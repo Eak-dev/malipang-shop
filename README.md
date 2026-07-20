@@ -2,7 +2,7 @@
 
 รุ่นปรับปรุงสำหรับดูแลโดยนักพัฒนาคนเดียว รับข้อมูลจาก LINE OA ประมวลผล Attendance/Payroll บน Cloudflare และเขียน Google Sheets API โดยตรง
 
-สถานะ: **RC สำหรับ Shadow/UAT** — โค้ดและ automated tests ผ่าน แต่ต้องทดสอบกับบัญชี LINE/Cloudflare/Google จริงก่อน Production
+สถานะ: **RC2 สำหรับ Shadow/UAT** — โค้ดและ automated tests ผ่าน แต่ต้องทดสอบกับบัญชี LINE/Cloudflare/Google จริงก่อน Production
 
 ## ขอบเขตรุ่นนี้
 
@@ -37,7 +37,7 @@ npx wrangler deploy --dry-run
 1. อ่าน `docs/01_SETUP_TH.md`
 2. สร้าง Cloudflare resources 4 รายการ
 3. ใส่ D1 ID ใน `wrangler.jsonc`
-4. ตั้ง Secrets 6 ค่า
+4. ตั้ง Secrets 7 ค่า รวม LINE User ID ของเจ้าของสำหรับ DLQ alert
 5. Migrate และ Deploy
 6. เรียก `/admin/bootstrap-sheets`
 7. เรียก `/admin/import-employees-from-sheet`
@@ -50,11 +50,15 @@ npx wrangler deploy --dry-run
 ## Admin endpoints
 
 - `GET /admin/status`
+- `GET /admin/readiness` ตรวจ D1, LINE, Google Sheets และ R2 จริง
 - `POST /admin/bootstrap-sheets`
 - `POST /admin/import-employees-from-sheet`
 - `POST /admin/expense-access`
 - `POST /admin/attendance/correct`
 - `POST /admin/retry-sync`
+- `POST /admin/reconcile-sheets` สร้างงาน Backfill จาก D1 ไป Sheets ใหม่
 - `GET /admin/evidence/<R2 key>`
 
 ทุก endpoint ต้องใช้ `Authorization: Bearer <ADMIN_TOKEN>` และ token ต้องยาวอย่างน้อย 32 ตัวอักษร
+
+RC2 สร้าง Sheets Sync Job ก่อนตอบ LINE, ประมวลผล Queue batch แบบขนาน, มี timeout/metrics สำหรับบริการภายนอก และมี DLQ consumer แจ้งเจ้าของผ่าน LINE โดยยังคงใช้ Queue หลักเพียงชุดเดียว

@@ -24,16 +24,36 @@ export async function incrementDailyUsage(env:Env,key:string):Promise<number>{
 export async function recordMetric(env:Env,traceId:string,name:string,valueMs:number,labels:Record<string,string>={}):Promise<void>{
   await env.DB.prepare(`INSERT INTO metrics(trace_id,name,value_ms,labels_json,created_at) VALUES(?,?,?,?,?)`).bind(traceId,name,Math.round(valueMs),JSON.stringify(labels),new Date().toISOString()).run();
 }
-export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
-  const now=new Date().toISOString();await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id) DO UPDATE SET payload_json=excluded.payload_json,error=excluded.error,status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,JSON.stringify(payload),String(error),now,now).run();
+export async function safeRecordMetric(env:Env,traceId:string,name:string,valueMs:number,labels:Record<string,string>={}):Promise<void>{
+  try{await recordMetric(env,traceId||"untraced",name,valueMs,labels);}catch(error){console.error("metric",name,error);}
 }
-export async function resolveFailedJobs(env:Env,queue:string,traceId:string):Promise<void>{
-  await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND status='OPEN'`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId).run();
+function failedJobKey(payload:unknown):string{
+  const job=payload as{kind?:string;entityType?:string;entityKey?:string;entityVersion?:number;event?:{webhookEventId?:string;message?:{id?:string}}};
+  if(job.kind==="SHEETS_SYNC")return`${job.entityType||"UNKNOWN"}:${job.entityKey||"UNKNOWN"}:${job.entityVersion||0}`;
+  if(job.kind==="LINE_EVENT")return`LINE_EVENT:${job.event?.webhookEventId||job.event?.message?.id||"UNKNOWN"}`;
+  return"UNKNOWN";
+}
+export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
+  const now=new Date().toISOString(),jobKey=failedJobKey(payload);await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET payload_json=excluded.payload_json,error=excluded.error,status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now).run();
+}
+export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
+  await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId,failedJobKey(payload)).run();
 }
 export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
-  if(env.SHEETS_SYNC_ENABLED!=="true")return;
-  const now=new Date().toISOString();await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now).run();
-  await env.JOB_QUEUE.send(job);
+  await enqueueSheetSyncBatch(env,[job]);
+}
+export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
+  if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
+  const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],now=new Date().toISOString();
+  for(let offset=0;offset<unique.length;offset+=50){
+    const statements=unique.slice(offset,offset+50).map(job=>env.DB.prepare(force
+      ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at`
+      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
+      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now));
+    await env.DB.batch(statements);
+  }
+  for(let offset=0;offset<unique.length;offset+=100)await env.JOB_QUEUE.sendBatch(unique.slice(offset,offset+100).map(body=>({body})));
+  return unique.length;
 }
 export async function recoverPendingSheetJobs(env:Env):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;

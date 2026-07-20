@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {weekStartMonday,addDays,minutesOf,resolveClockDate} from '../dist/shared/time.js';
+import {weekStartMonday,addDays,isIsoDate,minutesOf,resolveClockDate} from '../dist/shared/time.js';
 import {validateClock} from '../dist/domain/attendance.js';
 const base={kind:'CLOCK',hour:4,minute:8,month:7,day:20,weekday:'Mon',confidence:.99,clockFullyVisible:true,needsNewPhoto:false,note:'',provider:'test',raw:null};
 test('week is Monday through Sunday',()=>{assert.equal(weekStartMonday('2026-07-20'),'2026-07-20');assert.equal(addDays('2026-07-20',6),'2026-07-26');});
 test('HH:mm validation',()=>{assert.equal(minutesOf('04:30'),270);assert.throws(()=>minutesOf('24:00'));});
+test('ISO calendar validation',()=>{assert.equal(isIsoDate('2026-02-28'),true);assert.equal(isIsoDate('2026-02-31'),false);assert.equal(isIsoDate('20-02-01'),false);});
 test('invalid calendar date is rejected',()=>{assert.equal(resolveClockDate(2,31,'2026-02-28T12:00:00Z'),null);const r=validateClock({...base,month:2,day:31},'2026-02-28T12:00:00Z',1,.9,30);assert.equal(r.validationCode,'CLOCK_INVALID_CALENDAR_DATE');});
 test('clean clock photo is accepted',()=>{const r=validateClock(base,'2026-07-19T21:09:00Z',1,.9,30);assert.equal(r.ok,true);assert.equal(r.review,false);assert.equal(r.workDate,'2026-07-20');assert.equal(r.officialTime,'04:08');});
 test('LINE time difference creates review without replacing official time',()=>{const r=validateClock(base,'2026-07-20T00:00:00Z',1,.9,30);assert.equal(r.ok,true);assert.equal(r.review,true);assert.equal(r.officialTime,'04:08');assert.match(r.note,/เวลาในรูปต่าง/);});

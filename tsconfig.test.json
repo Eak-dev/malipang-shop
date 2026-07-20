@@ -12,6 +12,9 @@
     "src/expense/text-parser.ts",
     "src/line/signature.ts",
     "src/admin/staff-import.ts",
+    "src/admin/correction-validation.ts",
+    "src/admin/reconcile-sheets.ts",
+    "src/attendance/service.ts",
     "src/shared/**/*.ts",
     "src/cloudflare.d.ts"
   ]

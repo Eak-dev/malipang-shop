@@ -3,9 +3,9 @@ import { calculatePayroll } from "../domain/payroll";
 import { randomId } from "../shared/ids";
 import { addDays,weekStartMonday } from "../shared/time";
 import type { Employee,Env } from "../types";
-interface Correction{employeeId:string;workDate:string;timeIn:string;timeOut:string;reason:string}
-export async function correctAttendance(env:Env,input:Correction):Promise<{eventId:string;version:number}>{
-  if(!/^[A-Za-z0-9_-]{1,40}$/.test(input.employeeId)||!/^\d{4}-\d{2}-\d{2}$/.test(input.workDate)||!/^\d{2}:\d{2}$/.test(input.timeIn)||!/^\d{2}:\d{2}$/.test(input.timeOut)||input.reason.trim().length<3)throw new Error("Invalid correction payload");
+import { validateCorrection } from "./correction-validation";
+export async function correctAttendance(env:Env,rawInput:unknown):Promise<{eventId:string;version:number}>{
+  const input=validateCorrection(rawInput);
   const row=await env.DB.prepare(`SELECT * FROM employees WHERE employee_id=?`).bind(input.employeeId).first<Record<string,unknown>>();if(!row)throw new Error("Employee not found");
   const employee:Employee={employeeId:String(row.employee_id),staffName:String(row.staff_name),lineUserId:String(row.line_user_id),scheduledIn:String(row.scheduled_in),scheduledOut:String(row.scheduled_out),dailyWageSatang:Number(row.daily_wage_satang),graceMin:Number(row.grace_min),lateDeductionSatang:Number(row.late_deduction_satang),earlyDeductionSatang:Number(row.early_deduction_satang),canSubmitExpense:Number(row.can_submit_expense)===1,status:String(row.status)==="ACTIVE"?"ACTIVE":"INACTIVE"};
   const before=await env.DB.prepare(`SELECT * FROM attendance_daily WHERE employee_id=? AND work_date=?`).bind(input.employeeId,input.workDate).first<Record<string,unknown>>(),version=Number(before?.version||0)+1,payroll=calculatePayroll({employee,timeIn:input.timeIn,timeOut:input.timeOut,review:false}),eventId=randomId("admin_att"),messageId=randomId("admin_msg"),now=new Date().toISOString(),weekStart=weekStartMonday(input.workDate),paySunday=addDays(weekStart,6);

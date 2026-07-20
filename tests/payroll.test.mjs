@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {calculatePayroll} from '../dist/domain/payroll.js';
+const employee={employeeId:'EMP001',staffName:'Win',lineUserId:'U2759c683f61e504af0dd7f08a432b6e2',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:50000,graceMin:10,lateDeductionSatang:1000,earlyDeductionSatang:500,canSubmitExpense:false,status:'ACTIVE'};
+test('complete day inside grace is ready',()=>{const r=calculatePayroll({employee,timeIn:'04:08',timeOut:'16:00',review:false});assert.equal(r.confirmedWageSatang,50000);assert.equal(r.payStatus,'READY');});
+test('late deduction is a flat configured amount',()=>{const r=calculatePayroll({employee,timeIn:'04:20',timeOut:'16:00',review:false});assert.equal(r.lateMinutes,10);assert.equal(r.confirmedWageSatang,49000);});
+test('early deduction is a flat configured amount',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'15:30',review:false});assert.equal(r.earlyOutMinutes,30);assert.equal(r.confirmedWageSatang,49500);});
+test('missing punch has no payable or pending amount',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:null,review:false});assert.equal(r.pendingWageSatang,0);assert.equal(r.confirmedWageSatang,0);assert.equal(r.payStatus,'REVIEW');});
+test('review moves estimated wage to pending',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'16:00',review:true});assert.equal(r.confirmedWageSatang,0);assert.equal(r.pendingWageSatang,50000);assert.equal(r.payStatus,'REVIEW');});
+test('zero wage is NO_AMOUNT',()=>{const r=calculatePayroll({employee:{...employee,dailyWageSatang:0},timeIn:'04:00',timeOut:'16:00',review:false});assert.equal(r.payStatus,'NO_AMOUNT');});

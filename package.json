@@ -1,0 +1,25 @@
+{
+  "name": "malipang-backend-v5-2-solo",
+  "version": "5.2.0-rc.1",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build:test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({type:'commonjs'}))\"",
+    "test": "npm run build:test && node --test tests/*.test.mjs",
+    "check": "npm run typecheck && npm test",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "cf:types": "wrangler types",
+    "db:migrate:local": "wrangler d1 migrations apply malipang-v5-2 --local",
+    "db:migrate:remote": "wrangler d1 migrations apply malipang-v5-2 --remote",
+    "db:seed:local": "wrangler d1 execute malipang-v5-2 --local --file=seed/seed.local.sql",
+    "setup:check": "node scripts/setup-check.mjs",
+    "tail": "wrangler tail"
+  },
+  "devDependencies": {
+    "typescript": "5.8.3",
+    "wrangler": "4.28.1"
+  }
+}

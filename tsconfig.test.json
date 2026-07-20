@@ -1,0 +1,18 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "outDir": "dist",
+    "noEmit": false,
+    "types": []
+  },
+  "include": [
+    "src/domain/**/*.ts",
+    "src/expense/text-parser.ts",
+    "src/line/signature.ts",
+    "src/admin/staff-import.ts",
+    "src/shared/**/*.ts",
+    "src/cloudflare.d.ts"
+  ]
+}

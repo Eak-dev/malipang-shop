@@ -18,13 +18,21 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AttendanceCoordinator"] }],
   "queues": {
     "producers": [{ "binding": "JOB_QUEUE", "queue": "malipang-jobs" }],
-    "consumers": [{
-      "queue": "malipang-jobs",
-      "max_batch_size": 10,
-      "max_batch_timeout": 2,
-      "max_retries": 5,
-      "dead_letter_queue": "malipang-jobs-dlq"
-    }]
+    "consumers": [
+      {
+        "queue": "malipang-jobs",
+        "max_batch_size": 10,
+        "max_batch_timeout": 2,
+        "max_retries": 5,
+        "dead_letter_queue": "malipang-jobs-dlq"
+      },
+      {
+        "queue": "malipang-jobs-dlq",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
   },
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
@@ -47,6 +55,8 @@
     "CLOCK_FALLBACK_MIN_CONFIDENCE": "0.90",
     "CLOCK_MAX_DATE_DIFF_DAYS": "1",
     "CLOCK_MAX_LINE_TIME_DIFF_MIN": "30",
+    "EXTERNAL_API_TIMEOUT_MS": "15000",
+    "VISION_TIMEOUT_MS": "45000",
     "SHEET_STAFF_CONFIG": "HR_STAFF_CONFIG",
     "SHEET_ATTENDANCE_RAW": "V52_ATTENDANCE_RAW",
     "SHEET_DAILY_PAYROLL": "V52_DAILY_PAYROLL",

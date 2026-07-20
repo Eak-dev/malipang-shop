@@ -9,7 +9,7 @@ export async function handleLineWebhook(request:Request,env:Env,ctx:ExecutionCon
   let body:LineWebhookBody;try{body=JSON.parse(raw) as LineWebhookBody;}catch{return new Response("Invalid JSON",{status:400});}
   const events=body.events||[];if(events.length>100)return new Response("Too many events",{status:400});
   const receivedAtIso=new Date().toISOString();const jobs:InboundJob[]=events.map(event=>({kind:"LINE_EVENT",event,receivedAtIso,traceId:randomId("tr")}));
-  for(const job of jobs){const userId=job.event.source.type==="user"?job.event.source.userId||"":"";if(userId)ctx.waitUntil(startLoading(env,userId).catch(e=>console.error("loading",e)));}
+  for(const job of jobs){const userId=job.event.source.type==="user"?job.event.source.userId||"":"";if(userId)ctx.waitUntil(startLoading(env,userId,job.traceId).catch(e=>console.error("loading",e)));}
   if(jobs.length)await env.JOB_QUEUE.sendBatch(jobs.map(body=>({body})));
   return new Response("OK",{status:200});
 }

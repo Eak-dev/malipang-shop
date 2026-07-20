@@ -24,13 +24,14 @@ npx wrangler r2 bucket create malipang-v5-evidence
 ```bash
 npx wrangler secret put LINE_CHANNEL_SECRET
 npx wrangler secret put LINE_CHANNEL_ACCESS_TOKEN
+npx wrangler secret put LINE_OWNER_USER_ID
 npx wrangler secret put ADMIN_TOKEN
 npx wrangler secret put GOOGLE_SERVICE_ACCOUNT_EMAIL
 npx wrangler secret put GOOGLE_PRIVATE_KEY_BASE64
 npx wrangler secret put GOOGLE_SPREADSHEET_ID
 ```
 
-`ADMIN_TOKEN` ต้องสุ่มอย่างน้อย 32 ตัวอักษร ส่วน `OPENAI_API_KEY` ไม่ต้องตั้งในรุ่นเริ่มต้น
+`LINE_OWNER_USER_ID` คือ User ID ของเจ้าของที่ใช้รับแจ้งเตือน DLQ, `ADMIN_TOKEN` ต้องสุ่มอย่างน้อย 32 ตัวอักษร ส่วน `OPENAI_API_KEY` ไม่ต้องตั้งในรุ่นเริ่มต้น
 
 ## 4. Google
 
@@ -54,4 +55,4 @@ curl -X POST 'https://<worker>/admin/bootstrap-sheets' -H 'Authorization: Bearer
 curl -X POST 'https://<worker>/admin/import-employees-from-sheet' -H 'Authorization: Bearer <ADMIN_TOKEN>'
 ```
 
-ตรวจผลจาก `/admin/status` แล้วจึงเชื่อม LINE OA ทดสอบ
+ตรวจ `/admin/readiness` ให้ `d1`, `line`, `sheets`, `r2` เป็น `ok: true` และตรวจ `/admin/status` แล้วจึงเชื่อม LINE OA ทดสอบ

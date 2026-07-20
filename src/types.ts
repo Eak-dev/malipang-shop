@@ -18,6 +18,7 @@ export interface Env {
   R2_EVIDENCE_ENABLED: string;
   LINE_LOADING_ENABLED: string;
   LINE_LOADING_SECONDS: string;
+  LINE_OWNER_USER_ID: string;
   SHADOW_LINE_OUTPUT: string;
   WORKERS_AI_ENABLED: string;
   WORKERS_AI_MODEL: string;
@@ -28,6 +29,8 @@ export interface Env {
   CLOCK_FALLBACK_MIN_CONFIDENCE: string;
   CLOCK_MAX_DATE_DIFF_DAYS: string;
   CLOCK_MAX_LINE_TIME_DIFF_MIN: string;
+  EXTERNAL_API_TIMEOUT_MS: string;
+  VISION_TIMEOUT_MS: string;
   SHEET_STAFF_CONFIG: string;
   SHEET_ATTENDANCE_RAW: string;
   SHEET_DAILY_PAYROLL: string;

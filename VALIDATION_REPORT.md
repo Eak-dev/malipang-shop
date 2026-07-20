@@ -1,18 +1,21 @@
-# Validation Report — V5.2 Solo RC1
+# Validation Report — V5.2 Solo RC2
 
 วันที่ตรวจ: 2026-07-20
 
 ## ผ่านในเครื่องพัฒนา
 
 - TypeScript strict typecheck: PASS
-- Unit tests: 19/19 PASS
+- Unit tests: 30/30 PASS
 - npm lockfile และ `npm ci`: พร้อมตรวจซ้ำ
 - Wrangler deploy dry-run: PASS
-- SQLite migration + seed smoke test: PASS
+- SQLite migrations 0001→0002 + seed smoke test: PASS
 - Retry state transition `FAILED -> PROCESSING`: PASS
 - LINE HMAC raw-body test: PASS
 - Payroll/Expense/Clock date validation: PASS
 - Mapping จาก `HR_STAFF_CONFIG`: PASS
+- Sheets Sync Job ถูกสร้างก่อน LINE Push: PASS
+- Admin correction ตรวจวันจริง, HH:mm และลำดับเวลา: PASS
+- Timeout helper และ Deduct/Expense flags: PASS
 
 ## ตรวจข้อมูล Google Sheets จริงแล้ว
 
@@ -32,6 +35,7 @@
 - Queue retry/DLQ และ Durable Object concurrency จริง
 - Service Account bootstrap/import/write กับ Spreadsheet จริง
 - R2 upload/read/lifecycle จริง
+- `/admin/readiness`, `/admin/reconcile-sheets` และ LINE DLQ alert จริง
 - Shadow parity อย่างน้อย 7 วัน
 
 ## ข้อจำกัดเครื่องที่ใช้ตรวจ

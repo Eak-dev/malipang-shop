@@ -1,5 +1,6 @@
 LINE_CHANNEL_SECRET=replace_me
 LINE_CHANNEL_ACCESS_TOKEN=replace_me
+LINE_OWNER_USER_ID=U_replace_with_owner_line_user_id
 ADMIN_TOKEN=replace_with_at_least_32_random_characters
 GOOGLE_SERVICE_ACCOUNT_EMAIL=service-account@project.iam.gserviceaccount.com
 GOOGLE_PRIVATE_KEY_BASE64=base64_of_pkcs8_pem

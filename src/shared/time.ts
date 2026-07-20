@@ -23,6 +23,11 @@ function validDate(year:number,month:number,day:number):Date|null{
   const rendered=isoDateInBangkok(candidate);
   return rendered===`${year}-${pad(month)}-${pad(day)}`?candidate:null;
 }
+export function isIsoDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  return validDate(Number(match[1]), Number(match[2]), Number(match[3])) !== null;
+}
 export function resolveClockDate(month:number,day:number,receivedAtIso:string):string|null{
   const received=new Date(receivedAtIso);
   const year=Number(new Intl.DateTimeFormat("en",{timeZone:"Asia/Bangkok",year:"numeric"}).format(received));

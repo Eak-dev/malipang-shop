@@ -14,9 +14,10 @@
 | Daily_Wage | daily_wage_satang |
 | Grace_Min | grace_min |
 | Late_Deduction_Baht | late_deduction_satang |
+| Deduct_Late / Deduct_Early | เปิดหรือปิดยอดหักแบบคงที่ |
 | Status | status |
 
-หากเพิ่มคอลัมน์ `Can_Submit_Expense` ระบบจะอ่านสิทธิ์ Expense ได้ด้วย มิฉะนั้นให้ตั้งผ่าน `/admin/expense-access`
+หากเพิ่มคอลัมน์ `Can_Submit_Expense` ระบบจะอ่านและอัปเดตสิทธิ์ Expense ด้วย ถ้าไม่มีคอลัมน์นี้จะคงสิทธิ์เดิมใน D1 และสามารถตั้งผ่าน `/admin/expense-access`
 
 ห้าม import ชื่อพนักงานจาก `HR_ATTENDANCE_RAW` เพราะพบประวัติบางช่วงที่ EMP001/EMP002 สลับชื่อกัน
 

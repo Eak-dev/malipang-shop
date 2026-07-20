@@ -19,6 +19,9 @@ npx wrangler deploy --dry-run
 - Expense cash บันทึกทันที และ transfer ต้องกดยืนยัน
 - ผู้ไม่มีสิทธิ์ Expense ต้องถูกปฏิเสธ
 - แก้ missing punch ผ่าน `/admin/attendance/correct`
+- `/admin/readiness` ต้องผ่านทั้ง D1, LINE, Sheets และ R2
+- ทดสอบให้ job เข้า DLQ และเจ้าของได้รับ LINE alert
+- ลบ/แก้แถว Shadow แล้วทดสอบ `/admin/reconcile-sheets`
 
 ## เกณฑ์เปิดจริง
 

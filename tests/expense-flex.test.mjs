@@ -5,7 +5,7 @@ import {
   buildExpenseDateFlex,buildExpenseSavedFlex,collectFlexActionLabels,paymentWallet,paymentForWallet
 } from '../dist/expense/flex.js';
 
-const expense={expenseId:'exp_test_001',description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-22',status:'WAITING_CONFIRM'};
+const expense={expenseId:'exp_test_001',description:'Electricity',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-22',status:'WAITING_CONFIRM'};
 const builders=[buildExpenseSummaryFlex,buildExpensePaymentFlex,buildExpenseSourceFlex,buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpenseSavedFlex];
 
 test('expense Flex cards satisfy the LINE action-label contract',()=>{
@@ -27,6 +27,14 @@ test('summary Flex preserves the original editable flow',()=>{
 
 test('saved Flex offers audit-safe undo',()=>{
   assert.match(JSON.stringify(buildExpenseSavedFlex({...expense,status:'CONFIRMED'})),/expense_undo/);
+});
+
+test('expense Flex system UI is English only',()=>{
+  for(const build of builders){
+    const text=JSON.stringify(build(expense));
+    assert.doesNotMatch(text,/[ก-๙]/,build.name);
+    assert.match(text,/[A-Za-z]/,build.name);
+  }
 });
 
 test('card wallet keys match the Apps Script wallet master',()=>{

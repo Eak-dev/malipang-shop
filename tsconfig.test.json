@@ -17,9 +17,11 @@
     "src/admin/correction-validation.ts",
     "src/admin/reconcile-sheets.ts",
     "src/attendance/service.ts",
+    "src/attendance/messages.ts",
     "src/vision/workers-ai.ts",
     "src/vision/openai.ts",
     "src/vision/failure-reason.ts",
+    "src/line/multilingual.ts",
     "src/shared/**/*.ts",
     "src/cloudflare.d.ts"
   ]

@@ -17,6 +17,8 @@ test('provider failure and unknown image have distinct safe explanations',()=>{
   assert.equal(failure.code,'VISION_SERVICE_ERROR');
   assert.equal(unknown.code,'IMAGE_KIND_UNKNOWN');
   assert.doesNotMatch(failure.message,/401|secret|OpenAI HTTP/);
+  assert.match(failure.message,/Reason:/);
+  assert.match(failure.message,/[က-႟]/);
 });
 
 test('clock failures explain the exact validation condition in Thai',()=>{
@@ -25,4 +27,6 @@ test('clock failures explain the exact validation condition in Thai',()=>{
   assert.match(missing.message,/เวลา เดือน หรือวันที่/);
   assert.match(date.message,/วันที่บนหน้าปัดต่างจากวันที่ส่งรูป/);
   assert.match(date.message,/CLOCK_DATE_MISMATCH/);
+  assert.match(date.message,/The clock date differs/);
+  assert.match(date.message,/[က-႟]/);
 });

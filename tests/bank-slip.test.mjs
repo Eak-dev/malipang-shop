@@ -23,10 +23,16 @@ test('amount mismatch or non-THB receipt remains review-only',()=>{
 });
 
 test('SCB person transfer is accepted but explicitly requires category confirmation',()=>{
-  const validation=validateBankSlip(reading());
+  const result=reading();
+  const validation=validateBankSlip(result);
+  const draft=bankSlipExpenseDraft(result.document);
   assert.equal(validation.ok,true);
   assert.equal(validation.review,true);
   assert.equal(validation.code,'BANK_SLIP_CONFIRM_REQUIRED');
+  assert.equal(draft.paymentKey,'transfer');
+  assert.equal(draft.sourceWallet,'SHOP_BANK');
+  assert.equal(draft.amountSatang,5000);
+  assert.equal(draft.transactionDate,'2026-07-21');
 });
 
 test('Paotang subsidy receipt records 16 baht paid, not 40 baht gross',()=>{

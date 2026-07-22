@@ -5,7 +5,16 @@ import type { Env, VisionResult } from "../types";
 import { readImageWithOpenAI } from "./openai";
 import { readImageWithWorkersAI } from "./workers-ai";
 
-export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: ArrayBuffer, traceId=""): Promise<VisionResult> {
+export interface VisionReadOptions {
+  usageMetric?: string;
+  enforceDailyLimit?: boolean;
+}
+
+function failedVision(provider: string, note: string): VisionResult {
+  return {kind:"UNKNOWN",hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,needsNewPhoto:true,note,provider,raw:null};
+}
+
+export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: ArrayBuffer, traceId="", options:VisionReadOptions={}): Promise<VisionResult> {
   let primary: VisionResult | null = null;
   if (isTrue(env.WORKERS_AI_ENABLED)) {
     const started=Date.now();let primaryError="";try { primary = await withTimeout(readImageWithWorkersAI(env, preview),numberEnv(env.VISION_TIMEOUT_MS,45000),"Workers AI"); } catch (error) { primaryError=String(error instanceof Error?error.message:error).slice(0,240);console.error("workers-ai",error); }finally{await safeRecordMetric(env,traceId,"vision_primary_ms",Date.now()-started,{provider:"workers-ai",success:String(Boolean(primary)),error:primaryError});}
@@ -13,8 +22,11 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
   const threshold = numberEnv(env.CLOCK_PRIMARY_MIN_CONFIDENCE,0.97);
   const needsFallback = !primary || primary.kind === "UNKNOWN" || primary.needsNewPhoto || (primary.kind === "CLOCK" && primary.confidence < threshold);
   if (!needsFallback && primary) return primary;
-  if (!isTrue(env.OPENAI_FALLBACK_ENABLED) || !env.OPENAI_API_KEY) return primary || {kind:"UNKNOWN",hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,needsNewPhoto:true,note:"No vision provider succeeded",provider:"none",raw:null};
-  const count = await incrementDailyUsage(env,"openai_fallback_calls");
-  if (count > numberEnv(env.OPENAI_DAILY_FALLBACK_LIMIT,100)) return primary || {kind:"UNKNOWN",hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,needsNewPhoto:true,note:"OpenAI daily limit reached",provider:"budget-guard",raw:null};
-  const started=Date.now();try{return await readImageWithOpenAI(env, original);}finally{await safeRecordMetric(env,traceId,"vision_fallback_ms",Date.now()-started,{provider:"openai"});}
+  if (!isTrue(env.OPENAI_FALLBACK_ENABLED) || !env.OPENAI_API_KEY) return primary || failedVision("none","No vision provider succeeded");
+  const count = await incrementDailyUsage(env,options.usageMetric||"openai_fallback_calls");
+  if (options.enforceDailyLimit!==false&&count > numberEnv(env.OPENAI_DAILY_FALLBACK_LIMIT,100)) return primary || failedVision("budget-guard","OpenAI daily limit reached");
+  const started=Date.now();let fallbackError="";
+  try{return await readImageWithOpenAI(env, original);}
+  catch(error){fallbackError=String(error instanceof Error?error.message:error).slice(0,240);console.error("openai-vision",error);return primary||failedVision("openai-error","OpenAI vision request failed");}
+  finally{await safeRecordMetric(env,traceId,"vision_fallback_ms",Date.now()-started,{provider:"openai",success:String(!fallbackError),error:fallbackError});}
 }

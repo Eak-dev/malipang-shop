@@ -37,13 +37,21 @@ test('cash text writes CONFIRMED expense and enqueues Sheets',async()=>{
   assert.equal(h.state.queue[0].body.entityType,'EXPENSE');
 });
 
-test('transfer text waits for confirmation and does not enqueue Sheets',async()=>{
+test('English transfer text waits for confirmation and does not enqueue Sheets',async()=>{
   const h=harness();
-  await handleExpenseText(h.env,h.event('ค่าไฟ โอน 1200'),'trace_transfer');
+  await handleExpenseText(h.env,h.event('ค่าไฟ transfer 1200'),'trace_transfer');
   assert.equal(h.state.runs.length,1);
   assert.equal(h.state.runs[0].args[9],'WAITING_CONFIRM');
   assert.equal(h.state.batches.length,0);
   assert.equal(h.state.queue.length,0);
+});
+
+test('Thai transfer quick saves like the original Apps Script flow',async()=>{
+  const h=harness();
+  await handleExpenseText(h.env,h.event('ค่าไฟ โอน 1200'),'trace_thai_transfer');
+  assert.equal(h.state.runs[0].args[9],'CONFIRMED');
+  assert.equal(h.state.batches.length,1);
+  assert.equal(h.state.queue.length,1);
 });
 
 test('invalid text does not write D1 or enqueue Sheets',async()=>{

@@ -36,6 +36,7 @@ export interface Env {
   SHEET_DAILY_PAYROLL: string;
   SHEET_WEEKLY_PAYROLL: string;
   SHEET_EXPENSE_RAW: string;
+  SHEET_EXPENSE_DAILY: string;
   SHEET_SYSTEM_LOG: string;
   LINE_CHANNEL_SECRET: string;
   LINE_CHANNEL_ACCESS_TOKEN: string;
@@ -57,7 +58,7 @@ export interface LineEvent {
   webhookEventId?: string;
   deliveryContext?: { isRedelivery?: boolean };
   message?: LineMessage;
-  postback?: { data: string };
+  postback?: { data: string; params?: { date?: string; datetime?: string; time?: string } };
 }
 
 export interface InboundJob { kind: "LINE_EVENT"; event: LineEvent; receivedAtIso: string; traceId: string }

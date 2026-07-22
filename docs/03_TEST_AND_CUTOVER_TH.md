@@ -25,7 +25,7 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 
 ## UAT ขั้นต่ำ
 
-ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/confirm/reject ผ่าน Worker จริง `38/38`; cash สร้าง `CONFIRMED` และ Sheets job, transfer สร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test
+ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test
 
 - รูปนาฬิกาจริงอย่างน้อย 50 รูป
 - Win/Tualek/Eak ส่งเข้า–ออกและส่งซ้ำ
@@ -33,7 +33,7 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 - หลายคนส่งพร้อมกัน
 - ปิดอินเทอร์เน็ตหรือทำ Google เขียนล้มเหลวเพื่อดู retry
 - ตรวจ D1, R2 และ `V52_*` ทุกวัน
-- Expense cash บันทึกทันที และ transfer ต้องกดยืนยัน
+- Expense `ทอน`, `change` และ `โอน` ภาษาไทยบันทึกทันที; transfer ภาษาอังกฤษ บัตร หรือรายการไม่มี token แสดง Summary Flex ให้ตรวจและกดยืนยัน
 - ผู้ไม่มีสิทธิ์ Expense ต้องถูกปฏิเสธ
 - แก้ missing punch ผ่าน `/admin/attendance/correct`
 - `/admin/readiness` ต้องผ่านทั้ง D1, LINE, Sheets และ R2

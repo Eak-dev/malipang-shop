@@ -1,0 +1,5 @@
+[
+  {"id":"kbank-kplus","expected":{"kind":"BANK_SLIP","institutionAliases":["kbank","kasikorn","k+"],"channel":"BANK","paymentDate":"2026-07-21","paymentTime":"16:49","paidAmountBaht":200,"allowedCategories":["marketing","general"]}},
+  {"id":"scb-easy","expected":{"kind":"BANK_SLIP","institutionAliases":["scb","siam commercial"],"channel":"BANK","paymentDate":"2026-07-21","paymentTime":"17:19","paidAmountBaht":50,"allowedCategories":["general"]}},
+  {"id":"paotang-gwallet","expected":{"kind":"BANK_SLIP","institutionAliases":["paotang","g-wallet","g wallet"],"channel":"G_WALLET","paymentDate":"2026-07-11","paymentTime":"16:04","grossAmountBaht":40,"discountAmountBaht":24,"paidAmountBaht":16,"allowedCategories":["packaging","general"]}}
+]

@@ -23,6 +23,12 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 
 ผล baseline วันที่ 22 กรกฎาคม 2026: OpenAI `gpt-4.1-mini` อ่านชนิดรูป เวลา เดือน และวันที่ถูก `7/7`; `gpt-4o-mini` อ่าน Photo 2 ผิดเป็น `04:19`; Workers AI คืน `UNKNOWN 7/7` จึงปิดไว้ก่อน ส่วน weekday ไม่ใช้ตัดสิน Attendance และให้คืน `null`
 
+## Regression test สลิปธนาคารและวอลเล็ต
+
+contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และครอบคลุม KBank/K+, SCB และเป๋าตัง/G-Wallet รูปจริงไม่เก็บใน Git ให้ส่ง path ผ่าน `MALIPANG_BANK_SLIP_IMAGE_MAP` แล้วรัน `npm run test:bank-slips`
+
+ผล baseline วันที่ 22 กรกฎาคม 2026 ผ่าน `3/3`: ทั้งหมดเป็น `BANK_SLIP` และ validation ผ่าน KBank แปลงปีสองหลัก `26` เป็น `2026`, SCB ใช้ยอด 50 บาท และเป๋าตังแยกยอด 40 บาท/ส่วนลด 24 บาท/ยอดจ่ายจริง 16 บาทถูกต้อง
+
 ## UAT ขั้นต่ำ
 
 ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test
@@ -35,6 +41,8 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 - ตรวจ D1, R2 และ `V52_*` ทุกวัน
 - Expense `ทอน`, `change` และ `โอน` ภาษาไทยบันทึกทันที; transfer ภาษาอังกฤษ บัตร หรือรายการไม่มี token แสดง Summary Flex ให้ตรวจและกดยืนยัน
 - ผู้ไม่มีสิทธิ์ Expense ต้องถูกปฏิเสธ
+- Bank slip ที่สำเร็จต้องขึ้น Summary Flex และยังไม่เข้า Sheets ก่อนกด Save; หลัง Save ต้องลง H และ W=`บัญชีร้าน`
+- ส่งสลิปเดิมซ้ำทั้งไฟล์เดิมและเลขอ้างอิงเดิมต้องไม่สร้าง Expense ซ้ำ
 - แก้ missing punch ผ่าน `/admin/attendance/correct`
 - `/admin/readiness` ต้องผ่านทั้ง D1, LINE, Sheets และ R2
 - ทดสอบให้ job เข้า DLQ และเจ้าของได้รับ LINE alert

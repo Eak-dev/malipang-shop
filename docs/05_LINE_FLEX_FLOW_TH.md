@@ -50,6 +50,10 @@ Egg 375
 
 ## รูปภาพ
 
-Worker ปัจจุบันยังคงจำแนกรูปอัตโนมัติเพื่อให้ Attendance ทำงานเร็ว และรูปใบเสร็จ/สลิปถูกเก็บเป็น `WAITING_REVIEW` เท่านั้น ยังไม่ย้ายเมนู Apps Script ที่มี Receipt line items, bank-slip purpose และ linking เพราะ Backend V5.2 ยังไม่มี accounting engine เหล่านั้น การแสดงปุ่มดังกล่าวก่อน Backend พร้อมจะทำให้ผู้ใช้เข้าใจผิดว่าใช้งานได้ครบ
+Worker จำแนกรูปอัตโนมัติเพื่อให้ Attendance ทำงานเร็ว รูป KBank/K+, SCB และเป๋าตัง/G-Wallet ที่อ่านข้อมูลสำคัญครบจะสร้าง Bank slip draft เป็น `WAITING_CONFIRM` พร้อม Flex ภาษาอังกฤษ โดยแสดงรายการ ยอดจ่ายจริง สถาบัน เลขอ้างอิงบางส่วน หมวด และวันที่ ผู้ใช้แก้หมวด/วันที่แล้วกด Save หรือ Cancel ได้
+
+Bank slip ล็อก Payment เป็น Transfer และ Paid from เป็น Shop bank จึงไม่แสดงปุ่มแก้สองช่องนี้ เมื่อ Save แล้วจึงสร้าง Sheets Sync Job และลงยอดในชีท `รายวัน` หากสถานะไม่สำเร็จ ข้อมูลไม่ครบ สกุลเงินไม่ใช่ THB ยอดก่อนส่วนลด/ส่วนลด/ยอดจ่ายจริงไม่ตรง หรือเป็นสลิปซ้ำ ระบบจะไม่สร้างยอดและตอบเหตุผลพร้อม error code
+
+รูปใบเสร็จทั่วไปและ Online order ยังเป็น `WAITING_REVIEW` เพราะ Backend V5.2 ยังไม่มี Receipt line-item accounting, การแตกสินค้า หรือ linking หลายเอกสาร การแสดงปุ่มดังกล่าวก่อน Backend พร้อมจะทำให้ผู้ใช้เข้าใจผิดว่าใช้งานได้ครบ
 
 เมื่อพัฒนา Receipt Accounting ต่อ ให้ย้ายตามลำดับ: pending image → route Flex → OCR/AI → review Flex → wallet/date → confirm → D1/Sheets โดยไม่กลับไปใช้ Apps Script ใน Runtime

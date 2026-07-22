@@ -7,6 +7,12 @@ export interface ExpenseFlexRecord {
   category: string;
   transactionDate: string;
   status: string;
+  documentType?: string;
+  channel?: string;
+  institution?: string;
+  referenceId?: string;
+  grossAmountSatang?: number | null;
+  discountAmountSatang?: number | null;
 }
 
 type FlexMessage = { type: "flex"; altText: string; contents: Record<string, unknown> };
@@ -44,6 +50,7 @@ const row=(label:string,value:string)=>({type:"box",layout:"baseline",margin:"md
 ]});
 const money=(satang:number)=>(satang/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2});
 const displayDate=(iso:string)=>{const [y,m,d]=iso.split("-");return y&&m&&d?`${d}/${m}/${y}`:iso;};
+const referenceSuffix=(value:string)=>value.length<=8?value:value.slice(-8);
 export const paymentWallet=(paymentKey:string):string=>paymentKey==="cash"?"CASH_DRAWER":paymentKey==="transfer"?"SHOP_BANK":cardWalletByPayment[paymentKey]||"SHOP_BANK";
 export const paymentForWallet=(wallet:string,current="cash"):string=>{
   if(wallet==="CASH_DRAWER")return"cash";if(wallet==="SHOP_BANK")return"transfer";
@@ -55,14 +62,24 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
     {type:"separator",margin:"md"},row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),
     row("Category",categoryLabels[expense.category]||expense.category),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),
     row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Date",displayDate(expense.transactionDate))];
+  if(expense.documentType==="BANK_SLIP"){
+    body.push(row("Document",expense.channel==="G_WALLET"?"G-Wallet receipt":"Bank slip"));
+    if(expense.institution)body.push(row("Institution",expense.institution));
+    if(expense.grossAmountSatang!=null&&expense.grossAmountSatang!==expense.amountSatang)body.push(row("Original amount",`${money(expense.grossAmountSatang)} THB`));
+    if(expense.discountAmountSatang!=null&&expense.discountAmountSatang>0)body.push(row("Discount",`${money(expense.discountAmountSatang)} THB`));
+    if(expense.referenceId)body.push(row("Reference",`…${referenceSuffix(expense.referenceId)}`));
+  }
+  const editActions=expense.documentType==="BANK_SLIP"?[
+    action("🏷️ Category",`a=expense_category_menu&id=${id}`),action("📅 Date",`a=expense_date_menu&id=${id}`)
+  ]:[
+    action("💳 Payment",`a=expense_payment_menu&id=${id}`),action("🧺 Paid from",`a=expense_source_menu&id=${id}`),
+    action("🏷️ Category",`a=expense_category_menu&id=${id}`),action("📅 Date",`a=expense_date_menu&id=${id}`)
+  ];
   return{type:"flex",altText:`Review expense: ${expense.description} ${money(expense.amountSatang)} THB`,contents:{
     type:"bubble",size:"mega",header:{type:"box",layout:"vertical",backgroundColor:"#FFF3E0",contents:title("MaliPang Expense")},
     body:{type:"box",layout:"vertical",contents:body},footer:{type:"box",layout:"vertical",spacing:"sm",contents:[
       action("✅ Save",`a=expense_confirm&id=${id}`,"primary",green),
-      action("💳 Payment",`a=expense_payment_menu&id=${id}`),
-      action("🧺 Paid from",`a=expense_source_menu&id=${id}`),
-      action("🏷️ Category",`a=expense_category_menu&id=${id}`),
-      action("📅 Date",`a=expense_date_menu&id=${id}`),
+      ...editActions,
       action("❌ Cancel",`a=expense_cancel&id=${id}`)
     ]}}
   };
@@ -92,9 +109,9 @@ export function buildExpenseDateFlex(expense:ExpenseFlexRecord):FlexMessage{
   ]}}};
 }
 export function buildExpenseSavedFlex(expense:ExpenseFlexRecord):FlexMessage{
-  const id=encodeURIComponent(expense.expenseId);return{type:"flex",altText:`Expense saved: ${expense.description} ${money(expense.amountSatang)} THB`,contents:{type:"bubble",header:{type:"box",layout:"vertical",backgroundColor:"#E8F5E9",contents:title("Saved successfully ✅","#2E7D32")},body:{type:"box",layout:"vertical",contents:[
-    row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Category",categoryLabels[expense.category]||expense.category),row("Date",displayDate(expense.transactionDate))
-  ]},footer:{type:"box",layout:"vertical",contents:[action("↩️ Undo save",`a=expense_undo&id=${id}`)]}}};
+  const id=encodeURIComponent(expense.expenseId),body=[row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Category",categoryLabels[expense.category]||expense.category),row("Date",displayDate(expense.transactionDate))];
+  if(expense.documentType==="BANK_SLIP"&&expense.institution)body.push(row("Institution",expense.institution));
+  return{type:"flex",altText:`Expense saved: ${expense.description} ${money(expense.amountSatang)} THB`,contents:{type:"bubble",header:{type:"box",layout:"vertical",backgroundColor:"#E8F5E9",contents:title("Saved successfully ✅","#2E7D32")},body:{type:"box",layout:"vertical",contents:body},footer:{type:"box",layout:"vertical",contents:[action("↩️ Undo save",`a=expense_undo&id=${id}`)]}}};
 }
 
 function menu(heading:string,buttons:Record<string,unknown>[],id:string):FlexMessage{return{type:"flex",altText:heading,contents:{type:"bubble",size:"mega",body:{type:"box",layout:"vertical",spacing:"md",contents:title(heading)},footer:{type:"box",layout:"vertical",spacing:"sm",contents:[...buttons,action("↩️ Back",`a=expense_back&id=${id}`)]}}};}

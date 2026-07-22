@@ -6,14 +6,18 @@
 
 ### Quick Save
 
-คำสั่ง `ทอน`, `change` และ `โอน` ภาษาไทยบันทึกทันที:
+คำสั่ง `ทอน`, `change`, `โอน`, `transfer`, `ชื่อธนาคาร` บันทึกทันที:
 
 ```text
 ไข่ ทอน 375
 Egg change 500
 ค่าไฟ โอน 1200
+Gas transfer 371
+กล่อง kbank 350
+กล่อง kbank 350
+กล่อง "fc" 350
+กล่อง "citi" 350
 ```
-
 ลำดับงานคือ D1 → Sheets Sync Job → Saved Flex พร้อมปุ่ม Undo การ Undo จะเปลี่ยนสถานะเป็น `CANCELLED` และอัปเดตแถวเดิมใน Google Sheets ไม่ลบข้อมูลประวัติ
 
 ### ตรวจและแก้ก่อนบันทึก
@@ -22,8 +26,6 @@ Egg change 500
 
 ```text
 Egg 375
-Gas transfer 371
-กล่อง kbank 350
 ```
 
 จาก Summary ผู้ใช้ทำได้ดังนี้:

@@ -25,6 +25,8 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 
 ## UAT ขั้นต่ำ
 
+ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/confirm/reject ผ่าน Worker จริง `38/38`; cash สร้าง `CONFIRMED` และ Sheets job, transfer สร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test
+
 - รูปนาฬิกาจริงอย่างน้อย 50 รูป
 - Win/Tualek/Eak ส่งเข้า–ออกและส่งซ้ำ
 - วันที่ผิด วันบนหน้าปัดผิด รูปมืด/เอียง/บัง

@@ -10,7 +10,7 @@
   "d1_databases": [{
     "binding": "DB",
     "database_name": "malipang-v5-2",
-    "database_id": "REPLACE_D1_DATABASE_ID",
+    "database_id": "1a0744d4-5df7-41e9-b92d-4ccb732ac77a",
     "migrations_dir": "migrations"
   }],
   "r2_buckets": [{ "binding": "EVIDENCE", "bucket_name": "malipang-v5-evidence" }],
@@ -48,8 +48,8 @@
     "SHADOW_LINE_OUTPUT": "false",
     "WORKERS_AI_ENABLED": "true",
     "WORKERS_AI_MODEL": "@cf/moondream/moondream3.1-9B-A2B",
-    "OPENAI_FALLBACK_ENABLED": "false",
-    "OPENAI_MODEL": "gpt-5-nano-2025-08-07",
+    "OPENAI_FALLBACK_ENABLED": "true",
+    "OPENAI_MODEL": "gpt-4o-mini",
     "OPENAI_DAILY_FALLBACK_LIMIT": "25",
     "CLOCK_PRIMARY_MIN_CONFIDENCE": "0.97",
     "CLOCK_FALLBACK_MIN_CONFIDENCE": "0.90",

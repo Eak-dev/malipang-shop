@@ -15,6 +15,8 @@
     "src/admin/correction-validation.ts",
     "src/admin/reconcile-sheets.ts",
     "src/attendance/service.ts",
+    "src/vision/workers-ai.ts",
+    "src/vision/openai.ts",
     "src/shared/**/*.ts",
     "src/cloudflare.d.ts"
   ]

@@ -1,4 +1,4 @@
-import { dayDiff, hhmm, hhmmInBangkok, isoDateInBangkok, minuteDiffSameDate, resolveClockDate, weekdayShort } from "../shared/time";
+import { dayDiff, hhmm, hhmmInBangkok, isoDateInBangkok, minuteDiffSameDate, resolveClockDate } from "../shared/time";
 import type { VisionResult } from "../types";
 
 export interface ValidatedClock {ok:boolean;workDate:string;officialTime:string;lineTime:string;lineDiffMinutes:number;validationCode:string;review:boolean;note:string}
@@ -16,7 +16,6 @@ export function validateClock(reading:VisionResult,receivedAtIso:string,maxDateD
   const notes:string[]=[];
   if(diff!==0)notes.push("วันที่อยู่ใกล้รอยต่อวัน");
   if(lineDiffMinutes>maxLineTimeDiffMin)notes.push(`เวลาในรูปต่างจากเวลา LINE ${lineDiffMinutes} นาที`);
-  if(reading.weekday&&weekdayShort(workDate)!==reading.weekday.slice(0,3))notes.push(`วันบนหน้าปัดไม่ตรงกับวันที่: ${reading.weekday}`);
   if(reading.note)notes.push(reading.note);
   const review=notes.length>0;
   return{ok:true,workDate,officialTime,lineTime,lineDiffMinutes,validationCode:review?"CLOCK_REVIEW":"OK",review,note:notes.join(" / ")};

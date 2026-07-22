@@ -11,7 +11,11 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "Classify it as CLOCK, RECEIPT, BANK_SLIP, ONLINE_ORDER, or UNKNOWN.",
     "The physical MaliPang shop wall clock is wide and black, has large white LED time digits, a Mon-Sun list on the left, and green temperature/month/day digits on the right.",
     "For CLOCK, read only visible pixels: large white center digits are hour/minute, green above M is month, and green above D is day.",
-    "The active weekday is the one label rendered white or light blue while inactive labels are green. Return weekday=null whenever that highlight is not completely clear.",
+    "Locate the four large white seven-segment digits and read them from left to right before producing the answer.",
+    "Treat curved, diagonal, or uneven glare and reflections as noise. A real LED segment is a straight bar aligned with the other segments in that digit.",
+    "Double-check 5 versus 9: digit 5 has the upper-left vertical segment on and upper-right vertical segment off; digit 9 has both upper vertical segments on.",
+    "Silently inspect the clock digits a second time. If the two readings disagree, return null for the unclear field and needsNewPhoto=true instead of guessing.",
+    "Always return weekday=null. Weekday OCR is not trusted and is not used for attendance.",
     "A timestamp watermark or phone overlay is not evidence that the physical clock is present.",
     "Never infer missing fields from current time, LINE time, metadata, or context. Use null and needsNewPhoto=true when any required clock field is unclear.",
     "Set note to an empty string when the image is clear. Use note only for visible uncertainty or a specific problem that requires review."

@@ -6,3 +6,5 @@ dist/
 .DS_Store
 coverage/
 secrets/
+# Real UAT photos contain timestamps and precise location overlays. Keep them local.
+tests/fixtures/clock-photos/*.jpg

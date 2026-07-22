@@ -13,6 +13,10 @@ test('OpenAI fallback uses the proven MaliPang clock contract',()=>{
   assert.match(prompt,/wide and black/);
   assert.match(prompt,/Mon-Sun list on the left/);
   assert.match(prompt,/timestamp watermark or phone overlay is not evidence/i);
+  assert.match(prompt,/curved, diagonal, or uneven glare/i);
+  assert.match(prompt,/5 versus 9/i);
+  assert.match(prompt,/second time/i);
+  assert.match(prompt,/Always return weekday=null/i);
   assert.match(prompt,/note to an empty string/i);
   assert.match(payload.input[0].content[1].image_url,/^data:image\/jpeg;base64,/);
   assert.equal(payload.input[0].content[1].detail,'high');

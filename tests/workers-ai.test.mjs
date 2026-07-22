@@ -20,6 +20,9 @@ test('Moondream 3.1 uses query contract and parses answer JSON',async()=>{
   assert.equal(calledInput.reasoning,false);
   assert.match(calledInput.image,/^data:image\/jpeg;base64,/);
   assert.match(calledInput.question,/Return JSON only/);
+  assert.match(calledInput.question,/curved, diagonal, or uneven glare/i);
+  assert.match(calledInput.question,/5 versus 9/i);
+  assert.match(calledInput.question,/Always return weekday=null/i);
   assert.equal(result.kind,'CLOCK');
   assert.equal(result.hour,4);
   assert.equal(result.minute,3);

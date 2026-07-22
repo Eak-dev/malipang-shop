@@ -6,11 +6,12 @@ import { numberEnv } from "../shared/env";
 import { sha256Hex } from "../shared/ids";
 import { weekStartMonday } from "../shared/time";
 import type { AttendanceCommitRequest,AttendanceCommitResult,Employee,Env,LineEvent,VisionResult } from "../types";
+import { describeClockValidationFailure } from "../vision/failure-reason";
 
 export async function handleAttendance(env:Env,event:LineEvent,employee:Employee,reading:VisionResult,original:ArrayBuffer,traceId:string):Promise<boolean>{
   const to=event.source.userId||"",messageId=event.message?.id||"",webhookEventId=event.webhookEventId||`message:${messageId}`,receivedAtIso=new Date(event.timestamp).toISOString();
   const validated=validateClock(reading,receivedAtIso,numberEnv(env.CLOCK_MAX_DATE_DIFF_DAYS,1),numberEnv(env.CLOCK_FALLBACK_MIN_CONFIDENCE,0.9),numberEnv(env.CLOCK_MAX_LINE_TIME_DIFF_MIN,30));
-  if(!validated.ok){await pushText(env,to,`ยังไม่บันทึกเวลาค่ะ ❌\nสาเหตุ: ${validated.validationCode}\nกรุณาถ่ายใหม่ให้เห็นเวลา เดือน และวันที่ครบ`,traceId);return false;}
+  if(!validated.ok){await pushText(env,to,describeClockValidationFailure(validated.validationCode).message,traceId);return false;}
   const hash=await sha256Hex(original),imageKey=`attendance/${validated.workDate}/${employee.employeeId}/${messageId}-${hash.slice(0,12)}.jpg`;
   await saveEvidence(env,imageKey,original,{employeeId:employee.employeeId,messageId,traceId});
   const objectId=env.ATTENDANCE_COORDINATOR.idFromName(`${employee.employeeId}|${validated.workDate}`),stub=env.ATTENDANCE_COORDINATOR.get(objectId);

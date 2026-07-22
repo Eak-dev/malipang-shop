@@ -193,6 +193,8 @@ npm run test:clock-photos
 
 ระหว่างเปรียบเทียบโมเดลหรือทดสอบเฉพาะรูป สามารถเพิ่ม `MALIPANG_OPENAI_MODEL=gpt-4.1-mini` และ `MALIPANG_CLOCK_CASES=photo-02` ได้
 
+การทดสอบผ่าน `/admin/vision/inspect` และ `/admin/vision/evaluate` ใช้ตัวนับ `openai_admin_test_calls` แยกจากรูปจริงของพนักงาน จึงไม่กินโควตา `openai_fallback_calls` ฝั่ง Production ส่วนรูปที่ไม่ผ่านจะตอบ LINE ด้วยสาเหตุ วิธีแก้ และรหัสตรวจสอบ โดยไม่แสดงข้อผิดพลาดดิบหรือข้อมูลลับของผู้ให้บริการ AI ค่าเริ่มต้นฝั่ง Production จำกัดไว้ 100 ครั้งต่อวัน
+
 ## ก่อนเปิด Production
 
 1. ตรวจ `HR_STAFF_CONFIG` ให้ LINE User ID, ตารางงาน, ค่าแรง, grace และค่าหักเป็นข้อมูลจริง

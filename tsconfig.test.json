@@ -19,6 +19,7 @@
     "src/attendance/service.ts",
     "src/vision/workers-ai.ts",
     "src/vision/openai.ts",
+    "src/vision/failure-reason.ts",
     "src/shared/**/*.ts",
     "src/cloudflare.d.ts"
   ]

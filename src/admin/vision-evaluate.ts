@@ -46,7 +46,7 @@ export async function evaluateUploadedImage(env: Env, request: Request): Promise
       ? { ...env, WORKERS_AI_ENABLED: "true", OPENAI_FALLBACK_ENABLED: "false" }
       : env;
 
-  const reading = await classifyAndRead(evaluationEnv, image, image, traceId);
+  const reading = await classifyAndRead(evaluationEnv, image, image, traceId, {usageMetric:"openai_admin_test_calls",enforceDailyLimit:false});
   const validation = validateClock(
     reading,
     receivedAt,

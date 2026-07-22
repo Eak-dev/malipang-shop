@@ -9,6 +9,7 @@
     "build:test": "tsc -p tsconfig.test.json && node -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({type:'commonjs'}))\"",
     "test": "npm run build:test && node --test tests/*.test.mjs",
     "test:clock-photos": "node --test tests/clock-photo-fixtures.test.mjs",
+    "test:bank-slips": "node --test tests/bank-slip-photo-fixtures.test.mjs",
     "test:expense-text": "npm run build:test && node --test tests/expense.test.mjs",
     "check": "npm run typecheck && npm test",
     "dev": "wrangler dev --local",

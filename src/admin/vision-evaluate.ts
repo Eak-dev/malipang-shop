@@ -3,6 +3,7 @@ import { numberEnv } from "../shared/env";
 import { randomId } from "../shared/ids";
 import type { Env } from "../types";
 import { classifyAndRead } from "../vision/service";
+import { validateBankSlip } from "../expense/bank-slip";
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const PROVIDERS = ["pipeline", "openai", "workers-ai"] as const;
@@ -24,15 +25,9 @@ function receivedAtIso(url: URL): string {
   return parsed.toISOString();
 }
 
-export async function evaluateUploadedImage(env: Env, request: Request): Promise<unknown> {
-  const contentType = (request.headers.get("content-type") || "").split(";", 1)[0]?.trim().toLowerCase() || "";
-  if (contentType !== "image/jpeg") throw new Error("Only image/jpeg is supported");
-
-  const image = await request.arrayBuffer();
+async function evaluateImage(env:Env,image:ArrayBuffer,url:URL):Promise<unknown>{
   if (image.byteLength === 0) throw new Error("Image body is empty");
   if (image.byteLength > MAX_IMAGE_BYTES) throw new Error("Image exceeds the 5 MiB test limit");
-
-  const url = new URL(request.url);
   const provider = requestedProvider(url);
   const requestedModel = url.searchParams.get("model");
   if (requestedModel && (provider !== "openai" || !OPENAI_EVAL_MODELS.includes(requestedModel as typeof OPENAI_EVAL_MODELS[number]))) {
@@ -63,6 +58,21 @@ export async function evaluateUploadedImage(env: Env, request: Request): Promise
     receivedAt,
     imageBytes: image.byteLength,
     reading: safeReading,
-    validation
+    validation,
+    documentValidation: reading.kind === "BANK_SLIP" ? validateBankSlip(reading) : null
   };
+}
+
+export async function evaluateUploadedImage(env: Env, request: Request): Promise<unknown> {
+  const contentType = (request.headers.get("content-type") || "").split(";", 1)[0]?.trim().toLowerCase() || "";
+  if (contentType !== "image/jpeg") throw new Error("Only image/jpeg is supported");
+  return evaluateImage(env,await request.arrayBuffer(),new URL(request.url));
+}
+
+export async function evaluateEvidenceImage(env:Env,input:{key?:string},url:URL):Promise<unknown>{
+  const key=String(input.key||"").trim();
+  if(!key||key.length>512)throw new Error("A valid R2 evidence key is required");
+  const object=await env.EVIDENCE.get(key);
+  if(!object)throw new Error("R2 evidence object not found");
+  return evaluateImage(env,await new Response(object.body).arrayBuffer(),url);
 }

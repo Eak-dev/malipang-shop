@@ -106,6 +106,33 @@ export interface VisionResult {
   note: string;
   provider: string;
   raw: unknown;
+  document?: BankSlipDocument | null;
+}
+
+export interface BankSlipDocument {
+  documentType: "BANK_SLIP";
+  channel: "BANK" | "G_WALLET";
+  institution: string;
+  transactionType: "TRANSFER" | "PAYMENT" | "WALLET_PAYMENT" | "TOPUP" | "UNKNOWN";
+  transactionStatus: "SUCCESS" | "FAILED" | "PENDING" | "UNKNOWN";
+  printedYear: string;
+  paymentDate: string;
+  paymentTime: string;
+  referenceId: string;
+  sender: string;
+  senderAccountMasked: string;
+  recipient: string;
+  recipientAccountMasked: string;
+  merchant: string;
+  grossAmountBaht: number | null;
+  discountAmountBaht: number | null;
+  paidAmountBaht: number | null;
+  currency: string;
+  suggestedDescription: string;
+  suggestedCategory: string;
+  confidence: number;
+  needsReview: boolean;
+  note: string;
 }
 
 export interface AttendanceCommitRequest {

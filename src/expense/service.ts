@@ -7,6 +7,7 @@ import {
   buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
   buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
+import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
 import { parseExpenseText } from "./text-parser";
 
 type ExpenseRow=Record<string,unknown>;
@@ -18,10 +19,16 @@ const allowedCategories=new Set(["ingredients","fillings","packaging","gas","uti
 function recordFromRow(row:ExpenseRow):ExpenseFlexRecord{return{
   expenseId:String(row.expense_id),description:String(row.description),amountSatang:Number(row.amount_satang),
   paymentKey:String(row.payment_key),sourceWallet:String(row.source_wallet),category:String(row.category),
-  transactionDate:String(row.transaction_date),status:String(row.status)
+  transactionDate:String(row.transaction_date),status:String(row.status),
+  ...(row.document_type?{documentType:String(row.document_type)}:{}),...(row.channel?{channel:String(row.channel)}:{}),
+  ...(row.institution?{institution:String(row.institution)}:{}),...(row.reference_id?{referenceId:String(row.reference_id)}:{}),
+  ...(row.document_type?{grossAmountSatang:row.gross_amount_satang==null?null:Number(row.gross_amount_satang),discountAmountSatang:row.discount_amount_satang==null?null:Number(row.discount_amount_satang)}:{})
 };}
 async function findExpense(env:Env,id:string,to:string):Promise<ExpenseFlexRecord|null>{
-  const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=? AND line_user_id=? LIMIT 1`).bind(id,to).first<ExpenseRow>();return row?recordFromRow(row):null;
+  const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=? AND line_user_id=? LIMIT 1`).bind(id,to).first<ExpenseRow>();
+  if(!row)return null;
+  const document=await env.DB.prepare(`SELECT document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang FROM expense_documents WHERE expense_id=? LIMIT 1`).bind(id).first<ExpenseRow>();
+  return recordFromRow(document?{...row,...document}:row);
 }
 async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<ExpenseFlexRecord|null>{
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE message_id=? AND line_user_id=? LIMIT 1`).bind(messageId,to).first<ExpenseRow>();return row?recordFromRow(row):null;
@@ -44,9 +51,43 @@ export async function handleExpenseText(env:Env,event:LineEvent,traceId:string):
   return expense.status==="CONFIRMED"?"CONFIRMED":expense.status==="WAITING_CONFIRM"?"WAITING_CONFIRM":"REJECTED";
 }
 
-export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionResult,imageKey:string,traceId:string):Promise<void>{
-  const to=event.source.userId||"",id=randomId("doc");await env.DB.prepare(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,image_key,status,ai_json,trace_id,created_at) VALUES(?,?,?,?,?,'WAITING_REVIEW',?,?,?)`).bind(id,event.message?.id||"",to,reading.kind,imageKey,JSON.stringify(reading.raw),traceId,new Date().toISOString()).run();
-  await pushText(env,to,`${reading.kind} image received. ✅\nReview queue ID: ${id}\nThis version will not create an expense amount automatically from the image, preventing incorrect entries.`,traceId);
+function satangOrNull(value:number|null|undefined):number|null{return value==null||!Number.isFinite(value)?null:Math.round(value*100);}
+function documentInsert(env:Env,args:unknown[]){return env.DB.prepare(`INSERT INTO expense_documents(
+  document_id,message_id,line_user_id,document_type,image_key,status,ai_json,trace_id,created_at,
+  channel,institution,transaction_type,transaction_status,payment_date,payment_time,reference_id,reference_key,
+  sender,sender_account_masked,recipient,recipient_account_masked,merchant,gross_amount_satang,discount_amount_satang,
+  paid_amount_satang,suggested_description,suggested_category,confidence,needs_review,review_note,image_hash,expense_id
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...args);}
+async function findDuplicateDocument(env:Env,referenceKey:string,imageHash:string):Promise<ExpenseRow|null>{
+  if(referenceKey)return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE reference_key=? OR image_hash=? LIMIT 1`).bind(referenceKey,imageHash).first<ExpenseRow>();
+  return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE image_hash=? LIMIT 1`).bind(imageHash).first<ExpenseRow>();
+}
+async function pushDuplicateDocument(env:Env,to:string,duplicate:ExpenseRow|null,traceId:string):Promise<void>{
+  const existing=duplicate?.document_id?`\nExisting review ID: ${String(duplicate.document_id)}`:"";
+  await pushText(env,to,`Duplicate receipt not saved. ❌\nReason: This receipt reference or image is already in the system.${existing}\nAction: Do not submit the same receipt again.\nCode: BANK_SLIP_DUPLICATE`,traceId);
+}
+
+export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionResult,imageKey:string,traceId:string,imageHash:string):Promise<void>{
+  const to=event.source.userId||"",messageId=event.message?.id||"",document=reading.kind==="BANK_SLIP"?reading.document:null,referenceKey=document?bankSlipReferenceKey(document):"",duplicate=await findDuplicateDocument(env,referenceKey,imageHash);
+  if(duplicate){await pushDuplicateDocument(env,to,duplicate,traceId);return;}
+  const documentId=randomId("doc"),now=new Date().toISOString();
+  if(!document){
+    try{await documentInsert(env,[documentId,messageId,to,reading.kind,imageKey,"WAITING_REVIEW",JSON.stringify(reading.raw),traceId,now,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,reading.confidence,1,reading.note||"Detailed receipt accounting is not enabled for this document type.",imageHash,null]).run();}
+    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,to,await findDuplicateDocument(env,"",imageHash),traceId);return;}throw error;}
+    await pushText(env,to,`${reading.kind} image received. ✅\nReview queue ID: ${documentId}\nReason: This document is not a supported bank or wallet payment receipt for automatic posting.\nAction: Review it manually before recording an amount.`,traceId);return;
+  }
+  const validation=validateBankSlip(reading),documentArgs=[documentId,messageId,to,"BANK_SLIP",imageKey,validation.ok?"WAITING_CONFIRM":"WAITING_REVIEW",JSON.stringify(document),traceId,now,document.channel,document.institution,document.transactionType,document.transactionStatus,document.paymentDate,document.paymentTime,document.referenceId,referenceKey,document.sender,document.senderAccountMasked,document.recipient,document.recipientAccountMasked,document.merchant,satangOrNull(document.grossAmountBaht),satangOrNull(document.discountAmountBaht),satangOrNull(document.paidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,validation.review?1:0,validation.note,imageHash,null];
+  if(!validation.ok){
+    try{await documentInsert(env,documentArgs).run();}
+    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,to,await findDuplicateDocument(env,referenceKey,imageHash),traceId);return;}throw error;}
+    await pushText(env,to,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId);return;
+  }
+  const expenseId=randomId("exp"),draft=bankSlipExpenseDraft(document);documentArgs[31]=expenseId;
+  try{await env.DB.batch([
+    documentInsert(env,documentArgs),
+    env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now)
+  ]);}catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,to,await findDuplicateDocument(env,referenceKey,imageHash),traceId);return;}throw error;}
+  await pushFlex(env,to,buildExpenseSummaryFlex({expenseId,...draft,status:"WAITING_CONFIRM",documentType:"BANK_SLIP",channel:document.channel,institution:document.institution,referenceId:document.referenceId,grossAmountSatang:satangOrNull(document.grossAmountBaht),discountAmountSatang:satangOrNull(document.discountAmountBaht)}),traceId);
 }
 
 export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employee):Promise<void>{
@@ -58,28 +99,32 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     if(expense.status==="CANCELLED"){await showCurrent(env,to,expense,traceId);return;}
     if(expense.status==="WAITING_CONFIRM"){
       await env.DB.prepare(`UPDATE expense_events SET status='CONFIRMED',updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id,to).run();expense.status="CONFIRMED";
+      await env.DB.prepare(`UPDATE expense_documents SET status='CONFIRMED',updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id).run();
     }
     await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:1,traceId});await pushFlex(env,to,buildExpenseSavedFlex(expense),traceId);return;
   }
   if(action==="expense_cancel"){
     const changed=await env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id,to).run();
+    if(Number(changed.meta.changes||0)===1)await env.DB.prepare(`UPDATE expense_documents SET status='CANCELLED',updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id).run();
     await pushText(env,to,Number(changed.meta.changes||0)===1?"Expense cancelled. ✅":"This item has already been saved or cancelled.",traceId);return;
   }
   if(action==="expense_undo"){
     const changed=await env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=? WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'`).bind(new Date().toISOString(),id,to).run();
-    if(Number(changed.meta.changes||0)===1){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:2,traceId});await pushText(env,to,"Expense entry undone. ↩️\nThe original record remains in the audit history, and its status has been updated in Google Sheets.",traceId);}else await pushText(env,to,"This item is already cancelled or cannot be undone.",traceId);return;
+    if(Number(changed.meta.changes||0)===1){await env.DB.prepare(`UPDATE expense_documents SET status='CANCELLED',updated_at=? WHERE expense_id=? AND status='CONFIRMED'`).bind(new Date().toISOString(),id).run();await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:2,traceId});await pushText(env,to,"Expense entry undone. ↩️\nThe original record remains in the audit history, and its status has been updated in Google Sheets.",traceId);}else await pushText(env,to,"This item is already cancelled or cannot be undone.",traceId);return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,to,expense,traceId);return;}
   if(action==="expense_back"){await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);return;}
-  if(action==="expense_payment_menu"){await pushFlex(env,to,buildExpensePaymentFlex(expense),traceId);return;}
-  if(action==="expense_source_menu"){await pushFlex(env,to,buildExpenseSourceFlex(expense),traceId);return;}
+  if(action==="expense_payment_menu"){if(expense.documentType==="BANK_SLIP")await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);else await pushFlex(env,to,buildExpensePaymentFlex(expense),traceId);return;}
+  if(action==="expense_source_menu"){if(expense.documentType==="BANK_SLIP")await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);else await pushFlex(env,to,buildExpenseSourceFlex(expense),traceId);return;}
   if(action==="expense_category_menu"){await pushFlex(env,to,buildExpenseCategoryFlex(expense),traceId);return;}
   if(action==="expense_date_menu"){await pushFlex(env,to,buildExpenseDateFlex(expense),traceId);return;}
   if(action==="expense_set_payment"){
+    if(expense.documentType==="BANK_SLIP"){await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);return;}
     const payment=q.get("payment")||"";if(!allowedPayments.has(payment))throw new Error("Invalid expense payment");expense.paymentKey=payment;expense.sourceWallet=paymentWallet(payment);
     await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);return;
   }
   if(action==="expense_set_source"){
+    if(expense.documentType==="BANK_SLIP"){await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);return;}
     const source=q.get("source")||"";if(!allowedSources.has(source))throw new Error("Invalid expense source");expense.sourceWallet=source;expense.paymentKey=paymentForWallet(source,expense.paymentKey);
     await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();await pushFlex(env,to,buildExpenseSummaryFlex(expense),traceId);return;
   }

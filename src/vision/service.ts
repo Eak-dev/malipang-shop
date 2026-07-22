@@ -20,7 +20,7 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
     const started=Date.now();let primaryError="";try { primary = await withTimeout(readImageWithWorkersAI(env, preview),numberEnv(env.VISION_TIMEOUT_MS,45000),"Workers AI"); } catch (error) { primaryError=String(error instanceof Error?error.message:error).slice(0,240);console.error("workers-ai",error); }finally{await safeRecordMetric(env,traceId,"vision_primary_ms",Date.now()-started,{provider:"workers-ai",success:String(Boolean(primary)),error:primaryError});}
   }
   const threshold = numberEnv(env.CLOCK_PRIMARY_MIN_CONFIDENCE,0.97);
-  const needsFallback = !primary || primary.kind === "UNKNOWN" || primary.needsNewPhoto || (primary.kind === "CLOCK" && primary.confidence < threshold);
+  const needsFallback = !primary || primary.kind === "UNKNOWN" || primary.needsNewPhoto || (primary.kind === "CLOCK" && primary.confidence < threshold) || (primary.kind === "BANK_SLIP" && !primary.document);
   if (!needsFallback && primary) return primary;
   if (!isTrue(env.OPENAI_FALLBACK_ENABLED) || !env.OPENAI_API_KEY) return primary || failedVision("none","No vision provider succeeded");
   const count = await incrementDailyUsage(env,options.usageMetric||"openai_fallback_calls");

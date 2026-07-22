@@ -15,8 +15,8 @@ Egg change 500
 Gas transfer 371
 กล่อง kbank 350
 กล่อง kbank 350
-กล่อง "fc" 350
-กล่อง "citi" 350
+กล่อง fc 350
+กล่อง citi 350
 ```
 ลำดับงานคือ D1 → Sheets Sync Job → Saved Flex พร้อมปุ่ม Undo การ Undo จะเปลี่ยนสถานะเป็น `CANCELLED` และอัปเดตแถวเดิมใน Google Sheets ไม่ลบข้อมูลประวัติ
 

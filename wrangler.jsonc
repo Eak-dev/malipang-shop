@@ -40,7 +40,7 @@
     "RUNTIME_MODE": "shadow",
     "TIMEZONE": "Asia/Bangkok",
     "ATTENDANCE_ENABLED": "true",
-    "EXPENSE_ENABLED": "false",
+    "EXPENSE_ENABLED": "true",
     "SHEETS_SYNC_ENABLED": "true",
     "R2_EVIDENCE_ENABLED": "true",
     "LINE_LOADING_ENABLED": "true",

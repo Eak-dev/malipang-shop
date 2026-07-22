@@ -8,13 +8,16 @@ const now=new Date('2026-07-20T05:00:00Z');
 const acceptedCases=[
   ['Thai cash quick save','ไข่ ทอน 375',{description:'ไข่',amountSatang:37500,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-20',quickSave:true}],
   ['English cash quick save','Egg change 500',{description:'Egg',amountSatang:50000,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-20',quickSave:true}],
-  ['transfer needs confirmation','ค่าไฟ โอน 1,200.50',{description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-20',quickSave:false}],
+  ['Thai transfer quick save','ค่าไฟ โอน 1,200.50',{description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-20',quickSave:true}],
+  ['English transfer needs confirmation','ค่าไฟ transfer 1,200.50',{description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-20',quickSave:false}],
   ['card needs confirmation','กล่อง kbank 350',{description:'กล่อง',amountSatang:35000,paymentKey:'kbank',sourceWallet:'CARD_KBANK',category:'packaging',transactionDate:'2026-07-20',quickSave:false}],
   ['date without year','19/07 ไข่ ทอน 10',{description:'ไข่',amountSatang:1000,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-19',quickSave:true}],
   ['two digit year','19/07/26 นม ทอน 20',{description:'นม',amountSatang:2000,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-19',quickSave:true}],
-  ['ISO date','2026-07-18 ค่าเช่า โอน 5000',{description:'ค่าเช่า',amountSatang:500000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'rent',transactionDate:'2026-07-18',quickSave:false}],
+  ['ISO date','2026-07-18 ค่าเช่า โอน 5000',{description:'ค่าเช่า',amountSatang:500000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'rent',transactionDate:'2026-07-18',quickSave:true}],
   ['multiword description without payment token','ซื้อของ เบ็ดเตล็ด 99',{description:'ซื้อของ เบ็ดเตล็ด',amountSatang:9900,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'general',transactionDate:'2026-07-20',quickSave:false}],
   ['unknown token is description not wallet','ไข่ ทอม 375',{description:'ไข่ ทอม',amountSatang:37500,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-20',quickSave:false}]
+  ,['First Choice wallet mapping','กล่อง firstchoice 350',{description:'กล่อง',amountSatang:35000,paymentKey:'firstchoice',sourceWallet:'CARD_FIRST_CHOICE',category:'packaging',transactionDate:'2026-07-20',quickSave:false}]
+  ,['The 1 wallet mapping','กล่อง t1 350',{description:'กล่อง',amountSatang:35000,paymentKey:'t1',sourceWallet:'CARD_THE1',category:'packaging',transactionDate:'2026-07-20',quickSave:false}]
 ];
 
 for(const [name,input,expected] of acceptedCases){
@@ -42,7 +45,8 @@ test('category aliases cover the shop master',()=>{
     ['ค่าไฟ','utilities'],['Wi-Fi','utilities'],['โทรศัพท์','utilities'],
     ['สติกเกอร์','packaging'],['แก๊สถัง ALUMAX','gas'],['ค่าเช่า','rent'],
     ['ค่าน้ำมัน','transport'],['แป้ง','ingredients'],['สังขยา','fillings'],
-    ['ซ่อมเครื่อง','equipment'],['ค่าแรง','staff'],['เบ็ดเตล็ด','general']
+    ['ซ่อมเครื่อง','equipment'],['ค่าแรง','staff'],['น้ำยาล้างทำความสะอาด','cleaning'],
+    ['ค่าธรรมเนียมธนาคาร','bank_fee'],['ยิงแอด Facebook','marketing'],['เบ็ดเตล็ด','general']
   ];
   for(const [description,category] of cases)assert.equal(autoCategory(description),category,description);
 });

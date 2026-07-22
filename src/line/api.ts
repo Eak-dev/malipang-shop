@@ -18,7 +18,14 @@ export async function startLoading(env: Env, chatId: string, traceId=""): Promis
 }
 export async function pushText(env: Env, to: string, text: string, traceId=""): Promise<void> {
   if (!lineOutputEnabled(env)) return;
-  await lineFetch(env, "/v2/bot/message/push", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ to, messages:[{type:"text", text}] }) },traceId,"line_push_ms");
+  await pushLineMessages(env,to,[{type:"text",text}],traceId);
+}
+export async function pushFlex(env:Env,to:string,message:unknown,traceId=""):Promise<void>{
+  if(!lineOutputEnabled(env))return;
+  await pushLineMessages(env,to,[message],traceId);
+}
+async function pushLineMessages(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
+  await lineFetch(env,"/v2/bot/message/push",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({to,messages})},traceId,"line_push_ms");
 }
 export async function replyText(env: Env, replyToken: string, text: string, traceId=""): Promise<void> {
   if (!lineOutputEnabled(env)) return;

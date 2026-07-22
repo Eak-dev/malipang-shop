@@ -18,8 +18,8 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     }
     if(event.type!=="message"||!event.message){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.type==="text"){
-      if(env.EXPENSE_ENABLED==="true"&&actor?.canSubmitExpense)await handleExpenseText(env,event,job.traceId);else await pushText(env,to,env.EXPENSE_ENABLED==="true"?"ไม่มีสิทธิ์บันทึกค่าใช้จ่ายค่ะ":"ระบบค่าใช้จ่ายยังไม่เปิดใช้งานค่ะ",job.traceId);
-      await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",actor?.canSubmitExpense?"COMPLETED":"REJECTED");return;
+      if(env.EXPENSE_ENABLED==="true"&&actor?.canSubmitExpense){const outcome=await handleExpenseText(env,event,job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
+      else{await pushText(env,to,env.EXPENSE_ENABLED==="true"?"ไม่มีสิทธิ์บันทึกค่าใช้จ่ายค่ะ":"ระบบค่าใช้จ่ายยังไม่เปิดใช้งานค่ะ",job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT","REJECTED");}return;
     }
     if(event.message.type!=="image"){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.contentProvider?.type&&event.message.contentProvider.type!=="line"){await pushText(env,to,"รุ่นนี้รองรับเฉพาะรูปที่ส่งเข้า LINE โดยตรงค่ะ",job.traceId);await completeInboundEvent(env,webhookId,"EXTERNAL_IMAGE","REJECTED");return;}

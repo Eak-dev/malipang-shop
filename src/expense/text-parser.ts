@@ -2,6 +2,7 @@ import { isoDateInBangkok } from "../shared/time";
 export interface ParsedExpenseText{description:string;amountSatang:number;paymentKey:string;sourceWallet:string;category:string;transactionDate:string;quickSave:boolean}
 const cashTokens=new Set(["ทอน","change","drawer","front","frontcash","cashbox","till","cash","เงิน","เงินสด","สด"]),transferTokens=new Set(["โอน","transfer","bank","qr","online","onlineqr","promptpay","pp","พร้อมเพย์"]);
 const cardTokens=new Set(["kbank","firstchoice","aeon","citibank","ttb","homepro","t1"]);
+const cardWallets:Record<string,string>={kbank:"CARD_KBANK",firstchoice:"CARD_FIRST_CHOICE",aeon:"CARD_AEON",citibank:"CARD_CITIBANK",ttb:"CARD_TTB",homepro:"CARD_HOMEPRO",t1:"CARD_THE1"};
 function validIso(year:number,month:number,day:number):string|null{
   if(!Number.isInteger(year)||!Number.isInteger(month)||!Number.isInteger(day)||year<2000||year>9999||month<1||month>12||day<1||day>31)return null;
   const iso=`${year}-${String(month).padStart(2,"0")}-${String(day).padStart(2,"0")}`,d=new Date(`${iso}T12:00:00+07:00`);
@@ -16,7 +17,7 @@ export function parseExpenseText(text:string,now=new Date()):ParsedExpenseText|n
   const amountBaht=Number(amountText.replace(/,/g,"")),amountSatang=Math.round(amountBaht*100);if(!Number.isFinite(amountBaht)||amountBaht<=0||!Number.isSafeInteger(amountSatang)||amountSatang<=0)return null;
   const candidate=parts.length>=3?String(parts.at(-2)).toLowerCase():"",hasPaymentToken=cashTokens.has(candidate)||transferTokens.has(candidate)||cardTokens.has(candidate),middle=hasPaymentToken?candidate:"",description=parts.slice(0,parts.length-(hasPaymentToken?2:1)).join(" ").trim();if(!description)return null;
   let paymentKey="cash",sourceWallet="CASH_DRAWER",quickSave=false;
-  if(cashTokens.has(middle)){quickSave=true;}else if(transferTokens.has(middle)){paymentKey="transfer";sourceWallet="SHOP_BANK";}else if(cardTokens.has(middle)){paymentKey=middle;sourceWallet=`CARD_${middle.toUpperCase()}`;}
+  if(cashTokens.has(middle)){quickSave=middle==="ทอน"||middle==="change";}else if(transferTokens.has(middle)){paymentKey="transfer";sourceWallet="SHOP_BANK";quickSave=middle==="โอน";}else if(cardTokens.has(middle)){paymentKey=middle;sourceWallet=cardWallets[middle]||"SHOP_BANK";}
   return{description,amountSatang,paymentKey,sourceWallet,category:autoCategory(description),transactionDate,quickSave};
 }
 export function autoCategory(desc:string):string{
@@ -30,5 +31,8 @@ export function autoCategory(desc:string):string{
   if(has(["สังขยา","เผือก","ถั่วแดง","ฟิลลิ่ง"]))return"fillings";
   if(has(["เครื่อง","ซ่อม","อุปกรณ์","equipment","repair","machine","ตะกร้อ","ช้อนส้อม"]))return"equipment";
   if(has(["ค่าแรง","เงินเดือน"]))return"staff";
+  if(has(["น้ำยาล้าง","ทำความสะอาด","cleaner","detergent","sponge"]))return"cleaning";
+  if(has(["ค่าธรรมเนียม","bank fee","service fee"]))return"bank_fee";
+  if(has(["โฆษณา","ยิงแอด","ป้าย","facebook","marketing","poster","signage"]))return"marketing";
   return"general";
 }

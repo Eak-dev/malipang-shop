@@ -57,7 +57,7 @@ export interface LineEvent {
   webhookEventId?: string;
   deliveryContext?: { isRedelivery?: boolean };
   message?: LineMessage;
-  postback?: { data: string };
+  postback?: { data: string; params?: { date?: string; datetime?: string; time?: string } };
 }
 
 export interface InboundJob { kind: "LINE_EVENT"; event: LineEvent; receivedAtIso: string; traceId: string }

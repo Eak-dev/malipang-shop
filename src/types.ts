@@ -36,6 +36,7 @@ export interface Env {
   SHEET_DAILY_PAYROLL: string;
   SHEET_WEEKLY_PAYROLL: string;
   SHEET_EXPENSE_RAW: string;
+  SHEET_EXPENSE_DAILY: string;
   SHEET_SYSTEM_LOG: string;
   LINE_CHANNEL_SECRET: string;
   LINE_CHANNEL_ACCESS_TOKEN: string;

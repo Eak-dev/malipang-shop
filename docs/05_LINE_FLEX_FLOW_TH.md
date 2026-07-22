@@ -40,7 +40,7 @@ Gas transfer 371
 
 - ใช้สีน้ำตาล `#6D4C41` และพื้นครีม `#FFF3E0` ตาม Apps Script เดิม
 - การ์ดสำเร็จใช้สีเขียว
-- ข้อความหลักเป็นไทยและมีอังกฤษกำกับ
+- ข้อความและปุ่มใน Expense Flow ใช้ English เท่านั้น ส่วนชื่อรายการที่ผู้ใช้พิมพ์ภาษาไทยยังคงแสดงตามเดิม
 - ปุ่มและ Postback data ผ่านข้อจำกัด LINE Flex Message
 - Mapping `CARD_FIRST_CHOICE` และ `CARD_THE1` ตรงกับ Wallet Master เดิม
 

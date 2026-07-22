@@ -1,7 +1,13 @@
 import { isoDateInBangkok } from "../shared/time";
 export interface ParsedExpenseText{description:string;amountSatang:number;paymentKey:string;sourceWallet:string;category:string;transactionDate:string;quickSave:boolean}
 const cashTokens=new Set(["ทอน","change","drawer","front","frontcash","cashbox","till","cash","เงิน","เงินสด","สด"]),transferTokens=new Set(["โอน","transfer","bank","qr","online","onlineqr","promptpay","pp","พร้อมเพย์"]);
-const cardTokens=new Set(["kbank","firstchoice","aeon","citibank","ttb","homepro","t1"]);
+const cardAliases:Record<string,string>={
+  kbank:"kbank",kb:"kbank",kasikorn:"kbank",
+  firstchoice:"firstchoice",fc:"firstchoice",first:"firstchoice",
+  aeon:"aeon",citibank:"citibank",citi:"citibank",
+  ttb:"ttb",thanachart:"ttb",homepro:"homepro",hp:"homepro",
+  t1:"t1",theone:"t1",the_one:"t1"
+},cardTokens=new Set(Object.keys(cardAliases));
 const cardWallets:Record<string,string>={kbank:"CARD_KBANK",firstchoice:"CARD_FIRST_CHOICE",aeon:"CARD_AEON",citibank:"CARD_CITIBANK",ttb:"CARD_TTB",homepro:"CARD_HOMEPRO",t1:"CARD_THE1"};
 function validIso(year:number,month:number,day:number):string|null{
   if(!Number.isInteger(year)||!Number.isInteger(month)||!Number.isInteger(day)||year<2000||year>9999||month<1||month>12||day<1||day>31)return null;
@@ -17,22 +23,22 @@ export function parseExpenseText(text:string,now=new Date()):ParsedExpenseText|n
   const amountBaht=Number(amountText.replace(/,/g,"")),amountSatang=Math.round(amountBaht*100);if(!Number.isFinite(amountBaht)||amountBaht<=0||!Number.isSafeInteger(amountSatang)||amountSatang<=0)return null;
   const candidate=parts.length>=3?String(parts.at(-2)).toLowerCase():"",hasPaymentToken=cashTokens.has(candidate)||transferTokens.has(candidate)||cardTokens.has(candidate),middle=hasPaymentToken?candidate:"",description=parts.slice(0,parts.length-(hasPaymentToken?2:1)).join(" ").trim();if(!description)return null;
   let paymentKey="cash",sourceWallet="CASH_DRAWER",quickSave=false;
-  if(cashTokens.has(middle)){quickSave=middle==="ทอน"||middle==="change";}else if(transferTokens.has(middle)){paymentKey="transfer";sourceWallet="SHOP_BANK";quickSave=middle==="โอน";}else if(cardTokens.has(middle)){paymentKey=middle;sourceWallet=cardWallets[middle]||"SHOP_BANK";}
+  if(cashTokens.has(middle)){quickSave=middle==="ทอน"||middle==="change";}else if(transferTokens.has(middle)){paymentKey="transfer";sourceWallet="SHOP_BANK";quickSave=middle==="โอน";}else if(cardTokens.has(middle)){const canonical=cardAliases[middle];if(!canonical)throw new Error("Expense card alias is not configured");paymentKey=canonical;sourceWallet=cardWallets[paymentKey]||"SHOP_BANK";}
   return{description,amountSatang,paymentKey,sourceWallet,category:autoCategory(description),transactionDate,quickSave};
 }
 export function autoCategory(desc:string):string{
-  const s=desc.toLowerCase(),has=(keywords:string[])=>keywords.some(keyword=>s.includes(keyword));
-  if(has(["ขนส่ง","ส่งของ","ค่าน้ำมัน","ค่าจอดรถ"]))return"transport";
-  if(has(["ค่าไฟ","ค่าน้ำ","internet","wifi","wi-fi","โทรศัพท์","phone"]))return"utilities";
-  if(has(["กล่อง","ถุง","ซีล","สติ๊กเกอร์","สติกเกอร์","ซองกันชื้น","packaging","box","bag","sticker"]))return"packaging";
-  if(has(["แก๊ส","lpg","alumax"]))return"gas";
-  if(has(["ค่าเช่า","ค่าส่วนกลาง","rent"]))return"rent";
-  if(has(["แป้ง","ไข่","น้ำตาล","ยีสต์","นม","เนย","มาการีน","ไส้กรอก","แฮม","ชีส","flour","egg","sugar","yeast","milk","butter"]))return"ingredients";
-  if(has(["สังขยา","เผือก","ถั่วแดง","ฟิลลิ่ง"]))return"fillings";
-  if(has(["เครื่อง","ซ่อม","อุปกรณ์","equipment","repair","machine","ตะกร้อ","ช้อนส้อม"]))return"equipment";
-  if(has(["ค่าแรง","เงินเดือน"]))return"staff";
+  const s=desc.toLowerCase(),has=(keywords:string[])=>keywords.some(keyword=>s.includes(keyword)),hasWord=(keywords:string[])=>keywords.some(keyword=>new RegExp(`(?:^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}(?:$|[^a-z0-9])`,"i").test(s));
+  if(has(["น้ำมัน","ค่าน้ำมัน","ขนส่ง","ส่งของ","ค่าจอดรถ","grab","lineman","fuel","gasoline","delivery","transport","shipping","parking"]))return"transport";
+  if(has(["ค่าไฟ","ค่าน้ำ","อินเทอร์เน็ต","internet","wifi","wi-fi","โทรศัพท์","phone","electric","electricity","water bill"])||hasWord(["water"]))return"utilities";
+  if(has(["กล่อง","ถุง","ซีล","สติ๊กเกอร์","สติกเกอร์","เทป","แพ็ค","ถุงมือ","ซองกันชื้น","packaging","box","boxes","bag","bags","sticker","seal","tape","pack","glove","gloves"]))return"packaging";
+  if(has(["แก๊ส","lpg","alumax"])||hasWord(["gas"]))return"gas";
+  if(has(["ค่าเช่า","ค่าส่วนกลาง","ภาษีที่ดิน","rent","common fee","service charge","land tax"]))return"rent";
+  if(has(["ไส้กวน","สังขยา","เผือก","ถั่วแดง","บลูเบอร์รี่","ฟิลลิ่ง","filling","fillings","custard","pandan","taro","red bean","blueberry"]))return"fillings";
+  if(has(["แป้ง","ไข่","น้ำตาล","ยีสต์","นม","เนย","มาการีน","วัตถุดิบ","ไส้กรอก","แฮม","หมูหยอง","ข้าวโพด","ลูกเกด","ชีส","flour","egg","eggs","sugar","yeast","milk","butter","margarine","ham","sausage","pork floss","corn","raisin","raisins","cheese","mayonnaise","mayo","ketchup","truffle","tuna","crab stick","crabstick"]))return"ingredients";
+  if(has(["เครื่อง","ซ่อม","อุปกรณ์","equipment","repair","machine","ตะกร้อ","ช้อน","ส้อม","salad spinner","tool","tools"]))return"equipment";
+  if(has(["ค่าแรง","เงินเดือน","salary","wage","staff","payroll","labor","labour"]))return"staff";
   if(has(["น้ำยาล้าง","ทำความสะอาด","cleaner","detergent","sponge"]))return"cleaning";
-  if(has(["ค่าธรรมเนียม","bank fee","service fee"]))return"bank_fee";
-  if(has(["โฆษณา","ยิงแอด","ป้าย","facebook","marketing","poster","signage"]))return"marketing";
+  if(has(["ค่าธรรมเนียม","bank fee","service fee"])||hasWord(["fee"]))return"bank_fee";
+  if(has(["แอด","โฆษณา","ยิงแอด","ป้าย","facebook","marketing","poster","signage"])||hasWord(["ad","ads"]))return"marketing";
   return"general";
 }

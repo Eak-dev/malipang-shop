@@ -36,6 +36,8 @@ Gas transfer 371
 
 ทุก Postback ตรวจว่า Expense ID เป็นของ LINE User ผู้กดและรายการยังอยู่ในสถานะที่แก้ไขได้
 
+ชื่อย่อบัตรที่รองรับตรงกับ Apps Script เดิม: `kbank/kb/kasikorn`, `firstchoice/fc/first`, `aeon`, `citibank/citi`, `ttb/thanachart`, `homepro/hp` และ `t1/theone/the_one` โดยชื่อย่อทั้งหมดถูกแปลงเป็น Payment Key มาตรฐานก่อนบันทึก
+
 ## หน้าตา
 
 - ใช้สีน้ำตาล `#6D4C41` และพื้นครีม `#FFF3E0` ตาม Apps Script เดิม

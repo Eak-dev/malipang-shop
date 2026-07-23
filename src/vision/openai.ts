@@ -4,6 +4,7 @@ import { fetchWithTimeout } from "../shared/async";
 import { arrayBufferToBase64 } from "../shared/base64";
 import { numberEnv } from "../shared/env";
 import type { BankSlipDocument } from "../types";
+import { parseAttendanceOverlay } from "../domain/attendance-overlay";
 function outputText(data:unknown):string{const d=data as{output_text?:string;output?:Array<{content?:Array<{text?:string}>}>};return typeof d.output_text==="string"?d.output_text:d.output?.flatMap(o=>o.content||[]).map(c=>c.text||"").join("")||"";}
 export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown{
   const bankSlipSchema={type:"object",properties:{
@@ -50,13 +51,13 @@ function normalizeBankSlipDocument(value:unknown):BankSlipDocument|null{
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const obj=value as Record<string,unknown>,text=(v:unknown)=>String(v??"").trim(),numberOrNull=(v:unknown):number|null=>v==null||v===""?null:Number.isFinite(Number(v))?Number(v):null;
   if(text(obj.documentType)!=="BANK_SLIP")return null;
-  const channel=text(obj.channel)==="G_WALLET"?"G_WALLET":"BANK",transactionTypes=["TRANSFER","PAYMENT","WALLET_PAYMENT","TOPUP","UNKNOWN"] as const,statuses=["SUCCESS","FAILED","PENDING","UNKNOWN"] as const;
+  const channel=text(obj.channel)==="G_WALLET"?"G_WALLET":"BANK",rawInstitution=text(obj.institution),institution=channel==="G_WALLET"&&!/(?:paotang|g[- ]?wallet|เป๋าตัง)/i.test(rawInstitution)?`G-Wallet${rawInstitution?` (${rawInstitution})`:""}`:rawInstitution,transactionTypes=["TRANSFER","PAYMENT","WALLET_PAYMENT","TOPUP","UNKNOWN"] as const,statuses=["SUCCESS","FAILED","PENDING","UNKNOWN"] as const;
   const transactionType=transactionTypes.includes(text(obj.transactionType) as typeof transactionTypes[number])?text(obj.transactionType) as BankSlipDocument["transactionType"]:"UNKNOWN";
   const transactionStatus=statuses.includes(text(obj.transactionStatus) as typeof statuses[number])?text(obj.transactionStatus) as BankSlipDocument["transactionStatus"]:"UNKNOWN";
   const printedYear=text(obj.printedYear),yearDigits=printedYear.match(/\d{2,4}/)?.[0]||"",rawDate=text(obj.paymentDate),dateMatch=/^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDate);let paymentDate=rawDate;
   if(dateMatch&&yearDigits){const visible=Number(yearDigits),year=yearDigits.length===2?(visible<=79?2000+visible:1900+visible):visible>=2400?visible-543:visible;paymentDate=`${year.toString().padStart(4,"0")}-${dateMatch[2]}-${dateMatch[3]}`;}
   const rawCurrency=text(obj.currency).toUpperCase(),currency=["THB","BAHT","บาท","฿"].includes(rawCurrency)?"THB":rawCurrency||"THB";
-  return{documentType:"BANK_SLIP",channel,institution:text(obj.institution),transactionType,transactionStatus,printedYear,paymentDate,paymentTime:text(obj.paymentTime),referenceId:text(obj.referenceId),sender:text(obj.sender),senderAccountMasked:text(obj.senderAccountMasked),recipient:text(obj.recipient),recipientAccountMasked:text(obj.recipientAccountMasked),merchant:text(obj.merchant),grossAmountBaht:numberOrNull(obj.grossAmountBaht),discountAmountBaht:numberOrNull(obj.discountAmountBaht),paidAmountBaht:numberOrNull(obj.paidAmountBaht),currency,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:text(obj.suggestedCategory)||"general",confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),note:text(obj.note)};
+  return{documentType:"BANK_SLIP",channel,institution,transactionType,transactionStatus,printedYear,paymentDate,paymentTime:text(obj.paymentTime),referenceId:text(obj.referenceId),sender:text(obj.sender),senderAccountMasked:text(obj.senderAccountMasked),recipient:text(obj.recipient),recipientAccountMasked:text(obj.recipientAccountMasked),merchant:text(obj.merchant),grossAmountBaht:numberOrNull(obj.grossAmountBaht),discountAmountBaht:numberOrNull(obj.discountAmountBaht),paidAmountBaht:numberOrNull(obj.paidAmountBaht),currency,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:text(obj.suggestedCategory)||"general",confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),note:text(obj.note)};
 }
 export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unknown):VisionResult{
   const num=(v:unknown):number|null=>v==null?null:Number.isFinite(Number(v))?Number(v):null;
@@ -67,8 +68,8 @@ export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unkno
   };
   const kinds=["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","UNKNOWN"];
   const document=normalizeBankSlipDocument(obj.document),reportedKind=kinds.includes(String(obj.kind))?String(obj.kind) as VisionResult["kind"]:"UNKNOWN",kind=document?"BANK_SLIP":reportedKind;
-  const photoDate=nullableText(obj.photoDate),photoTime=nullableText(obj.photoTime);
-  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude:num(obj.latitude),longitude:num(obj.longitude),locationText:String(obj.locationText||"").trim(),overlayRawText:String(obj.overlayRawText||"").trim(),overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
+  const overlayRawText=String(obj.overlayRawText||"").trim(),parsedOverlay=parseAttendanceOverlay(overlayRawText),photoDate=nullableText(obj.photoDate)||parsedOverlay.photoDate,photoTime=nullableText(obj.photoTime)||parsedOverlay.photoTime,latitude=num(obj.latitude)??parsedOverlay.latitude,longitude=num(obj.longitude)??parsedOverlay.longitude;
+  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude,longitude,locationText:String(obj.locationText||"").trim(),overlayRawText,overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
 }
 export async function readImageWithOpenAI(env:Env,image:ArrayBuffer):Promise<VisionResult>{
   if(!env.OPENAI_API_KEY)throw new Error("OPENAI_API_KEY missing");

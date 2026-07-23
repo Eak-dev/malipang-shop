@@ -25,6 +25,7 @@
     "src/attendance/messages.ts",
     "src/vision/workers-ai.ts",
     "src/vision/openai.ts",
+    "src/vision/service.ts",
     "src/vision/failure-reason.ts",
     "src/line/multilingual.ts",
     "src/shared/**/*.ts",

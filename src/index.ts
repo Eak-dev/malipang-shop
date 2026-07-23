@@ -5,6 +5,7 @@ import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
 import { syncJob } from "./sheets/sync";
 import { pushOwnerAlert } from "./line/api";
+import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
 export{AttendanceCoordinator};
@@ -22,7 +23,7 @@ export default{
       for(const message of batch.messages){const job=message.body;try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${job.kind==="LINE_EVENT"?"LINE_EVENT":`${job.entityType} ${job.entityKey}`}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
       return;
     }
-    await Promise.all(batch.messages.map(async message=>{const job=message.body;try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else await syncJob(env,job);await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}message.retry();}}));
+    await Promise.all(batch.messages.map(async message=>{const job=message.body;try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else await syncJob(env,job);await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
     const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await recoverPendingSheetJobs(env);})());

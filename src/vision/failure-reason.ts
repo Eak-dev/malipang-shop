@@ -45,20 +45,20 @@ export function describeVisionRejection(reading: VisionResult): VisionRejection 
     );
   }
   if (reading.kind === "CLOCK") {
-    if (reading.hour == null || reading.minute == null || reading.month == null || reading.day == null || reading.needsNewPhoto) {
+    if (!reading.overlayPresent || !reading.photoDate || !reading.photoTime || reading.latitude == null || reading.longitude == null || reading.needsNewPhoto) {
       return rejection(
-        "CLOCK_FIELDS_MISSING",
-        {reason:"อ่านเวลา เดือน หรือวันที่บนหน้าปัดได้ไม่ครบ",action:"ถ่ายให้เห็นนาฬิกาทั้งเรือน ตัวเลขไม่เบลอและไม่มีแสงสะท้อน"},
-        {reason:"The time, month, or day could not be read completely.",action:"Photograph the whole clock with sharp digits and no glare."},
-        {reason:"နာရီ၊ လ သို့မဟုတ် ရက်ကို အပြည့်အစုံ မဖတ်နိုင်ပါ။",action:"နာရီတစ်ခုလုံးနှင့် ဂဏန်းများ ပြတ်သားပြီး အလင်းပြန်မှုမရှိအောင် ရိုက်ပါ။"},
+        "ATTENDANCE_OVERLAY_INCOMPLETE",
+        {reason:"อ่าน Timestamp หรือพิกัด GPS สีขาวบนภาพได้ไม่ครบ",action:"เปิดกล้องที่แสดงวันที่ เวลา และพิกัดเป็นตัวหนังสือสีขาว แล้วถ่ายให้เห็นนาฬิการ้านด้วย"},
+        {reason:"The white timestamp or GPS overlay could not be read completely.",action:"Use a camera overlay showing date, time, and GPS in white, with the shop clock visible too."},
+        {reason:"ဓာတ်ပုံပေါ်ရှိ အဖြူရောင် Timestamp သို့မဟုတ် GPS ကို အပြည့်အစုံ မဖတ်နိုင်ပါ။",action:"ရက်စွဲ၊ အချိန်နှင့် GPS ကို အဖြူရောင်ဖြင့်ပြပြီး ဆိုင်နာရီပါ မြင်ရအောင် ရိုက်ပါ။"},
         "เวลา"
       );
     }
     return rejection(
       "CLOCK_NOT_ACCEPTED",
-      {reason:"ข้อมูลจากหน้าปัดยังไม่ผ่านเงื่อนไขลงเวลา",action:"ถ่ายให้ตรงหน้าปัดและเห็นเวลา เดือน และวันที่ครบ"},
-      {reason:"The clock data did not pass attendance validation.",action:"Photograph the clock straight on with the time, month, and day visible."},
-      {reason:"နာရီအချက်အလက်သည် အလုပ်ချိန်စစ်ဆေးမှု မအောင်မြင်ပါ။",action:"အချိန်၊ လနှင့် ရက်အားလုံး မြင်ရအောင် နာရီကို တည့်တည့်ရိုက်ပါ။"},
+      {reason:"รูปยังไม่ผ่านเงื่อนไข Timestamp, GPS หรือนาฬิการ้าน",action:"ถ่ายใหม่ให้เห็น Overlay สีขาวและนาฬิการ้านชัดเจน"},
+      {reason:"The photo did not pass timestamp, GPS, or shop-clock validation.",action:"Retake it with the white overlay and shop clock clearly visible."},
+      {reason:"ဓာတ်ပုံသည် Timestamp၊ GPS သို့မဟုတ် ဆိုင်နာရီ စစ်ဆေးမှု မအောင်မြင်ပါ။",action:"အဖြူရောင် Overlay နှင့် ဆိုင်နာရီ ရှင်းလင်းစွာ မြင်ရအောင် ပြန်ရိုက်ပါ။"},
       "เวลา"
     );
   }
@@ -77,36 +77,22 @@ export function describeClockValidationFailure(code: string): VisionRejection {
       en:{reason:"This is not the shop wall clock.",action:"Photograph the entire black shop clock."},
       my:{reason:"ဤပုံသည် ဆိုင်နံရံကပ်နာရီ မဟုတ်ပါ။",action:"ဆိုင်ရှိ အနက်ရောင်နာရီတစ်ခုလုံးကို ရိုက်ပါ။"}
     },
-    CLOCK_FIELDS_MISSING: {
-      th:{reason:"อ่านเวลา เดือน หรือวันที่บนหน้าปัดได้ไม่ครบ",action:"ถ่ายให้เห็นนาฬิกาทั้งเรือน ตัวเลขไม่เบลอและไม่มีแสงสะท้อน"},
-      en:{reason:"The time, month, or day could not be read completely.",action:"Photograph the whole clock with sharp digits and no glare."},
-      my:{reason:"နာရီ၊ လ သို့မဟုတ် ရက်ကို အပြည့်အစုံ မဖတ်နိုင်ပါ။",action:"နာရီတစ်ခုလုံးနှင့် ဂဏန်းများ ပြတ်သားပြီး အလင်းပြန်မှုမရှိအောင် ရိုက်ပါ။"}
-    },
-    CLOCK_VALUE_OUT_OF_RANGE: {
-      th:{reason:"ค่าที่อ่านจากหน้าปัดอยู่นอกช่วงเวลาหรือวันที่ที่ถูกต้อง",action:"ถ่ายใหม่ให้ตรงหน้าปัดและเห็นตัวเลขครบทุกหลัก"},
-      en:{reason:"The clock values are outside a valid time or date range.",action:"Retake the photo straight on with every digit visible."},
-      my:{reason:"နာရီမှဖတ်ရသော တန်ဖိုးသည် မှန်ကန်သော အချိန် သို့မဟုတ် ရက်စွဲအတွင်း မရှိပါ။",action:"ဂဏန်းအားလုံးမြင်ရအောင် တည့်တည့်ပြန်ရိုက်ပါ။"}
-    },
-    CLOCK_LOW_CONFIDENCE: {
-      th:{reason:"AI อ่านตัวเลขได้ไม่มั่นใจพอ จึงไม่เดาเวลาให้",action:"ขยับเข้าใกล้ ถ่ายตรงหน้าปัด และหลีกเลี่ยงภาพเบลอหรือแสงสะท้อน"},
-      en:{reason:"The AI was not confident enough to read the digits and will not guess.",action:"Move closer, face the clock directly, and avoid blur or glare."},
-      my:{reason:"AI သည် ဂဏန်းများကို ယုံကြည်စိတ်ချစွာ မဖတ်နိုင်သဖြင့် ခန့်မှန်းမည်မဟုတ်ပါ။",action:"ပိုနီးကပ်၍ တည့်တည့်ရိုက်ပြီး မှုန်ဝါးခြင်းနှင့် အလင်းပြန်ခြင်းကို ရှောင်ပါ။"}
-    },
-    CLOCK_INVALID_CALENDAR_DATE: {
-      th:{reason:"เดือนและวันที่ที่อ่านได้ไม่เป็นวันที่จริง",action:"ตรวจหน้าปัดแล้วถ่ายใหม่ให้เห็นเดือนและวันที่ชัดเจน"},
-      en:{reason:"The detected month and day do not form a valid calendar date.",action:"Check the clock and retake a clear photo of the month and day."},
-      my:{reason:"ဖတ်ရသော လနှင့်ရက်သည် မှန်ကန်သော ပြက္ခဒိန်ရက်စွဲ မဟုတ်ပါ။",action:"နာရီကို စစ်ဆေးပြီး လနှင့်ရက်ကို ရှင်းလင်းစွာ ပြန်ရိုက်ပါ။"}
-    },
-    CLOCK_DATE_MISMATCH: {
-      th:{reason:"วันที่บนหน้าปัดต่างจากวันที่ส่งรูปเกินช่วงที่ระบบอนุญาต",action:"ตรวจวันที่บนตัวนาฬิกาและถ่ายรูปของวันปัจจุบันใหม่"},
-      en:{reason:"The clock date differs too much from the date the photo was sent.",action:"Check the clock date and take a new photo today."},
-      my:{reason:"နာရီပေါ်ရှိရက်စွဲနှင့် ဓာတ်ပုံပို့သည့်ရက်စွဲ အလွန်ကွာခြားနေပါသည်။",action:"နာရီရက်စွဲကို စစ်ဆေးပြီး ယနေ့ဓာတ်ပုံအသစ် ရိုက်ပါ။"}
-    }
+    CLOCK_NOT_CONFIRMED:{th:{reason:"AI ยังยืนยันนาฬิกาประจำร้านในภาพไม่ได้",action:"ถ่ายให้เห็นนาฬิกาสีดำของร้านชัดเจนพร้อม Overlay สีขาว"},en:{reason:"The shop wall clock could not be confirmed in the photo.",action:"Retake it with the black shop clock and white overlay clearly visible."},my:{reason:"ဓာတ်ပုံထဲရှိ ဆိုင်နံရံကပ်နာရီကို အတည်မပြုနိုင်ပါ။",action:"အနက်ရောင်ဆိုင်နာရီနှင့် အဖြူရောင် Overlay ရှင်းလင်းစွာ မြင်ရအောင် ပြန်ရိုက်ပါ။"}},
+    TIMESTAMP_MISSING:{th:{reason:"ไม่พบ Timestamp และตำแหน่งที่เป็นตัวหนังสือสีขาวบนภาพ",action:"เปิดการประทับวันที่ เวลา และตำแหน่งในแอปกล้องแล้วถ่ายใหม่"},en:{reason:"No white timestamp and location overlay was found.",action:"Enable the camera's date, time, and location overlay and retake the photo."},my:{reason:"အဖြူရောင် Timestamp နှင့် တည်နေရာ Overlay မတွေ့ပါ။",action:"ကင်မရာတွင် ရက်စွဲ၊ အချိန်နှင့် တည်နေရာ Overlay ဖွင့်ပြီး ပြန်ရိုက်ပါ။"}},
+    TIMESTAMP_NOT_WHITE:{th:{reason:"Timestamp หรือตำแหน่งบนภาพไม่ได้เป็นตัวหนังสือสีขาว",action:"ตั้งค่า Overlay ให้เป็นสีขาวแล้วถ่ายใหม่"},en:{reason:"The timestamp or location overlay is not white.",action:"Set the overlay text to white and retake the photo."},my:{reason:"Timestamp သို့မဟုတ် တည်နေရာ Overlay သည် အဖြူရောင်မဟုတ်ပါ။",action:"Overlay စာသားကို အဖြူရောင်ထားပြီး ပြန်ရိုက်ပါ။"}},
+    TIMESTAMP_FIELDS_MISSING:{th:{reason:"อ่านวันที่หรือเวลาจาก Overlay สีขาวได้ไม่ครบ",action:"ถ่ายใหม่ให้ตัวหนังสือวันที่และเวลาคมชัด ไม่ถูกตัด"},en:{reason:"The date or time in the white overlay is incomplete.",action:"Retake it with sharp, uncropped date and time text."},my:{reason:"အဖြူရောင် Overlay မှ ရက်စွဲ သို့မဟုတ် အချိန် မပြည့်စုံပါ။",action:"ရက်စွဲနှင့်အချိန် စာသားပြတ်သားပြီး မဖြတ်တောက်အောင် ပြန်ရိုက်ပါ။"}},
+    TIMESTAMP_LOW_CONFIDENCE:{th:{reason:"AI อ่าน Timestamp สีขาวได้ไม่มั่นใจพอ",action:"ถ่ายใหม่ให้ตัวหนังสือไม่เบลอและไม่ทับวัตถุสีอ่อน"},en:{reason:"The AI was not confident enough in the white timestamp.",action:"Retake it with sharp text that does not overlap a light background."},my:{reason:"AI သည် အဖြူရောင် Timestamp ကို ယုံကြည်စိတ်ချစွာ မဖတ်နိုင်ပါ။",action:"စာသားမမှုန်ဘဲ အလင်းရောင်နောက်ခံနှင့် မထပ်အောင် ပြန်ရိုက်ပါ။"}},
+    TIMESTAMP_INVALID:{th:{reason:"วันที่หรือเวลาบน Overlay ไม่ใช่ค่าที่ถูกต้อง",action:"ตรวจวันที่เวลาในแอปกล้องแล้วถ่ายใหม่"},en:{reason:"The overlay date or time is invalid.",action:"Check the camera date and time and retake the photo."},my:{reason:"Overlay ရက်စွဲ သို့မဟုတ် အချိန် မမှန်ကန်ပါ။",action:"ကင်မရာရက်စွဲနှင့်အချိန်ကို စစ်ဆေးပြီး ပြန်ရိုက်ပါ။"}},
+    GPS_MISSING:{th:{reason:"ไม่พบพิกัด Latitude/Longitude บนภาพ",action:"เปิด GPS และให้ Overlay แสดงตัวเลขพิกัดแล้วถ่ายใหม่"},en:{reason:"Latitude and longitude were not found in the photo.",action:"Enable GPS and show numeric coordinates in the overlay, then retake it."},my:{reason:"ဓာတ်ပုံတွင် Latitude/Longitude မတွေ့ပါ။",action:"GPS ဖွင့်ပြီး Overlay တွင် ဂဏန်းပုံစံ ပင်ကိုဩဒိနိတ်ပြကာ ပြန်ရိုက်ပါ။"}},
+    GPS_VALUE_OUT_OF_RANGE:{th:{reason:"ค่าพิกัด GPS บนภาพไม่ถูกต้อง",action:"เปิด GPS ให้จับตำแหน่งใหม่แล้วถ่ายอีกครั้ง"},en:{reason:"The GPS coordinates in the photo are invalid.",action:"Refresh the GPS location and retake the photo."},my:{reason:"ဓာတ်ပုံရှိ GPS ပင်ကိုဩဒိနိတ် မမှန်ကန်ပါ။",action:"GPS တည်နေရာကို ပြန်ယူပြီး ဓာတ်ပုံပြန်ရိုက်ပါ။"}},
+    STORE_LOCATION_NOT_CONFIGURED:{th:{reason:"ระบบยังไม่ได้ตั้งค่าพิกัดร้าน",action:"ไม่ต้องถ่ายใหม่ กรุณาแจ้งผู้ดูแลระบบ"},en:{reason:"The shop coordinates are not configured.",action:"Do not retake the photo. Contact the administrator."},my:{reason:"ဆိုင်ပင်ကိုဩဒိနိတ်ကို စနစ်တွင် မသတ်မှတ်ရသေးပါ။",action:"ဓာတ်ပုံအသစ် မရိုက်ပါနှင့်။ စီမံခန့်ခွဲသူကို ဆက်သွယ်ပါ။"}},
+    OUTSIDE_STORE_RADIUS:{th:{reason:"พิกัดบนภาพอยู่นอกรัศมีร้าน",action:"ไปยังจุดร้านมะลิปัง รอให้ GPS จับตำแหน่ง แล้วถ่ายใหม่"},en:{reason:"The photo coordinates are outside the shop radius.",action:"Go to the MaliPang shop, wait for GPS to update, and retake it."},my:{reason:"ဓာတ်ပုံပင်ကိုဩဒိနိတ်သည် ဆိုင်ဧရိယာပြင်ပတွင် ရှိပါသည်။",action:"မလိပန်းဆိုင်သို့သွား၍ GPS အသစ်ရပြီးနောက် ပြန်ရိုက်ပါ။"}},
+    PHOTO_TIME_TOO_OLD:{th:{reason:"Timestamp บนภาพห่างจากเวลาที่ส่ง LINE เกินกำหนด",action:"ถ่ายรูปใหม่ ณ เวลาปัจจุบันแล้วส่งทันที"},en:{reason:"The photo timestamp is too far from the LINE send time.",action:"Take a new photo now and send it immediately."},my:{reason:"ဓာတ်ပုံ Timestamp နှင့် LINE ပို့ချိန် အလွန်ကွာခြားနေပါသည်။",action:"ယခု ဓာတ်ပုံအသစ်ရိုက်ပြီး ချက်ချင်းပို့ပါ။"}}
   };
   const detail = cases[code] || {
-    th:{reason:"ข้อมูลจากหน้าปัดยังไม่ผ่านเงื่อนไขลงเวลา",action:"ถ่ายให้ตรงหน้าปัดและเห็นเวลา เดือน และวันที่ครบ"},
-    en:{reason:"The clock data did not pass attendance validation.",action:"Photograph the clock straight on with the time, month, and day visible."},
-    my:{reason:"နာရီအချက်အလက်သည် အလုပ်ချိန်စစ်ဆေးမှု မအောင်မြင်ပါ။",action:"အချိန်၊ လနှင့်ရက် မြင်ရအောင် နာရီကို တည့်တည့်ရိုက်ပါ။"}
+    th:{reason:"รูปยังไม่ผ่านเงื่อนไข Timestamp, GPS และนาฬิการ้าน",action:"ถ่ายใหม่ให้เห็น Overlay สีขาวและนาฬิการ้านชัดเจน"},
+    en:{reason:"The photo did not pass timestamp, GPS, and shop-clock validation.",action:"Retake it with the white overlay and shop clock clearly visible."},
+    my:{reason:"ဓာတ်ပုံသည် Timestamp၊ GPS နှင့် ဆိုင်နာရီ စစ်ဆေးမှု မအောင်မြင်ပါ။",action:"အဖြူရောင် Overlay နှင့် ဆိုင်နာရီ ရှင်းလင်းစွာ မြင်ရအောင် ပြန်ရိုက်ပါ။"}
   };
   return rejection(code || "CLOCK_NOT_ACCEPTED", detail.th, detail.en, detail.my, "เวลา");
 }

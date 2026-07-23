@@ -14,7 +14,7 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     suggestedDescription:{type:"string"},suggestedCategory:{type:"string",enum:["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"]},
     confidence:{type:"number"},needsReview:{type:"boolean"},note:{type:"string"}
   },required:["documentType","channel","institution","transactionType","transactionStatus","printedYear","paymentDate","paymentTime","referenceId","sender","senderAccountMasked","recipient","recipientAccountMasked","merchant","grossAmountBaht","discountAmountBaht","paidAmountBaht","currency","suggestedDescription","suggestedCategory","confidence","needsReview","note"],additionalProperties:false};
-  const schema={type:"object",properties:{kind:{type:"string",enum:["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","UNKNOWN"]},hour:{type:["integer","null"]},minute:{type:["integer","null"]},month:{type:["integer","null"]},day:{type:["integer","null"]},weekday:{type:["string","null"]},confidence:{type:"number"},clockFullyVisible:{type:["boolean","null"]},needsNewPhoto:{type:"boolean"},note:{type:"string"},document:{anyOf:[bankSlipSchema,{type:"null"}]}},required:["kind","hour","minute","month","day","weekday","confidence","clockFullyVisible","needsNewPhoto","note","document"],additionalProperties:false};
+  const schema={type:"object",properties:{kind:{type:"string",enum:["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","UNKNOWN"]},hour:{type:["integer","null"]},minute:{type:["integer","null"]},month:{type:["integer","null"]},day:{type:["integer","null"]},weekday:{type:["string","null"]},confidence:{type:"number"},clockFullyVisible:{type:["boolean","null"]},clockPresent:{type:["boolean","null"]},clockConfidence:{type:"number"},overlayPresent:{type:"boolean"},overlayTextWhite:{type:"boolean"},photoDate:{type:["string","null"]},photoTime:{type:["string","null"]},latitude:{type:["number","null"]},longitude:{type:["number","null"]},locationText:{type:"string"},overlayRawText:{type:"string"},overlayConfidence:{type:"number"},needsNewPhoto:{type:"boolean"},note:{type:"string"},document:{anyOf:[bankSlipSchema,{type:"null"}]}},required:["kind","hour","minute","month","day","weekday","confidence","clockFullyVisible","clockPresent","clockConfidence","overlayPresent","overlayTextWhite","photoDate","photoTime","latitude","longitude","locationText","overlayRawText","overlayConfidence","needsNewPhoto","note","document"],additionalProperties:false};
   const prompt=[
     "Inspect this MaliPang LINE image and return only the requested structured result.",
     "Classify it as CLOCK, RECEIPT, BANK_SLIP, ONLINE_ORDER, or UNKNOWN.",
@@ -32,14 +32,16 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "For a visible merchant, suggestedDescription should be a short expense label using the merchant name. For a person-to-person transfer, use 'Transfer to <recipient>' and suggestedCategory=general because the purpose is not visible.",
     "Choose suggestedCategory only from the schema list. Mark needsReview=true when purpose, category, reference ID, date, paid amount, status, or counterparty is uncertain.",
     "The physical MaliPang shop wall clock is wide and black, has large white LED time digits, a Mon-Sun list on the left, and green temperature/month/day digits on the right.",
-    "For CLOCK, read only visible pixels: large white center digits are hour/minute, green above M is month, and green above D is day.",
-    "Locate the four large white seven-segment digits and read them from left to right before producing the answer.",
-    "Treat curved, diagonal, or uneven glare and reflections as noise. A real LED segment is a straight bar aligned with the other segments in that digit.",
-    "Double-check 5 versus 9: digit 5 has the upper-left vertical segment on and upper-right vertical segment off; digit 9 has both upper vertical segments on.",
-    "Silently inspect the clock digits a second time. If the two readings disagree, return null for the unclear field and needsNewPhoto=true instead of guessing.",
-    "Always return weekday=null. Weekday OCR is not trusted and is not used for attendance.",
-    "A timestamp watermark or phone overlay is not evidence that the physical clock is present.",
-    "Never infer missing fields from current time, LINE time, metadata, or context. Use null and needsNewPhoto=true when any required clock field is unclear.",
+    "For a CLOCK attendance photo, inspect the entire image including every corner for a camera overlay printed in white text. Its position may vary.",
+    "The authoritative attendance data is the white overlay's date, time, latitude, longitude, and location text. The physical clock digits are never the attendance time.",
+    "Set overlayTextWhite=true only when the timestamp/location/GPS text itself is visibly white. White LED digits inside the physical clock do not count as the overlay.",
+    "Normalize the overlay date to Gregorian YYYY-MM-DD. Convert Buddhist Era years by subtracting 543 and expand a visible year 26 to 2026. Normalize the overlay time to 24-hour HH:mm:ss when seconds are visible, otherwise HH:mm.",
+    "Extract signed decimal GPS coordinates from the visible overlay. Convert forms such as 13.8968095N 100.6083093E to positive decimal latitude and longitude. Do not geocode an address or invent coordinates.",
+    "Copy all visible overlay timestamp and location lines into overlayRawText and copy the human-readable address/place into locationText.",
+    "The physical MaliPang clock is supporting shop evidence only. Set clockPresent and clockConfidence from its distinctive appearance; do not use or copy its displayed time/date into photoDate or photoTime.",
+    "For CLOCK return hour, minute, month, day, and weekday as null because wall-clock digits are diagnostic only and are not used for attendance.",
+    "A timestamp watermark or phone overlay is not by itself evidence that the physical clock is present; validate overlay and clock evidence independently.",
+    "Never infer missing fields from current time, LINE time, metadata, address geocoding, or context. Use null/false and needsNewPhoto=true when required overlay or clock evidence is unclear.",
     "Set note to an empty string when the image is clear. Use note only for visible uncertainty or a specific problem that requires review."
   ].join("\n");
   return{model,store:false,max_output_tokens:650,text:{format:{type:"json_schema",name:"malipang_image_read",strict:true,schema}},input:[{role:"user",content:[{type:"input_text",text:prompt},{type:"input_image",image_url:`data:image/jpeg;base64,${arrayBufferToBase64(image)}`,detail:"high"}]}]};
@@ -65,7 +67,8 @@ export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unkno
   };
   const kinds=["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","UNKNOWN"];
   const document=normalizeBankSlipDocument(obj.document),reportedKind=kinds.includes(String(obj.kind))?String(obj.kind) as VisionResult["kind"]:"UNKNOWN",kind=document?"BANK_SLIP":reportedKind;
-  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
+  const photoDate=nullableText(obj.photoDate),photoTime=nullableText(obj.photoTime);
+  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude:num(obj.latitude),longitude:num(obj.longitude),locationText:String(obj.locationText||"").trim(),overlayRawText:String(obj.overlayRawText||"").trim(),overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
 }
 export async function readImageWithOpenAI(env:Env,image:ArrayBuffer):Promise<VisionResult>{
   if(!env.OPENAI_API_KEY)throw new Error("OPENAI_API_KEY missing");

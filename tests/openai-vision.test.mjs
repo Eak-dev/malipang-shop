@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildOpenAIVisionPayload,normalizeOpenAIVisionResult} from '../dist/vision/openai.js';
 
-test('OpenAI fallback uses the proven MaliPang clock contract',()=>{
+test('OpenAI fallback uses photo timestamp and GPS as the attendance source',()=>{
   const payload=buildOpenAIVisionPayload('gpt-4o-mini',new Uint8Array([255,216,255,217]).buffer);
   assert.equal(payload.model,'gpt-4o-mini');
   assert.equal(payload.store,false);
@@ -12,11 +12,11 @@ test('OpenAI fallback uses the proven MaliPang clock contract',()=>{
   const prompt=payload.input[0].content[0].text;
   assert.match(prompt,/wide and black/);
   assert.match(prompt,/Mon-Sun list on the left/);
-  assert.match(prompt,/timestamp watermark or phone overlay is not evidence/i);
-  assert.match(prompt,/curved, diagonal, or uneven glare/i);
-  assert.match(prompt,/5 versus 9/i);
-  assert.match(prompt,/second time/i);
-  assert.match(prompt,/Always return weekday=null/i);
+  assert.match(prompt,/timestamp watermark or phone overlay is not by itself evidence/i);
+  assert.match(prompt,/entire image including every corner/i);
+  assert.match(prompt,/authoritative attendance data is the white overlay/i);
+  assert.match(prompt,/physical clock digits are never the attendance time/i);
+  assert.match(prompt,/Do not geocode an address/i);
   assert.match(prompt,/note to an empty string/i);
   assert.match(prompt,/Never classify a banking, Paotang, or G-Wallet payment receipt as ONLINE_ORDER/i);
   assert.match(prompt,/paidAmountBaht is the actual amount leaving the wallet or account/i);
@@ -58,4 +58,9 @@ test('OpenAI normalization treats textual null weekday as missing',()=>{
   },{});
   assert.equal(result.weekday,null);
   assert.equal(result.note,'');
+});
+
+test('OpenAI normalization preserves authoritative overlay fields',()=>{
+  const result=normalizeOpenAIVisionResult({kind:'CLOCK',hour:null,minute:null,month:null,day:null,weekday:null,confidence:.99,clockFullyVisible:true,clockPresent:true,clockConfidence:.98,overlayPresent:true,overlayTextWhite:true,photoDate:'2026-07-21',photoTime:'17:15:56',latitude:13.896844,longitude:100.608314,locationText:'Yingcharoen Market',overlayRawText:'21 Jul BE 2569 at 17:15:56',overlayConfidence:.99,needsNewPhoto:false,note:'',document:null},{});
+  assert.equal(result.clockPresent,true);assert.equal(result.photoDate,'2026-07-21');assert.equal(result.photoTime,'17:15:56');assert.equal(result.latitude,13.896844);assert.equal(result.overlayTextWhite,true);
 });

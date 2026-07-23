@@ -1,44 +1,9 @@
 [
-  {
-    "id": "photo-01",
-    "file": "photo-01.jpg",
-    "receivedAt": "2026-07-21T10:15:56.000Z",
-    "expected": { "kind": "CLOCK", "hour": 17, "minute": 16, "month": 7, "day": 21, "weekday": "tuesday" }
-  },
-  {
-    "id": "photo-02",
-    "file": "photo-02.jpg",
-    "receivedAt": "2026-07-21T21:14:27.000Z",
-    "expected": { "kind": "CLOCK", "hour": 4, "minute": 15, "month": 7, "day": 22, "weekday": "wednesday" }
-  },
-  {
-    "id": "photo-03",
-    "file": "photo-03.jpg",
-    "receivedAt": "2026-07-20T10:33:23.000Z",
-    "expected": { "kind": "CLOCK", "hour": 17, "minute": 33, "month": 7, "day": 20, "weekday": "monday" }
-  },
-  {
-    "id": "photo-04",
-    "file": "photo-04.jpg",
-    "receivedAt": "2026-07-22T00:03:55.000Z",
-    "expected": { "kind": "CLOCK", "hour": 7, "minute": 4, "month": 7, "day": 22, "weekday": "wednesday" }
-  },
-  {
-    "id": "photo-05",
-    "file": "photo-05.jpg",
-    "receivedAt": "2026-07-21T21:26:39.000Z",
-    "expected": { "kind": "CLOCK", "hour": 4, "minute": 27, "month": 7, "day": 22, "weekday": "wednesday" }
-  },
-  {
-    "id": "photo-06",
-    "file": "photo-06.jpg",
-    "receivedAt": "2026-07-21T10:16:00.000Z",
-    "expected": { "kind": "CLOCK", "hour": 17, "minute": 17, "month": 7, "day": 21, "weekday": "tuesday" }
-  },
-  {
-    "id": "photo-07",
-    "file": "photo-07.jpg",
-    "receivedAt": "2026-07-21T21:10:00.000Z",
-    "expected": { "kind": "CLOCK", "hour": 4, "minute": 10, "month": 7, "day": 22, "weekday": "wednesday" }
-  }
+  {"id":"photo-01","file":"photo-01.jpg","receivedAt":"2026-07-21T10:15:56.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-21","photoTime":"17:15:56","latitude":13.896844,"longitude":100.608314,"accepted":true,"validationCode":"OK"}},
+  {"id":"photo-02","file":"photo-02.jpg","receivedAt":"2026-07-21T21:14:27.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-22","photoTime":"04:14:27","latitude":13.896859,"longitude":100.608307,"accepted":true,"validationCode":"OK"}},
+  {"id":"photo-03","file":"photo-03.jpg","receivedAt":"2026-07-20T10:33:23.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-20","photoTime":"17:33:23","latitude":13.8968095,"longitude":100.6083093,"accepted":true,"validationCode":"OK"}},
+  {"id":"photo-04","file":"photo-04.jpg","receivedAt":"2026-07-22T00:03:55.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-22","photoTime":"07:03:55","latitude":13.896774,"longitude":100.608066,"accepted":true,"validationCode":"OK"}},
+  {"id":"photo-05","file":"photo-05.jpg","receivedAt":"2026-07-21T21:26:39.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-22","photoTime":"04:26:39","latitude":13.896795,"longitude":100.608316,"accepted":true,"validationCode":"OK"}},
+  {"id":"photo-06","file":"photo-06.jpg","receivedAt":"2026-07-21T10:16:00.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-21","photoTime":"17:16","latitude":null,"longitude":null,"accepted":false,"validationCode":"GPS_MISSING"}},
+  {"id":"photo-07","file":"photo-07.jpg","receivedAt":"2026-07-21T21:10:00.000Z","expected":{"kind":"CLOCK","photoDate":"2026-07-22","photoTime":"04:10","latitude":null,"longitude":null,"accepted":false,"validationCode":"GPS_MISSING"}}
 ]

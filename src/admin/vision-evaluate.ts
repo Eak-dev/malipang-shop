@@ -1,4 +1,4 @@
-import { validateClock } from "../domain/attendance";
+import { validateAttendancePhoto } from "../domain/attendance";
 import { numberEnv } from "../shared/env";
 import { randomId } from "../shared/ids";
 import type { Env } from "../types";
@@ -42,13 +42,11 @@ async function evaluateImage(env:Env,image:ArrayBuffer,url:URL):Promise<unknown>
       : env;
 
   const reading = await classifyAndRead(evaluationEnv, image, image, traceId, {usageMetric:"openai_admin_test_calls",enforceDailyLimit:false});
-  const validation = validateClock(
-    reading,
-    receivedAt,
-    numberEnv(env.CLOCK_MAX_DATE_DIFF_DAYS, 1),
-    numberEnv(env.CLOCK_FALLBACK_MIN_CONFIDENCE, 0.9),
-    numberEnv(env.CLOCK_MAX_LINE_TIME_DIFF_MIN, 30)
-  );
+  const validation = validateAttendancePhoto(reading,receivedAt,{
+    storeLat:numberEnv(env.ATTENDANCE_STORE_LAT,NaN),storeLng:numberEnv(env.ATTENDANCE_STORE_LNG,NaN),
+    allowedRadiusM:numberEnv(env.ATTENDANCE_ALLOWED_RADIUS_M,120),maxPhotoAgeMin:numberEnv(env.ATTENDANCE_MAX_PHOTO_AGE_MIN,3),
+    overlayMinConfidence:numberEnv(env.ATTENDANCE_OVERLAY_MIN_CONFIDENCE,0.9),clockMinConfidence:numberEnv(env.ATTENDANCE_CLOCK_MIN_CONFIDENCE,0.7)
+  });
   const { raw: _raw, ...safeReading } = reading;
 
   return {

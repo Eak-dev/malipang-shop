@@ -19,5 +19,7 @@ export async function checkReadiness(env:Env):Promise<ReadinessResult>{
     probe(async()=>({metadata:await getSpreadsheetMetadata(env),expenseDaily:await checkDailyExpenseSheet(env)})),
     isTrue(env.R2_EVIDENCE_ENABLED)?probe(()=>withTimeout(env.EVIDENCE.get("__malipang_readiness__"),timeout,"R2 readiness").then(()=>({binding:"reachable"}))):Promise.resolve({ok:true,detail:{enabled:false}})
   ]);
-  const checks={d1,line,sheets,r2};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
+  const lat=Number(env.ATTENDANCE_STORE_LAT),lng=Number(env.ATTENDANCE_STORE_LNG),enabled=isTrue(env.ATTENDANCE_ENABLED),configured=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180,attendanceConfig:ProbeResult={ok:!enabled||configured,detail:{enabled,storeLocationConfigured:configured,allowedRadiusM:numberEnv(env.ATTENDANCE_ALLOWED_RADIUS_M,120),maxPhotoAgeMin:numberEnv(env.ATTENDANCE_MAX_PHOTO_AGE_MIN,3)}};
+  if(!attendanceConfig.ok)attendanceConfig.error="ATTENDANCE_STORE_LAT/LNG missing or invalid";
+  const checks={d1,line,sheets,r2,attendanceConfig};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
 }

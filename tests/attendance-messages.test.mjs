@@ -13,14 +13,15 @@ function assertThreeLanguages(message){
   assert.match(message,/[က-႟]/,'Burmese text missing');
 }
 
-test('check-in success is trilingual and reports the actual wall-clock source',()=>{
+test('check-in success is trilingual and reports timestamp, GPS, and clock evidence',()=>{
   const message=buildAttendanceReply(employee,result);
   assertThreeLanguages(message);
   assert.match(message,/บันทึกเวลาเข้างานเรียบร้อย/);
   assert.match(message,/Check-in recorded/);
   assert.match(message,/အလုပ်ဝင်ချိန်/);
-  assert.match(message,/Time source: Shop wall clock/);
-  assert.doesNotMatch(message,/GPS|Photo timestamp/i);
+  assert.match(message,/Time source: Photo timestamp/);
+  assert.match(message,/GPS check: Passed/);
+  assert.match(message,/Shop clock evidence: Passed/);
 });
 
 test('check-out, duplicate, and complete replies are trilingual',()=>{

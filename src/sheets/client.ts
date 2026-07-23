@@ -14,7 +14,7 @@ export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:str
 export async function bootstrapSheets(env:Env):Promise<void>{
   const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));
   const definitions=[
-    [env.SHEET_ATTENDANCE_RAW,["Event_ID","Received_At","Work_Date","Employee_ID","Staff_Name","Punch_Type","Official_Time","LINE_Time","Diff_Min","Status","Confidence","Image_Key","Note","Validation_Code","Message_ID","Trace_ID","Version"]],
+    [env.SHEET_ATTENDANCE_RAW,["Event_ID","Received_At","Work_Date","Employee_ID","Staff_Name","Punch_Type","Official_Time","LINE_Time","Diff_Min","Status","Confidence","Image_Key","Note","Validation_Code","Message_ID","Trace_ID","Version","Attendance_Source","Photo_DateTime","GPS_Lat","GPS_Lng","Distance_M","Clock_Evidence","Clock_Confidence","Overlay_Raw_Text","Image_SHA256"]],
     [env.SHEET_DAILY_PAYROLL,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Time_In","Time_Out","Work_Hours","Late_Min","Early_Out_Min","Daily_Wage_Baht","Confirmed_Wage_Baht","Pending_Review_Wage_Baht","Pay_Status","Review_Flag","Version"]],
     [env.SHEET_WEEKLY_PAYROLL,["Pay_Sunday","Week_Start","Employee_ID","Staff_Name","Work_Days","Amount_To_Pay_Baht","Pending_Review_Baht","Status","Version"]],
     [env.SHEET_EXPENSE_RAW,["Expense_ID","Transaction_Date","Description","Amount_Baht","Payment_Key","Source_Wallet","Category","Status","Message_ID","Trace_ID"]],

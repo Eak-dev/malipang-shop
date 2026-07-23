@@ -21,10 +21,10 @@ test('clock photo fixture contract contains the seven supplied photos',async()=>
       assert.deepEqual([...image.subarray(0,2)],[0xff,0xd8],`${item.id}: not a JPEG`);
     }
     assert.equal(item.expected.kind,'CLOCK');
-    assert.ok(Number.isInteger(item.expected.hour)&&item.expected.hour>=0&&item.expected.hour<=23);
-    assert.ok(Number.isInteger(item.expected.minute)&&item.expected.minute>=0&&item.expected.minute<=59);
-    assert.ok(Number.isInteger(item.expected.month)&&item.expected.month>=1&&item.expected.month<=12);
-    assert.ok(Number.isInteger(item.expected.day)&&item.expected.day>=1&&item.expected.day<=31);
+    assert.match(item.expected.photoDate,/^\d{4}-\d{2}-\d{2}$/);
+    assert.match(item.expected.photoTime,/^\d{2}:\d{2}(?::\d{2})?$/);
+    assert.equal(typeof item.expected.accepted,'boolean');
+    if(item.expected.accepted){assert.ok(Number.isFinite(item.expected.latitude));assert.ok(Number.isFinite(item.expected.longitude));}
     assert.ok(Number.isFinite(new Date(item.receivedAt).getTime()));
   }
 });
@@ -36,7 +36,7 @@ const openAIModel=process.env.MALIPANG_OPENAI_MODEL||'';
 const selectedIds=new Set(String(process.env.MALIPANG_CLOCK_CASES||'').split(',').map(value=>value.trim()).filter(Boolean));
 const selectedCases=selectedIds.size?cases.filter(item=>selectedIds.has(item.id)):cases;
 
-test('live vision reads every supplied clock photo exactly',{
+test('live vision enforces white timestamp, GPS, and shop-clock evidence',{
   skip:!baseUrl||!tokenFile||!fixtureImagesPresent
 },async t=>{
   assert.ok(['pipeline','openai','workers-ai'].includes(provider));
@@ -59,23 +59,20 @@ test('live vision reads every supplied clock photo exactly',{
       assert.equal(response.ok,true,`${item.id}: HTTP ${response.status} ${result.error||''}`);
       assert.equal(result.ok,true,`${item.id}: endpoint failed`);
       assert.equal(result.reading.kind,item.expected.kind);
-      assert.equal(result.reading.hour,item.expected.hour);
-      assert.equal(result.reading.minute,item.expected.minute);
-      assert.equal(result.reading.month,item.expected.month);
-      assert.equal(result.reading.day,item.expected.day);
-      assert.equal(result.reading.needsNewPhoto,false);
-      assert.ok(result.reading.confidence>=0.9,`${item.id}: confidence ${result.reading.confidence}`);
-      assert.equal(result.validation.ok,true,`${item.id}: ${result.validation.validationCode}`);
-
-      const weekday=String(result.reading.weekday||'').toLowerCase();
-      const weekdayMatches=!weekday||weekday===item.expected.weekday||weekday===item.expected.weekday.slice(0,3);
+      assert.equal(result.reading.photoDate,item.expected.photoDate);
+      assert.equal(result.reading.photoTime,item.expected.photoTime);
+      assert.equal(result.reading.clockPresent,true);
+      assert.equal(result.reading.overlayPresent,true);
+      assert.equal(result.reading.overlayTextWhite,true);
+      if(item.expected.latitude==null){assert.equal(result.reading.latitude,null);assert.equal(result.reading.longitude,null);}else{assert.ok(Math.abs(result.reading.latitude-item.expected.latitude)<0.00001);assert.ok(Math.abs(result.reading.longitude-item.expected.longitude)<0.00001);}
+      assert.equal(result.validation.ok,item.expected.accepted,`${item.id}: ${result.validation.validationCode}`);
+      assert.equal(result.validation.validationCode,item.expected.validationCode);
       t.diagnostic(JSON.stringify({
         provider:result.reading.provider,
-        clock:`${String(result.reading.hour).padStart(2,'0')}:${String(result.reading.minute).padStart(2,'0')}`,
-        date:`${result.reading.month}/${result.reading.day}`,
-        weekday:result.reading.weekday,
-        weekdayMatches,
-        confidence:result.reading.confidence,
+        photoTimestamp:`${result.reading.photoDate} ${result.reading.photoTime}`,
+        gps:[result.reading.latitude,result.reading.longitude],
+        clockPresent:result.reading.clockPresent,
+        overlayConfidence:result.reading.overlayConfidence,
         validation:result.validation.validationCode
       }));
     });

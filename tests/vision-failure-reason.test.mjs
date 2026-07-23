@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {describeClockValidationFailure,describeVisionRejection} from '../dist/vision/failure-reason.js';
 
-const base={kind:'UNKNOWN',hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,needsNewPhoto:true,note:'',provider:'openai',raw:null};
+const base={kind:'UNKNOWN',hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,clockPresent:null,clockConfidence:0,overlayPresent:false,overlayTextWhite:false,photoDate:null,photoTime:null,latitude:null,longitude:null,locationText:'',overlayRawText:'',overlayConfidence:0,needsNewPhoto:true,note:'',provider:'openai',raw:null};
 
 test('budget guard says the photo is not at fault and tells staff to contact admin',()=>{
   const result=describeVisionRejection({...base,provider:'budget-guard'});
@@ -21,12 +21,8 @@ test('provider failure and unknown image have distinct safe explanations',()=>{
   assert.match(failure.message,/[က-႟]/);
 });
 
-test('clock failures explain the exact validation condition in Thai',()=>{
-  const missing=describeClockValidationFailure('CLOCK_FIELDS_MISSING');
-  const date=describeClockValidationFailure('CLOCK_DATE_MISMATCH');
-  assert.match(missing.message,/เวลา เดือน หรือวันที่/);
-  assert.match(date.message,/วันที่บนหน้าปัดต่างจากวันที่ส่งรูป/);
-  assert.match(date.message,/CLOCK_DATE_MISMATCH/);
-  assert.match(date.message,/The clock date differs/);
-  assert.match(date.message,/[က-႟]/);
+test('attendance failures explain timestamp, GPS, radius, and clock evidence in three languages',()=>{
+  for(const [code,pattern] of [['TIMESTAMP_MISSING',/ตัวหนังสือสีขาว/],['LOCATION_TEXT_MISSING',/ชื่อสถานที่หรือที่อยู่/],['GPS_MISSING',/Latitude\/Longitude/],['OUTSIDE_STORE_RADIUS',/นอกรัศมีร้าน/],['CLOCK_NOT_CONFIRMED',/นาฬิกาประจำร้าน/],['PHOTO_TIME_TOO_OLD',/เวลาที่ส่ง LINE/]]){
+    const failure=describeClockValidationFailure(code);assert.match(failure.message,pattern);assert.match(failure.message,new RegExp(code));assert.match(failure.message,/Reason:/);assert.match(failure.message,/[က-႟]/);
+  }
 });

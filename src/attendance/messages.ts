@@ -29,7 +29,9 @@ export function buildAttendanceReply(employee: Employee, result: AttendanceCommi
     `ชื่อ: ${employee.staffName}`,
     `วันที่: ${result.workDate}`,
     `เวลา${isIn?"เข้า":"ออก"}งาน: ${result.officialTime}`,
-    "อ้างอิงเวลา: หน้าปัดนาฬิการ้าน",
+    "อ้างอิงเวลา: Timestamp บนภาพ",
+    "ตรวจ GPS: ผ่าน",
+    "ยืนยันนาฬิการ้าน: ผ่าน",
     `สาย: ${result.lateMinutes} นาที`,
     `สถานะ: ${status.th}`
   ].join("\n");
@@ -38,7 +40,9 @@ export function buildAttendanceReply(employee: Employee, result: AttendanceCommi
     `Name: ${employee.staffName}`,
     `Date: ${result.workDate}`,
     `${isIn?"Check-in":"Check-out"} time: ${result.officialTime}`,
-    "Time source: Shop wall clock",
+    "Time source: Photo timestamp",
+    "GPS check: Passed",
+    "Shop clock evidence: Passed",
     `Late: ${result.lateMinutes} minutes`,
     `Status: ${status.en}`
   ].join("\n");
@@ -47,7 +51,9 @@ export function buildAttendanceReply(employee: Employee, result: AttendanceCommi
     `အမည်: ${employee.staffName}`,
     `ရက်စွဲ: ${result.workDate}`,
     `${isIn?"အလုပ်ဝင်ချိန်":"အလုပ်ဆင်းချိန်"}: ${result.officialTime}`,
-    "အချိန်အရင်းအမြစ်: ဆိုင်နံရံကပ်နာရီ",
+    "အချိန်အရင်းအမြစ်: ဓာတ်ပုံ Timestamp",
+    "GPS စစ်ဆေးမှု: အောင်မြင်",
+    "ဆိုင်နာရီအထောက်အထား: အောင်မြင်",
     `နောက်ကျမှု: ${result.lateMinutes} မိနစ်`,
     `အခြေအနေ: ${status.my}`
   ].join("\n");

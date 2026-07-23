@@ -31,6 +31,8 @@
 
 ระบบไม่เขียนทับ `HR_DAILY_PAYROLL` หรือ `HR_WEEKLY_PAYROLL` ซึ่งมีข้อมูลและสูตรเดิม
 
+`V52_ATTENDANCE_RAW` เก็บข้อมูลตรวจสอบเพิ่มต่อท้าย ได้แก่ `Attendance_Source`, `Photo_DateTime`, `GPS_Lat`, `GPS_Lng`, `Distance_M`, `Clock_Evidence`, `Clock_Confidence`, `Overlay_Raw_Text` และ `Image_SHA256` โดย `Work_Date`/`Official_Time` มาจาก Photo Timestamp เท่านั้น
+
 ## Expense รุ่นนี้
 
 ใช้ key ให้ตรง master เดิม เช่น `ingredients`, `packaging`, `gas`, `utilities`, `CASH_DRAWER`, `SHOP_BANK` รูปใบเสร็จทั่วไปยังเก็บรอตรวจและไม่แตกสินค้า ส่วน Bank slip/KBank/SCB/เป๋าตังที่อ่านข้อมูลสำคัญครบจะสร้างรายการรอยืนยันให้ผู้ใช้ตรวจใน LINE

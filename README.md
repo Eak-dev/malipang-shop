@@ -107,8 +107,8 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 
 | Setting | Value |
 |---|---|
-| `RUNTIME_MODE` | `shadow` |
-| `SHADOW_LINE_OUTPUT` | `true` |
+| `RUNTIME_MODE` | `production` |
+| `SHADOW_LINE_OUTPUT` | `false` |
 | `ATTENDANCE_ENABLED` | `true` |
 | `ATTENDANCE_STORE_LAT/LNG` | `13.89682 / 100.60830` |
 | `ATTENDANCE_ALLOWED_RADIUS_M` | `120` |
@@ -121,7 +121,7 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 | `OPENAI_FALLBACK_ENABLED` | `true` |
 | `OPENAI_MODEL` | `gpt-4.1-mini` |
 
-Shadow/UAT ปัจจุบันประมวลผลและบันทึกข้อมูลจริง พร้อมส่ง Loading/Reply/Push กลับ LINE เพื่อทดสอบครบ Flow โดยสิทธิ์บันทึกค่าใช้จ่ายยังควบคุมด้วย `can_submit_expense`
+Production ปัจจุบันประมวลผลและบันทึกข้อมูลจริง พร้อมส่ง Loading/Reply/Push กลับ LINE โดยสิทธิ์บันทึกค่าใช้จ่ายยังควบคุมด้วย `can_submit_expense`
 
 ## ผลทดสอบบริการจริง
 

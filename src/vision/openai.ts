@@ -4,6 +4,7 @@ import { fetchWithTimeout } from "../shared/async";
 import { arrayBufferToBase64 } from "../shared/base64";
 import { numberEnv } from "../shared/env";
 import type { BankSlipDocument } from "../types";
+import { parseAttendanceOverlay } from "../domain/attendance-overlay";
 function outputText(data:unknown):string{const d=data as{output_text?:string;output?:Array<{content?:Array<{text?:string}>}>};return typeof d.output_text==="string"?d.output_text:d.output?.flatMap(o=>o.content||[]).map(c=>c.text||"").join("")||"";}
 export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown{
   const bankSlipSchema={type:"object",properties:{
@@ -67,8 +68,8 @@ export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unkno
   };
   const kinds=["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","UNKNOWN"];
   const document=normalizeBankSlipDocument(obj.document),reportedKind=kinds.includes(String(obj.kind))?String(obj.kind) as VisionResult["kind"]:"UNKNOWN",kind=document?"BANK_SLIP":reportedKind;
-  const photoDate=nullableText(obj.photoDate),photoTime=nullableText(obj.photoTime);
-  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude:num(obj.latitude),longitude:num(obj.longitude),locationText:String(obj.locationText||"").trim(),overlayRawText:String(obj.overlayRawText||"").trim(),overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
+  const overlayRawText=String(obj.overlayRawText||"").trim(),parsedOverlay=parseAttendanceOverlay(overlayRawText),photoDate=nullableText(obj.photoDate)||parsedOverlay.photoDate,photoTime=nullableText(obj.photoTime)||parsedOverlay.photoTime,latitude=num(obj.latitude)??parsedOverlay.latitude,longitude=num(obj.longitude)??parsedOverlay.longitude;
+  return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude,longitude,locationText:String(obj.locationText||"").trim(),overlayRawText,overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
 }
 export async function readImageWithOpenAI(env:Env,image:ArrayBuffer):Promise<VisionResult>{
   if(!env.OPENAI_API_KEY)throw new Error("OPENAI_API_KEY missing");

@@ -1,0 +1,13 @@
+# Repository owner and final production decision maker
+* @Eak-dev
+
+# High-risk areas
+/src/ @Eak-dev
+/migrations/ @Eak-dev
+/wrangler.jsonc @Eak-dev
+/package.json @Eak-dev
+
+# Development and release governance
+/.github/ @Eak-dev
+/AGENTS.md @Eak-dev
+/docs/ @Eak-dev

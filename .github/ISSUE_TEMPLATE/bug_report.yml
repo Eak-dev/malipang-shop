@@ -1,0 +1,100 @@
+name: Bug Report
+description: รายงานปัญหาที่เกิดขึ้นจริงพร้อมหลักฐานสำหรับวิเคราะห์ root cause
+title: "[Bug] "
+body:
+  - type: dropdown
+    id: environment
+    attributes:
+      label: Environment
+      options:
+        - Local/Test
+        - Shadow/UAT
+        - Production
+        - ไม่แน่ใจ
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: ส่วนที่มีปัญหา
+      options:
+        - LINE webhook / Reply
+        - Attendance
+        - Payroll
+        - Expense text
+        - Bank slip / Receipt
+        - Google Sheets sync
+        - Queue / DLQ
+        - Admin endpoint
+        - Legacy Apps Script
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: occurrence
+    attributes:
+      label: วันที่ เวลา และผู้เกี่ยวข้อง
+      placeholder: |
+        วันที่/เวลา Asia/Bangkok:
+        Employee ID / LINE user:
+        Message ID / Trace ID:
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: ขั้นตอนที่ทำให้เกิดปัญหา
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: ผลที่ควรเกิด
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: ผลที่เกิดขึ้นจริง
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: หลักฐานและ Log
+      description: แนบภาพหรือ Log ที่ปิดบัง Token, Secret, Private Key และข้อมูลส่วนตัวที่ไม่จำเป็นแล้ว
+
+  - type: checkboxes
+    id: impact
+    attributes:
+      label: ผลกระทบ
+      options:
+        - label: ข้อมูลสูญหายหรือหาไม่พบ
+        - label: รายการซ้ำ
+        - label: ค่าแรงหรือยอดเงินผิด
+        - label: LINE ไม่ตอบหรือตอบซ้ำ
+        - label: Google Sheets ไม่ตรงกับ D1
+        - label: หลักฐาน R2 หาย
+        - label: มี workaround ชั่วคราว
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: ยืนยัน
+      options:
+        - label: ไม่ได้แนบ Secret, Token หรือ Private Key
+          required: true
+        - label: ยังไม่แก้ข้อมูล Production ด้วยมือโดยไม่มี audit trail
+          required: true
+        - label: ยังไม่ปิด Trigger, Deployment หรือ Webhook โดยเดา
+          required: true

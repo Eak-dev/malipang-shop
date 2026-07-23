@@ -37,7 +37,7 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "Set overlayTextWhite=true only when the timestamp/location/GPS text itself is visibly white. White LED digits inside the physical clock do not count as the overlay.",
     "Normalize the overlay date to Gregorian YYYY-MM-DD. Convert Buddhist Era years by subtracting 543 and expand a visible year 26 to 2026. Normalize the overlay time to 24-hour HH:mm:ss when seconds are visible, otherwise HH:mm.",
     "Extract signed decimal GPS coordinates from the visible overlay. Convert forms such as 13.8968095N 100.6083093E to positive decimal latitude and longitude. Do not geocode an address or invent coordinates.",
-    "Copy all visible overlay timestamp and location lines into overlayRawText and copy the human-readable address/place into locationText.",
+    "Copy every visible white-overlay timestamp and location line into overlayRawText. Copy the human-readable address or place name into locationText; this field is required for attendance and must not come from geocoding.",
     "The physical MaliPang clock is supporting shop evidence only. Set clockPresent and clockConfidence from its distinctive appearance; do not use or copy its displayed time/date into photoDate or photoTime.",
     "For CLOCK return hour, minute, month, day, and weekday as null because wall-clock digits are diagnostic only and are not used for attendance.",
     "A timestamp watermark or phone overlay is not by itself evidence that the physical clock is present; validate overlay and clock evidence independently.",

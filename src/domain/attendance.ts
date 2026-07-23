@@ -58,6 +58,7 @@ export function validateAttendancePhoto(reading:VisionResult,receivedAtIso:strin
   const time=normalizedTime(reading.photoTime);if(!time)return fail("TIMESTAMP_INVALID");
   if(reading.latitude==null||reading.longitude==null)return fail("GPS_MISSING");
   if(!Number.isFinite(reading.latitude)||!Number.isFinite(reading.longitude)||reading.latitude< -90||reading.latitude>90||reading.longitude< -180||reading.longitude>180)return fail("GPS_VALUE_OUT_OF_RANGE");
+  if(!reading.locationText.trim())return fail("LOCATION_TEXT_MISSING");
   if(!Number.isFinite(rules.storeLat)||!Number.isFinite(rules.storeLng)||rules.storeLat< -90||rules.storeLat>90||rules.storeLng< -180||rules.storeLng>180)return fail("STORE_LOCATION_NOT_CONFIGURED");
   const distanceM=distanceMeters(rules.storeLat,rules.storeLng,reading.latitude,reading.longitude);
   if(distanceM>rules.allowedRadiusM)return fail("OUTSIDE_STORE_RADIUS",`ห่างจากร้าน ${Math.round(distanceM)} เมตร`);

@@ -22,7 +22,7 @@ test('provider failure and unknown image have distinct safe explanations',()=>{
 });
 
 test('attendance failures explain timestamp, GPS, radius, and clock evidence in three languages',()=>{
-  for(const [code,pattern] of [['TIMESTAMP_MISSING',/ตัวหนังสือสีขาว/],['GPS_MISSING',/Latitude\/Longitude/],['OUTSIDE_STORE_RADIUS',/นอกรัศมีร้าน/],['CLOCK_NOT_CONFIRMED',/นาฬิกาประจำร้าน/],['PHOTO_TIME_TOO_OLD',/เวลาที่ส่ง LINE/]]){
+  for(const [code,pattern] of [['TIMESTAMP_MISSING',/ตัวหนังสือสีขาว/],['LOCATION_TEXT_MISSING',/ชื่อสถานที่หรือที่อยู่/],['GPS_MISSING',/Latitude\/Longitude/],['OUTSIDE_STORE_RADIUS',/นอกรัศมีร้าน/],['CLOCK_NOT_CONFIRMED',/นาฬิกาประจำร้าน/],['PHOTO_TIME_TOO_OLD',/เวลาที่ส่ง LINE/]]){
     const failure=describeClockValidationFailure(code);assert.match(failure.message,pattern);assert.match(failure.message,new RegExp(code));assert.match(failure.message,/Reason:/);assert.match(failure.message,/[က-႟]/);
   }
 });

@@ -16,11 +16,12 @@ This system affects real employee attendance, payroll, expenses and business rec
 
 ## Source of truth
 
-- D1 is the operational source of truth.
-- Google Sheets is a reporting interface, not the primary database or calculation engine.
+- D1 is the operational source of truth for the V5.2 backend.
+- Google Sheets is a reporting interface, not the primary database or calculation engine for V5.2.
 - R2 evidence must remain private.
-- Do not move business calculations back into Google Sheets or Apps Script.
-- Do not introduce Apps Script into the core architecture.
+- The V5.2 core runtime in this repository is Cloudflare Workers and uses the Google Sheets Direct API. Core processing must not depend on Apps Script.
+- Legacy Apps Script workflows may still exist outside this repository or as spreadsheet-bound projects during migration. Treat them as external legacy dependencies until their deployments and triggers are inventoried.
+- Do not add new Apps Script dependencies, modify legacy Apps Script code, disable triggers, delete legacy sheets or remove legacy deployments without an explicit task and owner approval.
 
 ## Required reading
 
@@ -32,6 +33,7 @@ Before changing code, read:
 4. `docs/03_TEST_AND_CUTOVER_TH.md`
 5. `docs/04_OPERATIONS_TH.md`
 6. `docs/05_LINE_FLEX_FLOW_TH.md`
+7. `docs/06_LEGACY_APPS_SCRIPT_STATUS_TH.md`
 
 Then inspect only the additional files relevant to the assigned task.
 
@@ -83,6 +85,7 @@ Never:
 - Remove audit trails
 - Change payroll rules silently
 - Overwrite Google Sheets formulas outside documented writable cells
+- Modify or disable legacy Apps Script projects, deployments or triggers before verified cutover and explicit owner approval
 
 Use mock or local values for tests.
 
@@ -175,5 +178,6 @@ When requirements are ambiguous:
 - State the ambiguity explicitly.
 - Prefer the safest reversible implementation when a decision is unavoidable.
 - Record assumptions in the pull request.
+- Do not assume a legacy Apps Script project is inactive merely because V5.2 is receiving events. Verify LINE webhook configuration, Apps Script deployments and installed triggers first.
 
 The repository owner makes the final decision on production behaviour and deployment.

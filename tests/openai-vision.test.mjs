@@ -64,3 +64,8 @@ test('OpenAI normalization preserves authoritative overlay fields',()=>{
   const result=normalizeOpenAIVisionResult({kind:'CLOCK',hour:null,minute:null,month:null,day:null,weekday:null,confidence:.99,clockFullyVisible:true,clockPresent:true,clockConfidence:.98,overlayPresent:true,overlayTextWhite:true,photoDate:'2026-07-21',photoTime:'17:15:56',latitude:13.896844,longitude:100.608314,locationText:'Yingcharoen Market',overlayRawText:'21 Jul BE 2569 at 17:15:56',overlayConfidence:.99,needsNewPhoto:false,note:'',document:null},{});
   assert.equal(result.clockPresent,true);assert.equal(result.photoDate,'2026-07-21');assert.equal(result.photoTime,'17:15:56');assert.equal(result.latitude,13.896844);assert.equal(result.overlayTextWhite,true);
 });
+
+test('OpenAI normalization derives date and time only from extracted white overlay text',()=>{
+  const result=normalizeOpenAIVisionResult({kind:'CLOCK',hour:null,minute:null,month:null,day:null,weekday:null,confidence:.95,clockFullyVisible:true,clockPresent:true,clockConfidence:.9,overlayPresent:true,overlayTextWhite:true,photoDate:null,photoTime:null,latitude:13.896795,longitude:100.608147,locationText:'Yingcharoen Market',overlayRawText:'23 Jul BE 2569 at 04:41:46\n+13.896795,+100.608147',overlayConfidence:.95,needsNewPhoto:false,note:'',document:null},{});
+  assert.equal(result.photoDate,'2026-07-23');assert.equal(result.photoTime,'04:41:46');assert.equal(result.hour,null);assert.equal(result.minute,null);
+});

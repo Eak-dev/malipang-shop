@@ -1,0 +1,113 @@
+name: Production Change
+description: ขออนุมัติการเปลี่ยน Production, Migration, Webhook, Secret หรือการปิด Legacy system
+title: "[Production] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        แบบฟอร์มนี้ใช้กับงาน High Risk เท่านั้น การ Merge ไม่ถือเป็นการอนุมัติ Deploy Production
+
+  - type: dropdown
+    id: change_type
+    attributes:
+      label: ประเภทการเปลี่ยน
+      options:
+        - Production deployment
+        - Remote D1 migration
+        - Cloudflare binding/config
+        - Secret rotation
+        - LINE webhook change
+        - Payroll/attendance rule
+        - Google Sheets production mapping
+        - Disable Apps Script trigger/deployment
+        - Other high-risk change
+    validations:
+      required: true
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: เป้าหมายและเหตุผล
+    validations:
+      required: true
+
+  - type: textarea
+    id: approved_commit
+    attributes:
+      label: Commit / Pull Request ที่ต้องการนำขึ้น
+      placeholder: |
+        PR:
+        Commit SHA:
+        Previous known-good commit:
+    validations:
+      required: true
+
+  - type: textarea
+    id: uat
+    attributes:
+      label: หลักฐาน UAT และ Release Gate
+      placeholder: |
+        - Attendance accuracy:
+        - Lost event:
+        - Duplicate attendance/payroll/expense:
+        - Readiness:
+        - Reconcile:
+        - Failed jobs:
+    validations:
+      required: true
+
+  - type: textarea
+    id: exact_changes
+    attributes:
+      label: การเปลี่ยนแปลงที่อนุญาต
+      description: ระบุคำสั่ง, flag, migration, webhook หรือ config ให้เฉพาะเจาะจง
+    validations:
+      required: true
+
+  - type: textarea
+    id: backup
+    attributes:
+      label: Backup และจุดกู้คืน
+      placeholder: |
+        D1 backup/status:
+        Apps Script backup:
+        Legacy sheet backup:
+        Config snapshot:
+    validations:
+      required: true
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback plan
+      description: ระบุ trigger, threshold และผู้ตัดสินใจ rollback
+    validations:
+      required: true
+
+  - type: textarea
+    id: monitoring
+    attributes:
+      label: Monitoring หลังเปลี่ยน
+      placeholder: |
+        Monitoring window:
+        Metrics/logs:
+        Owner:
+        Success criteria:
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: approvals
+    attributes:
+      label: Gate ก่อนดำเนินการ
+      options:
+        - label: ระบุ Commit SHA ที่อนุมัติแล้ว
+          required: true
+        - label: CI และ UAT ผ่านแล้ว
+          required: true
+        - label: มี Backup และ Rollback plan
+          required: true
+        - label: ไม่มี Secret อยู่ใน Issue หรือ GitHub
+          required: true
+        - label: เจ้าของร้านต้องยืนยันอนุมัติใน Issue นี้ก่อนดำเนินการ
+          required: true

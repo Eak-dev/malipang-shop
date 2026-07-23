@@ -1,0 +1,124 @@
+name: Codex Task
+description: งานพัฒนาหรือปรับปรุงที่มีขอบเขตและ Acceptance Criteria ชัดเจน
+title: "[Task] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        อ่าน `AGENTS.md` และเอกสารโครงการก่อนเริ่มงาน หนึ่ง Issue ต้องมีหนึ่งขอบเขต และ Codex ต้องเปิด Pull Request แยก
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: พื้นที่ของระบบ
+      options:
+        - Attendance
+        - Payroll
+        - Expense text
+        - Bank slip / Receipt vision
+        - Google Sheets sync
+        - Queue / DLQ / Reliability
+        - Security / Admin
+        - Documentation / Tooling
+        - Legacy Apps Script migration
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: business_goal
+    attributes:
+      label: เป้าหมายหน้างาน
+      description: อธิบายผลลัพธ์ที่เจ้าของร้านหรือพนักงานต้องได้รับ
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: ปัญหาและหลักฐาน
+      description: ระบุวันที่ เวลา Input, Expected, Actual, Message ID/Trace ID และ Log ถ้ามี โดยห้ามใส่ Secret
+      placeholder: |
+        วันที่/เวลา:
+        ผู้ใช้/Employee ID:
+        Input:
+        Expected:
+        Actual:
+        Message ID/Trace ID:
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: ขอบเขตที่ต้องทำ
+      placeholder: |
+        - [ ]
+        - [ ]
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria
+      placeholder: |
+        - [ ] แก้ root cause
+        - [ ] เพิ่ม regression test
+        - [ ] ไม่เกิด duplicate/lost event
+        - [ ] ไม่กระทบสูตร Google Sheets
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: สิ่งที่ไม่รวมในงานนี้
+      placeholder: |
+        - ไม่ Deploy Production
+        - ไม่แก้ Legacy Apps Script
+        - ไม่เปลี่ยน LINE webhook
+
+  - type: checkboxes
+    id: risk
+    attributes:
+      label: ส่วนที่อาจได้รับผลกระทบ
+      options:
+        - label: Attendance หรือ IN/OUT sequencing
+        - label: Payroll หรือยอดเงิน
+        - label: Expense หรือบัญชีรายวัน
+        - label: D1 migration หรือข้อมูล Production
+        - label: Authentication / Secret / LINE webhook
+        - label: Google Sheets formulas หรือ mapping
+        - label: Apps Script เดิม
+
+  - type: textarea
+    id: uat
+    attributes:
+      label: Manual UAT ที่ต้องผ่าน
+      placeholder: |
+        1.
+        2.
+        3.
+
+  - type: textarea
+    id: rollback
+    attributes:
+      label: Rollback ที่คาดไว้
+      description: ระบุวิธีย้อนกลับหรือปิดฟีเจอร์ หากยังไม่ทราบให้ระบุว่าต้องออกแบบก่อน Merge
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: authorization
+    attributes:
+      label: ข้อกำหนดความปลอดภัย
+      options:
+        - label: งานนี้ไม่อนุญาตให้ Deploy Production
+          required: true
+        - label: งานนี้ไม่อนุญาตให้ใส่หรือเปิดเผย Secret
+          required: true
+        - label: งานนี้ไม่อนุญาตให้ apply remote migration เว้นแต่มีการอนุมัติแยก
+          required: true
+        - label: Codex ต้องรัน `npm run check` และ `npx wrangler deploy --dry-run`
+          required: true

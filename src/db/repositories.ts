@@ -42,6 +42,15 @@ export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payl
 export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
   await enqueueSheetSyncBatch(env,[job]);
 }
+async function sendSheetJobs(env:Env,jobs:SheetsSyncJob[],rateLimited=false):Promise<void>{
+  for(let offset=0;offset<jobs.length;offset+=100){
+    const messages=jobs.slice(offset,offset+100).map((body,index)=>{
+      const delaySeconds=rateLimited?Math.floor((offset+index)/5)*60:0;
+      return delaySeconds?{body,delaySeconds}:{body};
+    });
+    await env.JOB_QUEUE.sendBatch(messages);
+  }
+}
 export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
   const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],now=new Date().toISOString();
@@ -52,14 +61,14 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
       .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now));
     await env.DB.batch(statements);
   }
-  for(let offset=0;offset<unique.length;offset+=100)await env.JOB_QUEUE.sendBatch(unique.slice(offset,offset+100).map(body=>({body})));
+  await sendSheetJobs(env,unique,force);
   return unique.length;
 }
-export async function recoverPendingSheetJobs(env:Env):Promise<number>{
+export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;
-  const stale=new Date(Date.now()-5*60*1000).toISOString();
+  const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),stale=new Date(Date.now()-seconds*1000).toISOString();
   const rows=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id FROM sync_jobs WHERE status IN ('PENDING','FAILED','PROCESSING') AND updated_at<? ORDER BY updated_at LIMIT 50`).bind(stale).all<Record<string,unknown>>();
   const jobs:SheetsSyncJob[]=(rows.results||[]).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
-  if(jobs.length)await env.JOB_QUEUE.sendBatch(jobs.map(body=>({body})));
+  if(jobs.length)await sendSheetJobs(env,jobs,true);
   return jobs.length;
 }

@@ -42,6 +42,19 @@ test('OpenAI normalization preserves structured G-Wallet paid amount',()=>{
   assert.equal(result.document.paidAmountBaht,16);
 });
 
+test('OpenAI normalization gives a stable G-Wallet institution label',()=>{
+  const result=normalizeOpenAIVisionResult({
+    kind:'BANK_SLIP',hour:null,minute:null,month:null,day:null,weekday:null,confidence:0.98,clockFullyVisible:null,needsNewPhoto:false,note:'',
+    document:{
+      documentType:'BANK_SLIP',channel:'G_WALLET',institution:'ไทยช่วยไทย พลัส 60/40',transactionType:'WALLET_PAYMENT',transactionStatus:'SUCCESS',printedYear:'2569',
+      paymentDate:'2026-07-11',paymentTime:'16:04',referenceId:'REF-WALLET',sender:'Eak',senderAccountMasked:'0722',recipient:'',recipientAccountMasked:'',merchant:'PA Plastic',
+      grossAmountBaht:40,discountAmountBaht:24,paidAmountBaht:16,currency:'THB',suggestedDescription:'PA Plastic supplies',suggestedCategory:'packaging',confidence:0.98,needsReview:false,note:''
+    }
+  },{});
+  assert.match(result.document.institution,/^G-Wallet/);
+  assert.match(result.document.institution,/ไทยช่วยไทย/);
+});
+
 test('OpenAI normalization expands printed year 26 and normalizes Baht to THB',()=>{
   const result=normalizeOpenAIVisionResult({
     kind:'BANK_SLIP',hour:null,minute:null,month:null,day:null,weekday:null,confidence:0.99,clockFullyVisible:null,needsNewPhoto:false,note:'',

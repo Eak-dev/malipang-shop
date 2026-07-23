@@ -36,7 +36,7 @@
   },
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
-    "APP_ENV": "production",
+    "APP_ENV": "uat",
     "RUNTIME_MODE": "shadow",
     "TIMEZONE": "Asia/Bangkok",
     "ATTENDANCE_ENABLED": "true",

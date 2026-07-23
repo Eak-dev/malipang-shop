@@ -30,3 +30,9 @@ test('keeps the more reliable complete extraction after retry',()=>{
   assert.equal(chooseBetterAttendanceReading(retry,first),retry);
   assert.equal(chooseBetterAttendanceReading(first,reading({latitude:null})),first);
 });
+
+test('prefers the retry that passes both thresholds over a higher combined failing score',()=>{
+  const first=reading({overlayConfidence:0.89,clockConfidence:0.99});
+  const retry=reading({overlayConfidence:0.91,clockConfidence:0.70});
+  assert.equal(chooseBetterAttendanceReading(first,retry,0.9,0.7),retry);
+});

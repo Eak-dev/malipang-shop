@@ -21,9 +21,12 @@ export function shouldRetryOpenAIAttendance(result:VisionResult,overlayThreshold
     (result.overlayConfidence<overlayThreshold||result.clockConfidence<clockThreshold);
 }
 
-export function chooseBetterAttendanceReading(first:VisionResult,retry:VisionResult):VisionResult{
+export function chooseBetterAttendanceReading(first:VisionResult,retry:VisionResult,overlayThreshold=0.9,clockThreshold=0.7):VisionResult{
   if(!completeAttendanceCandidate(retry))return first;
   if(!completeAttendanceCandidate(first))return retry;
+  const firstPass=first.overlayConfidence>=overlayThreshold&&first.clockConfidence>=clockThreshold;
+  const retryPass=retry.overlayConfidence>=overlayThreshold&&retry.clockConfidence>=clockThreshold;
+  if(firstPass!==retryPass)return retryPass?retry:first;
   const firstScore=first.overlayConfidence+first.clockConfidence;
   const retryScore=retry.overlayConfidence+retry.clockConfidence;
   return retryScore>firstScore?retry:first;
@@ -56,7 +59,7 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
     const retryStarted=Date.now();let retryError="";
     try{
       const retry=await readImageWithOpenAI(env,original);
-      return chooseBetterAttendanceReading(first,retry);
+      return chooseBetterAttendanceReading(first,retry,threshold,clockThreshold);
     }catch(error){
       retryError=String(error instanceof Error?error.message:error).slice(0,240);
       console.error("openai-vision-retry",error);

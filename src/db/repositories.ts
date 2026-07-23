@@ -42,33 +42,47 @@ export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payl
 export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
   await enqueueSheetSyncBatch(env,[job]);
 }
-async function sendSheetJobs(env:Env,jobs:SheetsSyncJob[],rateLimited=false):Promise<void>{
+interface ScheduledSheetJob{body:SheetsSyncJob;delaySeconds:number;nextAttemptAt:string}
+interface RecoverableSheetJobRow{entity_type:unknown;entity_key:unknown;entity_version:unknown;trace_id:unknown;status:unknown;updated_at:unknown;next_attempt_at:unknown;lease_until:unknown}
+export function sheetJobDelaySeconds(index:number,rateLimited:boolean):number{return rateLimited?Math.floor(index/5)*60:0;}
+function scheduleSheetJobs(jobs:SheetsSyncJob[],rateLimited:boolean,nowMs=Date.now()):ScheduledSheetJob[]{
+  return jobs.map((body,index)=>{const delaySeconds=sheetJobDelaySeconds(index,rateLimited);return{body,delaySeconds,nextAttemptAt:new Date(nowMs+delaySeconds*1000).toISOString()};});
+}
+export function isRecoverableSheetJob(row:Pick<RecoverableSheetJobRow,"status"|"updated_at"|"next_attempt_at"|"lease_until">,nowIso:string,staleBeforeIso:string):boolean{
+  const status=String(row.status||"");
+  if(status==="PROCESSING")return Boolean(row.lease_until)&&String(row.lease_until)<=nowIso;
+  if(status!=="PENDING"&&status!=="FAILED")return false;
+  return String(row.updated_at||"")<staleBeforeIso&&(!row.next_attempt_at||String(row.next_attempt_at)<=nowIso);
+}
+async function sendScheduledSheetJobs(env:Env,jobs:ScheduledSheetJob[]):Promise<void>{
   for(let offset=0;offset<jobs.length;offset+=100){
-    const messages=jobs.slice(offset,offset+100).map((body,index)=>{
-      const delaySeconds=rateLimited?Math.floor((offset+index)/5)*60:0;
-      return delaySeconds?{body,delaySeconds}:{body};
-    });
+    const messages=jobs.slice(offset,offset+100).map(({body,delaySeconds})=>delaySeconds?{body,delaySeconds}:{body});
     await env.JOB_QUEUE.sendBatch(messages);
   }
 }
 export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
-  const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],now=new Date().toISOString();
-  for(let offset=0;offset<unique.length;offset+=50){
-    const statements=unique.slice(offset,offset+50).map(job=>env.DB.prepare(force
-      ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at`
-      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
-      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now));
+  const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs);
+  for(let offset=0;offset<scheduled.length;offset+=50){
+    const statements=scheduled.slice(offset,offset+50).map(({body:job,nextAttemptAt})=>env.DB.prepare(force
+      ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,lease_until=NULL,lease_token=NULL WHERE sync_jobs.status!='PROCESSING' OR (sync_jobs.lease_until IS NOT NULL AND sync_jobs.lease_until<=excluded.updated_at)`
+      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
+      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt));
     await env.DB.batch(statements);
   }
-  await sendSheetJobs(env,unique,force);
+  await sendScheduledSheetJobs(env,scheduled);
   return unique.length;
 }
 export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;
-  const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),stale=new Date(Date.now()-seconds*1000).toISOString();
-  const rows=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id FROM sync_jobs WHERE status IN ('PENDING','FAILED','PROCESSING') AND updated_at<? ORDER BY updated_at LIMIT 50`).bind(stale).all<Record<string,unknown>>();
-  const jobs:SheetsSyncJob[]=(rows.results||[]).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
-  if(jobs.length)await sendSheetJobs(env,jobs,true);
-  return jobs.length;
+  const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString();
+  const rows=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id,status,updated_at,next_attempt_at,lease_until FROM sync_jobs WHERE status IN ('PENDING','FAILED','PROCESSING') ORDER BY updated_at LIMIT 200`).all<RecoverableSheetJobRow>();
+  const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>isRecoverableSheetJob(row,now,stale)).slice(0,50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
+  const scheduled=scheduleSheetJobs(jobs,true,nowMs),claimed:ScheduledSheetJob[]=[];
+  for(const item of scheduled){
+    const job=item.body,result=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',trace_id=?,last_error=NULL,updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND updated_at<? AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`).bind(job.traceId,now,item.nextAttemptAt,job.entityType,job.entityKey,job.entityVersion,stale,now,now).run();
+    if(Number(result.meta.changes||0)===1)claimed.push(item);
+  }
+  if(claimed.length)await sendScheduledSheetJobs(env,claimed);
+  return claimed.length;
 }

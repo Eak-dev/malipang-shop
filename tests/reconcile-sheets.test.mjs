@@ -17,8 +17,8 @@ test('reconcile recreates all report job types from D1',async()=>{
 });
 
 test('large forced sheet batches are spread across minute windows',async()=>{
-  const sent=[];
-  const env={DB:{prepare(){return{bind(){return this;}};},async batch(){return[];}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const sent=[],bound=[];
+  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(){return[];}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   const {enqueueSheetSyncBatch}=await import('../dist/db/repositories.js');
   const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${index}`,entityVersion:1,traceId:'reconcile_test'}));
   assert.equal(await enqueueSheetSyncBatch(env,jobs,true),45);
@@ -27,4 +27,7 @@ test('large forced sheet batches are spread across minute windows',async()=>{
   assert.equal(sent[5].delaySeconds,60);
   assert.equal(sent[9].delaySeconds,60);
   assert.equal(sent[10].delaySeconds,120);
+  assert.match(bound[0].sql,/next_attempt_at/);
+  assert.equal(Date.parse(bound[5].args[6])-Date.parse(bound[0].args[6]),60_000,'persisted eligibility must match queue delay');
+  assert.equal(Date.parse(bound[10].args[6])-Date.parse(bound[0].args[6]),120_000);
 });

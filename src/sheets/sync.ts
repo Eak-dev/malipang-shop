@@ -2,16 +2,23 @@ import type { Env,SheetsSyncJob } from "../types";
 import { batchWriteValues } from "./client";
 import { safeRecordMetric } from "../db/repositories";
 import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,type DailyExpenseRecord } from "./daily-expense";
+import { queueRetryDelaySeconds } from "../shared/retry";
 const baht=(value:unknown)=>Number(value||0)/100;
+const SHEET_SYNC_LEASE_MS=15*60*1000;
 async function allocateRow(env:Env,sheet:string,entityKey:string):Promise<number>{
   const existing=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(existing)return Number(existing.row_number);
   const allocated=await env.DB.prepare(`INSERT INTO sheet_cursors(sheet_name,next_row) VALUES(?,3) ON CONFLICT(sheet_name) DO UPDATE SET next_row=next_row+1 RETURNING next_row-1 AS row_number`).bind(sheet).first<{row_number:number}>(),candidate=Number(allocated?.row_number||2);
   await env.DB.prepare(`INSERT OR IGNORE INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)`).bind(sheet,entityKey,candidate).run();const finalRow=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(!finalRow)throw new Error("Unable to allocate sheet row");return Number(finalRow.row_number);
 }
+export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
+  const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
+  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+  const claim=await env.DB.prepare(`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`).bind(now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now).run();
+  return Number(claim.meta.changes||0)===1?leaseToken:null;
+}
 export async function syncJob(env:Env,job:SheetsSyncJob):Promise<void>{
-  if(env.SHEETS_SYNC_ENABLED!=="true")return;const now=new Date().toISOString();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,?) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now).run();
-  const claim=await env.DB.prepare(`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status!='COMPLETED'`).bind(now,job.entityType,job.entityKey,job.entityVersion).run();if(Number(claim.meta.changes||0)===0)return;
+  if(env.SHEETS_SYNC_ENABLED!=="true")return;
+  const leaseToken=await claimSheetSyncJob(env,job);if(!leaseToken)return;
   try{
     let sheet="",values:unknown[]=[],expense:Record<string,unknown>|null=null;
     if(job.entityType==="ATTENDANCE_EVENT"){
@@ -30,7 +37,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob):Promise<void>{
         else if(String(expense.status)==="CANCELLED")await clearCancelledExpenseFromDaily(env,String(expense.expense_id));
       }
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
-    await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion).run();
-  }catch(error){await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(new Date().toISOString(),String(error),job.entityType,job.entityKey,job.entityVersion).run();throw error;}
+    await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
+  }catch(error){const nowMs=Date.now(),delaySeconds=queueRetryDelaySeconds(error),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(error),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw error;}
 }
 function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

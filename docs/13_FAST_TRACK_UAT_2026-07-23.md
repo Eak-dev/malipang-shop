@@ -5,9 +5,9 @@
 - Current Worker only; `RUNTIME_MODE=shadow`
 - Existing OpenAI credential was used without displaying, exporting, rotating, or replacing it
 - LINE webhook and legacy Apps Script were not changed
-- No Production deployment was performed
-- Test records use `UAT` identifiers and LINE output is disabled inside the admin-only UAT harness
-- UAT endpoints require both the Admin bearer token and `APP_ENV=uat` plus `RUNTIME_MODE=shadow`
+- This branch was deployed to the existing Shadow/UAT Worker to collect evidence; Production mode was not enabled
+- Test records used `UAT` identifiers and LINE output was disabled inside the temporary admin-only UAT harness
+- The temporary `/admin/uat/*` runtime harness and its run/cleanup scripts were removed from the final PR after evidence collection
 
 ## Attendance — 12 cases
 
@@ -78,10 +78,16 @@ Recovery result:
 - Failed-job audit: 25 `RESOLVED`; 0 open
 - No D1 business event was lost
 
+Post-review reliability hardening retained in the final PR, but not deployed:
+
+- Persist `next_attempt_at` so Cron recovery does not enqueue jobs whose Queue delay is still active
+- Use an atomic lease token and expiry so only one consumer can process a Sync Job at a time
+- Regression coverage verifies delayed-job recovery and concurrent duplicate claims
+
 ## Automated checks
 
 - TypeScript typecheck: PASS
-- Node tests: 103 passed, 3 live-only tests skipped in the standard CI command
+- Node tests: 106 passed, 3 live-only tests skipped in the standard CI command
 - Wrangler dry run: PASS
 - Live attendance image contract: 7/7 PASS
 - `/admin/readiness` at 2026-07-23T12:45:06Z: D1, LINE, Google Sheets, R2, and attendance configuration PASS
@@ -101,4 +107,4 @@ Recovery result:
 
 ## Production status
 
-Not deployed to Production. Worker remains in Shadow Mode. LINE webhook and Apps Script remain unchanged.
+The branch was deployed to the existing Shadow/UAT Worker for evidence collection, but Production mode was never enabled. LINE webhook and Apps Script remain unchanged.

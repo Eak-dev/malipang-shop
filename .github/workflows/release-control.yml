@@ -1,0 +1,340 @@
+name: MaliPang Release Control
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Operation to run
+        required: true
+        type: choice
+        options:
+          - shadow-preflight
+          - production-cutover
+          - payroll-preview
+          - payroll-apply
+      release_ref:
+        description: Exact branch, tag, or commit to checkout
+        required: true
+        default: main
+        type: string
+      confirmation:
+        description: Typed safety confirmation shown in the runbook
+        required: true
+        type: string
+      period_start:
+        description: Payroll Monday in YYYY-MM-DD
+        required: true
+        default: "2026-07-20"
+        type: string
+      period_end:
+        description: Payroll Sunday in YYYY-MM-DD
+        required: true
+        default: "2026-07-26"
+        type: string
+      run_id:
+        description: Unique payroll Run ID; required only for payroll-apply
+        required: false
+        default: "payroll-2026-07-29-v1"
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: ${{ inputs.operation }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      OPERATION: ${{ inputs.operation }}
+      RELEASE_REF: ${{ inputs.release_ref }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      PERIOD_START: ${{ inputs.period_start }}
+      PERIOD_END: ${{ inputs.period_end }}
+      PAYROLL_RUN_ID: ${{ inputs.run_id }}
+
+    steps:
+      - name: Checkout exact release ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_ref }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate release code
+        run: npm run check
+
+      - name: Validate operation gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release-artifacts
+
+          case "$OPERATION" in
+            shadow-preflight)
+              expected="SHADOW-PREFLIGHT"
+              ;;
+            production-cutover)
+              expected="PRODUCTION-2026-07-29"
+              ;;
+            payroll-preview)
+              expected="PREVIEW-PAYROLL"
+              ;;
+            payroll-apply)
+              expected="APPLY-PAYROLL-2026-07-29"
+              ;;
+            *)
+              echo "Unsupported operation: $OPERATION" >&2
+              exit 1
+              ;;
+          esac
+
+          if [[ "$CONFIRMATION" != "$expected" ]]; then
+            echo "Confirmation text does not match the required value for $OPERATION" >&2
+            exit 1
+          fi
+
+          runtime_mode="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));process.stdout.write(String(c.vars.RUNTIME_MODE))")"
+          echo "runtime_mode=$runtime_mode" >> "$GITHUB_OUTPUT"
+
+          if [[ "$OPERATION" == "shadow-preflight" && "$runtime_mode" != "shadow" ]]; then
+            echo "Shadow preflight requires RUNTIME_MODE=shadow" >&2
+            exit 1
+          fi
+
+          if [[ "$OPERATION" == "production-cutover" ]]; then
+            if [[ "$RELEASE_REF" != "main" ]]; then
+              echo "Production cutover must deploy the protected main branch" >&2
+              exit 1
+            fi
+            if [[ "$runtime_mode" != "production" ]]; then
+              echo "Production cutover requires RUNTIME_MODE=production in main" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ "$OPERATION" == "production-cutover" || "$OPERATION" == "payroll-apply" ]]; then
+            bangkok_date="$(TZ=Asia/Bangkok date +%F)"
+            if [[ "$bangkok_date" != "2026-07-29" ]]; then
+              echo "$OPERATION is locked to 2026-07-29 Asia/Bangkok; current date is $bangkok_date" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ ! "$PERIOD_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || ! "$PERIOD_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "Payroll dates must use YYYY-MM-DD" >&2
+            exit 1
+          fi
+
+          if [[ "$OPERATION" == "payroll-apply" && ! "$PAYROLL_RUN_ID" =~ ^[A-Za-z0-9_-]{8,80}$ ]]; then
+            echo "Invalid payroll Run ID" >&2
+            exit 1
+          fi
+
+      - name: Validate required credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$MALIPANG_ADMIN_TOKEN" || { echo "MALIPANG_ADMIN_TOKEN is missing" >&2; exit 1; }
+          test -n "$MALIPANG_WORKER_URL" || { echo "MALIPANG_WORKER_URL repository variable is missing" >&2; exit 1; }
+          if [[ "$OPERATION" == "shadow-preflight" || "$OPERATION" == "production-cutover" ]]; then
+            test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "CLOUDFLARE_ACCOUNT_ID is missing" >&2; exit 1; }
+            test -n "$CLOUDFLARE_API_TOKEN" || { echo "CLOUDFLARE_API_TOKEN is missing" >&2; exit 1; }
+            npx wrangler auth token --json >/dev/null
+          fi
+
+      - name: Record current Worker versions
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        run: npx wrangler versions list --json > release-artifacts/worker-versions-before.json
+
+      - name: Export and verify fresh D1 backup
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(TZ=Asia/Bangkok date +%Y%m%d-%H%M%S)"
+          short_sha="$(git rev-parse --short=9 HEAD)"
+          sql="$RUNNER_TEMP/malipang-v5-2-before-${short_sha}-${stamp}.sql"
+          gz="${sql}.gz"
+          verify="$RUNNER_TEMP/verify-${short_sha}-${stamp}.sql.gz"
+          date_path="$(TZ=Asia/Bangkok date +%Y/%m/%d)"
+          object_key="d1/${date_path}/$(basename "$gz")"
+
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql" --skip-confirmation
+          gzip -9 "$sql"
+          sha="$(sha256sum "$gz" | awk '{print $1}')"
+          gzip -t "$gz"
+
+          npx wrangler r2 object put "malipang-private-backups/${object_key}" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/${object_key}" --file="$verify" --remote
+          verify_sha="$(sha256sum "$verify" | awk '{print $1}')"
+          gzip -t "$verify"
+
+          if [[ "$sha" != "$verify_sha" ]]; then
+            echo "Downloaded backup checksum does not match" >&2
+            exit 1
+          fi
+
+          jq -n \
+            --arg filename "$(basename "$gz")" \
+            --arg object_key "$object_key" \
+            --arg sha256 "$sha" \
+            --arg release_sha "$(git rev-parse HEAD)" \
+            --arg created_at "$(date -u +%FT%TZ)" \
+            '{filename:$filename,private_r2_bucket:"malipang-private-backups",object_key:$object_key,sha256:$sha256,release_sha:$release_sha,created_at:$created_at,download_verification:"PASS",gzip_integrity:"PASS"}' \
+            > release-artifacts/backup-metadata.json
+
+      - name: Apply Remote D1 migrations
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        run: npx wrangler d1 migrations apply malipang-v5-2 --remote --yes | tee release-artifacts/migrations.txt
+
+      - name: Deploy exact release
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        run: npx wrangler deploy | tee release-artifacts/deploy.txt
+
+      - name: Record deployed Worker versions
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        run: npx wrangler versions list --json > release-artifacts/worker-versions-after.json
+
+      - name: Verify health and runtime mode
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          expected_mode="shadow"
+          [[ "$OPERATION" == "production-cutover" ]] && expected_mode="production"
+
+          for attempt in $(seq 1 12); do
+            if curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health.json; then
+              break
+            fi
+            [[ "$attempt" == "12" ]] && exit 1
+            sleep 5
+          done
+
+          jq -e --arg mode "$expected_mode" '.ok == true and .mode == $mode' release-artifacts/health.json >/dev/null
+
+      - name: Verify readiness
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            "$base_url/admin/readiness" \
+            -o release-artifacts/readiness.json
+          jq -e '.ok == true' release-artifacts/readiness.json >/dev/null
+
+      - name: Bootstrap and verify Google Sheets schema
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            "$base_url/admin/bootstrap-sheets" \
+            -o release-artifacts/sheets-bootstrap.json
+          jq -e '.ok == true' release-artifacts/sheets-bootstrap.json >/dev/null
+
+      - name: Run read-only Payroll Preview
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          expected_pay_date="$(node -e "const d=new Date('${PERIOD_START}T12:00:00Z');d.setUTCDate(d.getUTCDate()+9);process.stdout.write(d.toISOString().slice(0,10))")"
+
+          jq -n --arg from "$PERIOD_START" --arg to "$PERIOD_END" '{fromDate:$from,toDate:$to}' > "$RUNNER_TEMP/preview-request.json"
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/preview-request.json" \
+            "$base_url/admin/payroll/preview" \
+            -o release-artifacts/payroll-preview.json
+
+          jq -e \
+            --arg from "$PERIOD_START" \
+            --arg to "$PERIOD_END" \
+            --arg pay "$expected_pay_date" \
+            '.ok == true and .periodStart == $from and .periodEnd == $to and .payDate == $pay' \
+            release-artifacts/payroll-preview.json >/dev/null
+
+      - name: Apply Payroll after zero-pending gate
+        if: inputs.operation == 'payroll-apply'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pending="$(jq -r '.pendingReviewCount' release-artifacts/payroll-preview.json)"
+          if [[ "$pending" != "0" ]]; then
+            echo "Payroll Apply blocked: pendingReviewCount=$pending" >&2
+            exit 1
+          fi
+
+          base_url="${MALIPANG_WORKER_URL%/}"
+          jq -n \
+            --arg from "$PERIOD_START" \
+            --arg to "$PERIOD_END" \
+            --arg run "$PAYROLL_RUN_ID" \
+            '{fromDate:$from,toDate:$to,runId:$run,requestedBy:"OWNER"}' \
+            > "$RUNNER_TEMP/apply-request.json"
+
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            -H "Content-Type: application/json" \
+            --data-binary @"$RUNNER_TEMP/apply-request.json" \
+            "$base_url/admin/payroll/apply" \
+            -o release-artifacts/payroll-apply.json
+
+          jq -e '.ok == true' release-artifacts/payroll-apply.json >/dev/null
+
+      - name: Write safe release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## MaliPang Release Control"
+            echo "- Operation: \`$OPERATION\`"
+            echo "- Release ref: \`$RELEASE_REF\`"
+            echo "- Checked out SHA: \`$(git rev-parse HEAD 2>/dev/null || echo unavailable)\`"
+            echo "- Payroll period: \`$PERIOD_START\` to \`$PERIOD_END\`"
+            if [[ -f release-artifacts/backup-metadata.json ]]; then
+              echo "- Fresh D1 backup verification: PASS"
+              echo "- Backup object key: \`$(jq -r '.object_key' release-artifacts/backup-metadata.json)\`"
+              echo "- Backup SHA-256: \`$(jq -r '.sha256' release-artifacts/backup-metadata.json)\`"
+            fi
+            if [[ -f release-artifacts/payroll-preview.json ]]; then
+              echo "- Payroll Preview rows: \`$(jq -r '.rowCount' release-artifacts/payroll-preview.json)\`"
+              echo "- Pending review: \`$(jq -r '.pendingReviewCount' release-artifacts/payroll-preview.json)\`"
+              echo "- Pay date: \`$(jq -r '.payDate' release-artifacts/payroll-preview.json)\`"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload operational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: malipang-${{ inputs.operation }}-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14

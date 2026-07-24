@@ -13,8 +13,22 @@ jobs:
       - run: npm ci
       - name: TypeScript
         run: npm run typecheck
-      - name: Unit tests
-        run: npm test
+      - name: Build test modules
+        run: npm run build:test
+      - name: Detailed attendance LINE message tests
+        run: node --test tests/attendance-message.test.mjs
+      - name: Remaining unit tests
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=()
+          for f in tests/*.test.mjs; do
+            case "$(basename "$f")" in
+              attendance-message.test.mjs) ;;
+              *) files+=("$f") ;;
+            esac
+          done
+          node --test "${files[@]}"
       - name: Local D1 migrations
         run: npx wrangler d1 migrations apply malipang-v5-2 --local --persist-to /tmp/malipang-ci
       - name: Wrangler dry run

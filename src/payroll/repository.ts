@@ -1,4 +1,4 @@
-import { addDays,weekStartMonday } from "../shared/time";
+import { addDays,isoDateInBangkok,weekStartMonday } from "../shared/time";
 import type { Employee,Env,WageSnapshot } from "../types";
 
 export function employeeFromRow(row:Record<string,unknown>):Employee{return{
@@ -17,6 +17,14 @@ export async function resolveWageSnapshot(env:Env,employee:Employee,workDate:str
   const row=await env.DB.prepare(`SELECT wage_id,daily_wage_satang,effective_from,effective_to FROM employee_wage_history WHERE employee_id=? AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY effective_from DESC LIMIT 1`).bind(employee.employeeId,workDate,workDate).first<Record<string,unknown>>();
   if(row)return{wageSourceId:String(row.wage_id),dailyWageSatang:Number(row.daily_wage_satang),effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to==null?null:String(row.effective_to)};
   return{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
+}
+
+export async function refreshCurrentEmployeeWages(env:Env,workDate=isoDateInBangkok()):Promise<number>{
+  const now=new Date().toISOString(),result=await env.DB.prepare(`UPDATE employees SET
+    daily_wage_satang=(SELECT w.daily_wage_satang FROM employee_wage_history w WHERE w.employee_id=employees.employee_id AND w.effective_from<=? AND (w.effective_to IS NULL OR w.effective_to>=?) ORDER BY w.effective_from DESC LIMIT 1),
+    updated_at=?
+    WHERE EXISTS(SELECT 1 FROM employee_wage_history w WHERE w.employee_id=employees.employee_id AND w.effective_from<=? AND (w.effective_to IS NULL OR w.effective_to>=?) AND w.daily_wage_satang<>employees.daily_wage_satang ORDER BY w.effective_from DESC LIMIT 1)`).bind(workDate,workDate,now,workDate,workDate).run();
+  return Number(result.meta.changes||0);
 }
 
 export async function approvedOtSatangForDay(env:Env,employeeId:string,workDate:string):Promise<number>{

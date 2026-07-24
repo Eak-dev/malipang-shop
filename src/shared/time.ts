@@ -46,3 +46,9 @@ export function weekStartMonday(workDate:string):string{
   const d=new Date(`${workDate}T12:00:00+07:00`),dow=(d.getUTCDay()+6)%7;d.setUTCDate(d.getUTCDate()-dow);return d.toISOString().slice(0,10);
 }
 export function addDays(dateIso:string,days:number):string{const d=new Date(`${dateIso}T12:00:00Z`);d.setUTCDate(d.getUTCDate()+days);return d.toISOString().slice(0,10);}
+export interface PayrollPeriod{weekStart:string;weekEnd:string;payDate:string;}
+export function payrollPeriodFor(workDate:string):PayrollPeriod{
+  if(!isIsoDate(workDate))throw new Error(`Invalid payroll date: ${workDate}`);
+  const weekStart=weekStartMonday(workDate);
+  return{weekStart,weekEnd:addDays(weekStart,6),payDate:addDays(weekStart,9)};
+}

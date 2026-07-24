@@ -1,4 +1,4 @@
-import { addDays,isoDateInBangkok,weekStartMonday } from "../shared/time";
+import { isoDateInBangkok,payrollPeriodFor,weekStartMonday } from "../shared/time";
 import type { Employee,Env,WageSnapshot } from "../types";
 
 export function employeeFromRow(row:Record<string,unknown>):Employee{return{
@@ -33,11 +33,11 @@ export async function approvedOtSatangForDay(env:Env,employeeId:string,workDate:
 }
 
 export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string,version:number,now:string):D1PreparedStatement{
-  const weekStart=weekStartMonday(workDate),paySunday=addDays(weekStart,6);
+  const{weekStart,weekEnd,payDate}=payrollPeriodFor(workDate);
   return env.DB.prepare(`INSERT INTO payroll_weekly(
-    employee_id,week_start,pay_sunday,work_days,confirmed_amount_satang,pending_amount_satang,status,version,updated_at,
+    employee_id,week_start,pay_sunday,pay_date,work_days,confirmed_amount_satang,pending_amount_satang,status,version,updated_at,
     base_wage_satang,late_deduction_total_satang,missing_punch_deduction_total_satang,ot_total_satang,other_adjustment_total_satang,net_pay_satang,pending_review_count
-  ) SELECT ?,?,?,
+  ) SELECT ?,?,?,?,
     COALESCE(SUM(CASE WHEN time_in IS NOT NULL OR time_out IS NOT NULL THEN 1 ELSE 0 END),0),
     COALESCE(SUM(confirmed_wage_satang),0),COALESCE(SUM(pending_wage_satang),0),
     CASE WHEN COALESCE(SUM(CASE WHEN pay_status='REVIEW' THEN 1 ELSE 0 END),0)>0 THEN 'REVIEW' WHEN COALESCE(SUM(confirmed_wage_satang),0)>0 THEN 'READY' ELSE 'NO_AMOUNT' END,
@@ -46,11 +46,11 @@ export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string
     COALESCE(SUM(confirmed_wage_satang),0),COALESCE(SUM(CASE WHEN pay_status='REVIEW' THEN 1 ELSE 0 END),0)
   FROM attendance_daily WHERE employee_id=? AND work_date BETWEEN ? AND ?
   ON CONFLICT(employee_id,week_start) DO UPDATE SET
-    work_days=excluded.work_days,confirmed_amount_satang=excluded.confirmed_amount_satang,pending_amount_satang=excluded.pending_amount_satang,
+    pay_sunday=excluded.pay_sunday,pay_date=excluded.pay_date,work_days=excluded.work_days,confirmed_amount_satang=excluded.confirmed_amount_satang,pending_amount_satang=excluded.pending_amount_satang,
     status=excluded.status,version=payroll_weekly.version+1,updated_at=excluded.updated_at,base_wage_satang=excluded.base_wage_satang,
     late_deduction_total_satang=excluded.late_deduction_total_satang,missing_punch_deduction_total_satang=excluded.missing_punch_deduction_total_satang,
     ot_total_satang=excluded.ot_total_satang,other_adjustment_total_satang=excluded.other_adjustment_total_satang,net_pay_satang=excluded.net_pay_satang,
-    pending_review_count=excluded.pending_review_count`).bind(employeeId,weekStart,paySunday,version,now,employeeId,weekStart,paySunday);
+    pending_review_count=excluded.pending_review_count`).bind(employeeId,weekStart,weekEnd,payDate,version,now,employeeId,weekStart,weekEnd);
 }
 
 export async function refreshWeeklyPayroll(env:Env,employeeId:string,workDate:string,version:number,now=new Date().toISOString()):Promise<number>{

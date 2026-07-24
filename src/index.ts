@@ -2,6 +2,7 @@ import { AttendanceCoordinator } from "./durable/attendance-coordinator";
 import { handleAdmin } from "./admin/handler";
 import { createFailedJob,InboundBusyError,recoverPendingSheetJobs,resolveFailedJobs } from "./db/repositories";
 import { finalizeMissingPunchPayrolls } from "./payroll/finalize";
+import { refreshCurrentEmployeeWages } from "./payroll/repository";
 import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
 import { syncJob } from "./sheets/sync";
@@ -27,6 +28,6 @@ export default{
     await Promise.all(batch.messages.map(async message=>{const job=message.body;try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else await syncJob(env,job);await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
-    const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await finalizeMissingPunchPayrolls(env);await recoverPendingSheetJobs(env);})());
+    const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await refreshCurrentEmployeeWages(env);await finalizeMissingPunchPayrolls(env);await recoverPendingSheetJobs(env);})());
   }
 } satisfies ExportedHandler<Env,QueueJob>;

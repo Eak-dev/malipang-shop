@@ -20,6 +20,8 @@ export interface PayrollResult{
   lateDeductionSatang:number;
   missingPunchType:MissingPunchType;
   missingPunchDeductionSatang:number;
+  appliedLateDeductionSatang:number;
+  appliedMissingPunchDeductionSatang:number;
   earlyDeductionSatang:number;
   totalDeductionSatang:number;
   otApprovedSatang:number;
@@ -56,13 +58,14 @@ export function calculatePayroll(input:PayrollInput):PayrollResult{
   const lateDeductionSatang=lateDeductionFor(baseWageSatang,lateMinutes);
   const missing=missingPunchType(timeIn,timeOut);
   const missingPunchDeductionSatang=missing==="NONE"?0:missing==="BOTH"?baseWageSatang:Math.round(baseWageSatang/2);
-  const primaryDeduction=Math.max(lateDeductionSatang,missingPunchDeductionSatang);
+  const appliedLateDeductionSatang=lateDeductionSatang>missingPunchDeductionSatang?lateDeductionSatang:0;
+  const appliedMissingPunchDeductionSatang=missingPunchDeductionSatang>=lateDeductionSatang?missingPunchDeductionSatang:0;
   const earlyDeductionSatang=missing==="NONE"&&earlyOutMinutes>0?Math.max(0,Math.round(employee.earlyDeductionSatang)):0;
-  const totalDeductionSatang=Math.min(baseWageSatang,primaryDeduction+earlyDeductionSatang);
+  const totalDeductionSatang=Math.min(baseWageSatang,appliedLateDeductionSatang+appliedMissingPunchDeductionSatang+earlyDeductionSatang);
   const otApprovedSatang=Math.max(0,Math.round(input.otApprovedSatang||0));
   const otherAdjustmentSatang=Math.round(input.otherAdjustmentSatang||0);
   const netPaySatang=Math.max(0,baseWageSatang-totalDeductionSatang+otApprovedSatang+otherAdjustmentSatang);
-  const base={workMinutes,lateMinutes,earlyOutMinutes,baseWageSatang,lateDeductionSatang,missingPunchType:missing,missingPunchDeductionSatang,earlyDeductionSatang,totalDeductionSatang,otApprovedSatang,otherAdjustmentSatang,estimatedWageSatang:netPaySatang,netPaySatang,policyCode:PAYROLL_POLICY_CODE};
+  const base={workMinutes,lateMinutes,earlyOutMinutes,baseWageSatang,lateDeductionSatang,missingPunchType:missing,missingPunchDeductionSatang,appliedLateDeductionSatang,appliedMissingPunchDeductionSatang,earlyDeductionSatang,totalDeductionSatang,otApprovedSatang,otherAdjustmentSatang,estimatedWageSatang:netPaySatang,netPaySatang,policyCode:PAYROLL_POLICY_CODE};
   if(missing==="BOTH")return{...base,confirmedWageSatang:0,pendingWageSatang:0,payStatus:"REVIEW"};
   if((missing==="MISSING_IN"||missing==="MISSING_OUT")&&!input.finalizeMissingPunch)return{...base,confirmedWageSatang:0,pendingWageSatang:netPaySatang,payStatus:"REVIEW"};
   if(review)return{...base,confirmedWageSatang:0,pendingWageSatang:netPaySatang,payStatus:"REVIEW"};

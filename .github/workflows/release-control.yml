@@ -111,7 +111,6 @@ jobs:
           fi
 
           runtime_mode="$(node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));process.stdout.write(String(c.vars.RUNTIME_MODE))")"
-          echo "runtime_mode=$runtime_mode" >> "$GITHUB_OUTPUT"
 
           if [[ "$OPERATION" == "shadow-preflight" && "$runtime_mode" != "shadow" ]]; then
             echo "Shadow preflight requires RUNTIME_MODE=shadow" >&2
@@ -213,13 +212,15 @@ jobs:
         run: npx wrangler versions list --json > release-artifacts/worker-versions-after.json
 
       - name: Verify health and runtime mode
-        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
         shell: bash
         run: |
           set -euo pipefail
           base_url="${MALIPANG_WORKER_URL%/}"
-          expected_mode="shadow"
-          [[ "$OPERATION" == "production-cutover" ]] && expected_mode="production"
+          expected_mode=""
+          case "$OPERATION" in
+            shadow-preflight) expected_mode="shadow" ;;
+            production-cutover|payroll-apply) expected_mode="production" ;;
+          esac
 
           for attempt in $(seq 1 12); do
             if curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health.json; then
@@ -229,10 +230,13 @@ jobs:
             sleep 5
           done
 
-          jq -e --arg mode "$expected_mode" '.ok == true and .mode == $mode' release-artifacts/health.json >/dev/null
+          if [[ -n "$expected_mode" ]]; then
+            jq -e --arg mode "$expected_mode" '.ok == true and .mode == $mode' release-artifacts/health.json >/dev/null
+          else
+            jq -e '.ok == true' release-artifacts/health.json >/dev/null
+          fi
 
       - name: Verify readiness
-        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
         shell: bash
         run: |
           set -euo pipefail

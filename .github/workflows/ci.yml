@@ -23,15 +23,28 @@ jobs:
       - name: Regression tests Attendance other
         shell: bash
         run: |
+          mkdir -p attendance-diagnostics
+          : > attendance-diagnostics/failed-files.txt
+          : > attendance-diagnostics/output.txt
           shopt -s nullglob
-          files=()
+          status=0
           for f in tests/[aA]ttendance*.test.mjs; do
             case "$(basename "$f")" in
-              attendance-message.test.mjs) ;;
-              *) files+=("$f") ;;
+              attendance-message.test.mjs) continue ;;
             esac
+            echo "===== $f =====" | tee -a attendance-diagnostics/output.txt
+            if ! node --test "$f" 2>&1 | tee -a attendance-diagnostics/output.txt; then
+              echo "$f" | tee -a attendance-diagnostics/failed-files.txt
+              status=1
+            fi
           done
-          if ((${#files[@]})); then node --test "${files[@]}"; fi
+          exit "$status"
+      - name: Upload attendance diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attendance-diagnostics
+          path: attendance-diagnostics
       - name: Regression tests A other
         shell: bash
         run: |

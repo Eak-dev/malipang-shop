@@ -4,6 +4,7 @@ import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../e
 import { saveEvidence } from "../evidence/r2";
 import { downloadLineContent,pushText } from "../line/api";
 import { handleOtPostback,isOtPostback } from "../payroll/ot-service";
+import { handleOwnerPayrollText } from "../payroll/owner-command";
 import { sha256Hex } from "../shared/ids";
 import type { Env,InboundJob } from "../types";
 import { classifyAndRead } from "../vision/service";
@@ -22,6 +23,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     }
     if(event.type!=="message"||!event.message){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.type==="text"){
+      if(await handleOwnerPayrollText(env,event)){await completeInboundEvent(env,webhookId,"OWNER_OT_TEXT","COMPLETED");return;}
       if(env.EXPENSE_ENABLED==="true"&&actor?.canSubmitExpense){const outcome=await handleExpenseText(env,event,job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
       else{await pushText(env,to,env.EXPENSE_ENABLED==="true"?"You are not authorized to record expenses.":"The expense system is currently disabled.",job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT","REJECTED");}return;
     }

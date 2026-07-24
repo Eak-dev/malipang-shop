@@ -1,11 +1,6 @@
 import { trilingual } from "../line/multilingual";
 import type { AttendanceCommitResult, Employee } from "../types";
 
-const statusText = (status: AttendanceCommitResult["status"]): { th: string; en: string; my: string } =>
-  status === "NORMAL"
-    ? {th:"ปกติ",en:"OK",my:"OK"}
-    : {th:"ต้องตรวจสอบ",en:"Review required",my:"ပြန်လည်စစ်ဆေးရန် လိုအပ်သည်"};
-
 export function buildAttendanceReply(employee: Employee, result: AttendanceCommitResult): string {
   if (result.punchType === "DUPLICATE") {
     return trilingual(
@@ -23,41 +18,14 @@ export function buildAttendanceReply(employee: Employee, result: AttendanceCommi
   }
 
   const isIn = result.punchType === "IN";
-  const status = statusText(result.status);
-  const thai = [
-    `บันทึกเวลา${isIn?"เข้า":"ออก"}งานเรียบร้อยค่ะ`,
-    `ชื่อ: ${employee.staffName}`,
-    `วันที่: ${result.workDate}`,
-    `เวลา${isIn?"เข้า":"ออก"}งาน: ${result.officialTime}`,
-    "อ้างอิงเวลา: Timestamp บนภาพ",
-    "ตรวจ GPS: ผ่าน",
-    "ยืนยันนาฬิการ้าน: ผ่าน",
-    `สาย: ${result.lateMinutes} นาที`,
-    `สถานะ: ${status.th}`
-  ].join("\n");
-  const english = [
-    `${isIn?"Check-in":"Check-out"} recorded.`,
-    `Name: ${employee.staffName}`,
-    `Date: ${result.workDate}`,
-    `${isIn?"Check-in":"Check-out"} time: ${result.officialTime}`,
-    "Time source: Photo timestamp",
-    "GPS check: Passed",
-    "Shop clock evidence: Passed",
-    `Late: ${result.lateMinutes} minutes`,
-    `Status: ${status.en}`
-  ].join("\n");
-  const burmese = [
-    `${isIn?"အလုပ်ဝင်ချိန်":"အလုပ်ဆင်းချိန်"} မှတ်တမ်းတင်ပြီးပါပြီ။`,
-    `အမည်: ${employee.staffName}`,
-    `ရက်စွဲ: ${result.workDate}`,
-    `${isIn?"အလုပ်ဝင်ချိန်":"အလုပ်ဆင်းချိန်"}: ${result.officialTime}`,
-    "အချိန်အရင်းအမြစ်: ဓာတ်ပုံ Timestamp",
-    "GPS စစ်ဆေးမှု: အောင်မြင်",
-    "ဆိုင်နာရီအထောက်အထား: အောင်မြင်",
-    `နောက်ကျမှု: ${result.lateMinutes} မိနစ်`,
-    `အခြေအနေ: ${status.my}`
-  ].join("\n");
-  return trilingual(thai, english, burmese);
+  const reviewThai = result.status === "REVIEW" ? "\nระบบบันทึกแล้ว และผู้ดูแลจะตรวจสอบข้อมูลเพิ่มเติม" : "";
+  const reviewEnglish = result.status === "REVIEW" ? "\nRecorded. The administrator will review the details." : "";
+  const reviewBurmese = result.status === "REVIEW" ? "\nမှတ်တမ်းတင်ပြီးပါပြီ။ စီမံခန့်ခွဲသူမှ ထပ်မံစစ်ဆေးပါမည်။" : "";
+  return trilingual(
+    `✅ บันทึกเวลา${isIn?"เข้า":"ออก"}งานเรียบร้อย\nชื่อ: ${employee.staffName}\nวันที่: ${result.workDate}\nเวลา: ${result.officialTime}${reviewThai}`,
+    `✅ ${isIn?"Check-in":"Check-out"} recorded\nName: ${employee.staffName}\nDate: ${result.workDate}\nTime: ${result.officialTime}${reviewEnglish}`,
+    `✅ ${isIn?"အလုပ်ဝင်ချိန်":"အလုပ်ဆင်းချိန်"} မှတ်တမ်းတင်ပြီးပါပြီ\nအမည်: ${employee.staffName}\nရက်စွဲ: ${result.workDate}\nအချိန်: ${result.officialTime}${reviewBurmese}`
+  );
 }
 
 export function attendanceNotAllowedMessage(): string {

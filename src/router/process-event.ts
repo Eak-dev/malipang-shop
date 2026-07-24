@@ -3,7 +3,6 @@ import { claimInboundEvent,completeInboundEvent,getEmployeeByLineId,InboundBusyE
 import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../expense/service";
 import { saveEvidence } from "../evidence/r2";
 import { downloadLineContent,pushText } from "../line/api";
-import { handleOtPostback,isOtPostback } from "../payroll/ot-service";
 import { handleOwnerPayrollText } from "../payroll/owner-command";
 import { sha256Hex } from "../shared/ids";
 import type { Env,InboundJob } from "../types";
@@ -17,7 +16,6 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     const actor=await getEmployeeByLineId(env,to);
     if(event.type==="postback"){
       if(!actor){await pushText(env,to,"You are not authorized to use this menu.",job.traceId);await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
-      if(isOtPostback(event)){await handleOtPostback(env,event,actor);await completeInboundEvent(env,webhookId,"OT_POSTBACK","COMPLETED");return;}
       if(env.EXPENSE_ENABLED!=="true"){await pushText(env,to,"The expense system is currently disabled.",job.traceId);await completeInboundEvent(env,webhookId,"POSTBACK","IGNORED");return;}
       await handleExpensePostback(env,event,actor);await completeInboundEvent(env,webhookId,"POSTBACK","COMPLETED");return;
     }

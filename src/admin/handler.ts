@@ -1,6 +1,7 @@
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
+import { applyPayrollRange,previewPayrollRange } from "../payroll/range";
 import { bootstrapSheets } from "../sheets/client";
 import type { EmployeeImportInput,Env } from "../types";
 import { correctAttendance } from "./attendance-correction";
@@ -27,6 +28,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/import-employees"){const employees=await request.json() as EmployeeImportInput[];await importEmployees(env,employees);return Response.json({ok:true,count:employees.length});}
     if(request.method==="POST"&&url.pathname==="/admin/payroll/wage")return Response.json({ok:true,...await setEmployeeWage(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/payroll/finalize-missing")return Response.json({ok:true,...await finalizeMissingPunchPayrolls(env)});
+    if(request.method==="POST"&&url.pathname==="/admin/payroll/preview")return Response.json({ok:true,...await previewPayrollRange(env,await request.json())});
+    if(request.method==="POST"&&url.pathname==="/admin/payroll/apply")return Response.json({ok:true,...await applyPayrollRange(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/ot/request")return Response.json({ok:true,...await createFixedOtRequest(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/ot/finalize")return Response.json({ok:true,...await finalizeFixedOt(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/expense-access"){const body=await request.json() as{lineUserId?:string;enabled?:boolean};if(!body.lineUserId||typeof body.enabled!=="boolean")throw new Error("lineUserId and enabled are required");const result=await env.DB.prepare(`UPDATE employees SET can_submit_expense=?,updated_at=? WHERE line_user_id=?`).bind(body.enabled?1:0,new Date().toISOString(),body.lineUserId).run();if(Number(result.meta.changes||0)!==1)throw new Error("LINE user not found");return Response.json({ok:true});}
@@ -34,7 +37,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/attendance/correct")return Response.json({ok:true,...await correctAttendance(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-sheets")return Response.json({ok:true,...await reconcileSheets(env,await request.json().catch(()=>({})) as never)});
-    if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string})});
+    if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string}});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate")return Response.json({ok:true,...await evaluateUploadedImage(env,request) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));

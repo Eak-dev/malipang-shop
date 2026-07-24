@@ -1,5 +1,12 @@
 # Mapping จาก MaliPang_OWNER_MASTER
 
+## หลักการ
+
+- D1 เป็นฐานข้อมูลและตัวคำนวณหลัก
+- Google Sheets เป็น Input/Reporting interface
+- ห้ามแก้แถวรายงาน `V52_*` ด้วยมือ
+- ค่าแรงใน Payroll ต้องใช้ Snapshot ตามวันที่ ห้ามคำนวณประวัติย้อนหลังจากค่าแรงปัจจุบัน
+
 ## แหล่งพนักงานที่เชื่อถือ
 
 อ่านจาก `HR_STAFF_CONFIG`:
@@ -11,27 +18,83 @@
 | LINE_User_ID | line_user_id |
 | Scheduled_In | scheduled_in |
 | Scheduled_Out | scheduled_out |
-| Daily_Wage | daily_wage_satang |
+| Daily_Wage | employees.daily_wage_satang สำหรับค่าปัจจุบัน/fallback |
+| Wage_Effective_From | employee_wage_history.effective_from เมื่อค่าแรงเปลี่ยน |
 | Grace_Min | grace_min |
-| Late_Deduction_Baht | late_deduction_satang |
-| Deduct_Late / Deduct_Early | เปิดหรือปิดยอดหักแบบคงที่ |
+| Late_Deduction_Baht | legacy flat setting; Payroll policy ใหม่ไม่ใช้ค่านี้สำหรับขั้น 50/100/ครึ่งวัน |
+| Deduct_Late / Deduct_Early | legacy enable/disable fields |
 | Status | status |
+| Can_Submit_Expense | can_submit_expense |
 
-หากเพิ่มคอลัมน์ `Can_Submit_Expense` ระบบจะอ่านและอัปเดตสิทธิ์ Expense ด้วย ถ้าไม่มีคอลัมน์นี้จะคงสิทธิ์เดิมใน D1 และสามารถตั้งผ่าน `/admin/expense-access`
+เมื่อ `Daily_Wage` ของพนักงานเดิมเปลี่ยน ต้องระบุ `Wage_Effective_From` เป็น `YYYY-MM-DD` มิฉะนั้น Import จะถูกปฏิเสธ
 
 ห้าม import ชื่อพนักงานจาก `HR_ATTENDANCE_RAW` เพราะพบประวัติบางช่วงที่ EMP001/EMP002 สลับชื่อกัน
 
-## แท็บ Shadow ที่ระบบสร้าง
+## Wage history
+
+ชีท `HR_WAGE_HISTORY` แสดงข้อมูลจาก `employee_wage_history`:
+
+| Google Sheet | D1 |
+|---|---|
+| Wage_ID | wage_id |
+| Employee_ID | employee_id |
+| Daily_Wage_Baht | daily_wage_satang / 100 |
+| Effective_From / Effective_To | effective_from / effective_to |
+| Source / Note / Version | source / note / version |
+
+ระบบเลือกค่าแรงด้วย `Employee_ID + Work_Date` แล้วเก็บ `Daily_Wage_Snapshot_Baht` และ `Wage_Source_ID` ใน Payroll รายวัน
+
+## Shift schedule
+
+ชีท `HR_SHIFT_SCHEDULE` เป็น Input/Report สำหรับ `employee_shift_days`:
+
+| Google Sheet | D1 |
+|---|---|
+| Work_Date | work_date |
+| Employee_ID | employee_id |
+| Scheduled_In / Scheduled_Out | scheduled_in / scheduled_out |
+| Daily_Wage_Snapshot_Baht | daily_wage_snapshot_satang |
+| Wage_Source_ID | wage_source_id |
+| Status | EXPECTED / DAY_OFF / CANCELLED |
+| Note / Version | note / version |
+
+Both-punch missing จะถูกตรวจเฉพาะแถว `EXPECTED` เท่านั้น เพื่อไม่ให้วันหยุดถูกนับเป็นขาดงาน
+
+## Fixed OT
+
+ชีท `HR_OT_REQUESTS` แสดงข้อมูลจาก `ot_requests`:
+
+| Google Sheet | D1 |
+|---|---|
+| OT_ID | ot_id |
+| Work_Date / Employee_ID | work_date / employee_id |
+| Fixed_Amount_Baht | fixed_amount_satang / 100 |
+| Employee_Confirm_Status | employee_confirm_status |
+| Owner_Final_Status | owner_final_status |
+| Owner_Final_Amount_Baht | owner_final_amount_satang / 100 |
+| Actual_OT_Min | actual_ot_minutes |
+| Status / Version | status / version |
+
+OT จะเข้า Payroll เฉพาะรายการที่พนักงาน `ACCEPTED` และ Owner Final เป็น `APPROVED`
+
+## แท็บ V5.2 ที่ระบบเขียน
 
 - `V52_ATTENDANCE_RAW`
 - `V52_DAILY_PAYROLL`
 - `V52_WEEKLY_PAYROLL`
+- `HR_WAGE_HISTORY`
+- `HR_SHIFT_SCHEDULE`
+- `HR_OT_REQUESTS`
 - `V52_EXPENSE_RAW`
 - `V52_SYSTEM_LOG`
 
 ระบบไม่เขียนทับ `HR_DAILY_PAYROLL` หรือ `HR_WEEKLY_PAYROLL` ซึ่งมีข้อมูลและสูตรเดิม
 
 `V52_ATTENDANCE_RAW` เก็บข้อมูลตรวจสอบเพิ่มต่อท้าย ได้แก่ `Attendance_Source`, `Photo_DateTime`, `GPS_Lat`, `GPS_Lng`, `Distance_M`, `Clock_Evidence`, `Clock_Confidence`, `Overlay_Raw_Text` และ `Image_SHA256` โดย `Work_Date`/`Official_Time` มาจาก Photo Timestamp เท่านั้น
+
+`V52_DAILY_PAYROLL` เก็บค่าแรง Snapshot, แหล่งค่าแรง, Late deduction, Missing-punch deduction, OT, Other adjustment, Net pay และ Policy code
+
+`V52_WEEKLY_PAYROLL` เก็บ Base wage, Late deduction, Missing-punch deduction, OT, Other adjustment, Net pay และ Pending review count
 
 ## Expense รุ่นนี้
 

@@ -19,8 +19,18 @@ jobs:
         run: node --test tests/attendance-message.test.mjs
       - name: Payroll policy tests
         run: node --test tests/payroll.test.mjs tests/ot.test.mjs tests/owner-ot-command.test.mjs tests/staff-import.test.mjs
-      - name: Full unit test suite
-        run: node --test tests/*.test.mjs
+      - name: Regression tests A-F
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[a-fA-F]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests G-L
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[g-lG-L]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests M-R
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[m-rM-R]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests S-Z
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[s-zS-Z]*.test.mjs); node --test "${files[@]}"
       - name: Local D1 migrations
         run: npx wrangler d1 migrations apply malipang-v5-2 --local --persist-to /tmp/malipang-ci
       - name: Wrangler dry run

@@ -37,7 +37,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/attendance/correct")return Response.json({ok:true,...await correctAttendance(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-sheets")return Response.json({ok:true,...await reconcileSheets(env,await request.json().catch(()=>({})) as never)});
-    if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string}});
+    if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string})});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate")return Response.json({ok:true,...await evaluateUploadedImage(env,request) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));

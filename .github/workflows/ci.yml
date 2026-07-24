@@ -19,9 +19,24 @@ jobs:
         run: node --test tests/attendance-message.test.mjs
       - name: Payroll policy tests
         run: node --test tests/payroll.test.mjs tests/ot.test.mjs tests/owner-ot-command.test.mjs tests/staff-import.test.mjs
-      - name: Regression tests A-F
+      - name: Regression tests A
         shell: bash
-        run: shopt -s nullglob; files=(tests/[a-fA-F]*.test.mjs); node --test "${files[@]}"
+        run: shopt -s nullglob; files=(tests/[aA]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests B
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[bB]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests C
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[cC]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests D
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[dD]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests E
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[eE]*.test.mjs); node --test "${files[@]}"
+      - name: Regression tests F
+        shell: bash
+        run: shopt -s nullglob; files=(tests/[fF]*.test.mjs); node --test "${files[@]}"
       - name: Regression tests G-L
         shell: bash
         run: shopt -s nullglob; files=(tests/[g-lG-L]*.test.mjs); node --test "${files[@]}"

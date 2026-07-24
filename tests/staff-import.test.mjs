@@ -11,6 +11,7 @@ test('real HR_STAFF_CONFIG mapping remains canonical',()=>{
   assert.deepEqual(parsed.map(x=>[x.employeeId,x.staffName,x.scheduledIn,x.scheduledOut]),[['EMP001','Win','04:00','16:00'],['EMP002','Tualek','04:00','16:00']]);
   assert.equal(parsed[0].dailyWageBaht,500);
   assert.equal(parsed[0].lateDeductionBaht,0);
+  assert.equal(Object.hasOwn(parsed[0],'wageEffectiveFrom'),false);
   assert.equal(Object.hasOwn(parsed[0],'canSubmitExpense'),false);
 });
 test('deduction flags and expense permission are imported',()=>{
@@ -22,4 +23,20 @@ test('deduction flags and expense permission are imported',()=>{
   assert.equal(employee.lateDeductionBaht,0);
   assert.equal(employee.earlyDeductionBaht,25);
   assert.equal(employee.canSubmitExpense,true);
+});
+test('wage effective date is imported explicitly',()=>{
+  const rows=[
+    ['Employee_ID','Staff_Name','LINE_User_ID','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Wage_Effective_From','Grace_Min'],
+    ['EMP001','Win','U2759c683f61e504af0dd7f08a432b6e2','04:00','16:00','Active',600,'2026-08-01',5]
+  ];
+  const [employee]=parseStaffRows(rows);
+  assert.equal(employee.dailyWageBaht,600);
+  assert.equal(employee.wageEffectiveFrom,'2026-08-01');
+});
+test('invalid wage effective date is rejected',()=>{
+  const rows=[
+    ['Employee_ID','Staff_Name','LINE_User_ID','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Wage_Effective_From','Grace_Min'],
+    ['EMP001','Win','U2759c683f61e504af0dd7f08a432b6e2','04:00','16:00','Active',600,'01/08/2026',5]
+  ];
+  assert.throws(()=>parseStaffRows(rows),/Wage_Effective_From/);
 });

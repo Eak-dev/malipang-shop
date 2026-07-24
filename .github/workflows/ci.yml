@@ -12,4 +12,5 @@ jobs:
         with: { node-version: 22, cache: npm }
       - run: npm ci
       - run: npm run check
+      - run: npx wrangler d1 migrations apply malipang-v5-2 --local --persist-to /tmp/malipang-ci
       - run: npx wrangler deploy --dry-run

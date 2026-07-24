@@ -19,33 +19,36 @@ jobs:
         run: node --test tests/attendance-message.test.mjs
       - name: Payroll policy tests
         run: node --test tests/payroll.test.mjs tests/ot.test.mjs tests/owner-ot-command.test.mjs tests/staff-import.test.mjs
-      - name: Regression tests A
+      - name: Regression tests Admin
         shell: bash
-        run: shopt -s nullglob; files=(tests/[aA]*.test.mjs); node --test "${files[@]}"
-      - name: Regression tests B
+        run: shopt -s nullglob; files=(tests/[aA]dmin*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
+      - name: Regression tests Attendance
         shell: bash
-        run: shopt -s nullglob; files=(tests/[bB]*.test.mjs); node --test "${files[@]}"
-      - name: Regression tests C
+        run: shopt -s nullglob; files=(tests/[aA]ttendance*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
+      - name: Regression tests A other
         shell: bash
-        run: shopt -s nullglob; files=(tests/[cC]*.test.mjs); node --test "${files[@]}"
-      - name: Regression tests D
+        run: |
+          shopt -s nullglob
+          files=()
+          for f in tests/[aA]*.test.mjs; do
+            case "$(basename "$f")" in
+              admin*|Admin*|attendance*|Attendance*) ;;
+              *) files+=("$f") ;;
+            esac
+          done
+          if ((${#files[@]})); then node --test "${files[@]}"; fi
+      - name: Regression tests B-F
         shell: bash
-        run: shopt -s nullglob; files=(tests/[dD]*.test.mjs); node --test "${files[@]}"
-      - name: Regression tests E
-        shell: bash
-        run: shopt -s nullglob; files=(tests/[eE]*.test.mjs); node --test "${files[@]}"
-      - name: Regression tests F
-        shell: bash
-        run: shopt -s nullglob; files=(tests/[fF]*.test.mjs); node --test "${files[@]}"
+        run: shopt -s nullglob; files=(tests/[b-fB-F]*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
       - name: Regression tests G-L
         shell: bash
-        run: shopt -s nullglob; files=(tests/[g-lG-L]*.test.mjs); node --test "${files[@]}"
+        run: shopt -s nullglob; files=(tests/[g-lG-L]*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
       - name: Regression tests M-R
         shell: bash
-        run: shopt -s nullglob; files=(tests/[m-rM-R]*.test.mjs); node --test "${files[@]}"
+        run: shopt -s nullglob; files=(tests/[m-rM-R]*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
       - name: Regression tests S-Z
         shell: bash
-        run: shopt -s nullglob; files=(tests/[s-zS-Z]*.test.mjs); node --test "${files[@]}"
+        run: shopt -s nullglob; files=(tests/[s-zS-Z]*.test.mjs); if ((${#files[@]})); then node --test "${files[@]}"; fi
       - name: Local D1 migrations
         run: npx wrangler d1 migrations apply malipang-v5-2 --local --persist-to /tmp/malipang-ci
       - name: Wrangler dry run

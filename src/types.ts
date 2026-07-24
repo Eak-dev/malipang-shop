@@ -1,7 +1,8 @@
 export type RuntimeMode = "shadow" | "production";
 export type ImageKind = "CLOCK" | "RECEIPT" | "BANK_SLIP" | "ONLINE_ORDER" | "UNKNOWN";
 export type PunchType = "IN" | "OUT" | "DUPLICATE" | "COMPLETE" | "REVIEW";
-export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "EXPENSE" | "SYSTEM_LOG";
+export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
+export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "SYSTEM_LOG";
 
 export interface Env {
   DB: D1Database;
@@ -37,6 +38,9 @@ export interface Env {
   SHEET_ATTENDANCE_RAW: string;
   SHEET_DAILY_PAYROLL: string;
   SHEET_WEEKLY_PAYROLL: string;
+  SHEET_WAGE_HISTORY: string;
+  SHEET_SHIFT_SCHEDULE: string;
+  SHEET_OT_REQUESTS: string;
   SHEET_EXPENSE_RAW: string;
   SHEET_EXPENSE_DAILY: string;
   SHEET_SYSTEM_LOG: string;
@@ -88,11 +92,29 @@ export interface EmployeeImportInput {
   scheduledIn: string;
   scheduledOut: string;
   dailyWageBaht: number;
+  wageEffectiveFrom?: string;
   graceMin: number;
   lateDeductionBaht: number;
   earlyDeductionBaht?: number;
   canSubmitExpense?: boolean;
   status: "ACTIVE" | "INACTIVE";
+}
+
+export interface WageSnapshot {
+  wageSourceId: string;
+  dailyWageSatang: number;
+  effectiveFrom: string;
+  effectiveTo: string | null;
+}
+
+export interface FixedOtRequestInput {
+  employeeId: string;
+  workDate: string;
+  reason: string;
+  plannedStart?: string | null;
+  plannedEnd?: string | null;
+  fixedAmountBaht: number;
+  note?: string;
 }
 
 export interface VisionResult {

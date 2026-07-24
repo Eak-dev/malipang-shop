@@ -23,5 +23,5 @@ test('parses owner final approval and rejection',()=>{
 
 test('rejects missing OT reason and invalid time range',()=>{
   assert.throws(()=>parseOwnerOtCommand('OT Win วันนี้ 200','2026-07-24'),/reason/);
-  assert.throws(()=>parseOwnerOtCommand('OT Win วันนี้ 200 18:00-16:00 เหตุผล','2026-07-24'),/reason/);
+  assert.throws(()=>parseOwnerOtCommand('OT Win วันนี้ 200 18:00-16:00 เหตุผล','2026-07-24'),/time range/);
 });

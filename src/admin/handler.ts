@@ -1,10 +1,13 @@
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
+import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
 import { bootstrapSheets } from "../sheets/client";
 import type { EmployeeImportInput,Env } from "../types";
 import { correctAttendance } from "./attendance-correction";
 import { evaluateExpenseText } from "./expense-evaluate";
+import { createFixedOtRequest,finalizeFixedOt,setEmployeeWage } from "./payroll-admin";
 import { importEmployees,importEmployeesFromConfiguredSheet } from "./staff-import";
+import { importShiftScheduleFromSheet } from "./shift-import";
 import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
@@ -20,7 +23,12 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="GET"&&url.pathname==="/admin/readiness"){const result=await checkReadiness(env);return Response.json(result,{status:result.ok?200:503});}
     if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
+    if(request.method==="POST"&&url.pathname==="/admin/import-shifts-from-sheet")return Response.json({ok:true,...await importShiftScheduleFromSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees"){const employees=await request.json() as EmployeeImportInput[];await importEmployees(env,employees);return Response.json({ok:true,count:employees.length});}
+    if(request.method==="POST"&&url.pathname==="/admin/payroll/wage")return Response.json({ok:true,...await setEmployeeWage(env,await request.json())});
+    if(request.method==="POST"&&url.pathname==="/admin/payroll/finalize-missing")return Response.json({ok:true,...await finalizeMissingPunchPayrolls(env)});
+    if(request.method==="POST"&&url.pathname==="/admin/ot/request")return Response.json({ok:true,...await createFixedOtRequest(env,await request.json())});
+    if(request.method==="POST"&&url.pathname==="/admin/ot/finalize")return Response.json({ok:true,...await finalizeFixedOt(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/expense-access"){const body=await request.json() as{lineUserId?:string;enabled?:boolean};if(!body.lineUserId||typeof body.enabled!=="boolean")throw new Error("lineUserId and enabled are required");const result=await env.DB.prepare(`UPDATE employees SET can_submit_expense=?,updated_at=? WHERE line_user_id=?`).bind(body.enabled?1:0,new Date().toISOString(),body.lineUserId).run();if(Number(result.meta.changes||0)!==1)throw new Error("LINE user not found");return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/expense/evaluate")return Response.json({ok:true,...evaluateExpenseText(await request.json() as{text?:string;now?:string}) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/attendance/correct")return Response.json({ok:true,...await correctAttendance(env,await request.json())});

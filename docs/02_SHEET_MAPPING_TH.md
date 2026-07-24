@@ -1,59 +1,122 @@
-# Mapping จาก MaliPang_OWNER_MASTER
+# Google Sheets Mapping — MaliPang Backend V5.2
 
-## แหล่งพนักงานที่เชื่อถือ
+D1 เป็น Source of Truth ส่วน Google Sheets ใช้สำหรับ Input, ตรวจสอบ และรายงานสำหรับ Owner
 
-อ่านจาก `HR_STAFF_CONFIG`:
+## Attendance LINE flow
 
-| Google Sheet | D1 |
-|---|---|
-| Employee_ID | employee_id |
-| Staff_Name | staff_name |
-| LINE_User_ID | line_user_id |
-| Scheduled_In | scheduled_in |
-| Scheduled_Out | scheduled_out |
-| Daily_Wage | daily_wage_satang |
-| Grace_Min | grace_min |
-| Late_Deduction_Baht | late_deduction_satang |
-| Deduct_Late / Deduct_Early | เปิดหรือปิดยอดหักแบบคงที่ |
-| Status | status |
+พนักงานใช้ Flow เดิม:
 
-หากเพิ่มคอลัมน์ `Can_Submit_Expense` ระบบจะอ่านและอัปเดตสิทธิ์ Expense ด้วย ถ้าไม่มีคอลัมน์นี้จะคงสิทธิ์เดิมใน D1 และสามารถตั้งผ่าน `/admin/expense-access`
+1. ส่งรูปเข้างานตอนเช้า
+2. ส่งรูปออกงานตอนเย็น
 
-ห้าม import ชื่อพนักงานจาก `HR_ATTENDANCE_RAW` เพราะพบประวัติบางช่วงที่ EMP001/EMP002 สลับชื่อกัน
+LINE แสดงรายละเอียดการลงเวลา ได้แก่ ชื่อ วันที่ เวลา Timestamp บนภาพ ผลตรวจ GPS ผลยืนยันนาฬิการ้าน นาทีสาย และสถานะ
 
-## แท็บ Shadow ที่ระบบสร้าง
+LINE ห้ามแสดงค่าแรง ยอดหัก OT ยอดจ่ายสุทธิ หรือสรุป Payroll
 
-- `V52_ATTENDANCE_RAW`
-- `V52_DAILY_PAYROLL`
-- `V52_WEEKLY_PAYROLL`
-- `V52_EXPENSE_RAW`
-- `V52_SYSTEM_LOG`
+## HR_STAFF_CONFIG
 
-ระบบไม่เขียนทับ `HR_DAILY_PAYROLL` หรือ `HR_WEEKLY_PAYROLL` ซึ่งมีข้อมูลและสูตรเดิม
+คอลัมน์หลัก:
 
-`V52_ATTENDANCE_RAW` เก็บข้อมูลตรวจสอบเพิ่มต่อท้าย ได้แก่ `Attendance_Source`, `Photo_DateTime`, `GPS_Lat`, `GPS_Lng`, `Distance_M`, `Clock_Evidence`, `Clock_Confidence`, `Overlay_Raw_Text` และ `Image_SHA256` โดย `Work_Date`/`Official_Time` มาจาก Photo Timestamp เท่านั้น
+- `Employee_ID`
+- `Staff_Name`
+- `LINE_User_ID`
+- `Scheduled_In`
+- `Scheduled_Out`
+- `Status`
+- `Daily_Wage`
+- `Grace_Min`
+- `Wage_Effective_From`
 
-## Expense รุ่นนี้
+เมื่อเปลี่ยน `Daily_Wage` ต้องระบุ `Wage_Effective_From` เป็น `YYYY-MM-DD`
 
-ใช้ key ให้ตรง master เดิม เช่น `ingredients`, `packaging`, `gas`, `utilities`, `CASH_DRAWER`, `SHOP_BANK` รูปใบเสร็จทั่วไปยังเก็บรอตรวจและไม่แตกสินค้า ส่วน Bank slip/KBank/SCB/เป๋าตังที่อ่านข้อมูลสำคัญครบจะสร้างรายการรอยืนยันให้ผู้ใช้ตรวจใน LINE
+## HR_WAGE_HISTORY
 
-ค่าใช้จ่ายที่ `CONFIRMED` จะเขียนสองจุด:
+ใช้รายงานประวัติค่าแรงตาม Effective Date จาก D1
 
-1. `V52_EXPENSE_RAW` เป็น audit trail และข้อมูลสำหรับกู้คืน
-2. `รายวัน` เป็นรายงานบัญชีเดิมที่เจ้าของร้านใช้งาน
+- `Wage_ID`
+- `Employee_ID`
+- `Staff_Name`
+- `Daily_Wage_Baht`
+- `Effective_From`
+- `Effective_To`
+- `Source`
+- `Note`
+- `Version`
+- `Created_At`
+- `Updated_At`
 
-### Mapping ไป `รายวัน`
+## HR_SHIFT_SCHEDULE
 
-| ข้อมูล | คอลัมน์ |
-|---|---|
-| เดือน / วัน / รายการ | B / C / D |
-| เงินสดแบบ NON-FIXED | G |
-| เงินโอน | H |
-| Kbank / First Choice / Aeon / Citibank / TTB / Homepro / The 1 | K ถึง Q ตามหัวตาราง |
-| Category / แหล่งเงิน | V / W |
+ใช้กำหนดวันที่ต้องทำงานเพื่อแยกวันขาดงานออกจากวันหยุด
 
-Bank slip ทุกธนาคารและ G-Wallet ใช้ `payment_key=transfer` และ `source_wallet=SHOP_BANK` เสมอ จึงลงยอดจ่ายจริงใน H และแสดง `บัญชีร้าน` ใน W เป๋าตังใช้ยอดสุดท้ายที่จ่ายจริง ไม่ใช้ราคาก่อนส่วนลด ข้อมูล audit ที่ชีทเดิมไม่มีคอลัมน์รองรับ เช่น สถาบัน เลขอ้างอิง ผู้ส่ง/ผู้รับ ยอดก่อนส่วนลด ส่วนลด และ image key จะเก็บใน `expense_documents`/R2 แทน
+- `Work_Date`
+- `Employee_ID`
+- `Staff_Name`
+- `Scheduled_In`
+- `Scheduled_Out`
+- `Daily_Wage_Snapshot_Baht`
+- `Wage_Source_ID`
+- `Status`
+- `Note`
+- `Version`
+- `Updated_At`
 
-ระบบหาเดือนจากแถวหัวข้อ `รายรับทั้งหมดในบัญชี` หาแถวสิ้นสุดจาก `รวม` และใช้เฉพาะแถวว่างก่อนแถวรวม บัตรเครดิตใช้วันตัดรอบที่อยู่ในแถว 2 ของคอลัมน์บัตร ถ้าวันรายการเกินวันตัดรอบจะลงเดือนถัดไป และปรับวันที่ให้ไม่เกินวันสุดท้ายของเดือน
+สถานะ:
 
-ระบบล้างเฉพาะ B:D, F:H, K:Q และ V:W ก่อนเขียนหรือเมื่อ Undo จึงรักษาสูตรใน I, J, R, S และ U ไว้เสมอ ถ้าบล็อกเดือนเต็มหรือไม่พบหัวตาราง งานจะ Failed/Retry แทนการเขียนทับ `รวม`
+- `EXPECTED`
+- `DAY_OFF`
+- `CANCELLED`
+
+## HR_OT_REQUESTS
+
+ใช้ตรวจรายการ OT แบบเหมาโดย Owner
+
+- `OT_ID`
+- `Work_Date`
+- `Employee_ID`
+- `Staff_Name`
+- `Reason`
+- `Planned_Start`
+- `Planned_End`
+- `Fixed_Amount_Baht`
+- `Requested_By`
+- `Owner_Preapproved_At`
+- `Employee_Confirm_Status` ซึ่งใช้ `NOT_REQUIRED`
+- `Employee_Confirmed_At`
+- `Owner_Final_Status`
+- `Owner_Final_Amount_Baht`
+- `Owner_Final_At`
+- `Actual_OT_Min`
+- `Status`
+- `Note`
+- `Version`
+- `Updated_At`
+
+## V52_DAILY_PAYROLL
+
+เพิ่มข้อมูล:
+
+- `Wage_Source_ID`
+- `Daily_Wage_Snapshot_Baht`
+- `Late_Deduction_Baht`
+- `Missing_Punch_Type`
+- `Missing_Punch_Deduction_Baht`
+- `OT_Approved_Baht`
+- `Other_Adjustment_Baht`
+- `Net_Pay_Baht`
+- `Payroll_Policy_Code`
+- `Finalized_At`
+
+## V52_WEEKLY_PAYROLL
+
+เพิ่มข้อมูล:
+
+- `Base_Wage_Total_Baht`
+- `Late_Deduction_Total_Baht`
+- `Missing_Punch_Deduction_Total_Baht`
+- `OT_Total_Baht`
+- `Other_Adjustment_Total_Baht`
+- `Net_Pay_Baht`
+- `Pending_Review_Count`
+
+ห้ามแก้แถวรายงาน `V52_*`, `HR_WAGE_HISTORY` หรือ `HR_OT_REQUESTS` ด้วยมือ ให้แก้ผ่าน Admin flow หรือ Input sheet ที่กำหนด

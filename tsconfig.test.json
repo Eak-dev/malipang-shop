@@ -9,6 +9,7 @@
   },
   "include": [
     "src/domain/**/*.ts",
+    "src/payroll/**/*.ts",
     "src/expense/text-parser.ts",
     "src/expense/flex.ts",
     "src/expense/service.ts",

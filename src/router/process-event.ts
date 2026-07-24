@@ -3,6 +3,7 @@ import { claimInboundEvent,completeInboundEvent,getEmployeeByLineId,InboundBusyE
 import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../expense/service";
 import { saveEvidence } from "../evidence/r2";
 import { downloadLineContent,pushText } from "../line/api";
+import { handleOwnerPayrollText } from "../payroll/owner-command";
 import { sha256Hex } from "../shared/ids";
 import type { Env,InboundJob } from "../types";
 import { classifyAndRead } from "../vision/service";
@@ -14,12 +15,13 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     const to=event.source.type==="user"?event.source.userId||"":"";if(!to){await completeInboundEvent(env,webhookId,"UNSUPPORTED_CHAT","IGNORED");return;}
     const actor=await getEmployeeByLineId(env,to);
     if(event.type==="postback"){
+      if(!actor){await pushText(env,to,"You are not authorized to use this menu.",job.traceId);await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
       if(env.EXPENSE_ENABLED!=="true"){await pushText(env,to,"The expense system is currently disabled.",job.traceId);await completeInboundEvent(env,webhookId,"POSTBACK","IGNORED");return;}
-      if(!actor){await pushText(env,to,"You are not authorized to manage expenses.",job.traceId);await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
       await handleExpensePostback(env,event,actor);await completeInboundEvent(env,webhookId,"POSTBACK","COMPLETED");return;
     }
     if(event.type!=="message"||!event.message){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.type==="text"){
+      if(await handleOwnerPayrollText(env,event)){await completeInboundEvent(env,webhookId,"OWNER_OT_TEXT","COMPLETED");return;}
       if(env.EXPENSE_ENABLED==="true"&&actor?.canSubmitExpense){const outcome=await handleExpenseText(env,event,job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
       else{await pushText(env,to,env.EXPENSE_ENABLED==="true"?"You are not authorized to record expenses.":"The expense system is currently disabled.",job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT","REJECTED");}return;
     }

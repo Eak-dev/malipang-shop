@@ -1,57 +1,38 @@
 # Payroll Policy — ค่าแรงตามวันที่ การหักมาสาย และ OT แบบเหมา
 
-เอกสารนี้อธิบายระบบใน Issue #17 / PR #18
+เอกสารนี้อธิบายระบบที่พัฒนาใน Issue #17 / PR #18
 
-> D1 เป็น Source of Truth และ Google Sheets เป็นหน้าสำหรับ Owner ตรวจข้อมูลทั้งหมด
+> D1 เป็น Source of Truth ส่วน Google Sheets เป็น Input/Reporting interface เท่านั้น
 
-## 1. หลักการแสดงผล
+## 1. กติกาค่าแรง
 
-### LINE ของพนักงาน
+ค่าแรงเป็นรายพนักงานและมีวันที่เริ่มใช้ (`Effective_From`) ห้าม hard-code ค่าแรง 500 บาทหรือยอดครึ่งวัน 250 บาท
 
-พนักงานใช้ Flow เดิมเท่านั้น:
+ระบบเลือกค่าแรงตามลำดับ:
 
-1. ตอนเช้าส่งรูปเข้างาน
-2. ระบบตอบชื่อ วันที่ และเวลาเข้า
-3. ตอนเย็นส่งรูปออกงาน
-4. ระบบตอบชื่อ วันที่ และเวลาออก
+1. ค้น `employee_wage_history` ด้วย `Employee_ID + Work_Date`
+2. ใช้รายการที่ `Effective_From <= Work_Date` และ `Effective_To` ว่างหรือครอบคลุมวันนั้น
+3. เมื่อสร้าง Payroll รายวัน ให้บันทึก `Daily_Wage_Snapshot_Baht` และ `Wage_Source_ID`
+4. หากค่าแรงเปลี่ยนภายหลัง Payroll เก่าจะไม่ถูกคำนวณใหม่จากค่าแรงปัจจุบัน
 
-LINE ของพนักงานต้องไม่แสดง:
+### การเปลี่ยนค่าแรง
 
-- ค่าแรง
-- ยอดหัก
-- นาทีสายเพื่อใช้ตัดเงิน
-- OT เป็นจำนวนเงิน
-- สรุป Payroll รายวันหรือรายสัปดาห์
-- ปุ่มยืนยัน OT หรือปุ่ม HR เพิ่มเติม
+ใช้ `POST /admin/payroll/wage`
 
-หากรายการต้องตรวจ ระบบแจ้งเพียงว่า “บันทึกแล้ว และผู้ดูแลจะตรวจสอบข้อมูลเพิ่มเติม” โดยไม่แสดงตัวเลขการเงิน
+```json
+{
+  "employeeId": "EMP001",
+  "dailyWageBaht": 600,
+  "effectiveFrom": "2026-08-01",
+  "note": "ปรับค่าแรงเดือนสิงหาคม"
+}
+```
 
-### Google Sheets ของ Owner
+หรือใส่คอลัมน์ `Wage_Effective_From` ใน `HR_STAFF_CONFIG` ก่อน Import พนักงาน เมื่อ `Daily_Wage` เปลี่ยนจากค่าเดิม ระบบจะปฏิเสธการ Import หากไม่ระบุวันที่เริ่มใช้
 
-รายละเอียดทั้งหมดแสดงใน:
+## 2. กติกามาสาย
 
-- `HR_WAGE_HISTORY`
-- `HR_SHIFT_SCHEDULE`
-- `HR_OT_REQUESTS`
-- `V52_DAILY_PAYROLL`
-- `V52_WEEKLY_PAYROLL`
-
-## 2. ค่าแรงตาม Effective Date
-
-ค่าแรงเป็นรายพนักงานและมีวันที่เริ่มใช้ ห้าม hard-code ค่าแรง 500 บาทหรือครึ่งวัน 250 บาท
-
-ระบบเลือกค่าแรงตาม `Employee_ID + Work_Date` แล้วบันทึก:
-
-- `Daily_Wage_Snapshot_Baht`
-- `Wage_Source_ID`
-
-เมื่อค่าแรงเปลี่ยน Payroll เก่าต้องไม่เปลี่ยนย้อนหลัง
-
-เปลี่ยนค่าแรงผ่าน `POST /admin/payroll/wage` หรือ Import `HR_STAFF_CONFIG` โดยต้องใส่ `Wage_Effective_From` เมื่อยอดค่าแรงเปลี่ยน
-
-## 3. กติกามาสาย
-
-คำนวณจากเวลาสายจริงเทียบกับ `Scheduled_In`
+ระบบคำนวณจากเวลาสายจริงเทียบกับ `Scheduled_In`
 
 | เวลาสายจริง | ยอดหัก |
 |---:|---:|
@@ -60,59 +41,135 @@ LINE ของพนักงานต้องไม่แสดง:
 | 30–89 นาที | 100 บาท |
 | 90 นาทีขึ้นไป | 50% ของ Daily Wage Snapshot |
 
-ยอดนี้บันทึกใน Google Sheets เท่านั้น ไม่ตอบกลับพนักงานผ่าน LINE
+ตัวอย่างค่าแรง 550 บาท:
 
-## 4. ลงเวลาไม่ครบ
+- สาย 6 นาที: หัก 50 บาท เหลือ 500 บาท
+- สาย 30 นาที: หัก 100 บาท เหลือ 450 บาท
+- สาย 90 นาที: หัก 275 บาท เหลือ 275 บาท
+
+## 3. กรณีลงเวลาไม่ครบ
 
 | สถานการณ์ | กติกา |
 |---|---|
 | มี IN และ OUT | คำนวณมาสายตามขั้น |
-| มี IN แต่ไม่มี OUT | หลังวันจบ หัก 50% ของ Daily Wage Snapshot |
-| ไม่มี IN แต่มี OUT | หลังวันจบ หัก 50% ของ Daily Wage Snapshot |
-| ไม่มีทั้ง IN และ OUT | ใช้ 100% ของ Daily Wage Snapshot และส่ง Review เฉพาะวันที่มี `EXPECTED` Shift |
+| มี IN แต่ไม่มี OUT | หัก 50% ของ Daily Wage Snapshot หลังวันทำงานจบ |
+| ไม่มี IN แต่มี OUT | หัก 50% ของ Daily Wage Snapshot หลังวันทำงานจบ |
+| ไม่มีทั้ง IN และ OUT | หักเต็มวันและส่ง Review เฉพาะวันที่มี Expected Shift |
 
-Late และ Missing Punch ไม่บวกซ้อน ใช้ยอดที่สูงกว่า
+### ป้องกันการหักซ้ำ
 
-ระหว่างวัน One-punch ยังอยู่ `REVIEW` เพื่อไม่หักก่อนพนักงานส่งรูปออก ส่วน Both-punch missing จะเกิดได้เฉพาะวันที่ Owner ระบุ `EXPECTED`
+Late และ Missing Punch ไม่บวกซ้อนกัน ระบบใช้ยอดที่สูงกว่า
 
-## 5. ตารางกะ
+ตัวอย่างค่าแรง 500 บาท สาย 35 นาทีและไม่มี OUT:
 
-ใช้ `HR_SHIFT_SCHEDULE`
+- Late = 100 บาท
+- Missing OUT = 250 บาท
+- หักจริง = 250 บาท ไม่ใช่ 350 บาท
 
-| Status | ความหมาย |
+### เวลา Finalize
+
+- ระหว่างวัน One-punch จะยังอยู่ `REVIEW`
+- Cron จะ Finalize One-punch หลังวันทำงานนั้นผ่านไปแล้ว เพื่อไม่หักระหว่างกะหรือระหว่าง OT
+- Both-punch missing จะสร้างได้เฉพาะรายการ `EXPECTED` ใน `HR_SHIFT_SCHEDULE`
+- วันหยุดต้องตั้ง `DAY_OFF` เพื่อไม่ให้ถูกมองเป็นขาดงาน
+
+## 4. ตารางกะทำงาน
+
+ใช้ชีท `HR_SHIFT_SCHEDULE`
+
+| คอลัมน์ | ใช้ทำอะไร |
 |---|---|
-| `EXPECTED` | ต้องมาทำงาน ใช้ตรวจกรณีไม่มีทั้ง IN และ OUT |
-| `DAY_OFF` | วันหยุด ไม่สร้างรายการขาดงาน |
-| `CANCELLED` | ยกเลิกกะ |
+| Work_Date | วันที่ทำงาน YYYY-MM-DD |
+| Employee_ID | รหัสพนักงาน |
+| Scheduled_In / Scheduled_Out | เวลาเริ่มและสิ้นสุดกะ |
+| Status | EXPECTED / DAY_OFF / CANCELLED |
+| Note | หมายเหตุ |
 
-ไม่จำเป็นต้องกำหนดวันหยุดทั้งเดือน สามารถใส่กะล่วงหน้าเป็นรายวันหรือรายสัปดาห์ได้ หากไม่มีแถว `EXPECTED` ระบบจะไม่ตัดสินว่าไม่มี Punch คือขาดงานเต็มวัน
-
-## 6. OT แบบเหมาจำนวนเงิน
-
-OT เป็น Owner-managed workflow และไม่ต้องให้พนักงานกดปุ่มใน LINE
-
-ขั้นตอน:
-
-1. Owner สร้าง OT ล่วงหน้า พร้อมวันที่ เหตุผล ช่วงเวลาโดยประมาณ และยอดเหมา
-2. พนักงานทำงานตามที่ Owner แจ้งหน้างาน และส่งรูป OUT ตามปกติ
-3. หลังมีเวลา OUT Owner ยืนยันหรือปฏิเสธยอดสุดท้าย
-4. ระบบจึงรวม OT เข้า Daily/Weekly Payroll
-
-สร้างผ่าน `POST /admin/ot/request` หรือคำสั่ง Owner LINE:
+นำเข้าด้วย:
 
 ```text
-OT Win วันนี้ 200 16:00-18:00 เตรียมไส้เพิ่ม
+POST /admin/import-shifts-from-sheet
 ```
 
-ยืนยันหลังทำงาน:
+ค่าแรง Snapshot และ Wage Source จะถูก Resolve ตอน Import กะ
+
+## 5. OT แบบเหมาจำนวนเงิน
+
+OT ไม่เข้าค่าแรงจนกว่าจะผ่านขั้นตอน:
+
+1. Owner Preapproval
+2. พนักงานทำงานและส่งรูป OUT ตาม Flow ปกติ
+3. Owner Final approval หลังทำงาน
+
+พนักงานไม่ต้องกดยืนยัน OT และไม่เห็นยอด OT ใน LINE
+
+### สร้าง OT
+
+```json
+POST /admin/ot/request
+{
+  "employeeId": "EMP001",
+  "workDate": "2026-08-01",
+  "reason": "เตรียมไส้เพิ่ม",
+  "plannedStart": "16:00",
+  "plannedEnd": "18:00",
+  "fixedAmountBaht": 200,
+  "note": "งานเพิ่มก่อนวันเสาร์"
+}
+```
+
+### Owner ยืนยันยอดสุดท้าย
+
+```json
+POST /admin/ot/finalize
+{
+  "otId": "<OT_ID>",
+  "approved": true,
+  "finalAmountBaht": 200,
+  "note": "งานเสร็จครบ"
+}
+```
+
+ระบบจะคำนวณ `Actual_OT_Min` จาก Attendance เพื่อ Audit แต่ยอดจ่ายใช้ Fixed Amount ที่ Owner อนุมัติ
+
+## 6. LINE ของพนักงาน
+
+พนักงานทำเพียงส่งรูปเข้างานตอนเช้าและรูปออกงานตอนเย็น
+
+ข้อความตอบรับแสดงข้อมูลการลงเวลาได้ดังนี้:
+
+- ชื่อ
+- วันที่
+- เวลาเข้า/ออก
+- อ้างอิงเวลาจาก Timestamp บนภาพ
+- ผลตรวจ GPS
+- ผลยืนยันนาฬิการ้าน
+- นาทีสาย
+- สถานะปกติหรือสถานะต้องตรวจสอบ
+
+ตัวอย่าง:
 
 ```text
-OT อนุมัติ <OT_ID> 200 งานเสร็จครบ
+บันทึกเวลาเข้างานเรียบร้อยค่ะ
+ชื่อ: Eak
+วันที่: 2026-07-24
+เวลาเข้างาน: 04:27
+อ้างอิงเวลา: Timestamp บนภาพ
+ตรวจ GPS: ผ่าน
+ยืนยันนาฬิการ้าน: ผ่าน
+สาย: 17 นาที
+สถานะ: ปกติ
 ```
 
-พนักงานไม่ได้รับปุ่มหรือข้อความยอด OT ส่วน Owner LINE ได้เพียงข้อความว่าบันทึกแล้วและให้ดูรายละเอียดใน `HR_OT_REQUESTS`
+ห้ามแสดงใน LINE:
 
-หากไม่มีเวลา OUT ระบบต้องปฏิเสธการอนุมัติ OT จนกว่าจะแก้ Attendance
+- ค่าแรง
+- ยอดหัก
+- ยอด OT
+- ยอดจ่ายสุทธิ
+- Daily/Weekly Payroll
+
+ข้อมูลการเงินทั้งหมดดูใน Google Sheets สำหรับ Owner เท่านั้น
 
 ## 7. Google Sheets
 
@@ -125,27 +182,20 @@ OT อนุมัติ <OT_ID> 200 งานเสร็จครบ
 
 - `HR_WAGE_HISTORY`
 - `HR_OT_REQUESTS`
-- `V52_DAILY_PAYROLL` แสดง Wage Snapshot, Late Deduction, Missing Punch, OT และ Net Pay
-- `V52_WEEKLY_PAYROLL` แสดง Base Wage, Deduction, OT, Net Pay และ Pending Review Count
+- `V52_DAILY_PAYROLL` เพิ่ม Wage Source, Wage Snapshot, Deduction, OT และ Net Pay
+- `V52_WEEKLY_PAYROLL` เพิ่ม Base Wage, Deduction, OT, Net Pay และ Pending Review Count
 
-ห้ามแก้แถวรายงาน `V52_*` ด้วยมือ
+ห้ามแก้แถวรายงาน `V52_*` ด้วยมือ ให้แก้ผ่าน Admin flow หรือ Input sheet ที่กำหนด
 
-## 8. UAT ก่อน Deploy จริง
-
-### Employee LINE flow
-
-- [ ] รูป IN ตอบเฉพาะชื่อ วันที่ เวลา
-- [ ] รูป OUT ตอบเฉพาะชื่อ วันที่ เวลา
-- [ ] LINE ไม่มีค่าแรง ยอดหัก นาทีสายเพื่อการเงิน หรือ OT amount
-- [ ] พนักงานไม่มีปุ่ม OT/Payroll ให้กด
-- [ ] Duplicate photo แจ้งไม่ต้องส่งซ้ำ
+## 8. UAT ที่ต้องทำก่อน Deploy จริง
 
 ### Wage history
 
-- [ ] พนักงานสองคนใช้ค่าแรงต่างกันในวันเดียวกัน
-- [ ] ค่าแรงใหม่เริ่มตาม Effective Date
-- [ ] Payroll วันเก่ายังคง Snapshot เดิม
-- [ ] เปลี่ยนค่าแรงโดยไม่มี Effective Date ถูกปฏิเสธ
+- [ ] พนักงาน A ค่าแรง 500 และพนักงาน B ค่าแรง 600 ในวันเดียวกัน
+- [ ] เปลี่ยนค่าแรง A เป็น 650 ในวันถัดไป
+- [ ] Payroll วันเก่ายังคง Snapshot 500
+- [ ] Payroll วันใหม่ใช้ Snapshot 650
+- [ ] Import ค่าแรงที่เปลี่ยนโดยไม่ใส่ Effective Date ถูกปฏิเสธ
 
 ### Late boundaries
 
@@ -160,20 +210,30 @@ OT อนุมัติ <OT_ID> 200 งานเสร็จครบ
 
 - [ ] IN อย่างเดียว Finalize เป็นครึ่งค่าแรงหลังวันจบ
 - [ ] OUT อย่างเดียว Finalize เป็นครึ่งค่าแรงหลังวันจบ
-- [ ] Late + Missing ใช้ยอดสูงกว่า
+- [ ] Late + Missing ใช้ยอดสูงกว่า ไม่บวกซ้อน
 - [ ] Both missing + EXPECTED = เต็มวันและ Review
-- [ ] Both missing + DAY_OFF หรือไม่มี Expected Shift = ไม่สร้างขาดงาน
+- [ ] Both missing + DAY_OFF = ไม่สร้าง Payroll ขาดงาน
+- [ ] Admin Correction คำนวณใหม่และเก็บ Audit
 
 ### Fixed OT
 
-- [ ] Owner สร้าง OT โดยไม่มีข้อความหรือปุ่มส่งให้พนักงาน
+- [ ] Owner สร้าง OT 100 บาท
+- [ ] พนักงานไม่ต้องกดปุ่มหรือเห็นยอด OT ใน LINE
 - [ ] ก่อน Owner Final ยอด OT ยังไม่เข้า Payroll
-- [ ] Missing OUT ทำให้ Owner Final ไม่ผ่าน
-- [ ] Owner Final แล้ว Daily/Weekly Payroll และ `HR_OT_REQUESTS` ตรงกัน
+- [ ] Owner Final 100 บาทแล้ว Daily/Weekly Payroll เพิ่ม 100 บาท
+- [ ] Missing OUT ทำให้ Owner ต้องตรวจ Attendance ก่อนยืนยัน OT
+
+### LINE attendance
+
+- [ ] แสดงชื่อ วันที่ เวลา Timestamp GPS นาฬิการ้าน นาทีสาย และสถานะ
+- [ ] ไม่แสดงค่าแรง ยอดหัก OT หรือ Payroll
+- [ ] ภาษาไทย อังกฤษ และพม่าครบ
 
 ### Reconcile
 
-- [ ] D1 ตรงกับ Sheets ทุกตารางใหม่
+- [ ] D1 ตรง `HR_WAGE_HISTORY`
+- [ ] D1 ตรง `HR_SHIFT_SCHEDULE`
+- [ ] D1 ตรง `HR_OT_REQUESTS`
 - [ ] Daily/Weekly breakdown ตรงการคำนวณมือ
 - [ ] Duplicate/Lost event = 0
 - [ ] Queue/Failed/DLQ ค้าง = 0
@@ -184,19 +244,21 @@ OT อนุมัติ <OT_ID> 200 งานเสร็จครบ
 2. เปิด Production Change Issue แยก
 3. Backup Remote D1 และบันทึก Worker version สำหรับ Rollback
 4. Apply Migration 0007
-5. Deploy Worker โดยคง `RUNTIME_MODE=shadow`
-6. เรียก `/admin/bootstrap-sheets`
-7. Import/ตรวจ Wage History และ Shift Schedule
-8. UAT LINE แบบรูปเข้า/รูปออก และตรวจรายละเอียดใน Sheets
-9. ตรวจ D1 ↔ Sheets ↔ Payroll มือ
-10. จึงพิจารณาเปิดใช้ยอดหักจริง
+5. ตรวจ tables/columns/indexes
+6. Deploy Worker โดยคง `RUNTIME_MODE=shadow`
+7. เรียก `/admin/bootstrap-sheets`
+8. Import/ตรวจ Wage History และ Shift Schedule
+9. UAT ตามรายการด้านบน
+10. ตรวจ D1 ↔ Sheets ↔ Payroll มือ
+11. จึงพิจารณาเปิดใช้ยอดหักจริง
 
 ## 10. Rollback
 
 - Rollback Worker ไป version ก่อนหน้า
 - ห้าม Drop ตารางหรือคอลัมน์จาก Migration 0007 ระหว่างเหตุฉุกเฉิน
+- ข้อมูลใหม่สามารถคงไว้แต่ Worker เก่าจะไม่ใช้งาน
 - ตรวจ Attendance, Daily/Weekly Payroll, Queue และ Sheets หลัง Rollback
 
 ## 11. ข้อควรระวัง
 
-กติกาหักค่าจ้างและ OT กระทบเงินจริง ต้องผ่าน Owner UAT และตรวจข้อกำหนดกฎหมายแรงงานก่อนเปิดใช้จ่ายจริง
+กติกาหักค่าจ้างและ OT เป็นนโยบายธุรกิจที่มีความเสี่ยงด้านกฎหมายแรงงาน ควรตรวจสอบกับผู้เชี่ยวชาญก่อนใช้หักเงินจริง

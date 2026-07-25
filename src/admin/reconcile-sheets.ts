@@ -1,15 +1,16 @@
 import { enqueueSheetSyncBatch } from "../db/repositories";
-import { addDays,isIsoDate,isoDateInBangkok,weekStartMonday } from "../shared/time";
+import { addDays,isIsoDate,isoDateInBangkok,payrollPeriodFor } from "../shared/time";
 import type { Env,SheetsSyncJob } from "../types";
 
 interface ReconcileInput { fromDate?:string; toDate?:string; limitPerType?:number }
 interface EntityRow { entity_key:unknown; version:unknown }
 function jobs(rows:EntityRow[],entityType:SheetsSyncJob["entityType"],traceId:string):SheetsSyncJob[]{return rows.map(row=>({kind:"SHEETS_SYNC",entityType,entityKey:String(row.entity_key),entityVersion:Number(row.version),traceId}));}
-export async function reconcileSheets(env:Env,input:ReconcileInput={}):Promise<{fromDate:string;toDate:string;enqueued:number;counts:Record<string,number>}>{
+export async function reconcileSheets(env:Env,input:ReconcileInput={}):Promise<{fromDate:string;toDate:string;enqueued:number;counts:Record<string,number>}>
+{
   const today=isoDateInBangkok(),fromDate=input.fromDate||addDays(today,-14),toDate=input.toDate||today,limit=Math.min(500,Math.max(1,Math.floor(Number(input.limitPerType||200))));
   if(!isIsoDate(fromDate)||!isIsoDate(toDate)||fromDate>toDate)throw new Error("fromDate/toDate must be valid YYYY-MM-DD and fromDate must not exceed toDate");
   if(addDays(fromDate,366)<toDate)throw new Error("Reconcile range must not exceed 366 days");
-  const weekFrom=weekStartMonday(fromDate),weekTo=weekStartMonday(toDate),traceId=`reconcile_${crypto.randomUUID()}`;
+  const weekFrom=payrollPeriodFor(fromDate).weekStart,weekTo=payrollPeriodFor(toDate).weekStart,traceId=`reconcile_${crypto.randomUUID()}`;
   const [attendance,daily,weekly,wages,shifts,ot,expense]=await Promise.all([
     env.DB.prepare(`SELECT event_id entity_key,version FROM attendance_events WHERE work_date BETWEEN ? AND ? ORDER BY work_date,event_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),
     env.DB.prepare(`SELECT employee_id||'|'||work_date entity_key,version FROM attendance_daily WHERE work_date BETWEEN ? AND ? ORDER BY work_date,employee_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),

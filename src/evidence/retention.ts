@@ -8,7 +8,7 @@ export interface EvidenceRetentionResult{enabled:boolean;attendanceDeleted:numbe
 const DAY_MS=86_400_000;
 function cutoffIso(nowMs:number,days:number):string{return new Date(nowMs-days*DAY_MS).toISOString();}
 
-async function candidates(env:Env,normalCutoff:string,shortCutoff:string,limitPerType:number):Promise<RetentionCandidate[]>{
+async function candidates(env:Env,normalCutoff:string,shortCutoff:string,limitPerType:number):Promise<RetentionCandidate[]> {
   const [attendance,expense]=await Promise.all([
     env.DB.prepare(`SELECT event_id id,image_key key FROM attendance_events WHERE evidence_deleted_at IS NULL AND image_key IS NOT NULL AND image_key<>'' AND created_at<=? ORDER BY created_at LIMIT ?`).bind(normalCutoff,limitPerType).all<{id:string;key:string}>(),
     env.DB.prepare(`SELECT document_id id,image_key key FROM expense_documents WHERE evidence_deleted_at IS NULL AND image_key IS NOT NULL AND image_key<>'' AND (((status='CANCELLED') AND COALESCE(updated_at,created_at)<=?) OR ((status<>'CANCELLED') AND created_at<=?)) ORDER BY created_at LIMIT ?`).bind(shortCutoff,normalCutoff,limitPerType).all<{id:string;key:string}>()
@@ -38,6 +38,6 @@ export async function cleanupExpiredEvidence(env:Env,nowMs=Date.now()):Promise<E
       if(row.source==="attendance")attendanceDeleted++;else expenseDeleted++;
     }catch(error){errors++;console.error("evidence-retention",row.source,row.id,error);}
   }
-  await safeRecordMetric(env,`evidence_retention_${deletedAt.slice(0,10)}`,"evidence_retention_ms",0,{attendanceDeleted,expenseDeleted,errors,normalDays,shortDays});
+  await safeRecordMetric(env,`evidence_retention_${deletedAt.slice(0,10)}`,"evidence_retention_ms",0,{attendanceDeleted:String(attendanceDeleted),expenseDeleted:String(expenseDeleted),errors:String(errors),normalDays:String(normalDays),shortDays:String(shortDays)});
   return{enabled:true,attendanceDeleted,expenseDeleted,errors};
 }

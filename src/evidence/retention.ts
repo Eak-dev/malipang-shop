@@ -20,7 +20,7 @@ async function scanPrefix(env:Env,prefix:string,limit:number,nowIso:string):Prom
   const listed=await env.EVIDENCE.list({prefix,limit,...(state?.cursor?{cursor:state.cursor}:{})});
   let newlyIndexed=0;
   for(const object of listed.objects){
-    const createdAt=object.uploaded instanceof Date?object.uploaded.toISOString():new Date(object.uploaded).toISOString();
+    const createdAt=object.uploaded.toISOString();
     const result=await env.DB.prepare(`INSERT OR IGNORE INTO evidence_objects(object_key,evidence_type,status,created_at,retention_eligible_at,updated_at) VALUES(?,?,'STORED',?,NULL,?)`).bind(object.key,evidenceType(prefix),createdAt,nowIso).run();
     newlyIndexed+=Number(result.meta.changes||0);
   }

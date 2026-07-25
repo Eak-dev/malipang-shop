@@ -1,0 +1,169 @@
+name: MalisPang Runtime Audit
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirmation:
+        description: Type AUDIT-RUNTIME-READONLY to confirm a read-only Production audit
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malispang-runtime-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    name: read-only-runtime-audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+
+    steps:
+      - name: Safety gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.confirmation }}" != "AUDIT-RUNTIME-READONLY" ]]; then
+            echo "Confirmation text does not match AUDIT-RUNTIME-READONLY" >&2
+            exit 1
+          fi
+
+      - name: Checkout protected main
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate read-only credentials are present
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "CLOUDFLARE_ACCOUNT_ID is missing" >&2; exit 1; }
+          test -n "$CLOUDFLARE_API_TOKEN" || { echo "CLOUDFLARE_API_TOKEN is missing" >&2; exit 1; }
+          test -n "$MALIPANG_ADMIN_TOKEN" || { echo "MALIPANG_ADMIN_TOKEN is missing" >&2; exit 1; }
+          test -n "$MALIPANG_WORKER_URL" || { echo "MALIPANG_WORKER_URL repository variable is missing" >&2; exit 1; }
+          npx wrangler auth token --json >/dev/null
+
+      - name: Record source evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p runtime-audit
+          git rev-parse HEAD > runtime-audit/source-sha.txt
+          node - <<'NODE' > runtime-audit/source-config.json
+          const fs=require('fs');
+          const config=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));
+          process.stdout.write(JSON.stringify({
+            runtimeMode:String(config.vars?.RUNTIME_MODE||''),
+            appEnv:String(config.vars?.APP_ENV||''),
+            sheetsSyncEnabled:String(config.vars?.SHEETS_SYNC_ENABLED||''),
+            r2EvidenceEnabled:String(config.vars?.R2_EVIDENCE_ENABLED||'')
+          },null,2));
+          NODE
+
+      - name: Record current Worker versions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler versions list --json > runtime-audit/worker-versions.json
+
+      - name: Probe deployed health readiness and status
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+
+          curl --silent --show-error \
+            --output runtime-audit/health.json \
+            --write-out '%{http_code}' \
+            "$base_url/health" > runtime-audit/health-http.txt
+
+          curl --silent --show-error \
+            --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            --output "$RUNNER_TEMP/readiness.raw.json" \
+            --write-out '%{http_code}' \
+            "$base_url/admin/readiness" > runtime-audit/readiness-http.txt
+
+          curl --silent --show-error \
+            --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            --output runtime-audit/status.json \
+            --write-out '%{http_code}' \
+            "$base_url/admin/status" > runtime-audit/status-http.txt
+
+          jq 'if .checks?.sheets?.detail?.metadata?.spreadsheetId then .checks.sheets.detail.metadata.spreadsheetId="REDACTED" else . end' \
+            "$RUNNER_TEMP/readiness.raw.json" > runtime-audit/readiness.json
+
+      - name: Validate and summarize evidence
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source_sha="$(cat runtime-audit/source-sha.txt)"
+          source_mode="$(jq -r '.runtimeMode' runtime-audit/source-config.json)"
+          health_http="$(cat runtime-audit/health-http.txt)"
+          readiness_http="$(cat runtime-audit/readiness-http.txt)"
+          status_http="$(cat runtime-audit/status-http.txt)"
+          health_mode="$(jq -r '.mode // "unknown"' runtime-audit/health.json)"
+          status_mode="$(jq -r '.mode // "unknown"' runtime-audit/status.json)"
+          open_failed="$(jq -r '.openFailedJobs // -1' runtime-audit/status.json)"
+          inbound_processing="$(jq '[.inbound[]? | select(.status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
+          sync_pending="$(jq '[.sync[]? | select(.status=="PENDING" or .status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
+
+          {
+            echo "## MalisPang read-only runtime audit"
+            echo "- Checked-out main SHA: \`$source_sha\`"
+            echo "- Source Runtime Mode: \`$source_mode\`"
+            echo "- Deployed /health mode: \`$health_mode\`"
+            echo "- /admin/status mode: \`$status_mode\`"
+            echo "- Health HTTP: \`$health_http\`"
+            echo "- Readiness HTTP: \`$readiness_http\`"
+            echo "- Status HTTP: \`$status_http\`"
+            echo "- Open failed jobs: \`$open_failed\`"
+            echo "- Inbound PROCESSING: \`$inbound_processing\`"
+            echo "- Sync PENDING/PROCESSING: \`$sync_pending\`"
+            echo "- Worker versions: captured in private workflow artifact"
+            echo "- Mutation performed: \`NO\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          jq -e '.ok == true' runtime-audit/health.json >/dev/null
+          jq -e '.ok == true' runtime-audit/readiness.json >/dev/null
+          jq -e '.ok == true' runtime-audit/status.json >/dev/null
+          [[ "$health_http" == "200" ]]
+          [[ "$readiness_http" == "200" ]]
+          [[ "$status_http" == "200" ]]
+          [[ "$health_mode" == "$status_mode" ]]
+
+      - name: Upload redacted runtime evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: malispang-runtime-audit-${{ github.run_id }}
+          path: |
+            runtime-audit/source-sha.txt
+            runtime-audit/source-config.json
+            runtime-audit/worker-versions.json
+            runtime-audit/health.json
+            runtime-audit/health-http.txt
+            runtime-audit/readiness.json
+            runtime-audit/readiness-http.txt
+            runtime-audit/status.json
+            runtime-audit/status-http.txt
+          if-no-files-found: warn
+          retention-days: 14

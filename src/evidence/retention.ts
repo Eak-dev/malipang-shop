@@ -2,42 +2,48 @@ import { safeRecordMetric } from "../db/repositories";
 import { isTrue,numberEnv } from "../shared/env";
 import type { Env } from "../types";
 
-interface RetentionCandidate{source:"attendance"|"expense";id:string;key:string;}
-export interface EvidenceRetentionResult{enabled:boolean;attendanceDeleted:number;expenseDeleted:number;errors:number;}
+export interface EvidenceRetentionResult{
+  enabled:boolean;
+  scanned:number;
+  newlyIndexed:number;
+  newlyEligible:number;
+  errors:number;
+}
 
 const DAY_MS=86_400_000;
+const PREFIXES=["attendance/","expense/"] as const;
 function cutoffIso(nowMs:number,days:number):string{return new Date(nowMs-days*DAY_MS).toISOString();}
+function evidenceType(prefix:string):string{return prefix.startsWith("attendance")?"attendance":"expense";}
 
-async function candidates(env:Env,normalCutoff:string,shortCutoff:string,limitPerType:number):Promise<RetentionCandidate[]> {
-  const [attendance,expense]=await Promise.all([
-    env.DB.prepare(`SELECT event_id id,image_key key FROM attendance_events WHERE evidence_deleted_at IS NULL AND image_key IS NOT NULL AND image_key<>'' AND created_at<=? ORDER BY created_at LIMIT ?`).bind(normalCutoff,limitPerType).all<{id:string;key:string}>(),
-    env.DB.prepare(`SELECT document_id id,image_key key FROM expense_documents WHERE evidence_deleted_at IS NULL AND image_key IS NOT NULL AND image_key<>'' AND (((status='CANCELLED') AND COALESCE(updated_at,created_at)<=?) OR ((status<>'CANCELLED') AND created_at<=?)) ORDER BY created_at LIMIT ?`).bind(shortCutoff,normalCutoff,limitPerType).all<{id:string;key:string}>()
-  ]);
-  return[
-    ...(attendance.results||[]).map(row=>({source:"attendance" as const,id:String(row.id),key:String(row.key)})),
-    ...(expense.results||[]).map(row=>({source:"expense" as const,id:String(row.id),key:String(row.key)}))
-  ];
+async function scanPrefix(env:Env,prefix:string,limit:number,nowIso:string):Promise<{scanned:number;newlyIndexed:number}>{
+  const state=await env.DB.prepare(`SELECT cursor FROM evidence_scan_state WHERE prefix=?`).bind(prefix).first<{cursor:string|null}>();
+  const listed=await env.EVIDENCE.list({prefix,limit,...(state?.cursor?{cursor:state.cursor}:{})});
+  let newlyIndexed=0;
+  for(const object of listed.objects){
+    const createdAt=object.uploaded instanceof Date?object.uploaded.toISOString():new Date(object.uploaded).toISOString();
+    const result=await env.DB.prepare(`INSERT OR IGNORE INTO evidence_objects(object_key,evidence_type,status,created_at,retention_eligible_at,updated_at) VALUES(?,?,'STORED',?,NULL,?)`).bind(object.key,evidenceType(prefix),createdAt,nowIso).run();
+    newlyIndexed+=Number(result.meta.changes||0);
+  }
+  const nextCursor=listed.truncated?String(listed.cursor||""):null;
+  await env.DB.prepare(`INSERT INTO evidence_scan_state(prefix,cursor,updated_at) VALUES(?,?,?) ON CONFLICT(prefix) DO UPDATE SET cursor=excluded.cursor,updated_at=excluded.updated_at`).bind(prefix,nextCursor,nowIso).run();
+  return{scanned:listed.objects.length,newlyIndexed};
 }
 
-async function markDeleted(env:Env,candidate:RetentionCandidate,deletedAt:string):Promise<void>{
-  if(candidate.source==="attendance"){
-    await env.DB.prepare(`UPDATE attendance_events SET evidence_deleted_at=? WHERE event_id=? AND evidence_deleted_at IS NULL`).bind(deletedAt,candidate.id).run();
-    return;
-  }
-  await env.DB.prepare(`UPDATE expense_documents SET evidence_deleted_at=? WHERE document_id=? AND evidence_deleted_at IS NULL`).bind(deletedAt,candidate.id).run();
+async function markEligible(env:Env,normalCutoff:string,shortCutoff:string,nowIso:string):Promise<number>{
+  const attendance=await env.DB.prepare(`UPDATE evidence_objects SET status='RETENTION_ELIGIBLE',retention_eligible_at=?,updated_at=? WHERE status='STORED' AND evidence_type='attendance' AND created_at<=?`).bind(nowIso,nowIso,normalCutoff).run();
+  const expense=await env.DB.prepare(`UPDATE evidence_objects SET status='RETENTION_ELIGIBLE',retention_eligible_at=?,updated_at=? WHERE status='STORED' AND evidence_type='expense' AND ((created_at<=? AND EXISTS(SELECT 1 FROM expense_documents d WHERE d.image_key=evidence_objects.object_key AND d.status='CANCELLED')) OR (created_at<=? AND NOT EXISTS(SELECT 1 FROM expense_documents d WHERE d.image_key=evidence_objects.object_key AND d.status='CANCELLED')))`).bind(nowIso,nowIso,shortCutoff,normalCutoff).run();
+  return Number(attendance.meta.changes||0)+Number(expense.meta.changes||0);
 }
 
-export async function cleanupExpiredEvidence(env:Env,nowMs=Date.now()):Promise<EvidenceRetentionResult>{
-  if(!isTrue(env.EVIDENCE_RETENTION_ENABLED))return{enabled:false,attendanceDeleted:0,expenseDeleted:0,errors:0};
-  const normalDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_DAYS,90))),shortDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_SHORT_RETENTION_DAYS,7))),limitPerType=Math.min(100,Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_BATCH_SIZE,50)))),normalCutoff=cutoffIso(nowMs,normalDays),shortCutoff=cutoffIso(nowMs,shortDays),rows=await candidates(env,normalCutoff,shortCutoff,limitPerType),deletedAt=new Date(nowMs).toISOString();
-  let attendanceDeleted=0,expenseDeleted=0,errors=0;
-  for(const row of rows){
-    try{
-      await env.EVIDENCE.delete(row.key);
-      await markDeleted(env,row,deletedAt);
-      if(row.source==="attendance")attendanceDeleted++;else expenseDeleted++;
-    }catch(error){errors++;console.error("evidence-retention",row.source,row.id,error);}
+export async function auditEvidenceRetention(env:Env,nowMs=Date.now()):Promise<EvidenceRetentionResult>{
+  if(!isTrue(env.EVIDENCE_RETENTION_AUDIT_ENABLED))return{enabled:false,scanned:0,newlyIndexed:0,newlyEligible:0,errors:0};
+  const started=Date.now(),normalDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_DAYS,90))),shortDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_SHORT_RETENTION_DAYS,7))),batchSize=Math.min(1000,Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_BATCH_SIZE,100)))),normalCutoff=cutoffIso(nowMs,normalDays),shortCutoff=cutoffIso(nowMs,shortDays),nowIso=new Date(nowMs).toISOString();
+  let scanned=0,newlyIndexed=0,newlyEligible=0,errors=0;
+  for(const prefix of PREFIXES){
+    try{const result=await scanPrefix(env,prefix,batchSize,nowIso);scanned+=result.scanned;newlyIndexed+=result.newlyIndexed;}
+    catch(error){errors++;console.error("evidence-retention-scan",prefix,error);}
   }
-  await safeRecordMetric(env,`evidence_retention_${deletedAt.slice(0,10)}`,"evidence_retention_ms",0,{attendanceDeleted:String(attendanceDeleted),expenseDeleted:String(expenseDeleted),errors:String(errors),normalDays:String(normalDays),shortDays:String(shortDays)});
-  return{enabled:true,attendanceDeleted,expenseDeleted,errors};
+  try{newlyEligible=await markEligible(env,normalCutoff,shortCutoff,nowIso);}catch(error){errors++;console.error("evidence-retention-mark",error);}
+  await safeRecordMetric(env,`evidence_retention_${nowIso.slice(0,10)}`,"evidence_retention_audit_ms",Date.now()-started,{scanned:String(scanned),newlyIndexed:String(newlyIndexed),newlyEligible:String(newlyEligible),errors:String(errors),normalDays:String(normalDays),shortDays:String(shortDays)});
+  return{enabled:true,scanned,newlyIndexed,newlyEligible,errors};
 }

@@ -4,10 +4,14 @@ import { saveEvidence } from "../evidence/r2";
 import { pushText } from "../line/api";
 import { numberEnv } from "../shared/env";
 import { sha256Hex } from "../shared/ids";
-import { weekStartMonday } from "../shared/time";
+import { payrollPeriodFor } from "../shared/time";
 import type { AttendanceCommitRequest,AttendanceCommitResult,Employee,Env,LineEvent,VisionResult } from "../types";
 import { describeClockValidationFailure } from "../vision/failure-reason";
 import { buildAttendanceReply } from "./messages";
+
+export function weeklyPayrollSyncEntityKey(employeeId:string,workDate:string):string{
+  return `${employeeId}|${payrollPeriodFor(workDate).weekStart}`;
+}
 
 export async function handleAttendance(env:Env,event:LineEvent,employee:Employee,reading:VisionResult,original:ArrayBuffer,traceId:string):Promise<boolean>{
   const to=event.source.userId||"",messageId=event.message?.id||"",webhookEventId=event.webhookEventId||`message:${messageId}`,receivedAtIso=new Date(event.timestamp).toISOString();
@@ -20,10 +24,10 @@ export async function handleAttendance(env:Env,event:LineEvent,employee:Employee
   const response=await stub.fetch("https://attendance.local/commit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(input)});if(!response.ok)throw new Error(`Attendance DO HTTP ${response.status}`);
   const result=await response.json() as AttendanceCommitResult;
   if(result.punchType==="COMPLETE"){await pushText(env,to,buildAttendanceReply(employee,result),traceId);return true;}
-  const weekStart=weekStartMonday(result.workDate),jobs=[
+  const jobs=[
     {kind:"SHEETS_SYNC" as const,entityType:"ATTENDANCE_EVENT" as const,entityKey:result.eventId,entityVersion:result.version,traceId},
     {kind:"SHEETS_SYNC" as const,entityType:"DAILY_PAYROLL" as const,entityKey:`${employee.employeeId}|${result.workDate}`,entityVersion:result.version,traceId},
-    {kind:"SHEETS_SYNC" as const,entityType:"WEEKLY_PAYROLL" as const,entityKey:`${employee.employeeId}|${weekStart}`,entityVersion:result.version,traceId}
+    {kind:"SHEETS_SYNC" as const,entityType:"WEEKLY_PAYROLL" as const,entityKey:weeklyPayrollSyncEntityKey(employee.employeeId,result.workDate),entityVersion:result.version,traceId}
   ];
   for(const job of jobs)await enqueueSheetSync(env,job);
   await pushText(env,to,buildAttendanceReply(employee,result),traceId);

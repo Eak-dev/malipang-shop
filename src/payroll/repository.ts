@@ -1,4 +1,4 @@
-import { isoDateInBangkok,payrollPeriodFor,weekStartMonday } from "../shared/time";
+import { isoDateInBangkok,payrollPeriodFor } from "../shared/time";
 import type { Employee,Env,WageSnapshot } from "../types";
 
 export function employeeFromRow(row:Record<string,unknown>):Employee{return{
@@ -55,6 +55,6 @@ export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string
 
 export async function refreshWeeklyPayroll(env:Env,employeeId:string,workDate:string,version:number,now=new Date().toISOString()):Promise<number>{
   await weeklyPayrollStatement(env,employeeId,workDate,version,now).run();
-  const weekStart=weekStartMonday(workDate),row=await env.DB.prepare(`SELECT version FROM payroll_weekly WHERE employee_id=? AND week_start=?`).bind(employeeId,weekStart).first<{version:number}>();
+  const weekStart=payrollPeriodFor(workDate).weekStart,row=await env.DB.prepare(`SELECT version FROM payroll_weekly WHERE employee_id=? AND week_start=?`).bind(employeeId,weekStart).first<{version:number}>();
   return Number(row?.version||version);
 }

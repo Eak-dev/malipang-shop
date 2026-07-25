@@ -1,21 +1,21 @@
-# Payroll V1 — รอบจันทร์–อาทิตย์ จ่ายวันพุธ
+# Payroll V1 — รอบพฤหัสบดี–พุธ จ่ายวันพุธ
 
 ## กติกา
 
-- รอบงานเริ่มวันจันทร์และสิ้นสุดวันอาทิตย์
-- จ่ายเงินในวันพุธถัดไป
-- ตัวอย่าง: รอบ 20–26 กรกฎาคม 2026 จ่าย 29 กรกฎาคม 2026
-- วันที่ 27 กรกฎาคมเริ่มรอบใหม่ ซึ่งจ่าย 5 สิงหาคม 2026
+- รอบงานเริ่มวันพฤหัสบดีและสิ้นสุดวันพุธ รวม 7 วัน
+- จ่ายเงินในวันพุธเดียวกับวันปิดรอบ
+- ตัวอย่าง: รอบ 23–29 กรกฎาคม 2026 จ่าย 29 กรกฎาคม 2026
+- วันที่ 30 กรกฎาคมเริ่มรอบใหม่ ซึ่งจ่าย 5 สิงหาคม 2026
 
 ## Google Sheets
 
 ชีท `V52_WEEKLY_PAYROLL` ใช้หัวตาราง:
 
-- `Pay_Date` = วันพุธที่จ่าย
-- `Week_Start` = วันจันทร์
-- `Week_End` = วันอาทิตย์
+- `Pay_Date` = วันพุธที่จ่ายและเป็นวันปิดรอบ
+- `Period_Start` = วันพฤหัสบดี
+- `Period_End` = วันพุธ
 
-คอลัมน์ `Week_End` ต่อท้ายเพื่อไม่เลื่อนตำแหน่งข้อมูลเดิมโดยไม่จำเป็น
+ระบบยังคงใช้คอลัมน์ฐานข้อมูลเดิม `week_start` และ `pay_sunday` เพื่อ backward compatibility แต่ค่าที่เขียนใหม่หมายถึง `Period_Start` และ `Period_End` ตามลำดับ ห้ามแก้หรือ rewrite Payroll Snapshot เดิมย้อนหลัง
 
 ## Preview ก่อนจ่าย
 
@@ -27,13 +27,15 @@ Authorization: Bearer <ADMIN_TOKEN>
 Content-Type: application/json
 
 {
-  "fromDate": "2026-07-20",
-  "toDate": "2026-07-26"
+  "fromDate": "2026-07-23",
+  "toDate": "2026-07-29"
 }
 ```
 
 ตรวจอย่างน้อย:
 
+- `periodStart` ต้องเป็น `2026-07-23`
+- `periodEnd` ต้องเป็น `2026-07-29`
 - `payDate` ต้องเป็น `2026-07-29`
 - ค่าแรง Snapshot ของพนักงานแต่ละคน
 - ยอดสายและ Missing Punch ไม่ถูกหักซ้อน
@@ -48,8 +50,8 @@ Authorization: Bearer <ADMIN_TOKEN>
 Content-Type: application/json
 
 {
-  "fromDate": "2026-07-20",
-  "toDate": "2026-07-26",
+  "fromDate": "2026-07-23",
+  "toDate": "2026-07-29",
   "runId": "payroll-2026-07-29-v1",
   "requestedBy": "OWNER"
 }
@@ -81,19 +83,21 @@ Content-Type: application/json
 1. ยืนยัน exact commit SHA
 2. Backup Remote D1 ใหม่ เก็บ Private พร้อม SHA-256
 3. บันทึก Worker version ปัจจุบันเพื่อ Rollback
-4. Apply Migration 0007 และ 0008
-5. Bootstrap/ตรวจ Google Sheets
+4. ตรวจว่า Migration 0007 และ 0008 ถูก Apply แล้ว โดยไม่แก้ migration เดิม
+5. Bootstrap/ตรวจ Google Sheets headers เป็น `Pay_Date`, `Period_Start`, `Period_End`
 6. Import/ตรวจ Wage History โดยไม่เดาค่าแรง
-7. รัน Preview รอบ 20–26 กรกฎาคม
+7. รัน Preview รอบ 23–29 กรกฎาคม
 8. Owner ตรวจยอดและคำนวณมืออย่างน้อย 2 คน
 9. Apply ด้วย Run ID ที่กำหนดครั้งเดียว
-10. เปลี่ยน `RUNTIME_MODE=production` เฉพาะเมื่อ Health/Readiness/Queue/DLQ/Lost/Duplicate/Reconcile ผ่าน
+10. เปลี่ยน Runtime เฉพาะผ่าน Production Change ที่อนุมัติและเมื่อ Health/Readiness/Queue/DLQ/Lost/Duplicate/Reconcile ผ่าน
 11. ตรวจ Attendance และ Expense จริงตามธรรมชาติ
 12. Monitor และเริ่ม Production Day-1 Audit #23
 
+การ Merge โค้ด Payroll ไม่ถือเป็นการอนุญาต Deploy, เปลี่ยน `RUNTIME_MODE`, เปลี่ยน LINE Webhook, Secret หรือปิด Legacy Apps Script
+
 ## Rollback
 
-Rollback Worker ไปเวอร์ชัน Shadow ที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008 และไม่ลบ Payroll Run/Audit
+Rollback Worker ไปเวอร์ชันที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008 และไม่ลบ Payroll Run/Audit
 
 หยุดจ่ายและ Rollback เมื่อ:
 

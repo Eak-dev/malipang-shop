@@ -2,24 +2,40 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {payrollPeriodFor} from '../dist/shared/time.js';
 
-test('20-26 July 2026 payroll is paid Wednesday 29 July',()=>{
-  assert.deepEqual(payrollPeriodFor('2026-07-20'),{
-    weekStart:'2026-07-20',
-    weekEnd:'2026-07-26',
+test('23-29 July 2026 payroll closes and pays Wednesday 29 July',()=>{
+  assert.deepEqual(payrollPeriodFor('2026-07-23'),{
+    weekStart:'2026-07-23',
+    weekEnd:'2026-07-29',
     payDate:'2026-07-29'
   });
-  assert.deepEqual(payrollPeriodFor('2026-07-26'),{
-    weekStart:'2026-07-20',
-    weekEnd:'2026-07-26',
+  assert.deepEqual(payrollPeriodFor('2026-07-29'),{
+    weekStart:'2026-07-23',
+    weekEnd:'2026-07-29',
     payDate:'2026-07-29'
   });
 });
 
-test('27 July starts a new payroll period paid 5 August',()=>{
-  assert.deepEqual(payrollPeriodFor('2026-07-27'),{
-    weekStart:'2026-07-27',
-    weekEnd:'2026-08-02',
+test('30 July starts the next payroll period paid 5 August',()=>{
+  assert.deepEqual(payrollPeriodFor('2026-07-30'),{
+    weekStart:'2026-07-30',
+    weekEnd:'2026-08-05',
     payDate:'2026-08-05'
+  });
+});
+
+test('Thursday-Wednesday payroll works across a month boundary',()=>{
+  assert.deepEqual(payrollPeriodFor('2026-02-02'),{
+    weekStart:'2026-01-29',
+    weekEnd:'2026-02-04',
+    payDate:'2026-02-04'
+  });
+});
+
+test('Thursday-Wednesday payroll works across a year boundary',()=>{
+  assert.deepEqual(payrollPeriodFor('2027-01-01'),{
+    weekStart:'2026-12-31',
+    weekEnd:'2027-01-06',
+    payDate:'2027-01-06'
   });
 });
 

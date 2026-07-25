@@ -54,10 +54,10 @@ flowchart LR
 | `รายวัน` | **Read + Write + clear selected inputs** | `src/sheets/daily-expense.ts`, called from `src/sheets/sync.ts` for confirmed/cancelled Expense; readiness validates layout | Existing owner accounting/report sheet | Reads `A1:D1000` and `A1:W3`; detects month blocks and payment columns. Writes B:D, selected payment amount column, V:W. Clears B:D, F:H, K:Q, V:W for mapped row; deliberately leaves other columns/formula areas untouched | **No full D1/report replacement yet** | **BLOCKED** | Critical: current accounting output depends on existing layout and formula/report behavior |
 | `V52_SYSTEM_LOG` | Header/bootstrap configuration | `src/sheets/client.ts` definition; `Env` includes `SHEET_SYSTEM_LOG` | Intended system log tab | Header: `Created_At`, `Trace_ID`, `Level`, `Event`, `Detail` | D1 `metrics`, `failed_jobs`, audit/status data cover most runtime observability | Review/remove later; current `syncJob()` has no `SYSTEM_LOG` writer branch | Low/cleanup item |
 | Google OAuth service account | Auth dependency | `src/sheets/google-auth.ts` | Auth for Direct Google Sheets API | `GOOGLE_SERVICE_ACCOUNT_EMAIL`, `GOOGLE_PRIVATE_KEY_BASE64`, `GOOGLE_SPREADSHEET_ID` | Not needed after all Sheets dependencies are removed | **BLOCKED** | Secret must remain while any Direct Sheets API read/write exists |
-| `SHEETS_SYNC_ENABLED` | Runtime gate for sync jobs | `src/sheets/sync.ts` | Stops D1→Sheets sync processing when false | Does **not** disable imports, bootstrap or readiness Sheets probes | N/A | Not a complete cutover switch | High if mistaken as "no Sheets dependency" |
+| `SHEETS_SYNC_ENABLED` | Runtime gate for sync jobs | `src/sheets/sync.ts`, `src/db/repositories.ts:enqueueSheetSyncBatch` | Stops D1→Sheets sync processing when false | Does **not** disable imports, bootstrap or readiness Sheets probes; new sync jobs are not persisted while disabled | N/A | Not a complete cutover switch | High if mistaken as "no Sheets dependency" or as an automatically catch-up-able pause |
 | Sheet bootstrap | Read + Write | `/admin/bootstrap-sheets` → `src/sheets/client.ts:bootstrapSheets` | Creates mirror tabs and rewrites required header rows | Adds missing tabs and writes headers to A1:* | Board/D1 does not need this after final Sheets retirement | Keep during current release/parity phase | Medium |
-| Reconcile | D1 → queue → Sheets write | `/admin/reconcile-sheets` → `src/admin/reconcile-sheets.ts` | Rebuilds mirror jobs from D1 | Attendance, daily/weekly Payroll, wage, shift, OT, confirmed Expense | D1 remains source; reconcile is migration/parity tooling | Required during #61 observation | Medium |
-| Retry/recovery | D1 → queue → Sheets write | `/admin/retry-sync`, scheduled recovery, `recoverPendingSheetJobs` | Recover failed/stale Sheets sync | Uses `sync_jobs` status/lease/retry model | Not needed after mirror retirement | Required while Sheets sync remains enabled | Medium |
+| Reconcile | D1 → queue → Sheets write | `/admin/reconcile-sheets` → `src/admin/reconcile-sheets.ts` | Rebuilds mirror jobs from D1 | Attendance, daily/weekly Payroll, wage, shift, OT, confirmed Expense | D1 remains source; reconcile is migration/parity tooling | Required during #61 observation and for any controlled sync-disable rollback/backfill | Medium |
+| Retry/recovery | D1 → queue → Sheets write | `/admin/retry-sync`, scheduled recovery, `recoverPendingSheetJobs` | Recover failed/stale Sheets sync | Uses `sync_jobs` status/lease/retry model | Not needed after mirror retirement | Required while Sheets sync remains enabled; cannot recover jobs that were never created while sync was disabled | Medium |
 
 ## Environment / configuration references
 
@@ -87,7 +87,7 @@ Secret values, private keys and full external IDs must never be copied into Issu
 
 ### Stops
 
-`syncJob()` returns before claiming/writing D1→Sheets jobs, so these mirrors stop updating:
+Both `enqueueSheetSyncBatch()` and `syncJob()` short-circuit while the flag is false. That means the mirrors stop updating **and new sync jobs are not inserted/queued for transactions that occur during the disabled interval**:
 
 - Attendance
 - Daily Payroll
@@ -98,6 +98,8 @@ Secret values, private keys and full external IDs must never be copied into Issu
 - Expense raw
 - `รายวัน` confirmed/cancelled Expense posting through the sync path
 
+This is important operationally: turning sync back on does **not** automatically replay the disabled interval, because those missing jobs do not exist in `sync_jobs` for `/admin/retry-sync` to recover.
+
 ### Does not stop / does not remove dependency
 
 - `/admin/import-employees-from-sheet` still reads `HR_STAFF_CONFIG`.
@@ -106,7 +108,19 @@ Secret values, private keys and full external IDs must never be copied into Issu
 - `/admin/readiness` still probes spreadsheet metadata and validates the `รายวัน` layout, so readiness can fail when Sheets is unavailable.
 - Google service-account configuration remains required by those paths.
 
-Conclusion: **`SHEETS_SYNC_ENABLED=false` is not equivalent to "Google Sheets removed".**
+### Required rollback/backfill after any controlled disable test
+
+If an approved future test temporarily disables Sheets sync and then decides to re-enable it:
+
+1. Record the exact disabled start/end timestamps and corresponding Bangkok business-date range.
+2. Re-enable `SHEETS_SYNC_ENABLED` only through the approved change procedure.
+3. Run a **date-bounded** `/admin/reconcile-sheets` for the entire disabled interval to recreate mirror jobs from D1.
+4. Wait until pending/processing sync returns to zero and failed/DLQ gates are clean.
+5. Compare D1 ↔ Sheets totals/rows for Attendance, Payroll and Expense before declaring rollback/catch-up complete.
+
+`/admin/retry-sync` alone is insufficient for the disabled interval because it only operates on sync jobs that already exist.
+
+Conclusion: **`SHEETS_SYNC_ENABLED=false` is not equivalent to "Google Sheets removed" and must not be treated as a lossless pause without an explicit reconcile backfill.**
 
 ## `รายวัน` formula/layout protection
 
@@ -178,7 +192,8 @@ Do not copy Script ID, Deployment ID, Web App URL, Tokens or private source cred
 4. Split `/admin/readiness` so Sheets is optional once Sheets is intentionally retired.
 5. Remove/retire bootstrap, import, reconcile and retry paths that exist only for Sheets.
 6. Run parallel parity/UAT and prove Lost = 0, Duplicate = 0 and explained totals.
-7. Only then remove Google service-account dependencies and set/retire the sync feature safely.
+7. Define a bounded disabled-interval reconcile/backfill procedure before any test of `SHEETS_SYNC_ENABLED=false`.
+8. Only then remove Google service-account dependencies and retire the sync feature safely.
 
 ## Recommended migration order
 
@@ -188,8 +203,9 @@ Do not copy Script ID, Deployment ID, Web App URL, Tokens or private source cred
 4. Move Shift Schedule editing/source of truth from Sheet to D1.
 5. Build a replacement for the `รายวัน` accounting/report behaviors and validate historical totals.
 6. Change readiness from mandatory Sheets probe to explicit optional integration health once approved.
-7. Run a controlled period with Sheets writes disabled but rollback available.
-8. Retire Google credentials/import/bootstrap/reconcile code only after parity and Owner approval.
+7. Run a controlled period with Sheets writes disabled only after recording the exact interval and pre-authorizing the reconcile-backfill/rollback procedure.
+8. If sync is re-enabled, run date-bounded `/admin/reconcile-sheets` over the full disabled interval and prove pending/processing/failed/DLQ/parity gates are clean.
+9. Retire Google credentials/import/bootstrap/reconcile code only after parity and Owner approval.
 
 ## Unknowns / Owner evidence still required
 

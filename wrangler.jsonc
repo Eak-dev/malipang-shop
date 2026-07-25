@@ -37,7 +37,7 @@
   "triggers": { "crons": ["*/5 * * * *"] },
   "vars": {
     "APP_ENV": "production",
-    "RUNTIME_MODE": "shadow",
+    "RUNTIME_MODE": "production",
     "TIMEZONE": "Asia/Bangkok",
     "ATTENDANCE_ENABLED": "true",
     "EXPENSE_ENABLED": "true",
@@ -45,7 +45,7 @@
     "R2_EVIDENCE_ENABLED": "true",
     "LINE_LOADING_ENABLED": "true",
     "LINE_LOADING_SECONDS": "20",
-    "SHADOW_LINE_OUTPUT": "true",
+    "SHADOW_LINE_OUTPUT": "false",
     "WORKERS_AI_ENABLED": "false",
     "WORKERS_AI_MODEL": "@cf/moondream/moondream3.1-9B-A2B",
     "OPENAI_FALLBACK_ENABLED": "true",

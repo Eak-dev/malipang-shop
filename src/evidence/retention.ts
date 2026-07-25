@@ -36,7 +36,7 @@ async function markEligible(env:Env,normalCutoff:string,shortCutoff:string,nowIs
 }
 
 export async function auditEvidenceRetention(env:Env,nowMs=Date.now()):Promise<EvidenceRetentionResult>{
-  if(!isTrue(env.EVIDENCE_RETENTION_AUDIT_ENABLED))return{enabled:false,scanned:0,newlyIndexed:0,newlyEligible:0,errors:0};
+  if(!isTrue(env.EVIDENCE_RETENTION_ENABLED))return{enabled:false,scanned:0,newlyIndexed:0,newlyEligible:0,errors:0};
   const started=Date.now(),normalDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_DAYS,90))),shortDays=Math.max(1,Math.floor(numberEnv(env.EVIDENCE_SHORT_RETENTION_DAYS,7))),batchSize=Math.min(1000,Math.max(1,Math.floor(numberEnv(env.EVIDENCE_RETENTION_BATCH_SIZE,100)))),normalCutoff=cutoffIso(nowMs,normalDays),shortCutoff=cutoffIso(nowMs,shortDays),nowIso=new Date(nowMs).toISOString();
   let scanned=0,newlyIndexed=0,newlyEligible=0,errors=0;
   for(const prefix of PREFIXES){

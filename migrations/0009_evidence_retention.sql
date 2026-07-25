@@ -1,10 +1,13 @@
 PRAGMA foreign_keys = ON;
 
-ALTER TABLE attendance_events ADD COLUMN evidence_deleted_at TEXT;
-ALTER TABLE expense_documents ADD COLUMN evidence_deleted_at TEXT;
+CREATE TABLE IF NOT EXISTS evidence_objects(
+  object_key TEXT PRIMARY KEY,
+  evidence_type TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('PENDING_UPLOAD','STORED','UPLOAD_FAILED','RETENTION_ELIGIBLE')),
+  created_at TEXT NOT NULL,
+  retention_eligible_at TEXT,
+  updated_at TEXT NOT NULL
+);
 
-CREATE INDEX IF NOT EXISTS idx_attendance_evidence_retention
-ON attendance_events(evidence_deleted_at, created_at);
-
-CREATE INDEX IF NOT EXISTS idx_expense_document_evidence_retention
-ON expense_documents(evidence_deleted_at, status, created_at, updated_at);
+CREATE INDEX IF NOT EXISTS idx_evidence_objects_retention
+ON evidence_objects(status, evidence_type, created_at);

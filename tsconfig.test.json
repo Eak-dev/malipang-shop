@@ -13,6 +13,7 @@
     "src/expense/text-parser.ts",
     "src/expense/flex.ts",
     "src/expense/service.ts",
+    "src/evidence/retention.ts",
     "src/line/signature.ts",
     "src/admin/staff-import.ts",
     "src/admin/correction-validation.ts",

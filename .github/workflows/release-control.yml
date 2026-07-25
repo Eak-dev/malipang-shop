@@ -22,14 +22,14 @@ on:
         required: true
         type: string
       period_start:
-        description: Payroll Monday in YYYY-MM-DD
+        description: Payroll Thursday in YYYY-MM-DD
         required: true
-        default: "2026-07-20"
+        default: "2026-07-23"
         type: string
       period_end:
-        description: Payroll Sunday in YYYY-MM-DD
+        description: Payroll Wednesday in YYYY-MM-DD
         required: true
-        default: "2026-07-26"
+        default: "2026-07-29"
         type: string
       run_id:
         description: Unique payroll Run ID; required only for payroll-apply
@@ -265,7 +265,7 @@ jobs:
         run: |
           set -euo pipefail
           base_url="${MALIPANG_WORKER_URL%/}"
-          expected_pay_date="$(node -e "const d=new Date('${PERIOD_START}T12:00:00Z');d.setUTCDate(d.getUTCDate()+9);process.stdout.write(d.toISOString().slice(0,10))")"
+          expected_pay_date="$PERIOD_END"
 
           jq -n --arg from "$PERIOD_START" --arg to "$PERIOD_END" '{fromDate:$from,toDate:$to}' > "$RUNNER_TEMP/preview-request.json"
           curl --silent --show-error --fail-with-body \

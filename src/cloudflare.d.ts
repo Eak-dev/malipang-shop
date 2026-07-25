@@ -12,9 +12,13 @@ interface D1Database {
 interface R2HttpMetadata { contentType?: string }
 interface R2PutOptions { httpMetadata?: R2HttpMetadata; customMetadata?: Record<string,string> }
 interface R2ObjectBody { body: ReadableStream; httpEtag: string; writeHttpMetadata(headers: Headers): void }
+interface R2Object { key:string; uploaded:Date }
+interface R2Objects { objects:R2Object[]; truncated:boolean; cursor?:string }
+interface R2ListOptions { prefix?:string; cursor?:string; limit?:number }
 interface R2Bucket {
   put(key: string, value: ArrayBuffer | ReadableStream | string, options?: R2PutOptions): Promise<unknown>;
   get(key: string): Promise<R2ObjectBody | null>;
+  list(options?:R2ListOptions):Promise<R2Objects>;
 }
 interface QueueSendOptions {}
 interface Queue<T> { send(body: T, options?: QueueSendOptions): Promise<void>; sendBatch(messages: Array<{body:T}>): Promise<void> }

@@ -51,16 +51,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Validate read-only credentials are present
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -n "$CLOUDFLARE_ACCOUNT_ID" || { echo "CLOUDFLARE_ACCOUNT_ID is missing" >&2; exit 1; }
-          test -n "$CLOUDFLARE_API_TOKEN" || { echo "CLOUDFLARE_API_TOKEN is missing" >&2; exit 1; }
-          test -n "$MALIPANG_ADMIN_TOKEN" || { echo "MALIPANG_ADMIN_TOKEN is missing" >&2; exit 1; }
-          test -n "$MALIPANG_WORKER_URL" || { echo "MALIPANG_WORKER_URL repository variable is missing" >&2; exit 1; }
-          npx wrangler auth token --json >/dev/null
-
       - name: Record source evidence
         shell: bash
         run: |
@@ -78,22 +68,71 @@ jobs:
           },null,2));
           NODE
 
+      - name: Inspect read-only binding availability
+        id: bindings
+        shell: bash
+        run: |
+          set -euo pipefail
+          cloudflare_account=false
+          cloudflare_token=false
+          admin_token=false
+          worker_url=false
+          [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] && cloudflare_account=true
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] && cloudflare_token=true
+          [[ -n "$MALIPANG_ADMIN_TOKEN" ]] && admin_token=true
+          [[ -n "$MALIPANG_WORKER_URL" ]] && worker_url=true
+
+          cloudflare_ready=false
+          admin_ready=false
+          full_ready=false
+          [[ "$cloudflare_account" == true && "$cloudflare_token" == true ]] && cloudflare_ready=true
+          [[ "$admin_token" == true && "$worker_url" == true ]] && admin_ready=true
+          [[ "$cloudflare_ready" == true && "$admin_ready" == true ]] && full_ready=true
+
+          jq -n \
+            --argjson cloudflareAccount "$cloudflare_account" \
+            --argjson cloudflareToken "$cloudflare_token" \
+            --argjson adminToken "$admin_token" \
+            --argjson workerUrl "$worker_url" \
+            '{CLOUDFLARE_ACCOUNT_ID:$cloudflareAccount,CLOUDFLARE_API_TOKEN:$cloudflareToken,MALIPANG_ADMIN_TOKEN:$adminToken,MALIPANG_WORKER_URL:$workerUrl}' \
+            > runtime-audit/bindings.json
+
+          echo "cloudflare_ready=$cloudflare_ready" >> "$GITHUB_OUTPUT"
+          echo "admin_ready=$admin_ready" >> "$GITHUB_OUTPUT"
+          echo "worker_url_ready=$worker_url" >> "$GITHUB_OUTPUT"
+          echo "full_ready=$full_ready" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Cloudflare read credential
+        if: steps.bindings.outputs.cloudflare_ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler auth token --json >/dev/null
+
       - name: Record current Worker versions
+        if: steps.bindings.outputs.cloudflare_ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
           npx wrangler versions list --json > runtime-audit/worker-versions.json
 
-      - name: Probe deployed health readiness and status
+      - name: Probe deployed health
+        if: steps.bindings.outputs.worker_url_ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
           base_url="${MALIPANG_WORKER_URL%/}"
-
           curl --silent --show-error \
             --output runtime-audit/health.json \
             --write-out '%{http_code}' \
             "$base_url/health" > runtime-audit/health-http.txt
+
+      - name: Probe deployed readiness and status
+        if: steps.bindings.outputs.admin_ready == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
 
           curl --silent --show-error \
             --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
@@ -117,14 +156,29 @@ jobs:
 
           source_sha="$(cat runtime-audit/source-sha.txt)"
           source_mode="$(jq -r '.runtimeMode' runtime-audit/source-config.json)"
-          health_http="$(cat runtime-audit/health-http.txt)"
-          readiness_http="$(cat runtime-audit/readiness-http.txt)"
-          status_http="$(cat runtime-audit/status-http.txt)"
-          health_mode="$(jq -r '.mode // "unknown"' runtime-audit/health.json)"
-          status_mode="$(jq -r '.mode // "unknown"' runtime-audit/status.json)"
-          open_failed="$(jq -r '.openFailedJobs // -1' runtime-audit/status.json)"
-          inbound_processing="$(jq '[.inbound[]? | select(.status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
-          sync_pending="$(jq '[.sync[]? | select(.status=="PENDING" or .status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
+          health_http="NOT_RUN"
+          readiness_http="NOT_RUN"
+          status_http="NOT_RUN"
+          health_mode="unknown"
+          status_mode="unknown"
+          open_failed="unknown"
+          inbound_processing="unknown"
+          sync_pending="unknown"
+
+          if [[ -f runtime-audit/health-http.txt ]]; then
+            health_http="$(cat runtime-audit/health-http.txt)"
+            health_mode="$(jq -r '.mode // "unknown"' runtime-audit/health.json)"
+          fi
+          if [[ -f runtime-audit/readiness-http.txt ]]; then
+            readiness_http="$(cat runtime-audit/readiness-http.txt)"
+          fi
+          if [[ -f runtime-audit/status-http.txt ]]; then
+            status_http="$(cat runtime-audit/status-http.txt)"
+            status_mode="$(jq -r '.mode // "unknown"' runtime-audit/status.json)"
+            open_failed="$(jq -r '.openFailedJobs // -1' runtime-audit/status.json)"
+            inbound_processing="$(jq '[.inbound[]? | select(.status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
+            sync_pending="$(jq '[.sync[]? | select(.status=="PENDING" or .status=="PROCESSING") | (.count|tonumber)] | add // 0' runtime-audit/status.json)"
+          fi
 
           {
             echo "## MalisPang read-only runtime audit"
@@ -138,9 +192,14 @@ jobs:
             echo "- Open failed jobs: \`$open_failed\`"
             echo "- Inbound PROCESSING: \`$inbound_processing\`"
             echo "- Sync PENDING/PROCESSING: \`$sync_pending\`"
-            echo "- Worker versions: captured in private workflow artifact"
+            echo "- Binding availability: captured as booleans only in artifact"
             echo "- Mutation performed: \`NO\`"
           } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ steps.bindings.outputs.full_ready }}" != "true" ]]; then
+            echo "Runtime audit is incomplete: one or more required read-only bindings are missing. See bindings.json; no secret values are recorded." >&2
+            exit 1
+          fi
 
           jq -e '.ok == true' runtime-audit/health.json >/dev/null
           jq -e '.ok == true' runtime-audit/readiness.json >/dev/null
@@ -158,6 +217,7 @@ jobs:
           path: |
             runtime-audit/source-sha.txt
             runtime-audit/source-config.json
+            runtime-audit/bindings.json
             runtime-audit/worker-versions.json
             runtime-audit/health.json
             runtime-audit/health-http.txt

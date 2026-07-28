@@ -85,11 +85,11 @@ Payroll Apply ทำได้วันที่ 5 สิงหาคม 2026 ห
 | Operation | Confirmation | Period / Run ID |
 |---|---|---|
 | Shadow preflight | `SHADOW-PREFLIGHT` | `2026-07-30` → `2026-08-05` |
-| Production cutover | `PRODUCTION-2026-07-28` | `2026-07-30` → `2026-08-05` |
+| Production cutover | `PRODUCTION-2026-07-29` | `2026-07-30` → `2026-08-05` |
 | Payroll preview | `PREVIEW-PAYROLL` | `2026-07-30` → `2026-08-05` |
 | Payroll apply | `APPLY-PAYROLL-2026-08-05` | `payroll-2026-08-05-v1` |
 
-## Controlled launch วันที่ 28 กรกฎาคม 2026
+## Controlled launch วันที่ 29 กรกฎาคม 2026
 
 ดำเนินการผ่าน Production Change ที่ Owner อนุมัติเท่านั้น:
 
@@ -111,7 +111,7 @@ Payroll Apply ทำได้วันที่ 5 สิงหาคม 2026 ห
 
 - ห้าม Preview/Apply รอบ `2026-07-23` ถึง `2026-07-29`
 - ห้ามใช้ Run ID `payroll-2026-07-29-v1`
-- ห้ามใช้ confirmation `PRODUCTION-2026-07-29` หรือ `APPLY-PAYROLL-2026-07-29`
+- ห้ามใช้ confirmation เดิม `PRODUCTION-2026-07-28` หรือ `APPLY-PAYROLL-2026-07-29`
 
 หลัง Silent Shadow ผ่าน ให้เปลี่ยน Runtime เฉพาะผ่าน config-only Production Change ที่อนุมัติ แล้วตรวจ Health/Readiness/Queue/DLQ/Lost/Duplicate/Reconcile ก่อนรับเหตุการณ์จริง
 

@@ -91,7 +91,7 @@ jobs:
               expected="SHADOW-PREFLIGHT"
               ;;
             production-cutover)
-              expected="PRODUCTION-2026-07-28"
+              expected="PRODUCTION-2026-07-29"
               ;;
             payroll-preview)
               expected="PREVIEW-PAYROLL"
@@ -140,8 +140,8 @@ jobs:
 
           if [[ "$OPERATION" == "production-cutover" ]]; then
             bangkok_date="$(TZ=Asia/Bangkok date +%F)"
-            if [[ "$bangkok_date" != "2026-07-28" ]]; then
-              echo "Production cutover is locked to 2026-07-28 Asia/Bangkok; current date is $bangkok_date" >&2
+            if [[ "$bangkok_date" != "2026-07-29" ]]; then
+              echo "Production cutover is locked to 2026-07-29 Asia/Bangkok; current date is $bangkok_date" >&2
               exit 1
             fi
           fi

@@ -55,3 +55,6 @@ export function payrollPeriodFor(workDate:string):PayrollPeriod{
   const weekStart=payrollPeriodStartThursday(workDate),weekEnd=addDays(weekStart,6);
   return{weekStart,weekEnd,payDate:weekEnd};
 }
+export function weeklyPayrollEntityKey(employeeId:string,workDate:string):string{
+  return`${employeeId}|${payrollPeriodFor(workDate).weekStart}`;
+}

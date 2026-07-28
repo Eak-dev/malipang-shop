@@ -2,14 +2,14 @@ import { enqueueSheetSync } from "../db/repositories";
 import { calculatePayroll,LATE_GRACE_MIN } from "../domain/payroll";
 import { approvedOtSatangForDay,getEmployeeById,resolveWageSnapshot,weeklyPayrollStatement } from "../payroll/repository";
 import { randomId } from "../shared/ids";
-import { weekStartMonday } from "../shared/time";
+import { weeklyPayrollEntityKey } from "../shared/time";
 import type { Env } from "../types";
 import { validateCorrection } from "./correction-validation";
 export async function correctAttendance(env:Env,rawInput:unknown):Promise<{eventId:string;version:number}>{
   const input=validateCorrection(rawInput),employee=await getEmployeeById(env,input.employeeId);if(!employee)throw new Error("Employee not found");
   const before=await env.DB.prepare(`SELECT * FROM attendance_daily WHERE employee_id=? AND work_date=?`).bind(input.employeeId,input.workDate).first<Record<string,unknown>>(),version=Number(before?.version||0)+1;
   const previousWage=Number(before?.daily_wage_snapshot_satang||before?.daily_wage_satang||0),resolved=previousWage>0?{wageSourceId:String(before?.wage_source_id||"LEGACY_SNAPSHOT"),dailyWageSatang:previousWage}:await resolveWageSnapshot(env,employee,input.workDate),otApprovedSatang=await approvedOtSatangForDay(env,input.employeeId,input.workDate);
-  const payroll=calculatePayroll({employee:{...employee,dailyWageSatang:resolved.dailyWageSatang},timeIn:input.timeIn,timeOut:input.timeOut,review:false,finalizeMissingPunch:true,otApprovedSatang}),eventId=randomId("admin_att"),messageId=randomId("admin_msg"),now=new Date().toISOString(),weekStart=weekStartMonday(input.workDate);
+  const payroll=calculatePayroll({employee:{...employee,dailyWageSatang:resolved.dailyWageSatang},timeIn:input.timeIn,timeOut:input.timeOut,review:false,finalizeMissingPunch:true,otApprovedSatang}),eventId=randomId("admin_att"),messageId=randomId("admin_msg"),now=new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO attendance_events(event_id,webhook_event_id,message_id,employee_id,work_date,punch_type,official_time,status,confidence,line_time,line_diff_minutes,image_key,note,validation_code,trace_id,created_at,version) VALUES(?,?,?,?,?,'REVIEW',?,'NORMAL',1,'',0,'',?,'ADMIN_CORRECTION',?,?,?)`).bind(eventId,messageId,messageId,input.employeeId,input.workDate,input.timeOut,input.reason.trim(),eventId,now,version),
     env.DB.prepare(`INSERT INTO attendance_daily(
@@ -21,6 +21,6 @@ export async function correctAttendance(env:Env,rawInput:unknown):Promise<{event
     env.DB.prepare(`INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),"ATTENDANCE_CORRECTION",`${input.employeeId}|${input.workDate}`,input.reason.trim(),JSON.stringify(before),JSON.stringify({timeIn:input.timeIn,timeOut:input.timeOut,wageSourceId:resolved.wageSourceId,payroll}),now)
   ]);
   const stub=env.ATTENDANCE_COORDINATOR.get(env.ATTENDANCE_COORDINATOR.idFromName(`${input.employeeId}|${input.workDate}`));await stub.fetch("https://attendance.local/sync",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({timeIn:input.timeIn,timeOut:input.timeOut,review:false,version})});
-  for(const job of [{entityType:"ATTENDANCE_EVENT" as const,entityKey:eventId},{entityType:"DAILY_PAYROLL" as const,entityKey:`${input.employeeId}|${input.workDate}`},{entityType:"WEEKLY_PAYROLL" as const,entityKey:`${input.employeeId}|${weekStart}`}])await enqueueSheetSync(env,{kind:"SHEETS_SYNC",...job,entityVersion:version,traceId:eventId});
+  for(const job of [{entityType:"ATTENDANCE_EVENT" as const,entityKey:eventId},{entityType:"DAILY_PAYROLL" as const,entityKey:`${input.employeeId}|${input.workDate}`},{entityType:"WEEKLY_PAYROLL" as const,entityKey:weeklyPayrollEntityKey(input.employeeId,input.workDate)}])await enqueueSheetSync(env,{kind:"SHEETS_SYNC",...job,entityVersion:version,traceId:eventId});
   return{eventId,version};
 }

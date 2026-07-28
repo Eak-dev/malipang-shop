@@ -4,8 +4,10 @@
 
 - รอบงานเริ่มวันพฤหัสบดีและสิ้นสุดวันพุธ รวม 7 วัน
 - จ่ายเงินในวันพุธเดียวกับวันปิดรอบ
-- ตัวอย่าง: รอบ 23–29 กรกฎาคม 2026 จ่าย 29 กรกฎาคม 2026
-- วันที่ 30 กรกฎาคมเริ่มรอบใหม่ ซึ่งจ่าย 5 สิงหาคม 2026
+- รอบเงินจริงรอบแรกที่ล็อกไว้คือ 30 กรกฎาคม–5 สิงหาคม 2026
+- จ่ายวันที่ 5 สิงหาคม 2026
+
+> รอบ 23–29 กรกฎาคม 2026 เป็นข้อมูล Historical/Audit เท่านั้น ห้ามใช้คำสั่ง Apply กับรอบนั้น และไม่ใช่เงื่อนไขเปิดระบบรอบนี้
 
 ## Google Sheets
 
@@ -27,16 +29,16 @@ Authorization: Bearer <ADMIN_TOKEN>
 Content-Type: application/json
 
 {
-  "fromDate": "2026-07-23",
-  "toDate": "2026-07-29"
+  "fromDate": "2026-07-30",
+  "toDate": "2026-08-05"
 }
 ```
 
 ตรวจอย่างน้อย:
 
-- `periodStart` ต้องเป็น `2026-07-23`
-- `periodEnd` ต้องเป็น `2026-07-29`
-- `payDate` ต้องเป็น `2026-07-29`
+- `periodStart` ต้องเป็น `2026-07-30`
+- `periodEnd` ต้องเป็น `2026-08-05`
+- `payDate` ต้องเป็น `2026-08-05`
 - ค่าแรง Snapshot ของพนักงานแต่ละคน
 - ยอดสายและ Missing Punch ไม่ถูกหักซ้อน
 - OT ตรงรายการที่ Owner อนุมัติ
@@ -50,9 +52,9 @@ Authorization: Bearer <ADMIN_TOKEN>
 Content-Type: application/json
 
 {
-  "fromDate": "2026-07-23",
-  "toDate": "2026-07-29",
-  "runId": "payroll-2026-07-29-v1",
+  "fromDate": "2026-07-30",
+  "toDate": "2026-08-05",
+  "runId": "payroll-2026-08-05-v1",
   "requestedBy": "OWNER"
 }
 ```
@@ -60,6 +62,8 @@ Content-Type: application/json
 `runId` ต้องไม่ซ้ำ รายการที่ Apply สำเร็จจะถูกบันทึกใน `payroll_runs`
 
 เมื่อส่ง `runId` เดิมซ้ำ ระบบคืนผลเดิมและไม่บวกค่าแรง ยอดหัก หรือ OT ซ้ำ
+
+Payroll Apply ทำได้วันที่ 5 สิงหาคม 2026 หลัง Owner อนุมัติแยกเท่านั้น การ Merge หรือ Deploy ไม่ได้อนุญาตให้ Apply
 
 ## กติกายอดหักในรายงาน
 
@@ -76,28 +80,46 @@ Content-Type: application/json
 
 จึงสามารถกระทบยอดจาก Base, Deduction, OT และ Net ได้ตรงโดยไม่ตีความว่าหัก 350 บาท
 
-## Cutover วันที่ 29 กรกฎาคม 2026
+## Release Control ที่ล็อกไว้
 
-ดำเนินการผ่าน Issue #22 เท่านั้น:
+| Operation | Confirmation | Period / Run ID |
+|---|---|---|
+| Shadow preflight | `SHADOW-PREFLIGHT` | `2026-07-30` → `2026-08-05` |
+| Production cutover | `PRODUCTION-2026-07-28` | `2026-07-30` → `2026-08-05` |
+| Payroll preview | `PREVIEW-PAYROLL` | `2026-07-30` → `2026-08-05` |
+| Payroll apply | `APPLY-PAYROLL-2026-08-05` | `payroll-2026-08-05-v1` |
+
+## Controlled launch วันที่ 28 กรกฎาคม 2026
+
+ดำเนินการผ่าน Production Change ที่ Owner อนุมัติเท่านั้น:
 
 1. ยืนยัน exact commit SHA
 2. Backup Remote D1 ใหม่ เก็บ Private พร้อม SHA-256
 3. บันทึก Worker version ปัจจุบันเพื่อ Rollback
-4. ตรวจว่า Migration 0007 และ 0008 ถูก Apply แล้ว โดยไม่แก้ migration เดิม
-5. Bootstrap/ตรวจ Google Sheets headers เป็น `Pay_Date`, `Period_Start`, `Period_End`
-6. Import/ตรวจ Wage History โดยไม่เดาค่าแรง
-7. รัน Preview รอบ 23–29 กรกฎาคม
-8. Owner ตรวจยอดและคำนวณมืออย่างน้อย 2 คน
-9. Apply ด้วย Run ID ที่กำหนดครั้งเดียว
-10. เปลี่ยน Runtime เฉพาะผ่าน Production Change ที่อนุมัติและเมื่อ Health/Readiness/Queue/DLQ/Lost/Duplicate/Reconcile ผ่าน
-11. ตรวจ Attendance และ Expense จริงตามธรรมชาติ
-12. Monitor และเริ่ม Production Day-1 Audit #23
+4. ยืนยันพนักงานจริง 4 คนเป็น `ACTIVE` และ UAT 3 คนเป็น `INACTIVE`
+5. Apply Migration `0007` → `0008` → `0009` ตามลำดับ โดยไม่แก้ migration เดิม
+6. Deploy exact RC เป็น Silent Shadow และยืนยันว่าไม่มี LINE output จริง
+7. Bootstrap/ตรวจ Google Sheets headers เป็น `Pay_Date`, `Period_Start`, `Period_End`
+8. Import/ตรวจ Wage History 500 บาท effective `2026-07-30` ครบ 4 คน โดยไม่เดาค่าแรง
+9. Import/ตรวจ Shift Schedule 28 แถวสำหรับ `2026-07-30` ถึง `2026-08-05`
+10. ตรวจ Health, Readiness, Attendance, Expense, Sheets Sync, Queue/DLQ, lost และ duplicate
+11. รัน Preview รอบ `2026-07-30` ถึง `2026-08-05`
+12. Owner ตรวจยอดและคำนวณมืออย่างน้อย 2 คน
+13. เตรียม Production config-only change และหยุดขออนุมัติ Cutover
+
+ห้ามใช้รายการเก่าต่อไปนี้เป็นขั้นตอนปัจจุบัน:
+
+- ห้าม Preview/Apply รอบ `2026-07-23` ถึง `2026-07-29`
+- ห้ามใช้ Run ID `payroll-2026-07-29-v1`
+- ห้ามใช้ confirmation `PRODUCTION-2026-07-29` หรือ `APPLY-PAYROLL-2026-07-29`
+
+หลัง Silent Shadow ผ่าน ให้เปลี่ยน Runtime เฉพาะผ่าน config-only Production Change ที่อนุมัติ แล้วตรวจ Health/Readiness/Queue/DLQ/Lost/Duplicate/Reconcile ก่อนรับเหตุการณ์จริง
 
 การ Merge โค้ด Payroll ไม่ถือเป็นการอนุญาต Deploy, เปลี่ยน `RUNTIME_MODE`, เปลี่ยน LINE Webhook, Secret หรือปิด Legacy Apps Script
 
 ## Rollback
 
-Rollback Worker ไปเวอร์ชันที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008 และไม่ลบ Payroll Run/Audit
+Rollback Worker ไปเวอร์ชันที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008/0009 และไม่ลบ Payroll Run/Audit
 
 หยุดจ่ายและ Rollback เมื่อ:
 

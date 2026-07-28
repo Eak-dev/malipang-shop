@@ -218,10 +218,10 @@ jobs:
         run: |
           set -euo pipefail
           npx wrangler d1 execute malipang-v5-2 --remote --json \
-            --command "SELECT SUM(CASE WHEN employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND status='ACTIVE' THEN 1 ELSE 0 END) AS real_active, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') AND status='INACTIVE' THEN 1 ELSE 0 END) AS uat_inactive, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') THEN 1 ELSE 0 END) AS uat_total FROM employees" \
+            --command "SELECT SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active_total, SUM(CASE WHEN employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND status='ACTIVE' THEN 1 ELSE 0 END) AS authorized_active, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') AND status='INACTIVE' THEN 1 ELSE 0 END) AS uat_inactive, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') THEN 1 ELSE 0 END) AS uat_total FROM employees" \
             > release-artifacts/employee-launch-status.json
           jq -e \
-            '.[0].success == true and .[0].results[0].real_active == 4 and .[0].results[0].uat_inactive == 3 and .[0].results[0].uat_total == 3' \
+            '.[0].success == true and .[0].results[0].active_total == 4 and .[0].results[0].authorized_active == 4 and .[0].results[0].uat_inactive == 3 and .[0].results[0].uat_total == 3' \
             release-artifacts/employee-launch-status.json >/dev/null
 
       - name: Apply Remote D1 migrations
@@ -285,7 +285,7 @@ jobs:
             -o release-artifacts/sheets-bootstrap.json
           jq -e '.ok == true' release-artifacts/sheets-bootstrap.json >/dev/null
 
-      - name: Import payroll source sheets
+      - name: Import Staff Config
         if: inputs.operation == 'shadow-preflight'
         shell: bash
         run: |
@@ -298,6 +298,24 @@ jobs:
             -o release-artifacts/staff-import.json
           jq -e '.ok == true' release-artifacts/staff-import.json >/dev/null
 
+      - name: Verify exact active employee set after staff import
+        if: inputs.operation == 'shadow-preflight'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json \
+            --command "SELECT SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active_total, SUM(CASE WHEN employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND status='ACTIVE' THEN 1 ELSE 0 END) AS authorized_active, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') AND status='INACTIVE' THEN 1 ELSE 0 END) AS uat_inactive, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') THEN 1 ELSE 0 END) AS uat_total FROM employees" \
+            > release-artifacts/employee-post-import-status.json
+          jq -e \
+            '.[0].success == true and .[0].results[0].active_total == 4 and .[0].results[0].authorized_active == 4 and .[0].results[0].uat_inactive == 3 and .[0].results[0].uat_total == 3' \
+            release-artifacts/employee-post-import-status.json >/dev/null
+
+      - name: Import Shift Schedule
+        if: inputs.operation == 'shadow-preflight'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
           curl --silent --show-error --fail-with-body \
             -X POST \
             -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \

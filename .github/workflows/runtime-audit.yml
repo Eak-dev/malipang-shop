@@ -102,13 +102,6 @@ jobs:
           echo "worker_url_ready=$worker_url" >> "$GITHUB_OUTPUT"
           echo "full_ready=$full_ready" >> "$GITHUB_OUTPUT"
 
-      - name: Validate Cloudflare read credential
-        if: steps.bindings.outputs.cloudflare_ready == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          npx wrangler auth token --json >/dev/null
-
       - name: Record current Worker versions
         if: steps.bindings.outputs.cloudflare_ready == 'true'
         shell: bash

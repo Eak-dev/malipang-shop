@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {payrollPeriodFor} from '../dist/shared/time.js';
+import {payrollPeriodFor,weeklyPayrollEntityKey} from '../dist/shared/time.js';
 
 test('23-29 July 2026 payroll closes and pays Wednesday 29 July',()=>{
   assert.deepEqual(payrollPeriodFor('2026-07-23'),{
@@ -41,4 +41,10 @@ test('Thursday-Wednesday payroll works across a year boundary',()=>{
 
 test('invalid payroll date is rejected',()=>{
   assert.throws(()=>payrollPeriodFor('29/07/2026'),/Invalid payroll date/);
+});
+
+test('all payroll maintenance flows can use the Thursday weekly sync entity key',()=>{
+  assert.equal(weeklyPayrollEntityKey('EMP001','2026-07-23'),'EMP001|2026-07-23');
+  assert.equal(weeklyPayrollEntityKey('EMP001','2026-07-29'),'EMP001|2026-07-23');
+  assert.equal(weeklyPayrollEntityKey('EMP001','2026-07-30'),'EMP001|2026-07-30');
 });

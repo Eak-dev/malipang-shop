@@ -73,3 +73,17 @@ test("required LINE operations still propagate HTTP failures",async()=>{
     globalThis.fetch=originalFetch;
   }
 });
+
+test("shadow mode suppresses owner DLQ alerts with all other LINE output",async()=>{
+  const originalFetch=globalThis.fetch,metrics=[],env=testEnv(metrics);
+  env.RUNTIME_MODE="shadow";
+  let calls=0;
+  globalThis.fetch=async()=>{calls+=1;return new Response("unexpected",{status:500});};
+  try{
+    await assert.doesNotReject(pushOwnerAlert(env,"alert","trace"));
+    assert.equal(calls,0);
+    assert.deepEqual(metricNames(metrics),[]);
+  }finally{
+    globalThis.fetch=originalFetch;
+  }
+});

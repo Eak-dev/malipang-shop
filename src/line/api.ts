@@ -65,6 +65,7 @@ export async function getLineBotInfo(env:Env):Promise<{userId:string;displayName
   return lineFetch(env,"/v2/bot/info",{method:"GET"},"readiness","line_readiness_ms").then(res=>res.json()) as Promise<{userId:string;displayName:string;basicId?:string}>;
 }
 export async function pushOwnerAlert(env:Env,text:string,traceId=""):Promise<void>{
+  if(!lineOutputEnabled(env))return;
   if(!env.LINE_OWNER_USER_ID)throw new Error("LINE_OWNER_USER_ID missing");
   await lineFetch(env,"/v2/bot/message/push",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({to:env.LINE_OWNER_USER_ID,messages:[{type:"text",text}]})},traceId,"line_dlq_alert_ms");
 }

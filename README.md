@@ -15,7 +15,7 @@ Backend กลางของร้านมะลิปังสำหรับ
 - Fast-track UAT วันที่ 23 กรกฎาคม 2026 ผ่าน Attendance `12/12` และ Expense `10/10`; หลักฐานอยู่ใน [รายงาน Fast-track UAT](docs/13_FAST_TRACK_UAT_2026-07-23.md)
 - Branch นี้เคย deploy ไปยัง Worker ที่อยู่ใน Shadow/UAT เพื่อเก็บหลักฐาน แต่ไม่เคยเปิด Production Mode และ UAT runtime harness ถูกถอดออกจาก final PR แล้ว
 - ทดสอบ LINE รูปนาฬิกาจริงแบบ IN และ OUT สำเร็จ
-- ระบบยังอยู่ใน Shadow/UAT แต่เปิดการตอบกลับ LINE เพื่อทดสอบ Flow ค่าใช้จ่ายครบวงจร
+- Release Candidate นี้ใช้ Silent Shadow: ประมวลผลและบันทึกเพื่อทดสอบ แต่ไม่ส่งข้อความจริงกลับ LINE
 - Attendance เปิดใช้งาน และ Expense เปิดเฉพาะผู้ใช้ที่ได้รับสิทธิ์เพื่อทดสอบ Shadow/UAT
 
 ยังไม่ถือเป็น Production จนกว่าจะผ่าน UAT รูปจริงตามเกณฑ์ ปรับข้อมูลพนักงาน/ค่าแรงจริง ตรวจ Legacy Apps Script และเปิด LINE output อย่างตั้งใจ
@@ -113,8 +113,9 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 
 | Setting | Value |
 |---|---|
+| `APP_ENV` | `shadow` |
 | `RUNTIME_MODE` | `shadow` |
-| `SHADOW_LINE_OUTPUT` | `true` |
+| `SHADOW_LINE_OUTPUT` | `false` |
 | `ATTENDANCE_ENABLED` | `true` |
 | `ATTENDANCE_STORE_LAT/LNG` | `13.89682 / 100.60830` |
 | `ATTENDANCE_ALLOWED_RADIUS_M` | `120` |
@@ -127,7 +128,7 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 | `OPENAI_FALLBACK_ENABLED` | `true` |
 | `OPENAI_MODEL` | `gpt-4.1-mini` |
 
-Shadow/UAT ปัจจุบันประมวลผลและบันทึกข้อมูลจริง พร้อมส่ง Loading/Reply/Push กลับ LINE เพื่อทดสอบครบ Flow โดยสิทธิ์บันทึกค่าใช้จ่ายยังควบคุมด้วย `can_submit_expense`
+Silent Shadow ตั้งใจประมวลผลและบันทึกข้อมูลจริงโดยไม่ส่ง Loading, Reply, Push หรือ Owner DLQ alert กลับ LINE การเงียบของ LINE ในโหมดนี้จึงเป็นพฤติกรรมที่คาดหวัง ไม่ใช่หลักฐานว่า Event ประมวลผลล้มเหลว และสิทธิ์บันทึกค่าใช้จ่ายยังควบคุมด้วย `can_submit_expense`
 
 ## ผลทดสอบบริการจริง
 

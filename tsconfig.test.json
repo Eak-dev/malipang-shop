@@ -16,6 +16,7 @@
     "src/evidence/retention.ts",
     "src/line/signature.ts",
     "src/admin/staff-import.ts",
+    "src/admin/shift-import.ts",
     "src/admin/correction-validation.ts",
     "src/admin/reconcile-sheets.ts",
     "src/admin/readiness.ts",

@@ -24,17 +24,17 @@ on:
       period_start:
         description: Payroll Thursday in YYYY-MM-DD
         required: true
-        default: "2026-07-23"
+        default: "2026-07-30"
         type: string
       period_end:
         description: Payroll Wednesday in YYYY-MM-DD
         required: true
-        default: "2026-07-29"
+        default: "2026-08-05"
         type: string
       run_id:
         description: Unique payroll Run ID; required only for payroll-apply
         required: false
-        default: "payroll-2026-07-29-v1"
+        default: "payroll-2026-08-05-v1"
         type: string
 
 permissions:
@@ -91,13 +91,13 @@ jobs:
               expected="SHADOW-PREFLIGHT"
               ;;
             production-cutover)
-              expected="PRODUCTION-2026-07-29"
+              expected="PRODUCTION-2026-07-28"
               ;;
             payroll-preview)
               expected="PREVIEW-PAYROLL"
               ;;
             payroll-apply)
-              expected="APPLY-PAYROLL-2026-07-29"
+              expected="APPLY-PAYROLL-2026-08-05"
               ;;
             *)
               echo "Unsupported operation: $OPERATION" >&2
@@ -128,17 +128,30 @@ jobs:
             fi
           fi
 
-          if [[ "$OPERATION" == "production-cutover" || "$OPERATION" == "payroll-apply" ]]; then
+          if [[ ! "$PERIOD_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || ! "$PERIOD_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+            echo "Payroll dates must use YYYY-MM-DD" >&2
+            exit 1
+          fi
+
+          if [[ "$PERIOD_START" != "2026-07-30" || "$PERIOD_END" != "2026-08-05" ]]; then
+            echo "First real-money payroll is locked to 2026-07-30 through 2026-08-05" >&2
+            exit 1
+          fi
+
+          if [[ "$OPERATION" == "production-cutover" ]]; then
             bangkok_date="$(TZ=Asia/Bangkok date +%F)"
-            if [[ "$bangkok_date" != "2026-07-29" ]]; then
-              echo "$OPERATION is locked to 2026-07-29 Asia/Bangkok; current date is $bangkok_date" >&2
+            if [[ "$bangkok_date" != "2026-07-28" ]]; then
+              echo "Production cutover is locked to 2026-07-28 Asia/Bangkok; current date is $bangkok_date" >&2
               exit 1
             fi
           fi
 
-          if [[ ! "$PERIOD_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ || ! "$PERIOD_END" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
-            echo "Payroll dates must use YYYY-MM-DD" >&2
-            exit 1
+          if [[ "$OPERATION" == "payroll-apply" ]]; then
+            bangkok_date="$(TZ=Asia/Bangkok date +%F)"
+            if [[ "$bangkok_date" != "2026-08-05" ]]; then
+              echo "Payroll Apply is locked to 2026-08-05 Asia/Bangkok; current date is $bangkok_date" >&2
+              exit 1
+            fi
           fi
 
           if [[ "$OPERATION" == "payroll-apply" && ! "$PAYROLL_RUN_ID" =~ ^[A-Za-z0-9_-]{8,80}$ ]]; then
@@ -198,6 +211,18 @@ jobs:
             --arg created_at "$(date -u +%FT%TZ)" \
             '{filename:$filename,private_r2_bucket:"malipang-private-backups",object_key:$object_key,sha256:$sha256,release_sha:$release_sha,created_at:$created_at,download_verification:"PASS",gzip_integrity:"PASS"}' \
             > release-artifacts/backup-metadata.json
+
+      - name: Verify employee launch statuses before migrations
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json \
+            --command "SELECT SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active_total, SUM(CASE WHEN employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND status='ACTIVE' THEN 1 ELSE 0 END) AS authorized_active, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') AND status='INACTIVE' THEN 1 ELSE 0 END) AS uat_inactive, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') THEN 1 ELSE 0 END) AS uat_total FROM employees" \
+            > release-artifacts/employee-launch-status.json
+          jq -e \
+            '.[0].success == true and .[0].results[0].active_total == 4 and .[0].results[0].authorized_active == 4 and .[0].results[0].uat_inactive == 3 and .[0].results[0].uat_total == 3' \
+            release-artifacts/employee-launch-status.json >/dev/null
 
       - name: Apply Remote D1 migrations
         if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
@@ -259,6 +284,56 @@ jobs:
             "$base_url/admin/bootstrap-sheets" \
             -o release-artifacts/sheets-bootstrap.json
           jq -e '.ok == true' release-artifacts/sheets-bootstrap.json >/dev/null
+
+      - name: Import Staff Config
+        if: inputs.operation == 'shadow-preflight'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            "$base_url/admin/import-employees-from-sheet" \
+            -o release-artifacts/staff-import.json
+          jq -e '.ok == true' release-artifacts/staff-import.json >/dev/null
+
+      - name: Verify exact active employee set after staff import
+        if: inputs.operation == 'shadow-preflight'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json \
+            --command "SELECT SUM(CASE WHEN status='ACTIVE' THEN 1 ELSE 0 END) AS active_total, SUM(CASE WHEN employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND status='ACTIVE' THEN 1 ELSE 0 END) AS authorized_active, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') AND status='INACTIVE' THEN 1 ELSE 0 END) AS uat_inactive, SUM(CASE WHEN employee_id IN ('UATAND','UATIPH','UATMISS') THEN 1 ELSE 0 END) AS uat_total FROM employees" \
+            > release-artifacts/employee-post-import-status.json
+          jq -e \
+            '.[0].success == true and .[0].results[0].active_total == 4 and .[0].results[0].authorized_active == 4 and .[0].results[0].uat_inactive == 3 and .[0].results[0].uat_total == 3' \
+            release-artifacts/employee-post-import-status.json >/dev/null
+
+      - name: Import Shift Schedule
+        if: inputs.operation == 'shadow-preflight'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body \
+            -X POST \
+            -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
+            "$base_url/admin/import-shifts-from-sheet" \
+            -o release-artifacts/shift-import.json
+          jq -e '.ok == true' release-artifacts/shift-import.json >/dev/null
+
+      - name: Verify first payroll baseline in D1
+        if: inputs.operation == 'shadow-preflight' || inputs.operation == 'production-cutover'
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json \
+            --command "SELECT (SELECT COUNT(*) FROM employee_wage_history WHERE employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND effective_from='2026-07-30' AND daily_wage_satang=50000) AS wage_rows, (SELECT COUNT(*) FROM employee_shift_days WHERE employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND work_date BETWEEN '2026-07-30' AND '2026-08-05') AS shift_rows, (SELECT COUNT(*) FROM employee_shift_days WHERE employee_id IN ('EMP_TEST','EMP001','EMP002','EMP003') AND work_date BETWEEN '2026-07-30' AND '2026-08-05' AND status NOT IN ('EXPECTED','DAY_OFF','CANCELLED')) AS invalid_shift_rows" \
+            > release-artifacts/payroll-baseline.json
+          jq -e \
+            '.[0].success == true and .[0].results[0].wage_rows == 4 and .[0].results[0].shift_rows == 28 and .[0].results[0].invalid_shift_rows == 0' \
+            release-artifacts/payroll-baseline.json >/dev/null
 
       - name: Run read-only Payroll Preview
         shell: bash

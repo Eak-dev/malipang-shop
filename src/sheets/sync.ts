@@ -16,7 +16,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   const claim=await env.DB.prepare(`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`).bind(now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
-export async function syncJob(env:Env,job:SheetsSyncJob):Promise<void>{
+export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<void>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return;
   const leaseToken=await claimSheetSyncJob(env,job);if(!leaseToken)return;
   try{
@@ -44,6 +44,10 @@ export async function syncJob(env:Env,job:SheetsSyncJob):Promise<void>{
       }
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
     await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
-  }catch(error){const nowMs=Date.now(),delaySeconds=queueRetryDelaySeconds(error),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(error),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw error;}
+  }catch(error){
+    const attemptRow=await env.DB.prepare(`SELECT attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=? AND lease_token=?`).bind(job.entityType,job.entityKey,job.entityVersion,leaseToken).first<{attempt_count:number}>(),attempt=Math.max(retryAttempt,Number(attemptRow?.attempt_count||1)),retryError=error instanceof Error?error:new Error(String(error));
+    Object.defineProperty(retryError,"retryAttempt",{value:attempt,configurable:true});
+    const nowMs=Date.now(),delaySeconds=queueRetryDelaySeconds(retryError,attempt,()=>0),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(retryError),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw retryError;
+  }
 }
 function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

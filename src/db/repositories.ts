@@ -44,7 +44,8 @@ export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
 }
 interface ScheduledSheetJob{body:SheetsSyncJob;delaySeconds:number;nextAttemptAt:string}
 interface RecoverableSheetJobRow{entity_type:unknown;entity_key:unknown;entity_version:unknown;trace_id:unknown;status:unknown;updated_at:unknown;next_attempt_at:unknown;lease_until:unknown}
-export function sheetJobDelaySeconds(index:number,rateLimited:boolean):number{return rateLimited?Math.floor(index/5)*60:0;}
+const SHEETS_SAFE_WRITES_PER_MINUTE=40;
+export function sheetJobDelaySeconds(index:number,rateLimited:boolean):number{return rateLimited?Math.floor(index/SHEETS_SAFE_WRITES_PER_MINUTE)*60:0;}
 function scheduleSheetJobs(jobs:SheetsSyncJob[],rateLimited:boolean,nowMs=Date.now()):ScheduledSheetJob[]{
   return jobs.map((body,index)=>{const delaySeconds=sheetJobDelaySeconds(index,rateLimited);return{body,delaySeconds,nextAttemptAt:new Date(nowMs+delaySeconds*1000).toISOString()};});
 }

@@ -120,7 +120,9 @@ export async function insertMissingScheduleRows(env:Env,rawRows:ShiftInsertInput
       if(shiftChanges===1){inserted++;jobs.push({kind:"SHEETS_SYNC",entityType:"SHIFT_SCHEDULE",entityKey:`${row.employeeId}|${row.workDate}`,entityVersion:1,traceId:operationId});}
     }
   }
-  await enqueueSheetSyncBatch(env,jobs);
+  // A full default schedule can contain hundreds of rows. Pace these writes
+  // below the Google Sheets per-user quota instead of releasing them at once.
+  await enqueueSheetSyncBatch(env,jobs,true);
   return{inserted,existing:planned.length-inserted};
 }
 export async function generateDefaultSchedule(env:Env,input:GenerateDefaultScheduleInput):Promise<{inserted:number;existing:number;requested:number}>{

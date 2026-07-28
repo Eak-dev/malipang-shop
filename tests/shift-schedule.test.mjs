@@ -13,7 +13,8 @@ function makeEnv({inactive=[]}={}){
     wages:new Map(employeeIds.map(id=>[id,[{employee_id:id,wage_id:`wage_${id}`,daily_wage_satang:50000,effective_from:"2026-07-30",effective_to:null}]])),
     shifts:new Map(),
     audits:[],
-    queued:[]
+    queued:[],
+    queuedMessages:[]
   };
   const statement=(sql)=>({sql,args:[],bind(...args){this.args=args;return this;},async all(){
     if(sql.includes("FROM employees WHERE employee_id IN"))return{results:this.args.map(id=>state.employees.get(String(id))).filter(Boolean),meta:{}};
@@ -57,7 +58,7 @@ function makeEnv({inactive=[]}={}){
       });
     }
   };
-  return{state,env:{DB:db,SHEETS_SYNC_ENABLED:"true",JOB_QUEUE:{async sendBatch(messages){state.queued.push(...messages.map(message=>message.body));}}}};
+  return{state,env:{DB:db,SHEETS_SYNC_ENABLED:"true",JOB_QUEUE:{async sendBatch(messages){state.queuedMessages.push(...messages);state.queued.push(...messages.map(message=>message.body));}}}};
 }
 const generateInput=(employeeIds=["EMP001"])=>({employeeIds,fromDate:"2026-07-30",toDate:"2026-07-30",scheduledIn:"04:00",scheduledOut:"16:00",changedBy:"OWNER",reason:"Initial default schedule"});
 
@@ -84,6 +85,9 @@ test("locked default range creates 620 EXPECTED rows with no gaps or duplicates"
   }
   assert.equal(new Set([...state.shifts.keys()]).size,620);
   assert.equal(state.audits.length,620);
+  assert.equal(state.queuedMessages[39].delaySeconds,undefined);
+  assert.equal(state.queuedMessages[40].delaySeconds,60);
+  assert.equal(state.queuedMessages[619].delaySeconds,900);
 });
 
 test("default generation never overwrites DAY_OFF or CANCELLED Owner overrides",async()=>{

@@ -36,11 +36,9 @@ test('large forced sheet batches are spread across minute windows',async()=>{
   const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${index}`,entityVersion:1,traceId:'reconcile_test'}));
   assert.equal(await enqueueSheetSyncBatch(env,jobs,true),45);
   assert.equal(sent[0].delaySeconds,undefined);
-  assert.equal(sent[4].delaySeconds,undefined);
-  assert.equal(sent[5].delaySeconds,60);
-  assert.equal(sent[9].delaySeconds,60);
-  assert.equal(sent[10].delaySeconds,120);
+  assert.equal(sent[39].delaySeconds,undefined);
+  assert.equal(sent[40].delaySeconds,60);
+  assert.equal(sent[44].delaySeconds,60);
   assert.match(bound[0].sql,/next_attempt_at/);
-  assert.equal(Date.parse(bound[5].args[6])-Date.parse(bound[0].args[6]),60_000,'persisted eligibility must match queue delay');
-  assert.equal(Date.parse(bound[10].args[6])-Date.parse(bound[0].args[6]),120_000);
+  assert.equal(Date.parse(bound[40].args[6])-Date.parse(bound[0].args[6]),60_000,'persisted eligibility must match queue delay');
 });

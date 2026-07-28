@@ -23,7 +23,11 @@ test("release control uses the first real payroll cycle and verifies its sources
     "authorized_active == 4",
     "uat_inactive == 3",
     "wage_rows == 4",
-    "shift_rows == 28",
+    "shift_rows == 620",
+    "expected_rows == 620",
+    "first_cycle_rows == 28",
+    "employees_with_155 == 4",
+    "uat_shift_rows == 0",
     "/admin/import-employees-from-sheet",
     "/admin/import-shifts-from-sheet"
   ])assert.match(workflow,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
@@ -57,6 +61,6 @@ test("shift status accepts only the three approved source values",()=>{
   assert.equal(parseShiftStatus("EXPECTED"),"EXPECTED");
   assert.equal(parseShiftStatus("DAY_OFF"),"DAY_OFF");
   assert.equal(parseShiftStatus("CANCELLED"),"CANCELLED");
-  assert.throws(()=>parseShiftStatus(""),/Invalid shift Status/);
-  assert.throws(()=>parseShiftStatus("EXPECTD"),/Invalid shift Status/);
+  assert.throws(()=>parseShiftStatus(""),/Invalid shift status/);
+  assert.throws(()=>parseShiftStatus("EXPECTD"),/Invalid shift status/);
 });

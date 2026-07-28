@@ -91,7 +91,46 @@ Late และ Missing Punch ไม่บวกซ้อนกัน ระบ�
 POST /admin/import-shifts-from-sheet
 ```
 
-ค่าแรง Snapshot และ Wage Source จะถูก Resolve ตอน Import กะ
+การ Import จากชีทและการสร้างค่าเริ่มต้นเป็นแบบ **insert-only**: ถ้ามี
+`Employee_ID + Work_Date` อยู่แล้ว ระบบจะไม่แก้ Status, เวลา หรือหมายเหตุเดิม
+จึงไม่ใช้ Import เป็นช่องทางแก้วันหยุดของ Owner ค่าแรง Snapshot และ Wage Source
+จะถูก Resolve เฉพาะตอนสร้างแถวใหม่
+
+สร้างตารางเริ่มต้นด้วย:
+
+```text
+POST /admin/shifts/generate-defaults
+X-MaliPang-Actor: <admin identity>
+
+{
+  "employeeIds": ["EMP001", "EMP002", "EMP003", "EMP004"],
+  "fromDate": "2026-07-30",
+  "toDate": "2026-12-31",
+  "scheduledIn": "04:00",
+  "scheduledOut": "16:00",
+  "reason": "Owner-approved default schedule"
+}
+```
+
+แก้วันของพนักงานหนึ่งคนโดยตั้งใจผ่าน endpoint แยก:
+
+```text
+POST /admin/shifts/override
+X-MaliPang-Actor: <admin identity>
+
+{
+  "employeeId": "EMP001",
+  "workDate": "2026-08-01",
+  "newStatus": "DAY_OFF",
+  "reason": "Owner approved day off"
+}
+```
+
+- รับ Status เฉพาะ `EXPECTED`, `DAY_OFF`, `CANCELLED`
+- พนักงานต้องเป็น `ACTIVE`; พนักงาน UAT/Inactive จะถูกปฏิเสธ
+- Owner override ไม่เปลี่ยนเวลาโดยอัตโนมัติและกระทบเพียงพนักงาน/วันที่ที่ระบุ
+- ทุกการสร้างและ Override เขียนประวัติแบบ append-only ใน `shift_schedule_audit`
+- `DAY_OFF` และ `CANCELLED` ไม่สร้าง Missing Punch; Attendance ที่มีอยู่ยังเป็นหลักฐานและไม่เปลี่ยนสถานะกะ
 
 ## 5. OT แบบเหมาจำนวนเงิน
 
@@ -243,7 +282,7 @@ POST /admin/ot/finalize
 1. Review และ Merge PR โดยยังไม่ Deploy
 2. เปิด Production Change Issue แยก
 3. Backup Remote D1 และบันทึก Worker version สำหรับ Rollback
-4. Apply Migration 0007
+4. Apply Migration `0007` → `0008` → `0009` → `0010` ตามลำดับ
 5. ตรวจ tables/columns/indexes
 6. Deploy Worker โดยคง `RUNTIME_MODE=shadow`
 7. เรียก `/admin/bootstrap-sheets`
@@ -255,9 +294,13 @@ POST /admin/ot/finalize
 ## 10. Rollback
 
 - Rollback Worker ไป version ก่อนหน้า
-- ห้าม Drop ตารางหรือคอลัมน์จาก Migration 0007 ระหว่างเหตุฉุกเฉิน
+- ห้าม Drop ตารางหรือคอลัมน์จาก Migration 0007–0010 ระหว่างเหตุฉุกเฉิน
 - ข้อมูลใหม่สามารถคงไว้แต่ Worker เก่าจะไม่ใช้งาน
 - ตรวจ Attendance, Daily/Weekly Payroll, Queue และ Sheets หลัง Rollback
+
+Migration `0010` เป็น additive migration: เพิ่มตัวระบุการสร้างใน
+`employee_shift_days`, ตาราง Audit และ trigger ป้องกันแก้/ลบ Audit
+Rollback ใช้ Worker version เดิมและ forward-fix เท่านั้น ไม่ Drop schema หรือ Audit
 
 ## 11. ข้อควรระวัง
 

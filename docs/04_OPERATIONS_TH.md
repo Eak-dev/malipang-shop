@@ -27,6 +27,14 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 คำสั่งนี้ใช้ D1 เป็นข้อมูลจริงและเขียนแท็บ `V52_*` ใหม่แบบ idempotent รวมทั้ง backfill ค่าใช้จ่ายที่ยืนยันแล้วลง `รายวัน` โดยไม่แตะสูตร
 
+## LINE Push ตอบผู้ใช้ไม่ได้
+
+ข้อความ Push และ Flex ที่ใช้แจ้งผลหลังธุรกรรมสิ้นสุดแล้วเป็น notification แบบ best effort หาก LINE ตอบ 429 หรือ HTTP error ระบบจะเก็บ `line_push_ms` และ `line_notification_failure` แต่จะไม่เปลี่ยนธุรกรรมที่สำเร็จหรือเหตุการณ์ที่ถูกปฏิเสธอย่างถูกต้องให้เป็น `FAILED` และจะไม่ retry งานธุรกิจทั้ง Event เพียงเพราะส่งข้อความแจ้งเตือนไม่สำเร็จ
+
+Flex ที่ผู้ใช้ต้องกด `Save` หรือ `Cancel` เพื่อให้ Workflow เดินต่อยังเป็น actionable notification แบบ strict หากส่งไม่สำเร็จ Queue จะ retry และกรณีสลิปเดิมมี `WAITING_CONFIRM` อยู่แล้ว ระบบจะส่งการ์ดเดิมซ้ำแทนการสร้าง Expense ซ้ำหรือปฏิเสธว่าเป็นสลิปซ้ำ
+
+ตรวจ D1 ก่อนเสมอว่าธุรกรรมถูกสร้างหรือไม่ ห้าม replay Event โดยเดา ส่วน LINE operation ที่จำเป็นต่อการทำงาน เช่น ดาวน์โหลดรูปหลักฐานและ Owner DLQ alert ยังคงถือว่าเป็น error และเข้าสู่ retry ตามปกติ
+
 ## แก้เวลาเข้า–ออก
 
 ```bash

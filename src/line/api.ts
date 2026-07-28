@@ -24,8 +24,25 @@ export async function pushFlex(env:Env,to:string,message:unknown,traceId=""):Pro
   if(!lineOutputEnabled(env))return;
   await pushLineMessages(env,to,[message],traceId);
 }
-async function pushLineMessages(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
+export async function pushActionableFlex(env:Env,to:string,message:unknown,traceId=""):Promise<void>{
+  if(!lineOutputEnabled(env))return;
+  await pushLineMessagesStrict(env,to,[message],traceId);
+}
+function notificationHttpStatus(error:unknown):string{
+  const match=error instanceof Error?error.message.match(/\bHTTP (\d{3})\b/):null;
+  return match?.[1]||"ERROR";
+}
+async function pushLineMessagesStrict(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
   await lineFetch(env,"/v2/bot/message/push",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({to,messages})},traceId,"line_push_ms");
+}
+async function pushLineMessages(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
+  try{
+    await pushLineMessagesStrict(env,to,messages,traceId);
+  }catch(error){
+    const status=notificationHttpStatus(error);
+    console.error("line-notification-failed",{channel:"push",status});
+    await safeRecordMetric(env,traceId,"line_notification_failure",0,{channel:"push",status});
+  }
 }
 export async function replyText(env: Env, replyToken: string, text: string, traceId=""): Promise<void> {
   if (!lineOutputEnabled(env)) return;
@@ -34,7 +51,7 @@ export async function replyText(env: Env, replyToken: string, text: string, trac
 export async function pushConfirmation(env: Env, to: string, title: string, body: string, confirmData: string, cancelData: string, traceId=""): Promise<void> {
   if (!lineOutputEnabled(env)) return;
   const message = { type:"template", altText:title, template:{ type:"confirm", text:body.slice(0,240), actions:[{type:"postback", label:"ยืนยัน", data:confirmData, displayText:"ยืนยันบันทึก"},{type:"postback", label:"ยกเลิก", data:cancelData, displayText:"ยกเลิก"}] } };
-  await lineFetch(env, "/v2/bot/message/push", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({to,messages:[message]}) },traceId,"line_push_ms");
+  await pushLineMessagesStrict(env,to,[message],traceId);
 }
 export async function downloadLineContent(env: Env, messageId: string, preview=false, traceId=""): Promise<ArrayBuffer> {
   const started=Date.now();let status="ERROR";

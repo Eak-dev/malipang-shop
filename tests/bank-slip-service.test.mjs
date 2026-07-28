@@ -41,6 +41,34 @@ test('duplicate reference or image creates no new records',async()=>{
   assert.equal(h.state.runs.length,0);
 });
 
+test('failed actionable Flex retries by resending the existing WAITING_CONFIRM card without duplicating expense',async()=>{
+  const originalFetch=globalThis.fetch,state={runs:[],batches:[],persisted:false,fetches:0};
+  const expense={expense_id:'exp_existing',description:'Printing expense',amount_satang:20000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'marketing',transaction_date:'2026-07-21',status:'WAITING_CONFIRM'};
+  const document={document_type:'BANK_SLIP',channel:'BANK',institution:'KBank',reference_id:'REF-NEW',gross_amount_satang:20000,discount_amount_satang:0};
+  const DB={
+    prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){
+      if(sql.includes('SELECT document_id,expense_id,status'))return state.persisted?{document_id:'doc_existing',expense_id:'exp_existing',status:'WAITING_CONFIRM'}:null;
+      if(sql.includes('SELECT * FROM expense_events'))return state.persisted?expense:null;
+      if(sql.includes('SELECT document_type,channel'))return state.persisted?document:null;
+      return null;
+    },async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},
+    async batch(statements){state.persisted=true;state.batches.push(statements.map(statement=>({sql:statement.sql,args:statement.args})));return statements.map(()=>({meta:{changes:1}}));}
+  };
+  const env={DB,RUNTIME_MODE:'production',SHADOW_LINE_OUTPUT:'false',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000'};
+  const event={source:{type:'user',userId:'U_TEST'},message:{id:'msg_retry',type:'image'}};
+  try{
+    globalThis.fetch=async()=>{state.fetches+=1;return new Response('rate limited',{status:429});};
+    await assert.rejects(handleExpenseImage(env,event,bankReading(),'expense/key.jpg','trace_retry','hash-retry'),/HTTP 429/);
+    assert.equal(state.batches.length,1);
+    globalThis.fetch=async()=>{state.fetches+=1;return new Response('',{status:200});};
+    await handleExpenseImage(env,event,bankReading(),'expense/key.jpg','trace_retry','hash-retry');
+    assert.equal(state.batches.length,1);
+    assert.equal(state.fetches,2);
+  }finally{
+    globalThis.fetch=originalFetch;
+  }
+});
+
 test('incomplete bank slip remains review-only and never creates an expense',async()=>{
   const h=harness();
   await handleExpenseImage(h.env,h.event,bankReading({transactionStatus:'PENDING',referenceId:'',paidAmountBaht:null}),'expense/key.jpg','trace_bad','hash-bad');

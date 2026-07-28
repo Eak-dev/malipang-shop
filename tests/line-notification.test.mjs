@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   downloadLineContent,
+  pushActionableFlex,
   pushConfirmation,
   pushOwnerAlert,
   pushText
@@ -50,12 +51,13 @@ test("optional text notification HTTP 429 is audited without failing business pr
   }
 });
 
-test("optional confirmation notification HTTP 429 is also best effort",async()=>{
+test("actionable confirmation notifications remain strict and recoverable",async()=>{
   const originalFetch=globalThis.fetch,metrics=[];
   globalThis.fetch=async()=>new Response("rate limited",{status:429});
   try{
-    await assert.doesNotReject(pushConfirmation(testEnv(metrics),"recipient","Confirm","Body","yes","no","trace"));
-    assert.deepEqual(metricNames(metrics),["line_push_ms","line_notification_failure"]);
+    await assert.rejects(pushActionableFlex(testEnv(metrics),"recipient",{type:"flex"},"trace"),/HTTP 429/);
+    await assert.rejects(pushConfirmation(testEnv(metrics),"recipient","Confirm","Body","yes","no","trace"),/HTTP 429/);
+    assert.deepEqual(metricNames(metrics),["line_push_ms","line_push_ms"]);
   }finally{
     globalThis.fetch=originalFetch;
   }

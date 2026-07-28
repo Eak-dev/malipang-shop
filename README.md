@@ -191,6 +191,9 @@ npm run deploy
 - `POST /admin/bootstrap-sheets`
 - `POST /admin/import-employees-from-sheet`
 - `POST /admin/import-employees`
+- `POST /admin/import-shifts-from-sheet` สำหรับสร้างแถวที่ยังไม่มีเท่านั้น
+- `POST /admin/shifts/generate-defaults` สำหรับสร้างกะเริ่มต้นแบบ insert-only
+- `POST /admin/shifts/override` สำหรับ Owner เปลี่ยนสถานะพนักงาน/วันที่เดียวพร้อม Audit
 - `POST /admin/expense-access`
 - `POST /admin/expense/evaluate` สำหรับทดสอบข้อความโดยไม่บันทึก D1/Sheets
 - `POST /admin/attendance/correct`

@@ -97,11 +97,11 @@ Payroll Apply ทำได้วันที่ 5 สิงหาคม 2026 ห
 2. Backup Remote D1 ใหม่ เก็บ Private พร้อม SHA-256
 3. บันทึก Worker version ปัจจุบันเพื่อ Rollback
 4. ยืนยันพนักงานจริง 4 คนเป็น `ACTIVE` และ UAT 3 คนเป็น `INACTIVE`
-5. Apply Migration `0007` → `0008` → `0009` ตามลำดับ โดยไม่แก้ migration เดิม
+5. Apply Migration `0007` → `0008` → `0009` → `0010` ตามลำดับ โดยไม่แก้ migration เดิม
 6. Deploy exact RC เป็น Silent Shadow และยืนยันว่าไม่มี LINE output จริง
 7. Bootstrap/ตรวจ Google Sheets headers เป็น `Pay_Date`, `Period_Start`, `Period_End`
 8. Import/ตรวจ Wage History 500 บาท effective `2026-07-30` ครบ 4 คน โดยไม่เดาค่าแรง
-9. Import/ตรวจ Shift Schedule 28 แถวสำหรับ `2026-07-30` ถึง `2026-08-05`
+9. สร้าง/ตรวจ Shift Schedule แบบ insert-only สำหรับ `2026-07-30` ถึง `2026-12-31`: 4 คน × 155 วัน = 620 แถว `EXPECTED`, เวลา `04:00–16:00`; รอบแรก `2026-07-30` ถึง `2026-08-05` ต้องมี 28 แถว
 10. ตรวจ Health, Readiness, Attendance, Expense, Sheets Sync, Queue/DLQ, lost และ duplicate
 11. รัน Preview รอบ `2026-07-30` ถึง `2026-08-05`
 12. Owner ตรวจยอดและคำนวณมืออย่างน้อย 2 คน
@@ -119,7 +119,7 @@ Payroll Apply ทำได้วันที่ 5 สิงหาคม 2026 ห
 
 ## Rollback
 
-Rollback Worker ไปเวอร์ชันที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008/0009 และไม่ลบ Payroll Run/Audit
+Rollback Worker ไปเวอร์ชันที่บันทึกไว้ โดยไม่ Drop Migration 0007/0008/0009/0010 และไม่ลบ Payroll Run/Audit/Shift Audit การย้อน schema ให้ใช้ forward-fix เท่านั้น
 
 หยุดจ่ายและ Rollback เมื่อ:
 

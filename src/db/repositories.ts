@@ -40,6 +40,11 @@ export async function createFailedJob(env:Env,queue:string,traceId:string,payloa
 export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
   await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId,failedJobKey(payload)).run();
 }
+export async function findOpenFailedJobPayload<T>(env:Env,queue:string,traceId:string,payload:unknown):Promise<T|null>{
+  const row=await env.DB.prepare(`SELECT payload_json FROM failed_jobs WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN' LIMIT 1`).bind(queue,traceId,failedJobKey(payload)).first<{payload_json:string}>();
+  if(!row?.payload_json)return null;
+  try{return JSON.parse(row.payload_json) as T;}catch{return null;}
+}
 export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
   await enqueueSheetSyncBatch(env,[job]);
 }

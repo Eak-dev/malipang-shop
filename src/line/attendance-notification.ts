@@ -1,4 +1,4 @@
-import { createFailedJob,resolveFailedJobs,safeRecordMetric } from "../db/repositories";
+import { createFailedJob,findOpenFailedJobPayload,resolveFailedJobs,safeRecordMetric } from "../db/repositories";
 import { sha256Hex } from "../shared/ids";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import type { Env,LineNotificationJob,LineNotificationPurpose,QueueJob } from "../types";
@@ -35,8 +35,16 @@ export async function enqueueAttendanceNotification(env:Env,input:{
   traceId:string;
 }):Promise<LineNotificationJob|null>{
   if(!lineOutputEnabled(env))return null;
-  const job=await buildAttendanceNotificationJob(input);
-  await env.JOB_QUEUE.send(job);
+  const candidate=await buildAttendanceNotificationJob(input);
+  const persisted=await findOpenFailedJobPayload<LineNotificationJob>(env,"malipang-jobs",input.traceId,candidate);
+  const job=persisted?.kind==="LINE_NOTIFICATION"&&persisted.retryKey===candidate.retryKey?persisted:candidate;
+  if(!persisted)await createFailedJob(env,"malipang-jobs",input.traceId,job,"PENDING_LINE_NOTIFICATION_DELIVERY");
+  try{
+    await env.JOB_QUEUE.send(job);
+  }catch(error){
+    await createFailedJob(env,"malipang-jobs",input.traceId,job,error);
+    throw error;
+  }
   await safeRecordMetric(env,input.traceId,"line_notification_enqueued",0,{purpose:input.purpose});
   return job;
 }

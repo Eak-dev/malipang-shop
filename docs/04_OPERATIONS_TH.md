@@ -31,7 +31,7 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 ข้อความ Push และ Flex ทั่วไปที่ใช้แจ้งผลหลังธุรกรรมสิ้นสุดแล้วเป็น notification แบบ best effort หาก LINE ตอบ 429 หรือ HTTP error ระบบจะเก็บ `line_push_ms` และ `line_notification_failure` แต่จะไม่เปลี่ยนธุรกรรมที่สำเร็จหรือเหตุการณ์ที่ถูกปฏิเสธอย่างถูกต้องให้เป็น `FAILED`
 
-ผล Attendance ทั้งสำเร็จและปฏิเสธใช้ `LINE_NOTIFICATION` Queue แยกจากธุรกรรมลงเวลา แต่ละงานมี `X-Line-Retry-Key` คงที่เพื่อให้ LINE ป้องกันข้อความซ้ำ การ retry จึงส่งข้อความเดิมเท่านั้นและไม่ย้อนกลับไปรัน Vision, Commit Attendance, Payroll หรือ Sheets อีก ความผิดพลาดชั่วคราวจะ retry แบบ bounded backoff ส่วน 4xx ถาวรจะถูกเก็บใน `failed_jobs` โดยไม่สร้าง Punch ซ้ำ
+ผล Attendance ทั้งสำเร็จและปฏิเสธใช้ `LINE_NOTIFICATION` Queue แยกจากธุรกรรมลงเวลา ระบบเก็บ payload ผลลัพธ์เดิมใน `failed_jobs` เป็น durable outbox ก่อนส่งเข้า Queue และใช้ `X-Line-Retry-Key` คงที่ต่อ Webhook หาก Queue enqueue ให้ผลกำกวม การลองใหม่จึงนำผล IN/OUT หรือ rejection เดิมกลับมาส่ง ไม่สร้างข้อความ Duplicate แทน และ LINE ป้องกันการรับข้อความซ้ำ การ retry delivery ไม่ย้อนกลับไปรัน Vision, Commit Attendance, Payroll หรือ Sheets อีก ความผิดพลาดชั่วคราวจะ retry แบบ bounded backoff ส่วน 4xx ถาวรจะคงเป็น failed job ที่ตรวจสอบได้
 
 Production smoke ของช่องทางนี้ใช้ `POST /admin/attendance/notification-smoke` ได้เฉพาะ `EMP_TEST` และต้องระบุ `SUCCESS` หรือ `REJECTION` พร้อม `runId` คำสั่งนี้สร้างเฉพาะ notification job และไม่สร้าง Attendance/Payroll/Sheets record
 

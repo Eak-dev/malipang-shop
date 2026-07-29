@@ -17,10 +17,16 @@ function database(state){
         async run(){
           state.sql.push({sql,values:this.values});
           if(sql.includes("INSERT INTO inbound_events"))return{meta:{changes:0}};
+          if(sql.includes("INSERT INTO failed_jobs")){
+            state.failedPayload=String(this.values[4]);
+            state.failedOpen=true;
+          }
+          if(sql.includes("UPDATE failed_jobs SET status='RESOLVED'"))state.failedOpen=false;
           return{meta:{changes:1}};
         },
         async first(){
           if(sql.includes("SELECT status FROM inbound_events"))return{status:"COMPLETED"};
+          if(sql.includes("SELECT payload_json FROM failed_jobs")&&state.failedOpen)return{payload_json:state.failedPayload};
           return null;
         },
         async all(){return{results:[],meta:{}};}
@@ -31,7 +37,7 @@ function database(state){
 }
 
 function fixture(options={}){
-  const state={sql:[],batchCount:0,attendanceCommits:0,queued:[],sheetBatches:[]};
+  const state={sql:[],batchCount:0,attendanceCommits:0,queued:[],sheetBatches:[],failedPayload:"",failedOpen:false};
   const result=options.result||{eventId:"att_1",punchType:"IN",workDate:"2026-07-29",officialTime:"04:13",status:"NORMAL",lateMinutes:3,confirmedWageSatang:0,pendingWageSatang:50000,validationCode:"OK",version:1};
   const env={
     DB:database(state),
@@ -41,7 +47,7 @@ function fixture(options={}){
     },
     ATTENDANCE_COORDINATOR:{
       idFromName(){return{};},
-      get(){return{async fetch(){state.attendanceCommits+=1;return Response.json(result);}};}
+      get(){return{async fetch(){state.attendanceCommits+=1;return Response.json(typeof result==="function"?result(state.attendanceCommits):result);}};}
     },
     EVIDENCE:{async put(){return{};}},
     R2_EVIDENCE_ENABLED:"false",
@@ -117,6 +123,26 @@ test("duplicate webhook claim is terminal before Attendance is processed again",
   assert.equal(state.attendanceCommits,0);
   assert.equal(existingAttendanceRecords,1);
   assert.equal(state.queued.length,0);
+});
+
+test("ambiguous Queue enqueue preserves the original committed IN result on inbound retry",async()=>{
+  const {state,env}=fixture({result:attempt=>attempt===1
+    ?{eventId:"att_1",punchType:"IN",workDate:"2026-07-29",officialTime:"04:13",status:"NORMAL",lateMinutes:3,confirmedWageSatang:0,pendingWageSatang:50000,validationCode:"OK",version:1}
+    :{eventId:"att_1",punchType:"DUPLICATE",workDate:"2026-07-29",officialTime:"04:13",status:"DUPLICATE",lateMinutes:3,confirmedWageSatang:0,pendingWageSatang:50000,validationCode:"DUPLICATE_MESSAGE",version:1}
+  });
+  const accepted=[];
+  env.JOB_QUEUE.send=async job=>{
+    accepted.push(structuredClone(job));
+    if(accepted.length===1)throw new Error("Queue enqueue result unknown");
+  };
+  await assert.rejects(handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,"trace-ambiguous"),/result unknown/);
+  await assert.doesNotReject(handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,"trace-ambiguous"));
+  assert.equal(state.attendanceCommits,2);
+  assert.equal(accepted.length,2);
+  assert.equal(accepted[0].retryKey,accepted[1].retryKey);
+  assert.deepEqual(accepted[0].messages,accepted[1].messages);
+  assert.match(accepted[1].messages[0].text,/Check-in recorded/);
+  assert.doesNotMatch(accepted[1].messages[0].text,/already complete/i);
 });
 
 test("stale Attendance never commits and rejection notification is retryable",async()=>{

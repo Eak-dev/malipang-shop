@@ -10,6 +10,8 @@ Backend กลางของร้าน **มะลิปัง (MaliPang)** �
 >
 > **Legacy Apps Script:** ไม่ใช่ core runtime ของ V5.2 แต่ยังถือเป็น external legacy dependency จนกว่าจะผ่าน parity / shutdown gate แยก ห้ามปิด Trigger, Deployment หรือลบ Legacy sheets จากงาน V5.2 โดยพลการ
 
+> **V1.1 Identity & Access:** เพิ่ม role/branch scope, LINE HR registration และ Owner approval แบบ additive โดยไม่เปลี่ยน employee ID หรือข้อมูล Attendance/Payroll เดิม
+
 ---
 
 ## 1. Production Snapshot ล่าสุด
@@ -540,6 +542,8 @@ MaliPang_OWNER_MASTER
 
 - `HR_STAFF_CONFIG`
 - `HR_SHIFT_SCHEDULE`
+
+`HR_STAFF_CONFIG` รองรับ `Role` และ `Branch_ID` แบบ optional; `LINE_User_ID` ไม่จำเป็นสำหรับพนักงานใหม่ เพราะ LINE identity ที่ปลอดภัยต้องเชื่อมผ่านการส่ง `HR` และ Owner อนุมัติ
 
 ### V5.2 Reporting Sheets
 
@@ -1295,6 +1299,7 @@ Production release ต้องมี explicit authorization
 - [Owner Action Checklist](docs/09_OWNER_ACTION_CHECKLIST_TH.md)
 - [Codex Task Template](docs/10_CODEX_TASK_TEMPLATE_TH.md)
 - [Fast-track UAT 23 กรกฎาคม 2026](docs/13_FAST_TRACK_UAT_2026-07-23.md)
+- [V1.1 Identity, Roles, Branch และ HR registration](docs/19_V11_IDENTITY_ACCESS_TH.md)
 
 ---
 

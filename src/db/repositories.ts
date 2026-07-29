@@ -1,3 +1,4 @@
+import { getStaffActorByLineId } from "../access/repository";
 import type { Employee, Env, LineEvent, SheetsSyncJob } from "../types";
 
 export type InboundClaim="CLAIMED"|"BUSY"|"TERMINAL";
@@ -13,9 +14,8 @@ export async function completeInboundEvent(env:Env,webhookEventId:string,route:s
   await env.DB.prepare(`UPDATE inbound_events SET route=?,status=?,error=?,completed_at=? WHERE webhook_event_id=?`).bind(route,status,error,new Date().toISOString(),webhookEventId).run();
 }
 export async function getEmployeeByLineId(env:Env,lineUserId:string):Promise<Employee|null>{
-  const row=await env.DB.prepare(`SELECT employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,daily_wage_satang,grace_min,late_deduction_satang,early_deduction_satang,can_submit_expense,status FROM employees WHERE line_user_id=? LIMIT 1`).bind(lineUserId).first<Record<string,unknown>>();
-  if(!row)return null;
-  return{employeeId:String(row.employee_id),staffName:String(row.staff_name),lineUserId:String(row.line_user_id),scheduledIn:String(row.scheduled_in),scheduledOut:String(row.scheduled_out),dailyWageSatang:Number(row.daily_wage_satang),graceMin:Number(row.grace_min),lateDeductionSatang:Number(row.late_deduction_satang),earlyDeductionSatang:Number(row.early_deduction_satang),canSubmitExpense:Number(row.can_submit_expense)===1,status:String(row.status)==="ACTIVE"?"ACTIVE":"INACTIVE"};
+  const actor=await getStaffActorByLineId(env,lineUserId);
+  return actor?.employee||null;
 }
 export async function incrementDailyUsage(env:Env,key:string):Promise<number>{
   const day=new Date().toISOString().slice(0,10);await env.DB.prepare(`INSERT INTO usage_daily(day,metric,value) VALUES(?,?,1) ON CONFLICT(day,metric) DO UPDATE SET value=value+1`).bind(day,key).run();

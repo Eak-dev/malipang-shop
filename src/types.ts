@@ -107,7 +107,7 @@ export interface Employee {
 export interface EmployeeImportInput {
   employeeId: string;
   staffName: string;
-  lineUserId: string;
+  lineUserId?: string;
   scheduledIn: string;
   scheduledOut: string;
   dailyWageBaht: number;
@@ -117,6 +117,8 @@ export interface EmployeeImportInput {
   earlyDeductionBaht?: number;
   canSubmitExpense?: boolean;
   status: "ACTIVE" | "INACTIVE";
+  role?: "OWNER" | "BRANCH_MANAGER" | "ASSISTANT_MANAGER" | "EMPLOYEE";
+  branchId?: string;
 }
 
 export interface WageSnapshot {

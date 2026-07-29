@@ -2,6 +2,8 @@ import { createFixedOtRequest,finalizeFixedOt } from "../admin/payroll-admin";
 import { respondTextToLineEvent } from "../line/event-response";
 import { addDays,isIsoDate,isoDateInBangkok,minutesOf } from "../shared/time";
 import type { Env,LineEvent } from "../types";
+import { authorize } from "../access/authorization";
+import type { StaffActor } from "../access/repository";
 
 export type OwnerOtCommand=
   |{kind:"CREATE";employeeRef:string;workDate:string;fixedAmountBaht:number;plannedStart:string|null;plannedEnd:string|null;reason:string}
@@ -19,7 +21,7 @@ export function parseOwnerOtCommand(text:string,today=isoDateInBangkok()):OwnerO
 
 async function resolveEmployeeId(env:Env,reference:string):Promise<string>{const row=await env.DB.prepare(`SELECT employee_id FROM employees WHERE employee_id=? OR LOWER(staff_name)=LOWER(?) LIMIT 1`).bind(reference,reference).first<{employee_id:string}>();if(!row)throw new Error(`Employee not found: ${reference}`);return String(row.employee_id);}
 function help(error?:unknown):string{return[`คำสั่ง OT ไม่ถูกต้อง${error?`\nสาเหตุ: ${String(error instanceof Error?error.message:error)}`:""}`,"","สร้าง OT:","OT Win วันนี้ 200 16:00-18:00 เตรียมไส้เพิ่ม","OT EMP001 2026-08-01 100 ช่วยปิดร้าน","","ยืนยันหลังทำงาน:","OT อนุมัติ <OT_ID> 200","OT ไม่อนุมัติ <OT_ID> เหตุผล","","รายละเอียดค่าแรงและ OT ดูที่ Google Sheets เท่านั้น"].join("\n");}
-export async function handleOwnerPayrollText(env:Env,event:LineEvent):Promise<boolean>{
-  const text=event.message?.text||"",to=event.source.userId||"",traceId=`owner_ot_${event.message?.id||crypto.randomUUID()}`,respond=(message:string)=>respondTextToLineEvent(env,event,message,{traceId,purpose:"OWNER_RESPONSE"});if(!/^(OT|โอที)(\s|$)/i.test(text.trim()))return false;if(to!==env.LINE_OWNER_USER_ID){await respond("คำสั่ง OT ใช้ได้เฉพาะบัญชี Owner เท่านั้น");return true;}
+export async function handleOwnerPayrollText(env:Env,event:LineEvent,actor:StaffActor|null):Promise<boolean>{
+  const text=event.message?.text||"",traceId=`owner_ot_${event.message?.id||crypto.randomUUID()}`,respond=(message:string)=>respondTextToLineEvent(env,event,message,{traceId,purpose:"OWNER_RESPONSE"});if(!/^(OT|โอที)(\s|$)/i.test(text.trim()))return false;if(!actor||actor.role!=="OWNER"||!authorize(actor,"payroll.apply")){await respond("คำสั่ง OT ใช้ได้เฉพาะบัญชี Owner เท่านั้น");return true;}
   try{const command=parseOwnerOtCommand(text);if(!command)return false;if(command.kind==="CREATE"){const employeeId=await resolveEmployeeId(env,command.employeeRef),result=await createFixedOtRequest(env,{employeeId,workDate:command.workDate,reason:command.reason,plannedStart:command.plannedStart,plannedEnd:command.plannedEnd,fixedAmountBaht:command.fixedAmountBaht,note:"Created from Owner LINE"});await respond(`บันทึกรายการ OT เรียบร้อย ✅\nOT ID: ${result.otId}\nดูรายละเอียดที่ชีท HR_OT_REQUESTS`);return true;}if(command.kind==="APPROVE"){const result=await finalizeFixedOt(env,{otId:command.otId,approved:true,...(command.finalAmountBaht==null?{}:{finalAmountBaht:command.finalAmountBaht}),note:command.note});await respond(`อัปเดตรายการ OT เรียบร้อย ✅\nOT ID: ${result.otId}\nดูรายละเอียดที่ชีท HR_OT_REQUESTS`);return true;}const result=await finalizeFixedOt(env,{otId:command.otId,approved:false,note:command.note});await respond(`อัปเดตรายการ OT เรียบร้อย ✅\nOT ID: ${result.otId}\nดูรายละเอียดที่ชีท HR_OT_REQUESTS`);return true;}catch(error){await respond(help(error));return true;}
 }

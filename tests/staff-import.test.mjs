@@ -40,3 +40,13 @@ test('invalid wage effective date is rejected',()=>{
   ];
   assert.throws(()=>parseStaffRows(rows),/Wage_Effective_From/);
 });
+test('new HR staff rows do not require a raw LINE User ID and accept V1.1 role scope',()=>{
+  const rows=[
+    ['Employee_ID','Staff_Name','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Grace_Min','Role','Branch_ID'],
+    ['EMP004','New staff','04:00','16:00','Active',500,10,'EMPLOYEE','B001']
+  ];
+  const [employee]=parseStaffRows(rows);
+  assert.equal(employee.lineUserId,undefined);
+  assert.equal(employee.role,'EMPLOYEE');
+  assert.equal(employee.branchId,'B001');
+});

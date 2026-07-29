@@ -1,120 +1,782 @@
-# MaliPang Backend V5.2 Solo — Cloudflare Core
+# MaliPang Backend V5.2 Solo — Production
 
-Backend กลางของร้านมะลิปังสำหรับรับข้อมูลจาก LINE OA ประมวลผล Attendance, Payroll และ Expense บน Cloudflare แล้วเขียนรายงานไป Google Sheets โดยตรง ออกแบบให้ดูแลและติดตั้งได้โดยนักพัฒนาคนเดียว
+Backend กลางของร้าน **มะลิปัง (MaliPang)** สำหรับรับข้อมูลจาก LINE OA, ประมวลผล Attendance / Payroll / Expense บน Cloudflare, เก็บข้อมูลจริงใน D1, เก็บหลักฐานใน R2 และ Sync รายงานไป Google Sheets โดยตรง
 
-> **สถานะ Apps Script:** V5.2 ไม่ใช้ Apps Script เป็น core runtime แต่ระบบ Apps Script เดิมอาจยังติดตั้งอยู่ภายนอก repository ระหว่างการย้ายระบบ ห้ามปิด Trigger, Deployment หรือลบ Legacy sheets จนกว่าจะตรวจ inventory, backup และผ่าน cutover gate ตามเอกสาร
+ระบบออกแบบให้ใช้งานจริงในร้านได้ด้วยทีมเล็กและดูแลได้โดยนักพัฒนาคนเดียว โดยให้ความสำคัญกับ **ความถูกต้อง, auditability, idempotency, rollback และต้นทุนต่ำ** มากกว่าการทำระบบที่ซับซ้อนเกินจำเป็น
 
-## สถานะล่าสุด
+> **Production status:** ระบบ V5.2 เปิดใช้งาน Production แล้วเมื่อ 29 กรกฎาคม 2026
+>
+> **Core runtime:** Cloudflare Workers + D1 + Durable Objects + Queues/DLQ + R2 + LINE Messaging API + Google Sheets API + OpenAI Vision
+>
+> **Legacy Apps Script:** ไม่ใช่ core runtime ของ V5.2 แต่ยังถือเป็น external legacy dependency จนกว่าจะผ่าน parity / shutdown gate แยก ห้ามปิด Trigger, Deployment หรือลบ Legacy sheets จากงาน V5.2 โดยพลการ
 
-**V5.2 — Production cutover candidate**
+---
 
-- Worker deploy และเชื่อม LINE OA จริงแล้ว
-- D1, Queue, DLQ, Durable Object, R2 และ Google Sheets API ใช้งานจริงแล้ว
-- OpenAI `gpt-4.1-mini` เป็นตัวอ่านรูปหลัก; ปิด Workers AI หลัง regression test รูปจริงคืน `UNKNOWN` ทุกภาพ
-- Automated tests ผ่าน `106` รายการ, live expense text ผ่าน `161/161`, รูปนาฬิกาผ่าน `7/7` และสลิปธนาคาร/วอลเล็ตผ่าน `3/3`
-- Fast-track UAT วันที่ 23 กรกฎาคม 2026 ผ่าน Attendance `12/12` และ Expense `10/10`; หลักฐานอยู่ใน [รายงาน Fast-track UAT](docs/13_FAST_TRACK_UAT_2026-07-23.md)
-- Branch นี้เคย deploy ไปยัง Worker ที่อยู่ใน Shadow/UAT เพื่อเก็บหลักฐาน แต่ไม่เคยเปิด Production Mode และ UAT runtime harness ถูกถอดออกจาก final PR แล้ว
-- ทดสอบ LINE รูปนาฬิกาจริงแบบ IN และ OUT สำเร็จ
-- Silent Shadow candidate ยังคงใช้สำหรับ preflight ก่อน cutover และไม่ส่งข้อความจริงกลับ LINE
-- Config ที่ตรวจเข้า `main` สำหรับ cutover ใช้ Production Mode; LINE output ทำงานตามปกติเพราะ `RUNTIME_MODE=production`
+## 1. Production Snapshot ล่าสุด
 
-ยังไม่ถือเป็น Production จนกว่าจะผ่าน UAT รูปจริงตามเกณฑ์ ปรับข้อมูลพนักงาน/ค่าแรงจริง ตรวจ Legacy Apps Script และเปิด LINE output อย่างตั้งใจ
+Snapshot นี้ใช้สำหรับอ้างอิงสถานะที่ผ่าน Production verification ล่าสุด ไม่ใช่ค่าที่ควร hard-code ลง logic
 
-Worker: <https://malipang-backend-v5-2.eakkachai-dev.workers.dev>
+| รายการ | สถานะ |
+|---|---|
+| Environment | `production` |
+| Runtime mode | `production` |
+| Production source SHA | `8918ceb6cd8841c1619fbc30f66532188ba6007e` |
+| Production Worker version | `fd37c92e-c5de-417f-8728-b646c6fdb71a` |
+| Worker traffic | `100%` |
+| Health | PASS |
+| Readiness | PASS |
+| LINE architecture | `REPLY_FIRST_FREE_PLAN` |
+| LINE Push quota ณ incident verification | `300/300` (EXHAUSTED) |
+| Employee flow with Push quota = 0 | PASS |
+| Google Sheets sync | PASS |
+| Sync jobs หลัง verification | `810 COMPLETED`, pending/processing = 0 |
+| Lost event ใหม่ | 0 |
+| Duplicate business record ที่ตรวจ | 0 |
+| Issue #93 | CLOSED / completed |
 
-## ระบบทำงานอย่างไร
+Worker URL:
+
+<https://malipang-backend-v5-2.eakkachai-dev.workers.dev>
+
+### สิ่งที่ Production verification ล่าสุดพิสูจน์แล้ว
+
+- Attendance valid image สามารถบันทึก Punch ได้ 1 ครั้งและตอบผลผ่าน LINE Reply API
+- Attendance stale/invalid image ถูกปฏิเสธโดยไม่สร้าง Attendance และตอบสาเหตุผ่าน Reply API
+- LINE Push quota หมดไม่ทำให้ employee interaction ปกติล่ม
+- Notification failure ไม่ย้อนกลับไปประมวลผล Attendance ซ้ำ
+- D1 และ Google Sheets reconcile ตรงกันใน flow ที่ทดสอบ
+- Daily Payroll sync สำเร็จ
+- ไม่มี duplicate Attendance / Payroll / Expense จาก incident #93
+
+---
+
+## 2. เป้าหมายของระบบ
+
+MaliPang Backend V5.2 มีหน้าที่หลักดังนี้
+
+1. รับ LINE webhook ของพนักงานและ Owner อย่างปลอดภัย
+2. ตรวจรูปลงเวลาและหลักฐานร้าน
+3. บันทึก Attendance แบบ idempotent
+4. คำนวณ Daily Payroll และ Weekly Payroll
+5. จัดการ Wage แบบ effective-dated
+6. รองรับ Shift Schedule และ Owner Override พร้อม audit
+7. รองรับ Expense text / receipt / bank slip / online order
+8. เก็บหลักฐานรูปใน private R2
+9. Sync ข้อมูลไป Google Sheets โดยไม่ให้ Sheets เป็น source of truth
+10. มี retry, queue, failed jobs, DLQ, reconcile และ recovery path
+11. ทำงานกับ LINE OA Free plan ได้โดยใช้ Reply API เป็นหลัก
+12. รองรับ Production release / rollback แบบ exact SHA และมีหลักฐาน audit
+
+---
+
+## 3. Source of Truth และ Operating Model
+
+### D1 = Operational Source of Truth
+
+D1 เป็นแหล่งข้อมูลจริงสำหรับ V5.2 ได้แก่
+
+- Employee
+- Wage history
+- Shift schedule
+- Attendance
+- Daily payroll
+- Weekly payroll
+- Expense
+- Sync jobs
+- Failed jobs
+- Audit records
+
+### Google Sheets = Reporting / Owner Interface
+
+Google Sheets ใช้สำหรับ
+
+- Owner ตรวจข้อมูล
+- Staff config input บางส่วน
+- Shift schedule input / mirror
+- Attendance report
+- Daily payroll report
+- Weekly payroll report
+- Wage history report
+- Expense report
+- System log / operational view
+
+Google Sheets **ไม่ใช่ฐานข้อมูลหลัก** และ **ไม่ใช่ calculation engine หลัก** ของ V5.2
+
+### R2 = Private Evidence Store
+
+R2 ใช้เก็บหลักฐาน เช่น
+
+- รูปลงเวลา
+- รูปใบเสร็จ
+- รูปสลิป
+- หลักฐานที่ต้องใช้ตรวจย้อนหลัง
+
+R2 ต้อง private เสมอ และห้ามลบ evidence โดยไม่มี retention policy / Owner-approved process
+
+---
+
+## 4. Architecture ภาพรวม
 
 ```text
-LINE OA
-  -> POST /webhook/line + ตรวจ X-Line-Signature
-  -> Cloudflare Queue: malipang-jobs
-  -> ดาวน์โหลด Preview + Original จาก LINE
-  -> OpenAI gpt-4.1-mini
-  -> อ่าน Timestamp + GPS overlay และยืนยันหลักฐานนาฬิการ้าน
-  -> R2 เก็บรูปหลักฐาน
-  -> Durable Object จัดลำดับ IN/OUT ต่อพนักงานต่อวัน
-  -> D1 บันทึก Attendance + Daily Payroll + Weekly Payroll
-  -> Queue สร้างงาน Google Sheets ก่อนตอบ LINE
-  -> Reply API ตอบ event เดิม (ไม่ใช้โควตา Push รายเดือน)
-  -> Google Sheets Direct API
+Employee / Owner
+      |
+      v
+LINE Official Account
+      |
+      | POST /webhook/line
+      | X-Line-Signature verification
+      v
+Cloudflare Worker
+      |
+      +--> Cloudflare Queue: malipang-jobs
+      |        |
+      |        +--> LINE_EVENT
+      |        +--> SHEETS_SYNC
+      |        +--> LINE_NOTIFICATION fallback
+      |
+      +--> LINE content download
+      |
+      +--> Vision classification / extraction
+      |        |
+      |        +--> CLOCK
+      |        +--> RECEIPT
+      |        +--> BANK_SLIP
+      |        +--> ONLINE_ORDER
+      |        +--> UNKNOWN
+      |
+      +--> Attendance Durable Object
+      |        |
+      |        +--> serialize IN/OUT per employee/day
+      |
+      +--> D1
+      |        |
+      |        +--> Attendance
+      |        +--> Payroll
+      |        +--> Shift
+      |        +--> Wage history
+      |        +--> Expense
+      |        +--> Sync / failed jobs / audit
+      |
+      +--> R2 private evidence
+      |
+      +--> LINE Reply API (primary employee response)
+      |
+      +--> LINE Push API (fallback / async only)
+      |
+      +--> Google Sheets Direct API
 ```
 
-Google Sheets เป็นหน้ารายงาน ไม่ใช่ฐานข้อมูลหรือเครื่องคำนวณหลัก ข้อมูลจริงและการคำนวณอยู่ใน D1/TypeScript
+---
 
-## ความสามารถใน RC2
+## 5. LINE OA Strategy — REPLY_FIRST_FREE_PLAN
 
-### Attendance และ Payroll
+### เหตุผล
 
-- Official Time ใช้ Timestamp ตัวหนังสือสีขาวบนภาพเท่านั้น ไม่ใช้เวลา LINE หรือเลขบนหน้าปัด
-- รูปต้องมีวัน เวลา พิกัด Latitude/Longitude และชื่อสถานที่/ที่อยู่ใน Overlay สีขาว ซึ่งอยู่มุมใดของภาพก็ได้
-- ตรวจพิกัดเทียบรัศมีร้าน (ค่าเริ่มต้น 120 เมตร) และ Timestamp ต้องห่างจากเวลา LINEไม่เกิน 3 นาที
-- นาฬิกาประจำร้านใช้เป็นหลักฐานสถานที่เท่านั้น ระบบไม่ใช้เวลา/วันที่บนหน้าปัดคำนวณค่าแรง
-- ป้องกัน LINE redelivery และ Message ID ซ้ำ
-- ใช้ Durable Object ป้องกัน IN/OUT ชนกัน
-- คำนวณสาย ออกก่อน ค่าแรงรายวัน และยอดรายสัปดาห์บน Worker
-- Missing punch และข้อมูลที่ต้องตรวจจะไม่ถูกปล่อยเป็นยอดพร้อมจ่าย
-- มี Admin Correction พร้อม audit trail
+LINE OA ของระบบนี้ใช้กับพนักงานเป็นหลัก และเป้าหมายคือ **ใช้ฟรีเป็นหลัก**
 
-### Vision
+ดังนั้น Normal employee interaction ใช้ **Reply API** ก่อนเสมอเมื่อ event มี `replyToken` ที่ใช้งานได้
 
-- Primary: OpenAI `gpt-4.1-mini` พร้อม Structured JSON
-- Workers AI ปิดไว้ก่อน เพราะ baseline รูปจริงคืน `UNKNOWN 7/7`
-- OpenAI daily guard ปัจจุบัน `100` ครั้ง/วัน
-- แยกรูปเป็น `CLOCK`, `RECEIPT`, `BANK_SLIP`, `ONLINE_ORDER` หรือ `UNKNOWN`
-- Admin สามารถตรวจรูป LINE ซ้ำได้โดยไม่สร้าง Attendance ใหม่
+### Reply API ใช้กับ
 
-### Reliability
+- Attendance สำเร็จ
+- Attendance rejection
+- รูปเก่า / stale image
+- GPS ไม่ผ่าน
+- Timestamp ไม่ผ่าน
+- อ่านหลักฐานไม่สำเร็จ
+- Expense interaction ที่ตอบ event เดิมได้
+- Postback interaction ที่ตอบ event เดิมได้
 
-- D1 เป็น source of truth
-- R2 เก็บหลักฐานแบบ private
-- Sheets Sync Job ถูกบันทึกก่อนส่งข้อความสำเร็จกลับ LINE
-- ผลจาก event พนักงานใช้ LINE Reply API เป็นหลักเมื่อมี `replyToken`; Push ใช้เฉพาะ fallback หรืองาน asynchronous
-- การตอบ Attendance สำเร็จ/ไม่ผ่านไม่พึ่งโควตา Push รายเดือน และ notification failure ไม่ย้อนกลับไปสร้าง Punch ซ้ำ
-- Push 429 ที่ยืนยันว่าโควตารายเดือนหมดถูกจัดเป็น `LINE_PUSH_QUOTA_EXHAUSTED` และไม่ retry ถี่โดยไม่มีโอกาสสำเร็จ
-- Retry, DLQ, failed jobs, reconcile/backfill และ stale-job recovery
-- Reconcile/Recovery กระจายงานเป็นกลุ่มละ 5 งานต่อนาที, บันทึก `next_attempt_at` และใช้ atomic lease ป้องกัน Cron/consumer ทำ Sync Job เดียวกันซ้ำพร้อมกัน
-- หน่วง retry เมื่อ Google Sheets ตอบ 429 เพื่อไม่ให้ใช้ retry จนหมดในทันที
-- Metrics สำหรับ LINE download, Workers AI, OpenAI, R2, Sheets และเวลารวม
-- `/admin/readiness` ตรวจ D1, LINE, Google Sheets และ R2 จริง
-- `/admin/status` และ `/admin/readiness` แสดง Push quota/consumption; Push หมดเป็น `DEGRADED/EXHAUSTED` แต่ Reply capability ที่ผ่านยังทำให้ระบบพร้อมรับงานพนักงาน
+### Push API ใช้เฉพาะ
 
-### Expense
+- ไม่มี valid `replyToken`
+- Reply API ล้มเหลวและต้อง fallback
+- notification ที่เกิดภายหลังแบบ asynchronous
+- Owner/system alert ที่จำเป็น
 
-- รองรับข้อความค่าใช้จ่ายและ Flex Message แบบเดียวกับ Flow หลักของ Apps Script เดิม
-- `ทอน`, `change` และ `โอน` ภาษาไทยเป็น Quick Save พร้อมการ์ด Saved และ Undo
-- รายการปกติแสดง Summary Flex และแก้วิธีจ่าย แหล่งเงิน หมวด และวันที่ก่อนบันทึกได้
-- Undo เปลี่ยนสถานะเป็น `CANCELLED` และ Sync กลับ Google Sheets โดยไม่ลบ audit trail
-- รายการที่ยืนยันแล้วเขียนทั้ง `V52_EXPENSE_RAW` และแท็บ `รายวัน` ตามรูปแบบบัญชีเดิม
-- Mapping Wallet ของ First Choice และ The 1 ตรงกับ Master เดิม
-- รองรับชื่อย่อบัตรจาก Apps Script เดิมครบ เช่น `kb/kasikorn`, `fc/first`, `citi`, `thanachart`, `hp`, `theone/the_one`
-- Auto Category ใช้คำค้นไทยและอังกฤษจาก Expense Category Master รวมถึง `gas`, `electric`, `water`, `salary`, `delivery`, `custard`, `seal`, `tool` และ `ads`
-- รองรับ KBank/K+, SCB และเป๋าตัง/G-Wallet เป็น Bank slip โดยอ่านสถานะ วันที่ เวลา เลขอ้างอิง คู่รายการ และยอดจ่ายจริง
-- สลิปที่อ่านครบจะสร้างรายการ `WAITING_CONFIRM` และแสดง Flex ให้ตรวจหมวด/วันที่ก่อน Save; ยังไม่เขียน Google Sheets จนกดยืนยัน
-- Bank slip ทุกธนาคารและวอลเล็ตล็อก Payment เป็น `transfer` และ Source Wallet เป็น `SHOP_BANK` ซึ่งแสดงในชีท `รายวัน` ว่า `บัญชีร้าน`
-- เป๋าตังที่มีราคาก่อนสิทธิ์และส่วนลดจะบันทึกเฉพาะยอดจ่ายจริง เช่น `40 - 24 = 16` บาท
-- กันสลิปซ้ำทั้งเลขอ้างอิงและ hash รูป และปฏิเสธสลิปที่ไม่แสดงสถานะสำเร็จ วันที่ เลขอ้างอิง คู่รายการ ยอดจ่ายจริง หรือยอดคำนวณไม่ตรง
-- รูป Receipt/Online order ที่ยังไม่ใช่ Bank slip จะเก็บเป็นเอกสารรอตรวจ
-- ยังไม่ใช่ระบบแตกสินค้าจากใบเสร็จเต็มรูปแบบ
-- Shadow/UAT config ปัจจุบันตั้ง `EXPENSE_ENABLED=true` แต่รับเฉพาะพนักงานที่มี `can_submit_expense=1`
+### หลักการสำคัญ
 
-## Google Sheets
+```text
+Business transaction != Notification delivery
+```
 
-Spreadsheet: `MaliPang_OWNER_MASTER`
+Attendance commit และ LINE notification มี idempotency boundary แยกกัน
 
-ระบบอ่านพนักงานจาก `HR_STAFF_CONFIG` และเขียนรายงานลง:
+ถ้า Reply/Push ล้มเหลว:
 
+- ห้ามสร้าง Attendance ใหม่
+- ห้าม run Vision ใหม่โดยไม่จำเป็น
+- ห้าม run Payroll ใหม่
+- ห้ามสร้าง Sheets business record ซ้ำ
+- ต้องมี failed/retry state ที่ตรวจสอบได้
+
+### Push quota exhaustion
+
+เมื่อ Push ถูกจำกัดเพราะ monthly quota:
+
+- classify เป็น `LINE_PUSH_QUOTA_EXHAUSTED`
+- แสดง `DEGRADED/EXHAUSTED`
+- ไม่ retry ถี่แบบไม่มีโอกาสสำเร็จ
+- **ไม่ทำให้ employee Reply flow ล่ม**
+- `/admin/readiness` ยัง PASS ได้ถ้า LINE authentication และ Reply capability ใช้งานได้
+
+---
+
+## 6. Attendance
+
+### 6.1 Official Time
+
+เวลาที่ใช้เป็นเวลาทางการมาจาก **Timestamp + GPS overlay สีขาวบนรูปเท่านั้น**
+
+ไม่ใช้:
+
+- เวลา LINE message เป็นเวลาเข้างาน
+- ตัวเลขเวลาบนหน้าปัดนาฬิการ้านเป็นเวลาค่าแรง
+- weekday บนนาฬิกา
+
+นาฬิการ้านใช้เป็น **หลักฐานว่าถ่ายที่ร้าน / shop clock evidence** เท่านั้น
+
+### 6.2 หลักฐานที่รูปต้องมี
+
+1. Timestamp สีขาว
+2. วันที่
+3. เวลา
+4. Latitude / Longitude
+5. ชื่อสถานที่หรือที่อยู่
+6. นาฬิกาสีดำประจำร้านในภาพที่ AI ตรวจได้
+
+### 6.3 Validation หลัก
+
+- GPS เทียบ `ATTENDANCE_STORE_LAT/LNG`
+- รัศมี `ATTENDANCE_ALLOWED_RADIUS_M`
+- อายุรูป `ATTENDANCE_MAX_PHOTO_AGE_MIN`
+- Timestamp confidence
+- shop clock evidence confidence
+- duplicate / redelivery protection
+
+### 6.4 ค่า Production ปัจจุบัน
+
+| Setting | Value |
+|---|---|
+| Store location | `13.89682 / 100.60830` |
+| Allowed radius | `120 m` |
+| Maximum photo age | `3 min` |
+| Overlay min confidence | `0.90` |
+| Clock min confidence | `0.70` |
+
+### 6.5 Punch ordering
+
+Durable Object ใช้ key ตามพนักงานและวัน เพื่อป้องกัน
+
+- IN พร้อมกัน
+- OUT พร้อมกัน
+- redelivery
+- race condition
+
+ระบบต้องรักษา invariant ว่า Attendance business record ไม่ซ้ำจาก webhook retry
+
+### 6.6 Attendance response
+
+เมื่อผ่าน:
+
+- บันทึก Attendance
+- update Daily/Weekly Payroll ตามกติกา
+- enqueue Sheets sync
+- ตอบ LINE ผ่าน Reply API
+
+เมื่อไม่ผ่าน:
+
+- ไม่สร้าง Attendance
+- ตอบสาเหตุผ่าน Reply API
+- rejection notification failure ต้อง observable
+
+### 6.7 ภาษา
+
+Attendance success/rejection แสดง 3 ภาษา:
+
+1. ไทย
+2. English
+3. မြန်မာ
+
+ข้อความสำเร็จจะแสดงข้อมูลที่ตรวจจริง เช่น
+
+- Photo timestamp
+- GPS check: Passed
+- Shop clock evidence: Passed
+- late minutes ถ้ามี
+
+---
+
+## 7. Payroll
+
+### 7.1 Payroll cycle ปัจจุบัน
+
+```text
+Thursday -> Wednesday
+Pay date = Wednesday เดียวกับวันปิดรอบ
+```
+
+First real-money cycle ที่เตรียมไว้:
+
+```text
+Period Start : 2026-07-30
+Period End   : 2026-08-05
+Pay Date     : 2026-08-05
+```
+
+รอบ `2026-07-23..2026-07-29` เป็น historical/audit context ไม่ใช่ first real-money apply ของ release ปัจจุบัน
+
+### 7.2 Wage baseline รอบแรก
+
+พนักงานจริง 4 คนใช้ baseline:
+
+- 500 THB/day
+- effective from `2026-07-30`
+
+ค่าแรงต้องมาจาก effective-dated wage history ไม่ควร hard-code ใน business logic
+
+### 7.3 Payroll safety
+
+- Missing punch ห้ามกลายเป็นยอดพร้อมจ่ายอัตโนมัติ
+- Payroll Preview เป็น read-only calculation path
+- Payroll Apply ต้อง idempotent
+- Apply ต้องใช้ Run ID ที่ควบคุมได้
+- Duplicate payroll run ต้องเป็น 0
+- Weekly cycle key ใช้ Thursday period start
+
+### 7.4 Payroll Apply
+
+**Payroll Apply ไม่ควรถูกรันจากงานทั่วไปหรือ smoke test**
+
+ต้องมี Owner approval สำหรับรอบเงินจริง และตรวจ:
+
+- Attendance ครบ
+- Missing Punch
+- Owner overrides
+- Wage snapshot
+- Late / deduction
+- OT ถ้ามี
+- Pending Review = 0 หรือได้รับการอนุมัติอย่างชัดเจน
+- D1 ↔ Sheets reconcile
+
+---
+
+## 8. Shift Schedule
+
+### Default Production schedule ที่เตรียมไว้
+
+ช่วง:
+
+```text
+2026-07-30 .. 2026-12-31
+```
+
+พนักงาน 4 คน
+
+```text
+155 days / employee
+620 rows total
+04:00 -> 16:00
+status = EXPECTED
+```
+
+First payroll cycle:
+
+```text
+28 rows total
+```
+
+### Insert-only rule
+
+Default generation และ Sheet import ต้อง insert-only
+
+ห้าม overwrite Owner override ที่มีอยู่แล้ว
+
+### Status ที่รองรับ
+
+- `EXPECTED`
+- `DAY_OFF`
+- `CANCELLED`
+
+### Owner Override
+
+`POST /admin/shifts/override`
+
+ใช้สำหรับเปลี่ยนพนักงาน 1 คน / 1 วัน พร้อม
+
+- previous state
+- new state
+- actor
+- reason
+- timestamp
+- append-only audit
+
+---
+
+## 9. Expense
+
+รองรับทั้ง text และ image flow
+
+### ประเภทหลัก
+
+- ใบเสร็จซื้อของเข้าร้าน
+- สลิปโอนเงิน / ชำระเงิน
+- Online order
+- Expense text
+
+### Text flow
+
+- Quick Save สำหรับคำที่อนุญาต
+- Summary Flex ก่อน Save
+- แก้ Payment / Source / Category / Date ได้
+- Undo เปลี่ยนเป็น `CANCELLED`
+- audit trail ต้องคงอยู่
+
+### Bank Slip
+
+รองรับ regression contract สำหรับ
+
+- KBank / K+
+- SCB
+- เป๋าตัง / G-Wallet
+
+Bank slip ที่ยืนยันแล้วใช้
+
+```text
+Payment = transfer
+Source Wallet = SHOP_BANK
+```
+
+สลิปต้องตรวจ
+
+- success status
+- date/time
+- reference
+- sender/receiver
+- paid amount
+- duplicate reference / image hash
+
+### WAITING_CONFIRM
+
+สลิปที่อ่านครบจะสร้างรายการรอยืนยันก่อน
+
+ห้ามเขียน finalized expense ลง Google Sheets ก่อน Save
+
+### Daily sheet
+
+ค่าใช้จ่ายที่ยืนยันแล้วเขียนลง `รายวัน` โดยไม่เขียนทับ formula columns ที่สงวนไว้
+
+---
+
+## 10. Vision
+
+### Production provider
+
+Primary production extraction:
+
+```text
+OpenAI model: gpt-4.1-mini
+```
+
+Workers AI ถูกปิดเป็นค่าเริ่มต้นหลัง baseline รูปจริงไม่ผ่านตามเกณฑ์ที่ต้องการ
+
+### Classification
+
+- `CLOCK`
+- `RECEIPT`
+- `BANK_SLIP`
+- `ONLINE_ORDER`
+- `UNKNOWN`
+
+### Guard
+
+`OPENAI_DAILY_FALLBACK_LIMIT=100`
+
+Admin regression calls และ production employee calls ต้องสามารถแยก metric/count ได้
+
+### Privacy
+
+รูปจริงที่มี
+
+- พิกัด
+- เวลา
+- ที่อยู่
+- หลักฐานพนักงาน
+
+ห้าม commit เข้า Git
+
+---
+
+## 11. Google Sheets Integration
+
+Spreadsheet หลัก:
+
+```text
+MaliPang_OWNER_MASTER
+```
+
+### Input / Config sheets
+
+- `HR_STAFF_CONFIG`
+- `HR_SHIFT_SCHEDULE`
+
+### Report / system sheets
+
+- `HR_WAGE_HISTORY`
 - `V52_ATTENDANCE_RAW`
 - `V52_DAILY_PAYROLL`
 - `V52_WEEKLY_PAYROLL`
 - `V52_EXPENSE_RAW`
 - `V52_SYSTEM_LOG`
-- `รายวัน` เฉพาะค่าใช้จ่ายที่ยืนยันแล้ว โดยค้นบล็อกเดือนและแถวว่างก่อนแถว `รวม`
+- `รายวัน`
 
-ระบบเก็บ row index ใน D1 เพื่ออัปเดตแถวเดิมโดยไม่ต้องค้นทั้งชีททุกครั้ง และมี `/admin/reconcile-sheets` สำหรับสร้างงานรายงานใหม่จาก D1 การเขียน `รายวัน` จะไม่แก้สูตรใน I/J/R/S/U และ Undo จะล้างเฉพาะช่องข้อมูลที่ Backend เคยเขียน
+### Important rule
 
-สำหรับ Bank slip ที่ยืนยันแล้ว ระบบลงเดือน/วัน/คำอธิบายใน B/C/D, ยอดจ่ายจริงใน H (เงินโอน), หมวดใน V และ `บัญชีร้าน` ใน W ส่วนสถาบัน เลขอ้างอิง ยอดก่อนส่วนลด ส่วนลด ผู้ส่ง/ผู้รับ และ R2 key เก็บใน D1/R2 เพื่อ audit โดยไม่ยัดข้อมูลเพิ่มลงคอลัมน์สูตรของชีทเดิม
+`HR_WAGE_HISTORY` เป็น system/report output ไม่ใช่ sheet สำหรับแก้ baseline โดยตรง
 
-## ค่าที่เปิดใช้งานตอนนี้
+ค่า Wage Effective Date ต้องมาจาก source config / controlled import path
+
+### Sync architecture
+
+ทุก sync job มี business identity และ version
+
+ระบบเก็บ row mapping/index ใน D1 เพื่อ update แถวเดิมโดยไม่ scan ทั้ง sheet ทุกครั้ง
+
+### Quota-safe write
+
+หลัง production incident ที่ Google Sheets HTTP 429:
+
+- จำกัด forced/default schedule writes ที่ 40 requests/minute
+- exponential backoff
+- jitter
+- honor `Retry-After`
+- persisted attempt count
+- idempotent recovery
+
+### Incident ที่เคยเกิด
+
+Default schedule 620 แถวเคยปล่อย Sheets writes เร็วเกิน quota และเกิด `RESOURCE_EXHAUSTED`
+
+หลัง fix:
+
+- failed quota records recovered แบบ idempotent
+- 620/620 reconcile ตรง
+- missing = 0
+- duplicate = 0
+
+---
+
+## 12. Reliability Model
+
+ระบบยึดหลัก:
+
+```text
+Correctness > convenience
+Auditability > hidden automation
+Idempotency > blind retry
+Rollback > destructive repair
+```
+
+### Queue / DLQ
+
+Main queue:
+
+```text
+malipang-jobs
+```
+
+Dead-letter queue:
+
+```text
+malipang-jobs-dlq
+```
+
+### Retry
+
+- bounded retry
+- exponential backoff
+- jitter
+- provider-specific classification
+- deterministic identity
+
+### Failed jobs
+
+failed jobs ต้องแยก
+
+- transient failure
+- permanent failure
+- quota exhaustion
+- DLQ max retry
+
+ห้าม replay historical jobs แบบเหมารวม
+
+### Reconcile
+
+`/admin/reconcile-sheets`
+
+ใช้ D1 เป็น source of truth แล้วสร้าง reporting sync ใหม่
+
+Reconcile ห้ามสร้าง business transaction ใหม่
+
+---
+
+## 13. Issue #93 — Attendance ไม่มี LINE ตอบกลับ
+
+### Incident
+
+EMP_TEST ส่งรูปลงเวลาประมาณ `04:13` วันที่ 29 กรกฎาคม 2026
+
+ผลจริง:
+
+- Attendance `IN` ถูก commit 1 ครั้ง
+- D1 ถูกต้อง
+- Sheets sync สำเร็จ
+- LINE Push confirmation ล้มเหลวด้วย 429
+
+ส่งรูปเดิมอีกครั้งประมาณ `08:49`
+
+- ถูก reject เป็น stale อย่างถูกต้อง
+- ไม่สร้าง Attendance
+- rejection Push ก็ล้มเหลวด้วย 429
+
+### Root Cause
+
+Attendance business processing และ LINE notification ไม่มี retry/idempotency boundary ที่แยกกันชัดเจน
+
+### Phase 1 Fix
+
+PR #94 เพิ่ม
+
+- durable `LINE_NOTIFICATION`
+- deterministic retry key
+- bounded retry
+- permanent failure visibility
+- protection against re-running Attendance
+
+แต่ Production smoke ยังล้มเพราะ LINE OA Free plan ใช้ Push quota `300/300`
+
+### Final Fix
+
+Production architecture เปลี่ยนเป็น:
+
+```text
+REPLY_FIRST_FREE_PLAN
+```
+
+Normal employee interaction ใช้ Reply API
+
+Push เป็น fallback / async เท่านั้น
+
+### Production verification
+
+- valid Attendance: PASS
+- stale/invalid rejection: PASS
+- Push quota = exhausted: employee flow ยัง PASS
+- lost = 0
+- duplicate = 0
+- D1 ↔ Sheets = PASS
+
+Issue #93 ปิดแล้ว
+
+---
+
+## 14. Release / Version History ที่สำคัญ
+
+ส่วนนี้บันทึก evolution ของ V5.2 ที่เกี่ยวกับ Production launch และ Payroll release
+
+### PR #64 — Payroll Thursday–Wednesday
+
+- เปลี่ยนรอบ Payroll เป็น Thu–Wed
+- Pay Date = Period End (Wednesday)
+- cycle key ปรับตาม Thursday start
+
+### PR #84 / #85 — Release / runtime evidence hardening
+
+- ปรับ workflow ให้เก็บ evidence ได้ดีขึ้น
+- lock release behavior และ first payroll dates
+- เพิ่ม safe release verification
+
+### PR #87 — LINE retry boundary fix
+
+- ลดปัญหา LINE 429 debt
+- แยก behavior ของ retry ให้เหมาะกับ provider failure
+
+### PR #88 — Weekly payroll sync key
+
+- แก้ weekly sync ให้ใช้ Thursday cycle key ถูกต้อง
+
+### PR #89 — First payroll baseline / Silent Shadow
+
+- lock first real payroll `2026-07-30..2026-08-05`
+- เตรียม 4 authorized employees
+- Silent Shadow release path
+
+### PR #90 — Shift schedule hardening
+
+- default generation insert-only
+- Owner override endpoint
+- append-only shift audit
+- migration `0010_shift_schedule_audit.sql`
+
+### PR #91 — Production release config
+
+- เตรียม Production cutover config
+- alignment กับ release date / runtime
+
+### PR #92 — Google Sheets quota-safe sync
+
+- schedule writes ที่ 40/minute
+- exponential backoff
+- jitter
+- Retry-After
+- persisted attempt count
+
+### PR #94 — Attendance notification isolation
+
+- durable notification job
+- LINE retry key
+- notification retry ไม่ re-run Attendance
+
+### PR #95 / Production SHA `8918ceb...` — Reply-first Free Plan
+
+- employee response ใช้ Reply API เป็นหลัก
+- Push quota exhaustion = degraded ไม่ใช่ backend outage
+- recovery สำหรับ stranded notification outbox
+- verified Production with Push quota exhausted
+
+---
+
+## 15. Migrations
+
+Production release ใช้ migration chain แบบ additive
+
+### 0007
+
+Payroll / effective wage / shift / OT foundation
+
+### 0008
+
+Pay date / payroll run support
+
+### 0009
+
+Evidence management / retention metadata
+
+### 0010
+
+Shift schedule audit และ append-only protection
+
+### Safety rule
+
+Emergency rollback ไม่ drop tables/columns ของ additive migration
+
+Rollback Worker version ก่อน แล้วทำ forward-fix ถ้าจำเป็น
+
+---
+
+## 16. Runtime Configuration
+
+ค่าที่ตรวจเข้า Production config ปัจจุบัน:
 
 | Setting | Value |
 |---|---|
@@ -122,44 +784,133 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 | `RUNTIME_MODE` | `production` |
 | `SHADOW_LINE_OUTPUT` | `false` |
 | `ATTENDANCE_ENABLED` | `true` |
-| `ATTENDANCE_STORE_LAT/LNG` | `13.89682 / 100.60830` |
-| `ATTENDANCE_ALLOWED_RADIUS_M` | `120` |
-| `ATTENDANCE_MAX_PHOTO_AGE_MIN` | `3` |
 | `EXPENSE_ENABLED` | `true` |
 | `SHEETS_SYNC_ENABLED` | `true` |
-| `SHEET_EXPENSE_DAILY` | `รายวัน` |
 | `R2_EVIDENCE_ENABLED` | `true` |
+| `EVIDENCE_RETENTION_ENABLED` | `false` |
+| `LINE_LOADING_ENABLED` | `true` |
 | `WORKERS_AI_ENABLED` | `false` |
 | `OPENAI_FALLBACK_ENABLED` | `true` |
 | `OPENAI_MODEL` | `gpt-4.1-mini` |
+| `OPENAI_DAILY_FALLBACK_LIMIT` | `100` |
+| `ATTENDANCE_ALLOWED_RADIUS_M` | `120` |
+| `ATTENDANCE_MAX_PHOTO_AGE_MIN` | `3` |
+| `SHEET_STAFF_CONFIG` | `HR_STAFF_CONFIG` |
+| `SHEET_ATTENDANCE_RAW` | `V52_ATTENDANCE_RAW` |
+| `SHEET_DAILY_PAYROLL` | `V52_DAILY_PAYROLL` |
+| `SHEET_WEEKLY_PAYROLL` | `V52_WEEKLY_PAYROLL` |
+| `SHEET_WAGE_HISTORY` | `HR_WAGE_HISTORY` |
+| `SHEET_SHIFT_SCHEDULE` | `HR_SHIFT_SCHEDULE` |
+| `SHEET_EXPENSE_RAW` | `V52_EXPENSE_RAW` |
+| `SHEET_EXPENSE_DAILY` | `รายวัน` |
+| `SHEET_SYSTEM_LOG` | `V52_SYSTEM_LOG` |
 
-เมื่อ `RUNTIME_MODE=production` ระบบส่ง Loading, Reply, Push และ Owner DLQ alert ตามปกติ แม้ `SHADOW_LINE_OUTPUT=false` เพราะค่านี้ใช้ปิด output เฉพาะตอน `RUNTIME_MODE=shadow` เท่านั้น ส่วน Silent Shadow preflight ตั้งใจประมวลผลและบันทึกโดยไม่ส่ง LINE output จริง
+`SHADOW_LINE_OUTPUT=false` ปิด output เฉพาะเมื่อ runtime เป็น Shadow; ใน Production `RUNTIME_MODE=production` ระบบส่ง Reply/Push ตาม logic ปัจจุบัน
 
-ใน Production การตอบ event ของพนักงานใช้ Reply API ก่อนเสมอเมื่อ LINE ส่ง `replyToken` ที่ใช้ได้ จึงไม่กินโควตา Push รายเดือน ส่วน Push สงวนไว้สำหรับ fallback ที่ไม่มี reply token, งานแจ้งเตือนภายหลัง และ Owner/system alert
+---
 
-## ผลทดสอบบริการจริง
+## 17. Secrets
 
-UAT วันที่ 22–23 กรกฎาคม 2026:
+ห้าม commit secret ลง Git
 
-- `/health` ผ่าน
-- `/admin/readiness` ผ่าน D1, LINE OA, Google Sheets และ R2
-- LINE IN/OUT แบบหน้าปัดเป็นเวลาหลักเคยผ่านในรุ่นก่อน แต่ต้องทดสอบ Live ใหม่หลังเปลี่ยนเป็น Timestamp + GPS
-- รูปหลักฐานทั้ง IN/OUT พบใน R2 จริง
-- Attendance, Daily Payroll และ Weekly Payroll sync ไป Sheets สำเร็จ
-- Admin Correction และ audit trail ทำงานจริง
-- Failed jobs เปิดค้างหลัง recovery: `0` (`25` รายการจาก quota 429 ถูกกู้และเปลี่ยนเป็น `RESOLVED`)
-- `npm run check`: automated tests ผ่าน `106` รายการ (`3` live integration suites ถูก skip โดยค่าเริ่มต้น)
-- Live expense text matrix หลัง Deploy ผ่าน `161/161`
-- Contract รูปจริง 7 รูปผ่าน `7/7`: Photo 1–5 ผ่าน Timestamp + GPS; Photo 6–7 ถูกปฏิเสธด้วย `GPS_MISSING`
-- Fast-track UAT ผ่าน Attendance `12/12`, Expense `10/10`, Payroll คำนวณมือ 450 บาทตรง D1/Sheets, duplicate ทุกกลุ่มเป็น 0, Sync ทั้งหมด `COMPLETED` และ `/admin/readiness` ผ่าน
-- Regression สลิปจริง KBank, SCB และเป๋าตังผ่าน `3/3`: จำแนกเป็น `BANK_SLIP`, อ่านวันที่/เวลา/เลขอ้างอิง/ยอดได้ และ validation ผ่าน; KBank ปี `26` ถูก normalize เป็น `2026`, เป๋าตังบันทึกยอดจริง `16` จาก `40 - 24`
-- เลขเวลา/วันที่และ weekday บนหน้าปัดไม่ใช้ตัดสิน Attendance; ระบบใช้ Timestamp สีขาวบนภาพเท่านั้น
+Secrets หลัก:
 
-การทดสอบนี้ยืนยันเส้นทางหลัก แต่ยังไม่แทน UAT หลายวันและรูปหลายสภาพแสง
+- `LINE_CHANNEL_SECRET`
+- `LINE_CHANNEL_ACCESS_TOKEN`
+- `LINE_OWNER_USER_ID`
+- `ADMIN_TOKEN`
+- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
+- `GOOGLE_PRIVATE_KEY_BASE64`
+- `GOOGLE_SPREADSHEET_ID`
+- `OPENAI_API_KEY`
 
-## ตรวจโค้ดและ Deploy
+ใช้ Cloudflare secret management เท่านั้น
 
-ต้องใช้ Node.js 22 ขึ้นไป
+```bash
+npx wrangler secret put <NAME>
+```
+
+ห้ามแสดงค่าจริงใน README, Issue, PR, CI logs หรือ Chat
+
+---
+
+## 18. Admin Endpoints
+
+ทุก `/admin/*` ต้องใช้ Admin authorization
+
+### System
+
+- `GET /admin/status`
+- `GET /admin/readiness`
+- `POST /admin/bootstrap-sheets`
+- `POST /admin/retry-sync`
+- `POST /admin/reconcile-sheets`
+
+### Employee / Shift
+
+- `POST /admin/import-employees-from-sheet`
+- `POST /admin/import-employees`
+- `POST /admin/import-shifts-from-sheet`
+- `POST /admin/shifts/generate-defaults`
+- `POST /admin/shifts/override`
+
+### Attendance
+
+- `POST /admin/attendance/correct`
+- `POST /admin/attendance/notification-smoke`
+
+> `notification-smoke` เป็น Push fallback smoke ไม่ใช่หลักฐาน Reply API; Reply path ต้องทดสอบด้วย inbound event จริงที่มี reply token
+
+### Vision
+
+- `POST /admin/vision/inspect`
+- `POST /admin/vision/evaluate`
+- `POST /admin/vision/evaluate-evidence`
+- `GET /admin/evidence/<R2 key>`
+
+### Expense
+
+- `POST /admin/expense-access`
+- `POST /admin/expense/evaluate`
+
+### Payroll
+
+มี Preview / Apply path ภายใต้ admin flow; Apply เป็น high-risk mutation และต้องทำตาม payroll release gate เท่านั้น
+
+---
+
+## 19. Health / Readiness semantics
+
+### `/health`
+
+ตรวจ basic runtime configuration
+
+Production expected:
+
+```text
+ok = true
+mode = production
+```
+
+### `/admin/readiness`
+
+ตรวจ service dependency จริง เช่น
+
+- D1
+- LINE auth / reply capability
+- Google Sheets
+- R2
+- Attendance config
+
+LINE Push quota exhausted สามารถแสดง degraded ได้โดยไม่ทำให้ readiness ล้ม หาก normal employee Reply flow ยังทำงาน
+
+Google Sheets timeout แบบ transient ต้องแยกจาก auth/schema failure จริง
+
+---
+
+## 20. Testing
+
+ต้องใช้ Node.js 22+
 
 ```bash
 npm ci
@@ -167,103 +918,268 @@ npm run check
 npx wrangler deploy --dry-run
 ```
 
-Deploy และ migrate:
+### Automated validation ล่าสุดใน hotfix series
+
+ชุดทดสอบหลัง notification architecture มี automated tests มากกว่า 160 tests โดย live fixture บางชุดถูก skip โดย default ตาม environment
+
+ทุก PR ที่แก้ code ต้องผ่าน:
+
+- typecheck
+- unit/regression tests
+- `npm run check`
+- Wrangler dry-run
+- `git diff --check`
+- CI
+
+### Live tests
+
+Live tests ใช้เฉพาะ task ที่อนุญาต เพราะอาจกระทบ
+
+- LINE quota
+- Production data
+- D1
+- Sheets
+- OpenAI usage
+
+ห้ามใช้ real Attendance punch เป็น smoke test โดยไม่มี test identity / controlled plan
+
+---
+
+## 21. Deploy / Production Change
+
+### Local validation
+
+```bash
+npm ci
+npm run check
+npx wrangler deploy --dry-run
+```
+
+### Remote migration / deploy
 
 ```bash
 npm run db:migrate:remote
 npm run deploy
 ```
 
-คำสั่ง Deploy และ remote migration เป็นงาน Production/High Risk ต้องมี Issue, Backup, UAT, Rollback และ owner approval แยก การ Merge PR ไม่ถือเป็นการอนุมัติให้รันคำสั่งเหล่านี้
+คำสั่ง remote เป็น Production mutation
 
-## Secrets ที่ต้องตั้งใน Cloudflare
+ต้องมี:
 
-ตั้งด้วย `npx wrangler secret put <NAME>` เท่านั้น ห้ามใส่ค่าจริงใน GitHub หรือ `wrangler.jsonc`
+- Production Change scope
+- exact SHA
+- CI PASS
+- backup
+- rollback version
+- readiness
+- UAT/smoke plan
+- Owner authorization
 
-- `LINE_CHANNEL_SECRET`
-- `LINE_CHANNEL_ACCESS_TOKEN`
-- `LINE_OWNER_USER_ID`
-- `ADMIN_TOKEN` อย่างน้อย 32 ตัวอักษร
-- `GOOGLE_SERVICE_ACCOUNT_EMAIL`
-- `GOOGLE_PRIVATE_KEY_BASE64`
-- `GOOGLE_SPREADSHEET_ID`
-- `OPENAI_API_KEY`
+Merge PR **ไม่เท่ากับ deploy approval** ตาม repository policy เว้นแต่งานนั้นมี Owner authorization ชัดเจนครอบคลุม release end-to-end
 
-## Admin endpoints
+---
 
-ทุก endpoint ใต้ `/admin/*` ต้องใช้ `Authorization: Bearer <ADMIN_TOKEN>`
+## 22. Backup / Rollback
 
-- `GET /admin/status`
-- `GET /admin/readiness`
-- `POST /admin/bootstrap-sheets`
-- `POST /admin/import-employees-from-sheet`
-- `POST /admin/import-employees`
-- `POST /admin/import-shifts-from-sheet` สำหรับสร้างแถวที่ยังไม่มีเท่านั้น
-- `POST /admin/shifts/generate-defaults` สำหรับสร้างกะเริ่มต้นแบบ insert-only
-- `POST /admin/shifts/override` สำหรับ Owner เปลี่ยนสถานะพนักงาน/วันที่เดียวพร้อม Audit
-- `POST /admin/expense-access`
-- `POST /admin/expense/evaluate` สำหรับทดสอบข้อความโดยไม่บันทึก D1/Sheets
-- `POST /admin/attendance/correct`
-- `POST /admin/retry-sync`
-- `POST /admin/reconcile-sheets`
-- `POST /admin/vision/inspect`
-- `POST /admin/vision/evaluate` สำหรับ regression test รูป JPEG จริงเท่านั้น ไม่เก็บรูปและต้องใช้ Admin Token
-- `POST /admin/vision/evaluate-evidence` สำหรับอ่านรูปที่อยู่ใน R2 ซ้ำด้วย key โดยไม่สร้าง Expense และต้องใช้ Admin Token
-- `GET /admin/evidence/<R2 key>`
+ก่อน migration หรือ release สำคัญต้องสร้าง fresh D1 backup
 
-ทดสอบข้อความค่าใช้จ่ายกับ Worker จริงโดยไม่สร้างรายการ:
+Production launch backup ที่เคย verified:
 
-```bash
-MALIPANG_EXPENSE_BASE_URL=https://malipang-backend-v5-2.eakkachai-dev.workers.dev \
-MALIPANG_ADMIN_TOKEN_FILE=secrets/ADMIN_TOKEN.txt \
-npm run test:expense-text
+```text
+malipang-v5-2-before-b4277edfe-20260729-051421.sql.gz
+SHA-256:
+aa9bb5d11d1209e678440e4ffc228a53113c06ff4e6485873f9f5dac995ef2b5
 ```
 
-ชุดทดสอบรูปนาฬิกาจริงอยู่ที่ `tests/fixtures/clock-photos` รันกับ Worker ที่ deploy แล้วด้วย ไฟล์ `.jpg` ถูก Git ignore เพราะมีเวลา ที่อยู่ และพิกัดจริง ส่วน `cases.json` เก็บเฉพาะผลที่คาดหวัง:
+ผ่าน:
 
-```bash
-MALIPANG_VISION_BASE_URL=https://malipang-backend-v5-2.eakkachai-dev.workers.dev \
-MALIPANG_ADMIN_TOKEN_FILE=secrets/ADMIN_TOKEN.txt \
-MALIPANG_VISION_PROVIDER=openai \
-npm run test:clock-photos
+- gzip integrity
+- private R2 download checksum
+- SQLite restore integrity
+
+### Rollback principle
+
+1. rollback Worker version
+2. คง additive migrations
+3. คง D1/R2/Audit data
+4. ห้าม drop table/column ตอน incident
+5. ตรวจ Health / Readiness / Queue / Lost / Duplicate / Sheets หลัง rollback
+6. เปิด Bug Issue พร้อมหลักฐาน
+
+---
+
+## 23. Production Incidents / Lessons Learned
+
+### Google Sheets quota burst
+
+ปัญหา:
+
+- schedule 620 rows สร้าง writes เร็วเกิน quota
+- Google ตอบ 429 `RESOURCE_EXHAUSTED`
+
+แก้:
+
+- 40 writes/minute
+- exponential backoff
+- jitter
+- Retry-After
+- idempotent recovery
+
+### LINE Push quota exhausted
+
+ปัญหา:
+
+- Free plan Push `300/300`
+- Attendance transaction ถูกต้องแต่ผู้ใช้ไม่เห็น confirmation ใน architecture เดิม
+
+แก้:
+
+- Reply-first
+- Push fallback only
+- notification isolation
+- `LINE_PUSH_QUOTA_EXHAUSTED`
+- degraded readiness semantics
+
+### Key lesson
+
+ระบบ employee operation ต้องไม่ผูก business correctness กับ external notification quota
+
+---
+
+## 24. Legacy Apps Script
+
+V5.2 ไม่ใช้ Apps Script เป็น core runtime
+
+แต่ Legacy Apps Script อาจยังมี
+
+- trigger
+- deployment
+- spreadsheet-bound script
+- flow เดิมบางส่วน
+
+จึงห้าม:
+
+- ปิด trigger
+- ลบ deployment
+- ลบ legacy sheet
+- เปลี่ยน LINE webhook เพื่อ shutdown legacy
+
+จนกว่าจะผ่าน Legacy shutdown project และ Owner approval แยก
+
+เป้าหมายคือให้ Legacy ลดบทบาทหลังพิสูจน์ Production parity และ payroll cycle จริง
+
+---
+
+## 25. Production Monitoring ที่ควรดูทุกวัน
+
+หลังร้านปิดควรตรวจอย่างน้อย
+
+- `/health`
+- `/admin/readiness`
+- Attendance วันนี้
+- Missing Punch
+- Queue pending/processing
+- failed jobs ใหม่
+- Push quota state
+- Google Sheets sync
+- lost event
+- duplicate records
+- D1 ↔ Sheets reconcile
+
+สถานะที่ต้องการ:
+
+```text
+GREEN
 ```
 
-ระหว่างเปรียบเทียบโมเดลหรือทดสอบเฉพาะรูป สามารถเพิ่ม `MALIPANG_OPENAI_MODEL=gpt-4.1-mini` และ `MALIPANG_CLOCK_CASES=photo-02` ได้
+ถ้ามีปัญหาให้รายงานเป็น
 
-Regression contract ของ KBank, SCB และเป๋าตังอยู่ใน `tests/fixtures/bank-slip-cases.json` ส่วนรูปจริงไม่ commit ลง Git ให้ส่ง path ผ่าน JSON environment แล้วรัน:
-
-```bash
-MALIPANG_VISION_BASE_URL=https://malipang-backend-v5-2.eakkachai-dev.workers.dev \
-MALIPANG_ADMIN_TOKEN_FILE=secrets/ADMIN_TOKEN.txt \
-MALIPANG_BANK_SLIP_IMAGE_MAP='{"kbank-kplus":"/path/kbank.jpg","scb-easy":"/path/scb.jpg","paotang-gwallet":"/path/paotang.jpg"}' \
-npm run test:bank-slips
+```text
+ACTION REQUIRED
 ```
 
-การทดสอบผ่าน `/admin/vision/inspect` และ `/admin/vision/evaluate` ใช้ตัวนับ `openai_admin_test_calls` แยกจากรูปจริงของพนักงาน จึงไม่กินโควตา `openai_fallback_calls` ฝั่ง Production ส่วนรูปที่ไม่ผ่านจะตอบ LINE ด้วยสาเหตุ วิธีแก้ และรหัสตรวจสอบ โดยไม่แสดงข้อผิดพลาดดิบหรือข้อมูลลับของผู้ให้บริการ AI ค่าเริ่มต้นฝั่ง Production จำกัดไว้ 100 ครั้งต่อวัน
+พร้อม employee/date/root cause ที่ Owner ต้องแก้
 
-ข้อความ LINE สำหรับ Attendance ทั้งสำเร็จและไม่ผ่านแสดง 3 ภาษาตามลำดับ: ไทย, English และ မြန်မာ โดยเมื่อบันทึกสำเร็จจะระบุ `Photo timestamp`, `GPS check: Passed` และ `Shop clock evidence: Passed` ตามข้อมูลที่ระบบตรวจจริง ส่วนข้อความและ Flex UI ของ Expense ใช้ English เท่านั้น แต่รายละเอียดรายการที่ผู้ใช้พิมพ์เป็นภาษาไทยยังคงเก็บและแสดงได้ตามเดิม
+---
 
-### กติกาภาพลงเวลา (Timestamp + GPS)
+## 26. First Payroll Operational Checklist
 
-1. ต้องเห็นนาฬิกาสีดำประจำร้านชัดพอให้ AI ยืนยันลักษณะเฉพาะได้ แต่นาฬิกาเป็นหลักฐานประกอบเท่านั้น
-2. ต้องมี Overlay ตัวหนังสือสีขาวซึ่งมีวันที่ เวลา พิกัดตัวเลข Latitude/Longitude และชื่อสถานที่/ที่อยู่ โดยอยู่ตำแหน่งใดในภาพก็ได้
-3. ระบบใช้วันและเวลาจาก Overlay เป็น `Work_Date` และ `Official_Time` เพียงแหล่งเดียว
-4. ระบบตรวจพิกัดเทียบ `ATTENDANCE_STORE_LAT/LNG`, รัศมี `ATTENDANCE_ALLOWED_RADIUS_M` และตรวจภาพเก่าด้วย `ATTENDANCE_MAX_PHOTO_AGE_MIN`
-5. ภาพที่ไม่มี GPS, Overlay ไม่ใช่สีขาว, อยู่นอกรัศมี, Timestamp เก่า หรือยืนยันนาฬิการ้านไม่ได้ จะไม่ถูกบันทึกและ LINE จะแจ้งสาเหตุสามภาษา
+สำหรับรอบ `2026-07-30..2026-08-05`
 
-## ก่อนเปิด Production
+ก่อน Apply:
 
-1. ตรวจ `HR_STAFF_CONFIG` ให้ LINE User ID, ตารางงาน, ค่าแรง, grace และค่าหักเป็นข้อมูลจริง
-2. ทดสอบรูปนาฬิกาจริงอย่างน้อย 50 รูป หลายระยะ แสง และมุม
-3. ทดสอบ IN/OUT, ส่งซ้ำ, missing punch, concurrency, retry, DLQ และ reconcile
-4. ตรวจ Accuracy อย่างน้อย 99%, lost event = 0 และ duplicate payroll = 0
-5. ตรวจ R2 lifecycle ลบหลักฐานตามนโยบายที่กำหนด
-6. ตรวจ Apps Script triggers/deployments และ Backup ก่อนปิดระบบเดิม
-7. ตรวจ LINE webhook ให้ชี้ Runtime หลักเพียงระบบเดียว และปิด Auto-reply ที่ทำให้ตอบซ้ำ
-8. เปลี่ยน `RUNTIME_MODE` เป็น `production` และเปิด LINE output หลังอนุมัติ UAT เท่านั้น
-9. เฝ้าดู D1, failed jobs, Queue, Sheets และค่าใช้ OpenAI ในช่วงเปิดจริง
+1. ตรวจ IN/OUT ทุกวัน
+2. แก้ Missing Punch แบบ controlled correction
+3. ตรวจ DAY_OFF / CANCELLED
+4. ตรวจ Wage effective date
+5. ตรวจ Late / deduction
+6. ตรวจ OT ถ้ามี
+7. Payroll Preview
+8. ตรวจ 4 คนกับข้อมูลจริง
+9. Pending Review = 0
+10. D1 ↔ Sheets PASS
+11. Owner approve
+12. Payroll Apply ด้วย unique Run ID
+13. ตรวจ Weekly Payroll หลัง Apply
+14. ตรวจ duplicate payroll run = 0
 
-## เอกสารเพิ่มเติม
+---
+
+## 27. Cost Philosophy
+
+ระบบออกแบบให้ต้นทุนต่ำและใช้ Free tier เมื่อเหมาะสม
+
+### LINE OA
+
+ใช้ Free plan เป็นหลัก
+
+- Reply-first สำหรับ employee interaction
+- Push สงวนไว้สำหรับ fallback / async
+
+### Cloudflare
+
+ต้นทุนขึ้นกับ usage ของ
+
+- Workers
+- D1
+- R2
+- Queue
+
+ต้อง monitor usage แต่ architecture ไม่ควรสร้าง unnecessary retry หรือ writes
+
+### OpenAI
+
+Vision มี usage cost ตามจำนวน request
+
+Production guard ช่วยจำกัดจำนวน fallback call ต่อวัน
+
+### Google Sheets
+
+ไม่มี message cost แบบ LINE แต่มี quota/rate limit จึงต้องใช้ batching/pacing/retry ที่เหมาะสม
+
+---
+
+## 28. Repository Safety Rules สรุป
+
+ห้าม:
+
+- commit secrets
+- deploy Production โดยไม่มี authorization
+- remote D1 migration แบบไม่มี backup/gate
+- delete Production D1 data
+- delete R2 evidence
+- weaken LINE signature verification
+- bypass admin authorization
+- ปิด idempotency
+- ลบ audit trail
+- เปลี่ยน payroll rule แบบเงียบ
+- overwrite Sheets formulas
+- ปิด Legacy Apps Script โดยไม่มี project/gate แยก
+- เปลี่ยน LINE webhook โดยไม่มี cutover plan
+
+---
+
+## 29. เอกสารเพิ่มเติม
 
 - [ติดตั้งระบบ](docs/01_SETUP_TH.md)
 - [Google Sheets mapping](docs/02_SHEET_MAPPING_TH.md)
@@ -276,3 +1192,44 @@ npm run test:bank-slips
 - [Owner Action Checklist](docs/09_OWNER_ACTION_CHECKLIST_TH.md)
 - [Codex Task Template](docs/10_CODEX_TASK_TEMPLATE_TH.md)
 - [Fast-track UAT 23 กรกฎาคม 2026](docs/13_FAST_TRACK_UAT_2026-07-23.md)
+
+---
+
+## 30. Current Definition of Success
+
+ระบบถือว่าทำงานถูกต้องเมื่อ:
+
+- พนักงานส่งรูปแล้วได้รับผลผ่าน Reply API
+- Push quota หมดแล้วยังลงเวลาได้
+- Official Time มาจาก Timestamp + GPS overlay
+- Attendance ไม่ซ้ำ
+- Payroll snapshot ไม่ซ้ำ
+- Expense ไม่ finalize ก่อน confirm
+- D1 เป็น source of truth
+- Sheets sync กลับมาสร้างใหม่จาก D1 ได้
+- Lost event = 0
+- Duplicate business record = 0
+- Health / Readiness มีความหมายต่อ operations จริง
+- Owner ตรวจข้อมูลได้จาก Sheets/ระบบหลังบ้าน
+- Production rollback ทำได้โดยไม่ทำลายข้อมูล
+- Legacy Apps Script สามารถลดบทบาทได้ทีละขั้นหลัง parity ผ่าน
+
+---
+
+## 31. สถานะปัจจุบันแบบสั้น
+
+```text
+MaliPang Backend V5.2
+STATUS: PRODUCTION
+LINE: REPLY_FIRST_FREE_PLAN
+ATTENDANCE: LIVE
+PAYROLL: LIVE / first real cycle 2026-07-30..2026-08-05
+EXPENSE: LIVE
+D1: SOURCE OF TRUTH
+GOOGLE SHEETS: REPORTING + CONTROLLED INPUT
+R2: PRIVATE EVIDENCE
+PUSH QUOTA: NON-CRITICAL TO NORMAL EMPLOYEE FLOW
+LOST: 0 at latest production verification
+DUPLICATE: 0 at latest production verification
+LEGACY APPS SCRIPT: NOT CORE, NOT YET RETIRED
+```

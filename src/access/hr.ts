@@ -1,5 +1,5 @@
 import { authorize } from "./authorization";
-import { createEmployeeChangeRequest,startHrRegistration,submitHrStaffId } from "./repository";
+import { approveIdentityLinkRequest,createEmployeeChangeRequest,listIdentityLinkRequests,rejectIdentityLinkRequest,startHrRegistration,submitHrStaffId } from "./repository";
 import { respondTextToLineEvent } from "../line/event-response";
 import type { Env,LineEvent } from "../types";
 import type { StaffActor } from "./repository";
@@ -14,6 +14,26 @@ function profile(actor:StaffActor):string{return tri(
 export async function handleHrText(env:Env,event:LineEvent,actor:StaffActor|null,traceId:string):Promise<boolean>{
   const text=(event.message?.text||"").trim(),lineUserId=event.source.userId||"";
   if(!lineUserId)return false;
+  const ownerCommand=/^HR\s+(PENDING|APPROVE|REJECT)\b\s*(.*)$/i.exec(text);
+  if(ownerCommand){
+    if(!actor||actor.role!=="OWNER"||!authorize(actor,"identity.approve")){await reply(env,event,"HR identity administration is available only to a verified Owner LINE account.",traceId);return true;}
+    const action=ownerCommand[1]!.toUpperCase(),args=ownerCommand[2]!.trim();
+    if(action==="PENDING"){
+      const requests=await listIdentityLinkRequests(env);
+      const rows=requests.map(request=>`${request.requestId} | ${request.requestedStaffId||"-"} | ${request.staffName||"-"} | ${request.role||"-"} | ${request.branchName||"All branches"}`).join("\n");
+      await reply(env,event,rows?`HR registration requests\n${rows}`:"HR registration requests\nNo pending requests.",traceId);return true;
+    }
+    const [requestId,...reasonParts]=args.split(/\s+/).filter(Boolean);
+    if(!requestId){await reply(env,event,`Usage: HR ${action} <requestId>${action==="REJECT"?" <reason>":""}`,traceId);return true;}
+    if(action==="APPROVE"){
+      const result=await approveIdentityLinkRequest(env,requestId,actor);
+      await reply(env,event,`HR identity approved.\nStaff ID: ${result.employeeId}\nStatus: VERIFIED${result.idempotent?" (already approved)":""}`,traceId);return true;
+    }
+    const reason=reasonParts.join(" ").trim();
+    if(reason.length<3){await reply(env,event,"Usage: HR REJECT <requestId> <reason>",traceId);return true;}
+    await rejectIdentityLinkRequest(env,requestId,actor,reason);
+    await reply(env,event,`HR identity request rejected.\nRequest ID: ${requestId}`,traceId);return true;
+  }
   if(/^HR$/i.test(text)){
     if(actor){await reply(env,event,profile(actor),traceId);return true;}
     await startHrRegistration(env,lineUserId);

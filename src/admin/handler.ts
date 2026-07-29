@@ -16,17 +16,8 @@ import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification } from "../line/attendance-notification";
 import { getLineBotInfo,getLineMessageQuota } from "../line/api";
-import { authorize } from "../access/authorization";
-import { approveIdentityLinkRequest,assignStaffRole,getStaffActorByEmployeeId,listIdentityLinkRequests,rejectIdentityLinkRequest } from "../access/repository";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
-async function requireOwnerActor(request:Request,env:Env){
-  const employeeId=(request.headers.get("x-malipang-actor")||"").trim();
-  if(!employeeId)throw new Error("OWNER_ACTOR_REQUIRED");
-  const actor=await getStaffActorByEmployeeId(env,employeeId);
-  if(!actor||actor.role!=="OWNER"||!authorize(actor,"identity.approve"))throw new Error("FORBIDDEN");
-  return actor;
-}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
@@ -40,10 +31,6 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/shifts/generate-defaults"){const body=await request.json() as Record<string,unknown>;return Response.json({ok:true,...await generateDefaultSchedule(env,{...body,changedBy:request.headers.get("x-malipang-actor")})});}
     if(request.method==="POST"&&url.pathname==="/admin/shifts/override"){const body=await request.json() as Record<string,unknown>;return Response.json({ok:true,...await overrideShiftSchedule(env,{...body,changedBy:request.headers.get("x-malipang-actor")})});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees"){const employees=await request.json() as EmployeeImportInput[];await importEmployees(env,employees);return Response.json({ok:true,count:employees.length});}
-    if(request.method==="GET"&&url.pathname==="/admin/identity/requests"){await requireOwnerActor(request,env);return Response.json({ok:true,requests:await listIdentityLinkRequests(env,url.searchParams.get("status")||"PENDING_OWNER_APPROVAL")});}
-    if(request.method==="POST"&&url.pathname.startsWith("/admin/identity/requests/")&&url.pathname.endsWith("/approve")){const owner=await requireOwnerActor(request,env),requestId=decodeURIComponent(url.pathname.slice("/admin/identity/requests/".length,-"/approve".length));return Response.json({ok:true,...await approveIdentityLinkRequest(env,requestId,owner)});}
-    if(request.method==="POST"&&url.pathname.startsWith("/admin/identity/requests/")&&url.pathname.endsWith("/reject")){const owner=await requireOwnerActor(request,env),requestId=decodeURIComponent(url.pathname.slice("/admin/identity/requests/".length,-"/reject".length)),body=await request.json() as{reason?:unknown},reason=String(body.reason||"").trim();if(reason.length<3)throw new Error("REJECTION_REASON_REQUIRED");await rejectIdentityLinkRequest(env,requestId,owner,reason);return Response.json({ok:true,requestId,status:"REJECTED"});}
-    if(request.method==="POST"&&url.pathname==="/admin/staff/role"){const owner=await requireOwnerActor(request,env),body=await request.json() as{employeeId?:unknown;role?:unknown;branchId?:unknown;reason?:unknown},role=String(body.role||"");if(role!=="OWNER"&&role!=="BRANCH_MANAGER"&&role!=="ASSISTANT_MANAGER"&&role!=="EMPLOYEE")throw new Error("INVALID_ROLE");return Response.json({ok:true,...await assignStaffRole(env,owner,{employeeId:String(body.employeeId||""),role,branchId:body.branchId==null?null:String(body.branchId),reason:String(body.reason||"")})});}
     if(request.method==="POST"&&url.pathname==="/admin/payroll/wage")return Response.json({ok:true,...await setEmployeeWage(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/payroll/finalize-missing")return Response.json({ok:true,...await finalizeMissingPunchPayrolls(env)});
     if(request.method==="POST"&&url.pathname==="/admin/payroll/preview")return Response.json({ok:true,...await previewPayrollRange(env,await request.json())});

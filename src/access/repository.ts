@@ -36,7 +36,7 @@ function actorFromRow(row:Row):StaffActor{
   };
 }
 
-const employeeColumns=`e.employee_id,e.staff_name,e.line_user_id,e.scheduled_in,e.scheduled_out,e.daily_wage_satang,e.grace_min,e.late_deduction_satang,e.early_deduction_satang,e.can_submit_expense,e.status employee_status,r.role,r.scope,r.branch_id,r.status role_status,b.branch_name`;
+const employeeColumns=`e.employee_id,e.staff_name,e.line_user_id,e.scheduled_in,e.scheduled_out,e.daily_wage_satang,e.grace_min,e.late_deduction_satang,e.early_deduction_satang,e.can_submit_expense,e.status,e.status employee_status,r.role,r.scope,r.branch_id,r.status role_status,b.branch_name`;
 
 export async function getStaffActorByLineId(env:Env,lineUserId:string):Promise<StaffActor|null>{
   if(!lineUserId)return null;

@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {approveIdentityLinkRequest,assignStaffRole} from '../dist/access/repository.js';
+import {approveIdentityLinkRequest,assignStaffRole,getStaffActorByLineId} from '../dist/access/repository.js';
 
 const owner={employeeId:'EMP_TEST',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'EMP_TEST',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
 function db(state){return {prepare(sql){return {sql,values:[],bind(...values){this.values=values;return this;},async first(){
+  if(sql.includes('FROM line_identity_bindings i JOIN employees'))return state.actorRow||null;
   if(sql.startsWith('SELECT request_id,external_user_id'))return state.request;
   if(sql.startsWith('SELECT employee_id,staff_name,status'))return state.staff;
   return null;
@@ -26,6 +27,13 @@ test('duplicate owner approval is idempotent and does not make a second binding'
 
 test('an Owner cannot silently remove or downgrade their own Owner role',async()=>{
   await assert.rejects(()=>assignStaffRole({DB:db({sql:[]})},owner,{employeeId:'EMP_TEST',role:'BRANCH_MANAGER',branchId:'B001',reason:'test'}),/OWNER_CANNOT_CHANGE_OWN_ROLE/);
+});
+
+test('verified active binding retains ACTIVE status for both actor and employee image gates',async()=>{
+  const actorRow={employee_id:'EMP001',staff_name:'Win',line_user_id:'U-existing',scheduled_in:'04:00',scheduled_out:'16:00',daily_wage_satang:50000,grace_min:10,late_deduction_satang:0,early_deduction_satang:0,can_submit_expense:1,status:'ACTIVE',employee_status:'ACTIVE',role:'EMPLOYEE',scope:'BRANCH',branch_id:'B001',role_status:'ACTIVE',branch_name:'Yingcharoen'};
+  const actor=await getStaffActorByLineId({DB:db({sql:[],actorRow})},'U-existing');
+  assert.equal(actor.employee.status,'ACTIVE');
+  assert.equal(actor.employeeStatus,'ACTIVE');
 });
 
 test('schema enforces one active LINE identity per staff and per external user, manager cardinality, and append-only audit',()=>{

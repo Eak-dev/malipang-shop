@@ -48,6 +48,15 @@ test('already linked HR returns a sanitised profile without raw LINE user ID',as
   assert.doesNotMatch(calls[0].messages[0].text,/U-SECRET/);
 });
 
+test('only an already verified Owner LINE account can list pending identity requests',async()=>{
+  const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
+  const owner={employeeId:'EMP_TEST',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'EMP_TEST',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
+  const calls=await lineReply(()=>handleHrText(env(state),event('HR PENDING'),owner,'trace'));
+  assert.match(calls[0].messages[0].text,/No pending requests/);
+  const denied=await lineReply(()=>handleHrText(env(state),event('HR PENDING'),null,'trace'));
+  assert.match(denied[0].messages[0].text,/verified Owner LINE account/);
+});
+
 test('an already-bound target staff ID is rejected and creates no binding',async()=>{
   const state={sql:[],actor:null,pending:true,staff:{employee_id:'EMP001',staff_name:'Win',status:'ACTIVE',existing_binding:'bound'},lineBound:false};
   const calls=await lineReply(()=>handleHrText(env(state),event('EMP001'),null,'trace'));

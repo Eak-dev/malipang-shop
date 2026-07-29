@@ -51,18 +51,17 @@ V1.1 บังคับหนึ่ง role ที่ active ต่อพนั�
 
 คำสั่ง correction แบบปลอดภัยของพนักงานคือ `CORRECT <เหตุผล>` เช่น `CORRECT missing OUT 2026-07-29` ระบบสร้าง request เพื่อให้ Manager/Owner พิจารณาเท่านั้น ไม่แก้ Attendance หรือ Payroll โดยตรง
 
-### Owner approval API
+### Owner approval through verified LINE
 
-ทุก route ต้องใช้ `Authorization: Bearer <ADMIN_TOKEN>` และ `X-MaliPang-Actor: <Owner Staff ID>`:
+การอนุมัติไม่ใช้ header ที่ผู้เรียกอ้างว่าเป็น Owner. Owner ต้องเป็น LINE account ที่มี `VERIFIED` binding อยู่แล้ว และส่งคำสั่งต่อไปนี้:
 
 ```text
-GET  /admin/identity/requests
-POST /admin/identity/requests/<requestId>/approve
-POST /admin/identity/requests/<requestId>/reject   { "reason": "..." }
-POST /admin/staff/role                              { "employeeId":"...", "role":"EMPLOYEE", "branchId":"B001", "reason":"..." }
+HR PENDING
+HR APPROVE <requestId>
+HR REJECT <requestId> <reason>
 ```
 
-เฉพาะ Owner ที่ active เท่านั้นที่ผ่าน API สี่รายการนี้ได้ แม้จะมี ADMIN_TOKEN อยู่ก็ตาม
+จึงยืนยัน actor จาก `event.source.userId` ที่ผูกกับ Owner จริงก่อน approve/reject และ audit จะบันทึก Owner คนที่ส่งคำสั่งจริง. `ADMIN_TOKEN` ยังคงใช้กับ developer/system routes เดิมเท่านั้น ไม่ใช่หลักฐานว่าผู้เรียกเป็น Owner.
 
 ## HR_STAFF_CONFIG
 
@@ -89,7 +88,7 @@ Historical Attendance, Payroll, wage snapshots, shift rows และ existing LI
 
 V1.1 จะไม่ bind LINE account จาก display name, คำว่า `HR`, เวลา หรือ event ใกล้เคียงกัน. Current inbound schema เก็บ LINE user ID และชนิดข้อความ แต่ไม่เก็บข้อความ/profile evidence ที่ยืนยันว่าเป็น Nea ได้อย่างปลอดภัย จึงมีสถานะ `NEA_REGISTRATION_PENDING`.
 
-การทำงานเดียวที่ต้องทำหลัง deploy คือ Nea ส่ง `HR` ไปยัง MaliPang staff LINE OA แล้ว Owner อนุมัติ request ที่ได้จาก API ข้างต้น. จากนั้นใช้ `/admin/staff/role` ตั้ง role เป็น `OWNER` (organization scope) พร้อมเหตุผล `Add second MaliPang Owner`.
+การทำงานเดียวที่ต้องทำหลัง deploy คือเพิ่ม Nea เป็น staff record ใน `HR_STAFF_CONFIG` โดยกำหนด `Role=OWNER` (ไม่ต้องกรอก LINE_User_ID), import staff config แล้วให้ Nea ส่ง `HR` ไปยัง MaliPang staff LINE OA. Eak ส่ง `HR PENDING` แล้ว `HR APPROVE <requestId>` เพื่อยืนยัน binding. Import role มี audit และ Owner approval จะสร้าง verified binding อีกชั้นหนึ่ง.
 
 ## สัญญาสำหรับ V2 (ยังไม่มี UI)
 

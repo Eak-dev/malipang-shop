@@ -73,7 +73,13 @@ export interface LineEvent {
 
 export interface InboundJob { kind: "LINE_EVENT"; event: LineEvent; receivedAtIso: string; traceId: string }
 export interface SheetsSyncJob { kind: "SHEETS_SYNC"; entityType: SheetEntityType; entityKey: string; entityVersion: number; traceId: string }
-export type LineNotificationPurpose = "ATTENDANCE_RESULT" | "ATTENDANCE_REJECTION" | "ATTENDANCE_SMOKE";
+export type LineNotificationPurpose =
+  | "ATTENDANCE_RESULT"
+  | "ATTENDANCE_REJECTION"
+  | "ATTENDANCE_SMOKE"
+  | "EMPLOYEE_RESPONSE"
+  | "EXPENSE_RESPONSE"
+  | "OWNER_RESPONSE";
 export interface LineNotificationJob {
   kind: "LINE_NOTIFICATION";
   to: string;

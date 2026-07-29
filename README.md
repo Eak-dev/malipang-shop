@@ -35,6 +35,7 @@ LINE OA
   -> Durable Object จัดลำดับ IN/OUT ต่อพนักงานต่อวัน
   -> D1 บันทึก Attendance + Daily Payroll + Weekly Payroll
   -> Queue สร้างงาน Google Sheets ก่อนตอบ LINE
+  -> Reply API ตอบ event เดิม (ไม่ใช้โควตา Push รายเดือน)
   -> Google Sheets Direct API
 ```
 
@@ -67,11 +68,15 @@ Google Sheets เป็นหน้ารายงาน ไม่ใช่ฐ�
 - D1 เป็น source of truth
 - R2 เก็บหลักฐานแบบ private
 - Sheets Sync Job ถูกบันทึกก่อนส่งข้อความสำเร็จกลับ LINE
+- ผลจาก event พนักงานใช้ LINE Reply API เป็นหลักเมื่อมี `replyToken`; Push ใช้เฉพาะ fallback หรืองาน asynchronous
+- การตอบ Attendance สำเร็จ/ไม่ผ่านไม่พึ่งโควตา Push รายเดือน และ notification failure ไม่ย้อนกลับไปสร้าง Punch ซ้ำ
+- Push 429 ที่ยืนยันว่าโควตารายเดือนหมดถูกจัดเป็น `LINE_PUSH_QUOTA_EXHAUSTED` และไม่ retry ถี่โดยไม่มีโอกาสสำเร็จ
 - Retry, DLQ, failed jobs, reconcile/backfill และ stale-job recovery
 - Reconcile/Recovery กระจายงานเป็นกลุ่มละ 5 งานต่อนาที, บันทึก `next_attempt_at` และใช้ atomic lease ป้องกัน Cron/consumer ทำ Sync Job เดียวกันซ้ำพร้อมกัน
 - หน่วง retry เมื่อ Google Sheets ตอบ 429 เพื่อไม่ให้ใช้ retry จนหมดในทันที
 - Metrics สำหรับ LINE download, Workers AI, OpenAI, R2, Sheets และเวลารวม
 - `/admin/readiness` ตรวจ D1, LINE, Google Sheets และ R2 จริง
+- `/admin/status` และ `/admin/readiness` แสดง Push quota/consumption; Push หมดเป็น `DEGRADED/EXHAUSTED` แต่ Reply capability ที่ผ่านยังทำให้ระบบพร้อมรับงานพนักงาน
 
 ### Expense
 
@@ -129,6 +134,8 @@ Spreadsheet: `MaliPang_OWNER_MASTER`
 | `OPENAI_MODEL` | `gpt-4.1-mini` |
 
 เมื่อ `RUNTIME_MODE=production` ระบบส่ง Loading, Reply, Push และ Owner DLQ alert ตามปกติ แม้ `SHADOW_LINE_OUTPUT=false` เพราะค่านี้ใช้ปิด output เฉพาะตอน `RUNTIME_MODE=shadow` เท่านั้น ส่วน Silent Shadow preflight ตั้งใจประมวลผลและบันทึกโดยไม่ส่ง LINE output จริง
+
+ใน Production การตอบ event ของพนักงานใช้ Reply API ก่อนเสมอเมื่อ LINE ส่ง `replyToken` ที่ใช้ได้ จึงไม่กินโควตา Push รายเดือน ส่วน Push สงวนไว้สำหรับ fallback ที่ไม่มี reply token, งานแจ้งเตือนภายหลัง และ Owner/system alert
 
 ## ผลทดสอบบริการจริง
 

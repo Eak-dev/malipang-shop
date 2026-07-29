@@ -4,7 +4,12 @@ import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
 
 export class LineApiError extends Error{
-  constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){
+  constructor(
+    public readonly status:number,
+    message:string,
+    public readonly retryAfterSeconds?:number,
+    public readonly code?:string
+  ){
     super(message);this.name="LineApiError";
   }
 }
@@ -23,8 +28,13 @@ async function lineFetch(env: Env, path: string, init: RequestInit, traceId="", 
     const res = await fetchWithTimeout(`https://api.line.me${path}`, { ...init, headers },numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`LINE ${path}`);
     status=String(res.status);
     if(!res.ok&&!acceptResponse?.(res)){
-      await res.text();
-      throw new LineApiError(res.status,`LINE ${path} HTTP ${res.status}`,retryAfterSeconds(res.headers.get("Retry-After")));
+      const body=await res.text(),monthlyQuota=path==="/v2/bot/message/push"&&res.status===429&&/(monthly|month).*(limit|quota)|(limit|quota).*(monthly|month)/i.test(body);
+      throw new LineApiError(
+        res.status,
+        monthlyQuota?"LINE_PUSH_QUOTA_EXHAUSTED":`LINE ${path} HTTP ${res.status}`,
+        retryAfterSeconds(res.headers.get("Retry-After")),
+        monthlyQuota?"LINE_PUSH_QUOTA_EXHAUSTED":undefined
+      );
     }
     return res;
   }finally{await safeRecordMetric(env,traceId,metricName,Date.now()-started,{path,status});}
@@ -63,6 +73,9 @@ export async function pushRetryableLineMessages(env:Env,to:string,messages:unkno
     response=>response.status===409&&Boolean(response.headers.get("x-line-accepted-request-id"))
   );
 }
+export function isPushQuotaExhaustedError(error:unknown):boolean{
+  return error instanceof LineApiError&&error.code==="LINE_PUSH_QUOTA_EXHAUSTED";
+}
 export function isPermanentLineNotificationError(error:unknown):boolean{
   const status=error instanceof LineApiError?error.status:Number(String(error instanceof Error?error.message:error).match(/\bHTTP (\d{3})\b/)?.[1]||0);
   return status>=400&&status<500&&![408,409,425,429].includes(status);
@@ -76,9 +89,14 @@ async function pushLineMessages(env:Env,to:string,messages:unknown[],traceId:str
     await safeRecordMetric(env,traceId,"line_notification_failure",0,{channel:"push",status});
   }
 }
-export async function replyText(env: Env, replyToken: string, text: string, traceId=""): Promise<void> {
+export async function replyLineMessages(env:Env,replyToken:string,messages:unknown[],traceId=""):Promise<void>{
   if (!lineOutputEnabled(env)) return;
-  await lineFetch(env, "/v2/bot/message/reply", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ replyToken, messages:[{type:"text", text}] }) },traceId,"line_reply_ms");
+  if(!replyToken.trim())throw new Error("LINE reply token missing");
+  if(messages.length<1||messages.length>5)throw new Error("LINE Reply API requires 1-5 messages");
+  await lineFetch(env, "/v2/bot/message/reply", { method:"POST", headers:{"content-type":"application/json"}, body:JSON.stringify({ replyToken, messages }) },traceId,"line_reply_ms");
+}
+export async function replyText(env: Env, replyToken: string, text: string, traceId=""): Promise<void> {
+  await replyLineMessages(env,replyToken,[{type:"text",text}],traceId);
 }
 export async function pushConfirmation(env: Env, to: string, title: string, body: string, confirmData: string, cancelData: string, traceId=""): Promise<void> {
   if (!lineOutputEnabled(env)) return;
@@ -95,6 +113,23 @@ export async function downloadLineContent(env: Env, messageId: string, preview=f
 }
 export async function getLineBotInfo(env:Env):Promise<{userId:string;displayName:string;basicId?:string}>{
   return lineFetch(env,"/v2/bot/info",{method:"GET"},"readiness","line_readiness_ms").then(res=>res.json()) as Promise<{userId:string;displayName:string;basicId?:string}>;
+}
+export interface LineMessageQuota{
+  targetType:"none"|"limited";
+  targetLimit:number|null;
+  totalUsage:number;
+  remaining:number|null;
+  pushCapacity:"UNLIMITED"|"AVAILABLE"|"EXHAUSTED";
+}
+export async function getLineMessageQuota(env:Env):Promise<LineMessageQuota>{
+  const [target,consumption]=await Promise.all([
+    lineFetch(env,"/v2/bot/message/quota",{method:"GET"},"readiness","line_quota_target_ms").then(res=>res.json()) as Promise<{type:"none"|"limited";value?:number}>,
+    lineFetch(env,"/v2/bot/message/quota/consumption",{method:"GET"},"readiness","line_quota_consumption_ms").then(res=>res.json()) as Promise<{totalUsage:number}>
+  ]);
+  const totalUsage=Math.max(0,Number(consumption.totalUsage||0));
+  if(target.type==="none")return{targetType:"none",targetLimit:null,totalUsage,remaining:null,pushCapacity:"UNLIMITED"};
+  const targetLimit=Math.max(0,Number(target.value||0)),remaining=Math.max(0,targetLimit-totalUsage);
+  return{targetType:"limited",targetLimit,totalUsage,remaining,pushCapacity:remaining===0?"EXHAUSTED":"AVAILABLE"};
 }
 export async function pushOwnerAlert(env:Env,text:string,traceId=""):Promise<void>{
   if(!lineOutputEnabled(env))return;

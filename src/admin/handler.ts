@@ -15,13 +15,14 @@ import { reconcileSheets } from "./reconcile-sheets";
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification } from "../line/attendance-notification";
+import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
     if(request.method==="GET"&&url.pathname==="/admin/status"){
-      const[inbound,sync,failed]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>()]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),now:new Date().toISOString()});
+      const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }
     if(request.method==="GET"&&url.pathname==="/admin/readiness"){const result=await checkReadiness(env);return Response.json(result,{status:result.ok?200:503});}
     if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}

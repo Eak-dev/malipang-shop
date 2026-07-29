@@ -1,4 +1,4 @@
-import { getLineBotInfo } from "../line/api";
+import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { withTimeout } from "../shared/async";
 import { isTrue, numberEnv } from "../shared/env";
 import { getSpreadsheetMetadata } from "../sheets/client";
@@ -11,15 +11,32 @@ export interface ReadinessResult { ok:boolean; checkedAt:string; checks:Record<s
 async function probe(run:()=>Promise<unknown>):Promise<ProbeResult>{
   try{return{ok:true,detail:await run()};}catch(error){return{ok:false,error:String(error instanceof Error?error.message:error)};}
 }
+export function lineCapabilityChecks(line:ProbeResult,lineQuotaProbe:ProbeResult):{lineReplyCapability:ProbeResult;linePushCapacity:ProbeResult}{
+  const lineReplyCapability:ProbeResult={
+    ok:line.ok,
+    detail:{status:line.ok?"PASS":"FAIL",quotaExempt:true,requiresReplyToken:true},
+    ...(!line.ok?{error:"LINE authentication is required for Reply API"}:{})
+  };
+  const quota=lineQuotaProbe.ok?lineQuotaProbe.detail as Awaited<ReturnType<typeof getLineMessageQuota>>:null;
+  const linePushCapacity:ProbeResult={
+    ok:true,
+    detail:quota
+      ?{status:quota.pushCapacity==="EXHAUSTED"?"EXHAUSTED":"PASS",severity:quota.pushCapacity==="EXHAUSTED"?"DEGRADED":"OK",...quota}
+      :{status:"UNKNOWN",severity:"DEGRADED",warning:lineQuotaProbe.error||"LINE quota probe unavailable"}
+  };
+  return{lineReplyCapability,linePushCapacity};
+}
 export async function checkReadiness(env:Env):Promise<ReadinessResult>{
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
-  const [d1,line,sheets,r2]=await Promise.all([
+  const [d1,line,sheets,r2,lineQuotaProbe]=await Promise.all([
     probe(()=>withTimeout(env.DB.prepare("SELECT 1 AS ok").first(),timeout,"D1 readiness")),
     probe(()=>getLineBotInfo(env)),
     probe(async()=>({metadata:await getSpreadsheetMetadata(env),expenseDaily:await checkDailyExpenseSheet(env)})),
-    isTrue(env.R2_EVIDENCE_ENABLED)?probe(()=>withTimeout(env.EVIDENCE.get("__malipang_readiness__"),timeout,"R2 readiness").then(()=>({binding:"reachable"}))):Promise.resolve({ok:true,detail:{enabled:false}})
+    isTrue(env.R2_EVIDENCE_ENABLED)?probe(()=>withTimeout(env.EVIDENCE.get("__malipang_readiness__"),timeout,"R2 readiness").then(()=>({binding:"reachable"}))):Promise.resolve({ok:true,detail:{enabled:false}}),
+    probe(()=>getLineMessageQuota(env))
   ]);
+  const {lineReplyCapability,linePushCapacity}=lineCapabilityChecks(line,lineQuotaProbe);
   const lat=Number(env.ATTENDANCE_STORE_LAT),lng=Number(env.ATTENDANCE_STORE_LNG),enabled=isTrue(env.ATTENDANCE_ENABLED),configured=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180,attendanceConfig:ProbeResult={ok:!enabled||configured,detail:{enabled,storeLocationConfigured:configured,allowedRadiusM:numberEnv(env.ATTENDANCE_ALLOWED_RADIUS_M,120),maxPhotoAgeMin:numberEnv(env.ATTENDANCE_MAX_PHOTO_AGE_MIN,3)}};
   if(!attendanceConfig.ok)attendanceConfig.error="ATTENDANCE_STORE_LAT/LNG missing or invalid";
-  const checks={d1,line,sheets,r2,attendanceConfig};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
+  const checks={d1,line,lineReplyCapability,linePushCapacity,sheets,r2,attendanceConfig};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
 }

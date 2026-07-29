@@ -68,6 +68,7 @@ function fixture(options={}){
 
 const employee={employeeId:"EMP_TEST",staffName:"Test",lineUserId:"U1",scheduledIn:"04:00",scheduledOut:"16:00",dailyWageSatang:50000,graceMin:10,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:"ACTIVE"};
 const event={type:"message",timestamp:Date.parse("2026-07-28T21:13:34.700Z"),source:{type:"user",userId:"U1"},message:{id:"M1",type:"image"},webhookEventId:"W1"};
+const replyEvent={...event,replyToken:"reply-token"};
 const validReading={kind:"CLOCK",hour:null,minute:null,month:null,day:null,weekday:null,confidence:.99,clockFullyVisible:true,clockPresent:true,clockConfidence:.99,overlayPresent:true,overlayTextWhite:true,photoDate:"2026-07-29",photoTime:"04:13:18",latitude:13.89682,longitude:100.60830,locationText:"Yingcharoen Market",overlayRawText:"29 Jul 2026 04:13:18 +13.89682,+100.60830",overlayConfidence:.99,needsNewPhoto:false,note:"",provider:"test",raw:null};
 
 function queueMessage(job){
@@ -90,6 +91,62 @@ test("valid Attendance commits once and successful confirmation is delivered",as
   assert.equal(calls.length,1);
   assert.equal(new Headers(calls[0].headers).get("X-Line-Retry-Key"),state.queued[0].retryKey);
   assert.equal(state.attendanceCommits,1);
+});
+
+test("valid Attendance uses Reply API and does not require Push capacity",async()=>{
+  const {state,env}=fixture(),originalFetch=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{
+    calls.push({url:String(url),init});
+    if(String(url).endsWith("/v2/bot/message/push"))return new Response('{"message":"You have reached your monthly limit."}',{status:429});
+    return new Response("{}",{status:200});
+  };
+  try{
+    assert.equal(await handleAttendance(env,replyEvent,employee,validReading,new Uint8Array([1]).buffer,"trace-reply-valid"),true);
+  }finally{globalThis.fetch=originalFetch;}
+  assert.equal(state.attendanceCommits,1);
+  assert.equal(state.queued.length,0);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].url,/\/v2\/bot\/message\/reply$/);
+  assert.equal(JSON.parse(calls[0].init.body).replyToken,"reply-token");
+});
+
+test("stale Attendance uses Reply API rejection and never requires Push capacity",async()=>{
+  const {state,env}=fixture(),staleEvent={...replyEvent,timestamp:Date.parse("2026-07-29T01:49:56.663Z"),webhookEventId:"W-stale-reply",message:{id:"M-stale-reply",type:"image"}},originalFetch=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url,init)=>{calls.push({url:String(url),init});return new Response("{}",{status:200});};
+  try{
+    assert.equal(await handleAttendance(env,staleEvent,employee,validReading,new Uint8Array([2]).buffer,"trace-stale-reply"),false);
+  }finally{globalThis.fetch=originalFetch;}
+  assert.equal(state.attendanceCommits,0);
+  assert.equal(state.sheetBatches.length,0);
+  assert.equal(state.queued.length,0);
+  assert.equal(calls.length,1);
+  assert.match(calls[0].url,/\/v2\/bot\/message\/reply$/);
+  assert.match(JSON.parse(calls[0].init.body).messages[0].text,/old|เก่า|stale/i);
+});
+
+test("temporary Reply failure preserves Attendance and creates only notification fallback",async()=>{
+  const {state,env}=fixture(),originalFetch=globalThis.fetch,calls=[];
+  globalThis.fetch=async(url)=>{calls.push(String(url));return new Response("temporary",{status:503});};
+  try{
+    await assert.doesNotReject(handleAttendance(env,replyEvent,employee,validReading,new Uint8Array([1]).buffer,"trace-reply-temporary"));
+  }finally{globalThis.fetch=originalFetch;}
+  assert.equal(state.attendanceCommits,1);
+  assert.equal(calls.length,1);
+  assert.match(calls[0],/\/v2\/bot\/message\/reply$/);
+  assert.equal(state.queued.length,1);
+  assert.equal(state.queued[0].kind,"LINE_NOTIFICATION");
+  assert.equal(state.queued[0].purpose,"ATTENDANCE_RESULT");
+});
+
+test("monthly Push quota exhaustion is observable and is not aggressively retried",async()=>{
+  const {state,env}=fixture(),job=await buildAttendanceNotificationJob({to:"U1",text:"fallback",identity:"W-quota:result",purpose:"ATTENDANCE_RESULT",traceId:"trace-quota"}),current=queueMessage(job),originalFetch=globalThis.fetch;
+  globalThis.fetch=async()=>new Response('{"message":"You have reached your monthly limit."}',{status:429});
+  try{await processLineNotificationMessage(env,"malipang-jobs",current.message,1);}finally{globalThis.fetch=originalFetch;}
+  assert.equal(current.state.acked,1);
+  assert.equal(current.state.retries.length,0);
+  assert.equal(state.attendanceCommits,0);
+  assert.ok(state.sql.some(item=>item.values.includes("LINE_PUSH_QUOTA_EXHAUSTED")));
+  assert.ok(state.sql.some(item=>item.values.includes("line_push_quota_exhausted")));
 });
 
 test("temporary LINE failure retries notification only and then succeeds idempotently",async()=>{
@@ -125,7 +182,7 @@ test("duplicate webhook claim is terminal before Attendance is processed again",
   assert.equal(state.queued.length,0);
 });
 
-test("ambiguous Queue enqueue preserves the original committed IN result on inbound retry",async()=>{
+test("ambiguous notification enqueue never retries the committed Attendance business event",async()=>{
   const {state,env}=fixture({result:attempt=>attempt===1
     ?{eventId:"att_1",punchType:"IN",workDate:"2026-07-29",officialTime:"04:13",status:"NORMAL",lateMinutes:3,confirmedWageSatang:0,pendingWageSatang:50000,validationCode:"OK",version:1}
     :{eventId:"att_1",punchType:"DUPLICATE",workDate:"2026-07-29",officialTime:"04:13",status:"DUPLICATE",lateMinutes:3,confirmedWageSatang:0,pendingWageSatang:50000,validationCode:"DUPLICATE_MESSAGE",version:1}
@@ -133,16 +190,14 @@ test("ambiguous Queue enqueue preserves the original committed IN result on inbo
   const accepted=[];
   env.JOB_QUEUE.send=async job=>{
     accepted.push(structuredClone(job));
-    if(accepted.length===1)throw new Error("Queue enqueue result unknown");
+    throw new Error("Queue enqueue result unknown");
   };
-  await assert.rejects(handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,"trace-ambiguous"),/result unknown/);
   await assert.doesNotReject(handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,"trace-ambiguous"));
-  assert.equal(state.attendanceCommits,2);
-  assert.equal(accepted.length,2);
-  assert.equal(accepted[0].retryKey,accepted[1].retryKey);
-  assert.deepEqual(accepted[0].messages,accepted[1].messages);
-  assert.match(accepted[1].messages[0].text,/Check-in recorded/);
-  assert.doesNotMatch(accepted[1].messages[0].text,/already complete/i);
+  assert.equal(state.attendanceCommits,1);
+  assert.equal(accepted.length,1);
+  assert.match(accepted[0].messages[0].text,/Check-in recorded/);
+  assert.doesNotMatch(accepted[0].messages[0].text,/already complete/i);
+  assert.ok(state.failedOpen);
 });
 
 test("stale Attendance never commits and rejection notification is retryable",async()=>{

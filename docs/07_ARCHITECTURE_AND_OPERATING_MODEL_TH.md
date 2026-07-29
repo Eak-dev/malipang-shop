@@ -206,10 +206,13 @@ Google Sheets ใช้เพื่อ:
 -> D1 บันทึก Attendance
 -> คำนวณ Payroll snapshot
 -> สร้าง Sheets sync job
--> ตอบ LINE
+-> ตอบ event เดิมด้วย Reply API
+-> ใช้ Push outbox เฉพาะเมื่อไม่มี/ใช้ reply token ไม่ได้
 ```
 
 Official Time ใช้ Timestamp สีขาวบนภาพเท่านั้น นาฬิกาประจำร้านเป็นหลักฐานประกอบ ไม่ใช่แหล่งเวลาค่าแรง
+
+Reply API เป็นช่องทางหลักของ event พนักงานและไม่พึ่ง monthly Push quota ธุรกรรมกับ notification มี idempotency boundary แยกกัน ความล้มเหลวของ Reply/Push จึงต้องตรวจสอบได้แต่ห้ามย้อนกลับไปสร้าง Attendance ซ้ำ
 
 ### 5.2 Expense แบบข้อความ
 

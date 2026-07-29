@@ -28,9 +28,10 @@ export async function safeRecordMetric(env:Env,traceId:string,name:string,valueM
   try{await recordMetric(env,traceId||"untraced",name,valueMs,labels);}catch(error){console.error("metric",name,error);}
 }
 function failedJobKey(payload:unknown):string{
-  const job=payload as{kind?:string;entityType?:string;entityKey?:string;entityVersion?:number;event?:{webhookEventId?:string;message?:{id?:string}}};
+  const job=payload as{kind?:string;entityType?:string;entityKey?:string;entityVersion?:number;retryKey?:string;event?:{webhookEventId?:string;message?:{id?:string}}};
   if(job.kind==="SHEETS_SYNC")return`${job.entityType||"UNKNOWN"}:${job.entityKey||"UNKNOWN"}:${job.entityVersion||0}`;
   if(job.kind==="LINE_EVENT")return`LINE_EVENT:${job.event?.webhookEventId||job.event?.message?.id||"UNKNOWN"}`;
+  if(job.kind==="LINE_NOTIFICATION")return`LINE_NOTIFICATION:${job.retryKey||"UNKNOWN"}`;
   return"UNKNOWN";
 }
 export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
@@ -38,6 +39,11 @@ export async function createFailedJob(env:Env,queue:string,traceId:string,payloa
 }
 export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
   await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId,failedJobKey(payload)).run();
+}
+export async function findOpenFailedJobPayload<T>(env:Env,queue:string,traceId:string,payload:unknown):Promise<T|null>{
+  const row=await env.DB.prepare(`SELECT payload_json FROM failed_jobs WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN' LIMIT 1`).bind(queue,traceId,failedJobKey(payload)).first<{payload_json:string}>();
+  if(!row?.payload_json)return null;
+  try{return JSON.parse(row.payload_json) as T;}catch{return null;}
 }
 export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
   await enqueueSheetSyncBatch(env,[job]);

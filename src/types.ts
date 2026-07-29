@@ -73,7 +73,16 @@ export interface LineEvent {
 
 export interface InboundJob { kind: "LINE_EVENT"; event: LineEvent; receivedAtIso: string; traceId: string }
 export interface SheetsSyncJob { kind: "SHEETS_SYNC"; entityType: SheetEntityType; entityKey: string; entityVersion: number; traceId: string }
-export type QueueJob = InboundJob | SheetsSyncJob;
+export type LineNotificationPurpose = "ATTENDANCE_RESULT" | "ATTENDANCE_REJECTION" | "ATTENDANCE_SMOKE";
+export interface LineNotificationJob {
+  kind: "LINE_NOTIFICATION";
+  to: string;
+  messages: unknown[];
+  purpose: LineNotificationPurpose;
+  retryKey: string;
+  traceId: string;
+}
+export type QueueJob = InboundJob | SheetsSyncJob | LineNotificationJob;
 
 export interface Employee {
   employeeId: string;

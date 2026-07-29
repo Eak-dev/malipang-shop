@@ -14,6 +14,7 @@ import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
+import { enqueueAttendanceNotification } from "../line/attendance-notification";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -38,6 +39,25 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/expense-access"){const body=await request.json() as{lineUserId?:string;enabled?:boolean};if(!body.lineUserId||typeof body.enabled!=="boolean")throw new Error("lineUserId and enabled are required");const result=await env.DB.prepare(`UPDATE employees SET can_submit_expense=?,updated_at=? WHERE line_user_id=?`).bind(body.enabled?1:0,new Date().toISOString(),body.lineUserId).run();if(Number(result.meta.changes||0)!==1)throw new Error("LINE user not found");return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/expense/evaluate")return Response.json({ok:true,...evaluateExpenseText(await request.json() as{text?:string;now?:string}) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/attendance/correct")return Response.json({ok:true,...await correctAttendance(env,await request.json())});
+    if(request.method==="POST"&&url.pathname==="/admin/attendance/notification-smoke"){
+      const body=await request.json() as{employeeId?:string;scenario?:string;runId?:string};
+      if(body.employeeId!=="EMP_TEST")throw new Error("notification smoke is restricted to EMP_TEST");
+      if(body.scenario!=="SUCCESS"&&body.scenario!=="REJECTION")throw new Error("scenario must be SUCCESS or REJECTION");
+      if(!body.runId||!/^[A-Za-z0-9_-]{8,64}$/.test(body.runId))throw new Error("valid runId is required");
+      const employee=await env.DB.prepare(`SELECT line_user_id,status FROM employees WHERE employee_id='EMP_TEST' LIMIT 1`).first<{line_user_id:string;status:string}>();
+      if(!employee||employee.status!=="ACTIVE"||!employee.line_user_id)throw new Error("EMP_TEST must be ACTIVE and linked to LINE");
+      const success=body.scenario==="SUCCESS";
+      await enqueueAttendanceNotification(env,{
+        to:employee.line_user_id,
+        text:success
+          ?"✅ [SMOKE TEST] Attendance success notification is operational. No attendance record was created."
+          :"❌ [SMOKE TEST] Attendance rejection notification is operational. No attendance record was created.",
+        identity:`attendance-smoke:${body.runId}:${body.scenario}`,
+        purpose:"ATTENDANCE_SMOKE",
+        traceId:`attendance_smoke_${body.runId}_${body.scenario.toLowerCase()}`
+      });
+      return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-sheets")return Response.json({ok:true,...await reconcileSheets(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string})});

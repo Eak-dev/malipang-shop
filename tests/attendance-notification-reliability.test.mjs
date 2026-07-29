@@ -4,7 +4,8 @@ import {handleAttendance} from "../dist/attendance/service.js";
 import {
   buildAttendanceNotificationJob,
   deliverLineNotification,
-  processLineNotificationMessage
+  processLineNotificationMessage,
+  recoverPendingLineNotifications
 } from "../dist/line/attendance-notification.js";
 import {claimInboundEvent} from "../dist/db/repositories.js";
 
@@ -241,4 +242,35 @@ test("LINE retry-key 409 is treated as already delivered",async()=>{
   const originalFetch=globalThis.fetch;
   globalThis.fetch=async()=>new Response('{"message":"already accepted"}',{status:409,headers:{"x-line-accepted-request-id":"accepted"}});
   try{await assert.doesNotReject(deliverLineNotification(env,job));}finally{globalThis.fetch=originalFetch;}
+});
+
+test("scheduled recovery atomically re-enqueues stranded notification outbox only",async()=>{
+  const job=await buildAttendanceNotificationJob({to:"U1",text:"saved",identity:"W-recover:result",purpose:"ATTENDANCE_RESULT",traceId:"trace-recover"}),state={queued:[],claimed:0,metrics:[]},old="2026-07-29T00:00:00.000Z";
+  const env={
+    RUNTIME_MODE:"production",
+    SHADOW_LINE_OUTPUT:"false",
+    JOB_QUEUE:{async send(value){state.queued.push(value);}},
+    DB:{
+      prepare(sql){
+        return{
+          values:[],
+          bind(...values){this.values=values;return this;},
+          async all(){
+            if(sql.includes("SELECT id,trace_id,payload_json"))return{results:[{id:"failed_1",trace_id:"trace-recover",payload_json:JSON.stringify(job),updated_at:old}]};
+            return{results:[]};
+          },
+          async run(){
+            if(sql.includes("LINE_NOTIFICATION_RECOVERY_ENQUEUED")){state.claimed+=1;return{meta:{changes:state.claimed===1?1:0}};}
+            if(sql.includes("INSERT INTO metrics"))state.metrics.push(this.values);
+            return{meta:{changes:1}};
+          }
+        };
+      }
+    }
+  };
+  assert.equal(await recoverPendingLineNotifications(env,60,20),1);
+  assert.equal(state.queued.length,1);
+  assert.equal(state.queued[0].retryKey,job.retryKey);
+  assert.equal(await recoverPendingLineNotifications(env,60,20),0);
+  assert.equal(state.queued.length,1);
 });

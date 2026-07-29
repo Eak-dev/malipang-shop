@@ -33,6 +33,8 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 หากไม่มี reply token หรือ Reply API ตอบล้มเหลว ระบบจะสร้าง `LINE_NOTIFICATION` Push fallback แบบ deterministic/durable โดยไม่ย้อนกลับไปรัน Vision, Commit Attendance, Payroll หรือ Sheets อีก การ retry notification จึงไม่สร้าง Punch หรือ Expense ซ้ำ
 
+Cron จะกู้ outbox ที่ค้างจาก Queue enqueue ล้มเหลวแบบ atomic และใช้ retry key เดิม การกู้นี้ส่งเฉพาะ payload ผลลัพธ์เดิม ไม่ replay LINE event หรือธุรกรรม ส่วน outbox ที่เป็น `LINE_PUSH_QUOTA_EXHAUSTED` จะไม่ถูก Cron กู้ซ้ำทุก 5 นาที
+
 หาก Push ตอบ 429 เพราะโควตารายเดือนหมด ระบบจัดประเภทเป็น `LINE_PUSH_QUOTA_EXHAUSTED`, เก็บ failed job/metric ให้ตรวจได้ และหยุด retry ถี่ เพราะเงื่อนไขนี้ไม่ฟื้นจนกว่าโควตาจะกลับมา ส่วน 429 แบบ rate limit ชั่วคราวยังใช้ bounded backoff ตามเดิม
 
 ตรวจ `/admin/status` หรือ `/admin/readiness` เพื่อดู target limit, consumption และสถานะ Push การหมดโควตา Push แสดง `DEGRADED/EXHAUSTED` แต่ไม่ทำให้ readiness ล้ม หาก LINE authentication และ Reply capability ยังผ่าน

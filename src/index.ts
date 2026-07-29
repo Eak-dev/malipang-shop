@@ -8,7 +8,7 @@ import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
 import { syncJob } from "./sheets/sync";
 import { pushOwnerAlert } from "./line/api";
-import { processLineNotificationMessage } from "./line/attendance-notification";
+import { processLineNotificationMessage,recoverPendingLineNotifications } from "./line/attendance-notification";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -34,6 +34,6 @@ export default{
     await Promise.all(batch.messages.map(async message=>{const job=message.body,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else await syncJob(env,job,attempt);await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
-    const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await refreshCurrentEmployeeWages(env);await finalizeMissingPunchPayrolls(env);await recoverPendingSheetJobs(env);try{await auditEvidenceRetention(env);}catch(error){console.error("evidence-retention-scheduled",error);}})());
+    const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await refreshCurrentEmployeeWages(env);await finalizeMissingPunchPayrolls(env);await recoverPendingSheetJobs(env);await recoverPendingLineNotifications(env);try{await auditEvidenceRetention(env);}catch(error){console.error("evidence-retention-scheduled",error);}})());
   }
 } satisfies ExportedHandler<Env,QueueJob>;

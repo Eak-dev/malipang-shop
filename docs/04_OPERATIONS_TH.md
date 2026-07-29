@@ -29,7 +29,11 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 ## LINE Push ตอบผู้ใช้ไม่ได้
 
-ข้อความ Push และ Flex ที่ใช้แจ้งผลหลังธุรกรรมสิ้นสุดแล้วเป็น notification แบบ best effort หาก LINE ตอบ 429 หรือ HTTP error ระบบจะเก็บ `line_push_ms` และ `line_notification_failure` แต่จะไม่เปลี่ยนธุรกรรมที่สำเร็จหรือเหตุการณ์ที่ถูกปฏิเสธอย่างถูกต้องให้เป็น `FAILED` และจะไม่ retry งานธุรกิจทั้ง Event เพียงเพราะส่งข้อความแจ้งเตือนไม่สำเร็จ
+ข้อความ Push และ Flex ทั่วไปที่ใช้แจ้งผลหลังธุรกรรมสิ้นสุดแล้วเป็น notification แบบ best effort หาก LINE ตอบ 429 หรือ HTTP error ระบบจะเก็บ `line_push_ms` และ `line_notification_failure` แต่จะไม่เปลี่ยนธุรกรรมที่สำเร็จหรือเหตุการณ์ที่ถูกปฏิเสธอย่างถูกต้องให้เป็น `FAILED`
+
+ผล Attendance ทั้งสำเร็จและปฏิเสธใช้ `LINE_NOTIFICATION` Queue แยกจากธุรกรรมลงเวลา แต่ละงานมี `X-Line-Retry-Key` คงที่เพื่อให้ LINE ป้องกันข้อความซ้ำ การ retry จึงส่งข้อความเดิมเท่านั้นและไม่ย้อนกลับไปรัน Vision, Commit Attendance, Payroll หรือ Sheets อีก ความผิดพลาดชั่วคราวจะ retry แบบ bounded backoff ส่วน 4xx ถาวรจะถูกเก็บใน `failed_jobs` โดยไม่สร้าง Punch ซ้ำ
+
+Production smoke ของช่องทางนี้ใช้ `POST /admin/attendance/notification-smoke` ได้เฉพาะ `EMP_TEST` และต้องระบุ `SUCCESS` หรือ `REJECTION` พร้อม `runId` คำสั่งนี้สร้างเฉพาะ notification job และไม่สร้าง Attendance/Payroll/Sheets record
 
 Flex ที่ผู้ใช้ต้องกด `Save` หรือ `Cancel` เพื่อให้ Workflow เดินต่อยังเป็น actionable notification แบบ strict หากส่งไม่สำเร็จ Queue จะ retry และกรณีสลิปเดิมมี `WAITING_CONFIRM` อยู่แล้ว ระบบจะส่งการ์ดเดิมซ้ำแทนการสร้าง Expense ซ้ำหรือปฏิเสธว่าเป็นสลิปซ้ำ
 

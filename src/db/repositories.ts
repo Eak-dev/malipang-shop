@@ -28,9 +28,10 @@ export async function safeRecordMetric(env:Env,traceId:string,name:string,valueM
   try{await recordMetric(env,traceId||"untraced",name,valueMs,labels);}catch(error){console.error("metric",name,error);}
 }
 function failedJobKey(payload:unknown):string{
-  const job=payload as{kind?:string;entityType?:string;entityKey?:string;entityVersion?:number;event?:{webhookEventId?:string;message?:{id?:string}}};
+  const job=payload as{kind?:string;entityType?:string;entityKey?:string;entityVersion?:number;retryKey?:string;event?:{webhookEventId?:string;message?:{id?:string}}};
   if(job.kind==="SHEETS_SYNC")return`${job.entityType||"UNKNOWN"}:${job.entityKey||"UNKNOWN"}:${job.entityVersion||0}`;
   if(job.kind==="LINE_EVENT")return`LINE_EVENT:${job.event?.webhookEventId||job.event?.message?.id||"UNKNOWN"}`;
+  if(job.kind==="LINE_NOTIFICATION")return`LINE_NOTIFICATION:${job.retryKey||"UNKNOWN"}`;
   return"UNKNOWN";
 }
 export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{

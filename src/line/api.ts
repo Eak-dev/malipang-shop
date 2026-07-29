@@ -3,13 +3,30 @@ import { safeRecordMetric } from "../db/repositories";
 import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
 
-function lineOutputEnabled(env: Env): boolean { return env.RUNTIME_MODE !== "shadow" || env.SHADOW_LINE_OUTPUT === "true"; }
-async function lineFetch(env: Env, path: string, init: RequestInit, traceId="", metricName="line_api_ms"): Promise<Response> {
+export class LineApiError extends Error{
+  constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){
+    super(message);this.name="LineApiError";
+  }
+}
+export function lineOutputEnabled(env: Env): boolean { return env.RUNTIME_MODE !== "shadow" || env.SHADOW_LINE_OUTPUT === "true"; }
+function retryAfterSeconds(value:string|null):number|undefined{
+  if(!value)return undefined;
+  const seconds=Number(value);
+  if(Number.isFinite(seconds)&&seconds>=0)return Math.ceil(seconds);
+  const date=Date.parse(value);
+  return Number.isFinite(date)?Math.max(0,Math.ceil((date-Date.now())/1000)):undefined;
+}
+async function lineFetch(env: Env, path: string, init: RequestInit, traceId="", metricName="line_api_ms",acceptResponse?:(response:Response)=>boolean): Promise<Response> {
   const started=Date.now();let status="ERROR";
   const headers = new Headers(init.headers); headers.set("Authorization", `Bearer ${env.LINE_CHANNEL_ACCESS_TOKEN}`);
   try{
     const res = await fetchWithTimeout(`https://api.line.me${path}`, { ...init, headers },numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`LINE ${path}`);
-    status=String(res.status);if (!res.ok) throw new Error(`LINE ${path} HTTP ${res.status}: ${await res.text()}`);return res;
+    status=String(res.status);
+    if(!res.ok&&!acceptResponse?.(res)){
+      await res.text();
+      throw new LineApiError(res.status,`LINE ${path} HTTP ${res.status}`,retryAfterSeconds(res.headers.get("Retry-After")));
+    }
+    return res;
   }finally{await safeRecordMetric(env,traceId,metricName,Date.now()-started,{path,status});}
 }
 export async function startLoading(env: Env, chatId: string, traceId=""): Promise<void> {
@@ -34,6 +51,21 @@ function notificationHttpStatus(error:unknown):string{
 }
 async function pushLineMessagesStrict(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
   await lineFetch(env,"/v2/bot/message/push",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({to,messages})},traceId,"line_push_ms");
+}
+export async function pushRetryableLineMessages(env:Env,to:string,messages:unknown[],retryKey:string,traceId=""):Promise<void>{
+  if(!lineOutputEnabled(env))return;
+  await lineFetch(
+    env,
+    "/v2/bot/message/push",
+    {method:"POST",headers:{"content-type":"application/json","X-Line-Retry-Key":retryKey},body:JSON.stringify({to,messages})},
+    traceId,
+    "line_notification_delivery_ms",
+    response=>response.status===409&&Boolean(response.headers.get("x-line-accepted-request-id"))
+  );
+}
+export function isPermanentLineNotificationError(error:unknown):boolean{
+  const status=error instanceof LineApiError?error.status:Number(String(error instanceof Error?error.message:error).match(/\bHTTP (\d{3})\b/)?.[1]||0);
+  return status>=400&&status<500&&![408,409,425,429].includes(status);
 }
 async function pushLineMessages(env:Env,to:string,messages:unknown[],traceId:string):Promise<void>{
   try{

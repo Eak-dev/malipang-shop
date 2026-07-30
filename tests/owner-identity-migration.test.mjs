@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {execFileSync} from 'node:child_process';
+import {execFileSync,spawnSync} from 'node:child_process';
 import {mkdtempSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
@@ -10,6 +10,7 @@ const migration=(name)=>readFileSync(new URL(`../migrations/${name}`,import.meta
 function sqlite(db,input){return execFileSync('/usr/bin/sqlite3',[db],{input,encoding:'utf8'});}
 function rows(db,query){return JSON.parse(execFileSync('/usr/bin/sqlite3',['-json',db,query],{encoding:'utf8'})||'[]');}
 function apply(db,name){sqlite(db,migration(name));}
+function attemptMigration(db,name){return spawnSync('/usr/bin/sqlite3',[db],{input:migration(name),encoding:'utf8'});}
 
 test('full migration chain applies to a clean D1-shaped database',()=>{
   const directory=mkdtempSync(join(tmpdir(),'malipang-owner-identity-clean-'));
@@ -35,7 +36,9 @@ test('0012 aborts before mutation if EMP_TEST and OWN001 already coexist',()=>{
       INSERT INTO employees VALUES('OWN001','Other','U12345678901234567891','04:00','16:00',0,10,0,0,1,'ACTIVE','2026-07-30T00:00:00Z');`);
     apply(db,'0011_identity_access_foundation.sql');
     sqlite(db,`INSERT INTO attendance_events(event_id,webhook_event_id,message_id,employee_id,work_date,punch_type,status,validation_code,created_at,version) VALUES('att_collision','w','m','EMP_TEST','2026-07-30','IN','NORMAL','OK','2026-07-30T00:00:00Z',1);`);
-    assert.throws(()=>apply(db,'0012_owner_identity_canonicalization.sql'),/CHECK constraint failed/);
+    const result=attemptMigration(db,'0012_owner_identity_canonicalization.sql');
+    assert.notEqual(result.status,0);
+    assert.match(result.stderr,/CHECK constraint failed/);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 

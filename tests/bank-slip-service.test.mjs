@@ -34,6 +34,8 @@ test('valid bank slip creates linked WAITING_CONFIRM document and expense withou
   assert.equal(expenseInsert.args[5],'transfer');
   assert.equal(expenseInsert.args[6],'SHOP_BANK');
   assert.equal(expenseInsert.args[8],'2026-07-21');
+  assert.match(expenseInsert.sql,/VALUES\(\?,\?,\?,\?,\?,\?,\?,\?,\?,'WAITING_CONFIRM',\?,\?,\?,\?\)/);
+  assert.equal(expenseInsert.args.length,13,'bank draft bind count must match the fourteen insert columns including literal status');
   assert.ok(h.state.batches[0].some(statement=>statement.sql.includes('expense_audit_log')));
 });
 

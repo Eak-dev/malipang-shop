@@ -20,6 +20,7 @@ export interface DailyExpenseEntry{
 export interface DailyExpensePostingPlan{
   mode:"ITEMIZED"|"SUMMARY_FALLBACK";reason:string;entries:DailyExpenseEntry[];
 }
+export interface DailyExpenseItemPostingOptions{replaceLegacySummary?:boolean}
 export interface DailyExpensePlacement{entityKey:string;row:number;postingMonth:number;postingDay:number;amountColumn:string;sourceWallet:string}
 interface MonthBlock{month:number;headerRow:number;totalRow:number}
 interface DailyLayout{body:unknown[][];headers:unknown[][];blocks:MonthBlock[]}
@@ -199,15 +200,24 @@ async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entrie
   return entries.map(entry=>({entityKey:entry.rowKey,row:rows.get(entry.rowKey)!,postingMonth:payment.postingMonth,postingDay:payment.postingDay,amountColumn:payment.amountColumn,sourceWallet}));
 }
 
-export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[]):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[]}>{
+async function clearLegacySummaryMapping(env:Env,expenseId:string):Promise<boolean>{
+  const row=await mappedRow(env,expenseId);if(!row)return false;
+  await batchClearValues(env,dailyInputRanges(env.SHEET_EXPENSE_DAILY,row));
+  await env.DB.prepare(`DELETE FROM sheet_row_index WHERE sheet_name=? AND entity_key=? AND row_number=?`).bind(env.SHEET_EXPENSE_DAILY,expenseId,row).run();
+  return true;
+}
+
+export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[],options:DailyExpenseItemPostingOptions={}):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[];replacedLegacySummary:boolean}>{
   const plan=buildDailyExpenseEntries(record,document,items);
   // Existing summary mappings are historical reporting rows.  Keep them as-is
   // on automatic reconcile; only newly posted expenses acquire item row keys.
-  if(plan.mode==="ITEMIZED"&&await mappedRow(env,record.expenseId)){
+  const legacySummaryExists=plan.mode==="ITEMIZED"&&await mappedRow(env,record.expenseId);
+  if(legacySummaryExists&&!options.replaceLegacySummary){
     const summary:DailyExpensePostingPlan={mode:"SUMMARY_FALLBACK",reason:"Existing legacy summary mapping is preserved",entries:[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}]};
-    return{plan:summary,placements:await writeDailyExpenseEntries(env,record,summary.entries)};
+    return{plan:summary,placements:await writeDailyExpenseEntries(env,record,summary.entries),replacedLegacySummary:false};
   }
-  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries)};
+  const replacedLegacySummary=legacySummaryExists?await clearLegacySummaryMapping(env,record.expenseId):false;
+  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries),replacedLegacySummary};
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{

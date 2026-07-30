@@ -34,6 +34,7 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 - เมื่อ Receipt/Tax Invoice ถูกยืนยันและยอด line item รวมตรงกับยอดจ่ายจริง `รายวัน` จะลงหนึ่งแถวต่อ item. ตรวจว่าผลรวมแถว item เท่ากับยอด Expense ใน D1 และ `V52_EXPENSE_RAW` ยังมีเพียงหนึ่งแถว summary. หากยอดแบ่งไม่ได้จากหลักฐาน (เช่น voucher/subsidy/shipping) ระบบจะลง summary เดียวเพื่อรักษายอดบัญชี.
 - หากเดือนใน `รายวัน` เต็ม ระบบขยาย row ก่อน `รวม` อัตโนมัติแบบ formula-safe. ถ้า Sheets ตอบ error ให้ปล่อย sync job retry; ห้ามแทรกแถวหรือย้าย total ด้วยมือระหว่าง job กำลัง retry
 - ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Reconcile ใช้ key `Expense_ID|Item_ID` จึงเขียนซ้ำไม่ได้. Undo/CANCELLED ต้องล้างทุก row key ของ Expense นั้น แต่คงหลักฐานและ audit ไว้
+- แถว summary เก่าที่มีอยู่ก่อนระบบ line-item จะไม่ถูกแปลงอัตโนมัติ. หากตรวจสอบรายการหนึ่งแล้วว่าเป็น `CONFIRMED`, มี Primary Receipt/Tax Invoice และผลรวม line item ตรงกับยอดจ่ายจริง ให้ใช้ `POST /admin/reconcile-expense-items` พร้อม `{"expenseId":"<id>"}` เพื่อแทนที่เฉพาะแถว summary ของ Expense นั้นด้วยแถว item. คำสั่งจะปฏิเสธรายการที่แบ่งยอดอย่างปลอดภัยไม่ได้, ไม่เรียก OCR/Vision และไม่สร้าง Expense ใหม่; ตรวจผลรวม, mapping, สูตรรายเดือน และ `V52_EXPENSE_RAW` หลังทำทุกครั้ง.
 
 ## LINE Reply และ Push quota
 

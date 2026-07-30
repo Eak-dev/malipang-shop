@@ -511,6 +511,7 @@ Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured
 - ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
 - ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม
 - Receipt / Tax Invoice ที่ line item ใน D1 รวมตรงกับ final paid จะลง `รายวัน` หนึ่งแถวต่อ item ด้วย key `Expense_ID|Item_ID`; ไม่สร้าง summary ซ้ำ ขณะที่ `V52_EXPENSE_RAW` ยังคง summary หนึ่งแถวต่อ Expense
+- แถว summary ใน `รายวัน` ที่สร้างก่อน feature นี้ถูกเก็บไว้ตามเดิม. การแก้ย้อนหลังทำได้เฉพาะแบบระบุ Expense เดียวผ่าน admin reconcile หลังพิสูจน์ว่ารายการย่อยรวมเท่ายอดจ่ายจริง; ระบบจะไม่ mass-rewrite ประวัติ.
 - หากยอดสุดท้ายแบ่งลง item ไม่ได้อย่าง deterministic เพราะ voucher, subsidy, shipping หรือข้อมูลไม่ครบ ระบบใช้ summary fallback เพื่อไม่ให้ยอดรายวันเกิน/ขาด; Delivery Order ไม่สร้าง item row ซ้ำ
 - `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม โดย row mapping หลัง total จะถูกเลื่อนอย่างสอดคล้อง และขยายได้หลายแถวตามจำนวน item ที่ต้องลง
 

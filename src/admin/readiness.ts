@@ -26,6 +26,11 @@ export function lineCapabilityChecks(line:ProbeResult,lineQuotaProbe:ProbeResult
   };
   return{lineReplyCapability,linePushCapacity};
 }
+function sanitizedLineProbe(line:ProbeResult):ProbeResult{
+  if(!line.ok)return line;
+  const detail=line.detail as {displayName?:unknown;basicId?:unknown}|undefined;
+  return{ok:true,detail:{status:"CONNECTED",...(typeof detail?.displayName==="string"?{displayName:detail.displayName}:{}),...(typeof detail?.basicId==="string"?{basicId:detail.basicId}:{})}};
+}
 export async function checkReadiness(env:Env):Promise<ReadinessResult>{
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
   const [d1,line,sheets,r2,lineQuotaProbe]=await Promise.all([
@@ -38,5 +43,5 @@ export async function checkReadiness(env:Env):Promise<ReadinessResult>{
   const {lineReplyCapability,linePushCapacity}=lineCapabilityChecks(line,lineQuotaProbe);
   const lat=Number(env.ATTENDANCE_STORE_LAT),lng=Number(env.ATTENDANCE_STORE_LNG),enabled=isTrue(env.ATTENDANCE_ENABLED),configured=Number.isFinite(lat)&&lat>=-90&&lat<=90&&Number.isFinite(lng)&&lng>=-180&&lng<=180,attendanceConfig:ProbeResult={ok:!enabled||configured,detail:{enabled,storeLocationConfigured:configured,allowedRadiusM:numberEnv(env.ATTENDANCE_ALLOWED_RADIUS_M,120),maxPhotoAgeMin:numberEnv(env.ATTENDANCE_MAX_PHOTO_AGE_MIN,3)}};
   if(!attendanceConfig.ok)attendanceConfig.error="ATTENDANCE_STORE_LAT/LNG missing or invalid";
-  const checks={d1,line,lineReplyCapability,linePushCapacity,sheets,r2,attendanceConfig};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
+  const checks={d1,line:sanitizedLineProbe(line),lineReplyCapability,linePushCapacity,sheets,r2,attendanceConfig};return{ok:Object.values(checks).every(check=>check.ok),checkedAt:new Date().toISOString(),checks};
 }

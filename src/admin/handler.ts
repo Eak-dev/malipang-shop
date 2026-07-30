@@ -12,6 +12,7 @@ import { importShiftScheduleFromSheet } from "./shift-import";
 import { generateDefaultSchedule,overrideShiftSchedule } from "./shift-schedule";
 import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
+import { reconcileExpenseItemRows } from "../sheets/sync";
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification } from "../line/attendance-notification";
@@ -61,6 +62,12 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-sheets")return Response.json({ok:true,...await reconcileSheets(env,await request.json().catch(()=>({})) as never)});
+    if(request.method==="POST"&&url.pathname==="/admin/reconcile-expense-items"){
+      const body=await request.json().catch(()=>({})) as{expenseId?:unknown};
+      const expenseId=typeof body.expenseId==="string"?body.expenseId.trim():"";
+      if(!/^[A-Za-z0-9_-]{8,128}$/.test(expenseId))throw new Error("valid expenseId is required");
+      return Response.json({ok:true,...await reconcileExpenseItemRows(env,expenseId)});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/vision/inspect")return Response.json({ok:true,...await inspectLineImage(env,await request.json() as{messageId?:string})});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate")return Response.json({ok:true,...await evaluateUploadedImage(env,request) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});

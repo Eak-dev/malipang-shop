@@ -1,12 +1,33 @@
 import type { Env,SheetsSyncJob } from "../types";
 import { batchWriteValues } from "./client";
 import { safeRecordMetric } from "../db/repositories";
-import { clearCancelledExpenseFromDaily,writeConfirmedExpenseWithDocumentItemsToDaily,type DailyExpenseDocument,type DailyExpenseDocumentItem,type DailyExpenseRecord } from "./daily-expense";
+import { buildDailyExpenseEntries,clearCancelledExpenseFromDaily,writeConfirmedExpenseWithDocumentItemsToDaily,type DailyExpenseDocument,type DailyExpenseDocumentItem,type DailyExpenseRecord } from "./daily-expense";
 import { queueRetryDelaySeconds } from "../shared/retry";
 const baht=(value:unknown)=>Number(value||0)/100;
 const SHEET_SYNC_LEASE_MS=15*60*1000;
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
   return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
+}
+export interface LoadedExpenseDailyPosting{expense:Record<string,unknown>;summaryDocument:Record<string,unknown>|null;document:DailyExpenseDocument|null;items:DailyExpenseDocumentItem[];record:DailyExpenseRecord}
+export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<LoadedExpenseDailyPosting>{
+  const expense=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=?`).bind(expenseId).first<Record<string,unknown>>();if(!expense)throw new Error(`Expense not found: ${expenseId}`);
+  const primary=await env.DB.prepare(`SELECT d.document_id,d.document_type,d.vendor_name,d.legal_vendor_name,d.document_number,d.order_id FROM expense_document_links l JOIN expense_documents d ON d.document_id=l.document_id WHERE l.expense_id=? AND l.relation_type='PRIMARY_PURCHASE_DOCUMENT' ORDER BY l.created_at ASC LIMIT 1`).bind(expenseId).first<Record<string,unknown>>();
+  const summaryDocument=primary||await env.DB.prepare(`SELECT document_id,document_type,vendor_name,legal_vendor_name,document_number,order_id FROM expense_documents WHERE expense_id=? ORDER BY created_at ASC LIMIT 1`).bind(expenseId).first<Record<string,unknown>>();
+  let document:DailyExpenseDocument|null=null,items:DailyExpenseDocumentItem[]=[];
+  if(primary){
+    document={documentId:String(primary.document_id),documentType:String(primary.document_type),vendorName:String(primary.vendor_name||""),legalVendorName:String(primary.legal_vendor_name||""),documentNumber:String(primary.document_number||""),orderId:String(primary.order_id||"")};
+    const itemRows=await env.DB.prepare(`SELECT item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang FROM expense_document_items WHERE expense_id=? AND document_id=? ORDER BY created_at ASC,item_id ASC`).bind(expenseId,document.documentId).all<Record<string,unknown>>();
+    items=(itemRows.results||[]).map(item=>({itemId:String(item.item_id),documentId:String(item.document_id),expenseId:item.expense_id==null?null:String(item.expense_id),sellerKey:String(item.seller_key||""),productCode:String(item.product_code||""),description:String(item.description||""),quantity:item.quantity==null?null:Number(item.quantity),unit:String(item.unit||""),unitPriceSatang:item.unit_price_satang==null?null:Number(item.unit_price_satang),discountSatang:item.discount_satang==null?null:Number(item.discount_satang),lineTotalSatang:item.line_total_satang==null?null:Number(item.line_total_satang)}));
+  }
+  const record={expenseId:String(expense.expense_id),transactionDate:String(expense.transaction_date),description:String(expense.description),amountBaht:baht(expense.amount_satang),paymentKey:String(expense.payment_key),sourceWallet:String(expense.source_wallet),category:String(expense.category)} satisfies DailyExpenseRecord;
+  return{expense,summaryDocument,document,items,record};
+}
+export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"ITEMIZED";rowCount:number;replacedLegacySummary:boolean}>{
+  const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
+  const plan=buildDailyExpenseEntries(loaded.record,loaded.document,loaded.items);if(plan.mode!=="ITEMIZED")throw new Error(`Expense cannot be itemized safely: ${plan.reason}`);
+  const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
+  if(result.plan.mode!=="ITEMIZED")throw new Error("Expense item reconciliation did not produce an itemized plan");
+  return{mode:"ITEMIZED",rowCount:result.placements.length,replacedLegacySummary:result.replacedLegacySummary};
 }
 async function allocateRow(env:Env,sheet:string,entityKey:string):Promise<number>{
   const existing=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(existing)return Number(existing.row_number);
@@ -37,15 +58,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     }else if(job.entityType==="OT_REQUEST"){
       const r=await env.DB.prepare(`SELECT o.*,e.staff_name FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=?`).bind(job.entityKey).first<Record<string,unknown>>();if(!r)throw new Error(`OT request not found: ${job.entityKey}`);sheet=env.SHEET_OT_REQUESTS;values=[r.ot_id,r.work_date,r.employee_id,r.staff_name,r.reason,r.planned_start,r.planned_end,baht(r.fixed_amount_satang),r.requested_by,r.owner_preapproved_at,r.employee_confirm_status,r.employee_confirmed_at,r.owner_final_status,baht(r.owner_final_amount_satang),r.owner_final_at,r.actual_ot_minutes,r.status,r.note,r.version,r.updated_at];
     }else if(job.entityType==="EXPENSE"){
-      const r=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=?`).bind(job.entityKey).first<Record<string,unknown>>();if(!r)throw new Error(`Expense not found: ${job.entityKey}`);
-      const primary=await env.DB.prepare(`SELECT d.document_id,d.document_type,d.vendor_name,d.legal_vendor_name,d.document_number,d.order_id FROM expense_document_links l JOIN expense_documents d ON d.document_id=l.document_id WHERE l.expense_id=? AND l.relation_type='PRIMARY_PURCHASE_DOCUMENT' ORDER BY l.created_at ASC LIMIT 1`).bind(job.entityKey).first<Record<string,unknown>>();
-      const summaryDocument=primary||await env.DB.prepare(`SELECT document_id,document_type,vendor_name,legal_vendor_name,document_number,order_id FROM expense_documents WHERE expense_id=? ORDER BY created_at ASC LIMIT 1`).bind(job.entityKey).first<Record<string,unknown>>();
-      if(primary){
-        expenseDocument={documentId:String(primary.document_id),documentType:String(primary.document_type),vendorName:String(primary.vendor_name||""),legalVendorName:String(primary.legal_vendor_name||""),documentNumber:String(primary.document_number||""),orderId:String(primary.order_id||"")};
-        const itemRows=await env.DB.prepare(`SELECT item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang FROM expense_document_items WHERE expense_id=? AND document_id=? ORDER BY created_at ASC,item_id ASC`).bind(job.entityKey,expenseDocument.documentId).all<Record<string,unknown>>();
-        expenseItems=(itemRows.results||[]).map(item=>({itemId:String(item.item_id),documentId:String(item.document_id),expenseId:item.expense_id==null?null:String(item.expense_id),sellerKey:String(item.seller_key||""),productCode:String(item.product_code||""),description:String(item.description||""),quantity:item.quantity==null?null:Number(item.quantity),unit:String(item.unit||""),unitPriceSatang:item.unit_price_satang==null?null:Number(item.unit_price_satang),discountSatang:item.discount_satang==null?null:Number(item.discount_satang),lineTotalSatang:item.line_total_satang==null?null:Number(item.line_total_satang)}));
-      }
-      expense=r;sheet=env.SHEET_EXPENSE_RAW;values=buildExpenseRawSheetValues(r,summaryDocument);
+      const loaded=await loadExpenseDailyPosting(env,job.entityKey);expense=loaded.expense;expenseDocument=loaded.document;expenseItems=loaded.items;sheet=env.SHEET_EXPENSE_RAW;values=buildExpenseRawSheetValues(expense,loaded.summaryDocument);
     }else throw new Error(`Unsupported sheet entity type: ${job.entityType}`);
     const row=await allocateRow(env,sheet,job.entityKey),end=columnName(values.length),started=Date.now();try{
       await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}]);

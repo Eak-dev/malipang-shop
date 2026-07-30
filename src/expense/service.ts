@@ -146,7 +146,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     // still rolls this parent insert back.
     const statements=[] as ReturnType<typeof documentInsert>[];
     if(draft&&expenseId){
-      statements.push(env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId));
+      statements.push(env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId));
     }
     statements.push(
       documentInsert(env,base),
@@ -184,7 +184,7 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
   try{await env.DB.batch([
     documentInsert(env,documentArgs),
     env.DB.prepare(`UPDATE expense_documents SET submitted_by_employee_id=?,branch_id=?,normalized_json=?,currency='THB',final_paid_satang=?,updated_at=? WHERE document_id=?`).bind(ownership.employeeId,ownership.branchId,JSON.stringify(document),satangOrNull(document.paidAmountBaht),now,documentId),
-    env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId),
+    env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId),
     env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PAYMENT_EVIDENCE','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Bank or wallet payment evidence",now),
     expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:"BANK_SLIP",status:"WAITING_CONFIRM"}})
   ]);}catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId))return;await pushDuplicateDocument(env,event,existing,traceId);return;}throw error;}

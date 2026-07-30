@@ -57,6 +57,8 @@ test('receipt extraction persists structured document, normalized items, ownersh
   assert.ok(statements.some(item=>item.sql.includes('expense_audit_log')));
   const event=statements.find(item=>item.sql.includes('INSERT INTO expense_events'));
   assert.equal(event.args[4],18000);assert.equal(event.args[11],'EMP001');assert.equal(event.args[12],'B001');
+  assert.match(event.sql,/VALUES\(\?,\?,\?,\?,\?,\?,\?,\?,\?,'WAITING_CONFIRM',\?,\?,\?,\?\)/);
+  assert.equal(event.args.length,13,'purchase draft bind count must match the fourteen insert columns including literal status');
 });
 
 test('purchase receipt creates parent Expense before all foreign-key dependent rows',async()=>{

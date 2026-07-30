@@ -9,7 +9,7 @@
 | Organization | MaliPang | MaliPang | ACTIVE |
 | Branch | B001 | Yingcharoen | ACTIVE |
 
-ตาราง `employees` เดิมยังเป็นตัวตนหลักของพนักงานเพื่อรักษา Attendance, Payroll, ค่าแรง และกะเดิมไว้ครบถ้วน V1.1 เพิ่มตาราง `branches`, `staff_roles`, `line_identity_bindings`, `identity_link_requests`, `access_audit_log` และ `employee_change_requests` แบบ additive เท่านั้น
+ตาราง `employees` ยังคงเป็นตัวตนหลักของพนักงานเพื่อรักษา Attendance, Payroll, ค่าแรง และกะเดิมไว้ครบถ้วน V1.1 เพิ่มตาราง `branches`, `staff_roles`, `line_identity_bindings`, `identity_link_requests`, `access_audit_log` และ `employee_change_requests` แบบ additive เท่านั้น ส่วน Issue #100 เพิ่ม `staff_identity_aliases` เพื่อ resolve literal ของรหัสเก่าในหลักฐาน immutable โดยไม่ทำให้ alias กลับมาเป็น Staff ID ใช้งานได้
 
 ## บทบาทและขอบเขต
 
@@ -73,22 +73,23 @@ Role, Branch_ID
 
 ค่าเริ่มต้นเมื่อเพิ่มพนักงานใหม่ที่ไม่กำหนด role คือ `EMPLOYEE / B001`. การเปลี่ยน LINE User ID ของพนักงานที่มีอยู่ผ่าน import จะถูกปฏิเสธและต้องใช้ HR approval flow เสมอ. Import จะ audit การสร้าง/เปลี่ยน role ที่กำหนดผ่าน sheet.
 
-## Baseline migration
+## Canonical staff และ migration history
 
-| Existing staff | V1.1 role | Scope | Branch |
-|---|---|---|---|
-| Eak (`EMP_TEST`) | OWNER | ORGANIZATION | ทุกสาขา |
-| Win (`EMP001`) | EMPLOYEE | BRANCH | B001 |
-| Tualek (`EMP002`) | EMPLOYEE | BRANCH | B001 |
-| Laws non (`EMP003`) | EMPLOYEE | BRANCH | B001 |
+| Staff | Role | Scope | Branch | สถานะ |
+|---|---|---|---|---|
+| Eak (`OWN001`) | OWNER | ORGANIZATION | ทุกสาขา | ACTIVE / existing verified LINE binding |
+| Nea (`OWN002`) | OWNER | ORGANIZATION | ทุกสาขา | ACTIVE / LINE รอ HR registration + Owner approval |
+| Win (`EMP001`) | EMPLOYEE | BRANCH | B001 | ACTIVE |
+| Tualek (`EMP002`) | EMPLOYEE | BRANCH | B001 | ACTIVE |
+| Laws non (`EMP003`) | EMPLOYEE | BRANCH | B001 | ACTIVE |
 
-Historical Attendance, Payroll, wage snapshots, shift rows และ existing LINE bindings ไม่ถูกแก้ไขหรือลบโดย migration.
+Issue #100 เปลี่ยน primary identity ของ Eak จาก `EMP_TEST` เป็น `OWN001` ด้วย atomic identity-preserving replacement ที่ D1 รองรับ: สร้าง canonical parent ชั่วคราว, re-key ความสัมพันธ์ที่แก้ไขได้ (Attendance, Payroll, wage, shift, role, verified LINE binding และ request) แล้วลบ legacy parent เมื่อไม่มี reference เหลือ. จึงไม่มี Eak ซ้ำและไม่มีประวัติถูกลบ. `EMP_TEST` ไม่อยู่ใน `employees` จึงใช้สมัคร HR หรือเป็น operational actor ไม่ได้. Raw webhook/evidence JSON และ before/after JSON ของ audit ที่เป็น immutable อาจมี literal เดิมได้ แต่ alias จะชี้กลับไป `OWN001`; relational audit actor/target ถูก canonicalize แล้ว.
 
 ## Nea second owner
 
-V1.1 จะไม่ bind LINE account จาก display name, คำว่า `HR`, เวลา หรือ event ใกล้เคียงกัน. Current inbound schema เก็บ LINE user ID และชนิดข้อความ แต่ไม่เก็บข้อความ/profile evidence ที่ยืนยันว่าเป็น Nea ได้อย่างปลอดภัย จึงมีสถานะ `NEA_REGISTRATION_PENDING`.
+V1.1 จะไม่ bind LINE account จาก display name, คำว่า `HR`, เวลา หรือ event ใกล้เคียงกัน. `OWN002 / Nea` ถูก provision เป็น ACTIVE OWNER แล้ว แต่ไม่มี verified LINE binding จนกว่าจะผ่าน flow ปกติ จึงมีสถานะ `NEA_STAFF_READY_LINE_PENDING`.
 
-การทำงานเดียวที่ต้องทำหลัง deploy คือเพิ่ม Nea เป็น staff record ใน `HR_STAFF_CONFIG` โดยกำหนด `Role=OWNER` (ไม่ต้องกรอก LINE_User_ID), import staff config แล้วให้ Nea ส่ง `HR` ไปยัง MaliPang staff LINE OA. Eak ส่ง `HR PENDING` แล้ว `HR APPROVE <requestId>` เพื่อยืนยัน binding. Import role มี audit และ Owner approval จะสร้าง verified binding อีกชั้นหนึ่ง.
+การเพิ่มพนักงานในอนาคตให้เพิ่มแถวใน `MaliPang_OWNER_MASTER > HR_STAFF_CONFIG` แล้วเรียก controlled Staff Import ผ่าน admin route. Import validate Staff ID, Status, Role, Branch และห้ามเปลี่ยน LINE binding โดยตรง; `Role=OWNER` ต้องไม่กำหนด `Branch_ID`, ส่วน non-owner ที่ไม่ระบุ branch จะใช้ `B001`. จากนั้นพนักงานส่ง `HR` → Staff ID → Owner approve. สำหรับ Nea ให้ส่ง `HR`, ตามด้วย `OWN002`; Eak ส่ง `HR PENDING` แล้ว `HR APPROVE <requestId>`. Import role และ approval มี audit ทุกครั้ง.
 
 ## สัญญาสำหรับ V2 (ยังไม่มี UI)
 

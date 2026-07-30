@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {approveIdentityLinkRequest,assignStaffRole,getStaffActorByLineId} from '../dist/access/repository.js';
+import {approveIdentityLinkRequest,assignStaffRole,ensureImportedStaffRole,getStaffActorByLineId} from '../dist/access/repository.js';
 
-const owner={employeeId:'EMP_TEST',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'EMP_TEST',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
+const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'OWN001',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
 function db(state){return {prepare(sql){return {sql,values:[],bind(...values){this.values=values;return this;},async first(){
   if(sql.includes('FROM line_identity_bindings i JOIN employees'))return state.actorRow||null;
   if(sql.startsWith('SELECT request_id,external_user_id'))return state.request;
@@ -19,6 +19,13 @@ test('Owner approval creates one verified binding and audit record',async()=>{
   assert.ok(state.sql.some(entry=>entry.values.includes('IDENTITY_LINK_APPROVED')));
 });
 
+test('OWN002 is bound only after a verified Owner approves its request',async()=>{
+  const state={sql:[],request:{request_id:'req_nea',external_user_id:'U-nea',requested_staff_id:'OWN002',status:'PENDING_OWNER_APPROVAL'},staff:{employee_id:'OWN002',staff_name:'Nea',status:'ACTIVE',line_user_id:'PENDING_OWN002'}};
+  const result=await approveIdentityLinkRequest({DB:db(state)},'req_nea',owner);
+  assert.deepEqual(result,{requestId:'req_nea',employeeId:'OWN002',idempotent:false});
+  assert.ok(state.sql.some(entry=>String(entry.sql).includes('INSERT INTO line_identity_bindings')&&entry.values.includes('OWN002')));
+});
+
 test('duplicate owner approval is idempotent and does not make a second binding',async()=>{
   const state={sql:[],request:{request_id:'req_1',external_user_id:'U-new',requested_staff_id:'EMP004',status:'APPROVED'},staff:null};
   assert.deepEqual(await approveIdentityLinkRequest({DB:db(state)},'req_1',owner),{requestId:'req_1',employeeId:'EMP004',idempotent:true});
@@ -26,7 +33,20 @@ test('duplicate owner approval is idempotent and does not make a second binding'
 });
 
 test('an Owner cannot silently remove or downgrade their own Owner role',async()=>{
-  await assert.rejects(()=>assignStaffRole({DB:db({sql:[]})},owner,{employeeId:'EMP_TEST',role:'BRANCH_MANAGER',branchId:'B001',reason:'test'}),/OWNER_CANNOT_CHANGE_OWN_ROLE/);
+  await assert.rejects(()=>assignStaffRole({DB:db({sql:[]})},owner,{employeeId:'OWN001',role:'BRANCH_MANAGER',branchId:'B001',reason:'test'}),/OWNER_CANNOT_CHANGE_OWN_ROLE/);
+});
+
+test('optional-role Staff Config reactivation restores the latest historical Owner role',async()=>{
+  const state={sql:[]};
+  const database={prepare(sql){return{sql,values:[],bind(...values){this.values=values;return this;},async first(){
+    if(sql.startsWith('SELECT role_assignment_id,role,scope'))return{role_assignment_id:'old_owner',role:'OWNER',scope:'ORGANIZATION',branch_id:null,status:'INACTIVE'};
+    return null;
+  },async run(){state.sql.push({sql,values:this.values});return{meta:{changes:1}};}};},async batch(statements){for(const statement of statements)state.sql.push({sql:statement.sql,values:statement.values});return[];}};
+  await ensureImportedStaffRole({DB:database},{employeeId:'OWN002',status:'ACTIVE'});
+  const inserted=state.sql.find(entry=>String(entry.sql).startsWith('INSERT INTO staff_roles'));
+  assert.ok(inserted);
+  assert.ok(inserted.values.includes('OWNER'));
+  assert.ok(inserted.values.includes('ORGANIZATION'));
 });
 
 test('verified active binding retains ACTIVE status for both actor and employee image gates',async()=>{

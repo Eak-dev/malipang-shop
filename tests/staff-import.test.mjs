@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {parseStaffRows} from '../dist/admin/staff-import.js';
+import {importEmployees,parseStaffRows} from '../dist/admin/staff-import.js';
 test('real HR_STAFF_CONFIG mapping remains canonical',()=>{
   const rows=[
     ['Employee_ID','Staff_Name','LINE_User_ID','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Grace_Min','Pay_Mode','Deduct_Late','Deduct_Early','OT_Enabled','OT_Rate_Multiplier','Late_Deduction_Baht'],
@@ -49,4 +49,20 @@ test('new HR staff rows do not require a raw LINE User ID and accept V1.1 role s
   assert.equal(employee.lineUserId,undefined);
   assert.equal(employee.role,'EMPLOYEE');
   assert.equal(employee.branchId,'B001');
+});
+test('staff config rejects invalid status and an Owner branch scope',()=>{
+  const invalidStatus=[
+    ['Employee_ID','Staff_Name','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Grace_Min'],
+    ['EMP004','New staff','04:00','16:00','Pending',500,10]
+  ];
+  assert.throws(()=>parseStaffRows(invalidStatus),/Invalid Status/);
+  const ownerBranch=[
+    ['Employee_ID','Staff_Name','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Grace_Min','Role','Branch_ID'],
+    ['OWN002','Nea','04:00','16:00','Active',0,10,'OWNER','B001']
+  ];
+  assert.throws(()=>parseStaffRows(ownerBranch),/OWNER must use organization scope/);
+});
+test('a retired Staff ID cannot be re-imported as a new operational identity',async()=>{
+  const env={DB:{prepare(sql){return{bind(){return this;},async first(){return sql.includes('staff_identity_aliases')?{canonical_employee_id:'OWN001'}:null;}};}}};
+  await assert.rejects(()=>importEmployees(env,[{employeeId:'EMP_TEST',staffName:'Eak',scheduledIn:'04:00',scheduledOut:'16:00',status:'ACTIVE',dailyWageBaht:500,graceMin:10,lateDeductionBaht:0}]),/Retired Staff ID: EMP_TEST; use OWN001/);
 });

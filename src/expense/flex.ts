@@ -13,6 +13,7 @@ export interface ExpenseFlexRecord {
   referenceId?: string;
   grossAmountSatang?: number | null;
   discountAmountSatang?: number | null;
+  reviewNote?: string;
 }
 
 type FlexMessage = { type: "flex"; altText: string; contents: Record<string, unknown> };
@@ -62,6 +63,9 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
     {type:"separator",margin:"md"},row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),
     row("Category",categoryLabels[expense.category]||expense.category),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),
     row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Date",displayDate(expense.transactionDate))];
+  if(expense.documentType){
+    body.push(row("Document",expense.documentType.replaceAll("_"," ")));
+  }
   if(expense.documentType==="BANK_SLIP"){
     body.push(row("Document",expense.channel==="G_WALLET"?"G-Wallet receipt":"Bank slip"));
     if(expense.institution)body.push(row("Institution",expense.institution));
@@ -69,6 +73,7 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
     if(expense.discountAmountSatang!=null&&expense.discountAmountSatang>0)body.push(row("Discount",`${money(expense.discountAmountSatang)} THB`));
     if(expense.referenceId)body.push(row("Reference",`…${referenceSuffix(expense.referenceId)}`));
   }
+  if(expense.reviewNote)body.push(row("Review",expense.reviewNote));
   const editActions=expense.documentType==="BANK_SLIP"?[
     action("🏷️ Category",`a=expense_category_menu&id=${id}`),action("📅 Date",`a=expense_date_menu&id=${id}`)
   ]:[

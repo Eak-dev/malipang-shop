@@ -73,6 +73,12 @@ Worker จำแนกรูปอัตโนมัติเพื่อให�
 
 เมื่อ Save แล้วจึงสร้าง Sheets Sync Job และลงยอดจ่ายจริงในชีท `รายวัน` หากสถานะไม่สำเร็จ ข้อมูลไม่ครบ สกุลเงินไม่ใช่ THB ยอดก่อนส่วนลด/ส่วนลด/ยอดจ่ายจริงไม่ตรง หรือเป็นสลิปซ้ำ ระบบจะไม่สร้างยอดและตอบเหตุผลพร้อม error code
 
-รูปใบเสร็จทั่วไปและ Online order ยังเป็น `WAITING_REVIEW` เพราะ Backend V5.2 ยังไม่มี Receipt line-item accounting, การแตกสินค้า หรือ linking หลายเอกสาร การแสดงปุ่มดังกล่าวก่อน Backend พร้อมจะทำให้ผู้ใช้เข้าใจผิดว่าใช้งานได้ครบ
+### Expense Document V1.2
 
-เมื่อพัฒนา Receipt Accounting ต่อ ให้ย้ายตามลำดับ: pending image → route Flex → OCR/AI → review Flex → wallet/date → confirm → D1/Sheets โดยไม่กลับไปใช้ Apps Script ใน Runtime
+Receipt, Tax Invoice และ Online Order ที่อ่านยอดจ่ายจริงและวันที่จ่ายได้ จะสร้าง `WAITING_CONFIRM` พร้อม Review Flex ภาษาอังกฤษเหมือน flow เดิม โดยแสดง vendor, date, final paid amount, payment/source, category และ document type. ผู้ใช้ยืนยัน/ยกเลิก หรือแก้ payment, source, category และ date ก่อนบันทึกได้
+
+- ไม่มี final paid amount, วันที่จ่าย หรือแหล่งบัตรที่ยืนยันได้: เก็บเป็น reviewable document เท่านั้น ไม่เดาและไม่ลงชีท
+- Delivery Order เดี่ยว: ตอบว่ารับ supporting evidence แล้ว และรอ payment evidence จึงไม่สร้าง finalized Expense
+- Receipt/Tax Invoice เก็บ line item ที่เห็นทั้งหมดใน D1 เพื่อใช้ V2 ต่อได้ แต่ไม่เปิด Supplier/Inventory UI ใน V1.2
+- Online order หลาย seller จะสร้าง seller case แยก ไม่รวมยอดเป็น case เดียว; การแบ่งส่วนลดที่ไม่มีหลักฐานชัดเจนจะอยู่ review
+- ทุก image document ไม่ใช้ Quick Save และไม่ลง Sheets จนกด `Save`; LINE Reply-first และ retry notification ยังแยกจากธุรกรรม D1

@@ -13,12 +13,19 @@ export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):numbe
 async function sheetsFetch(env:Env,path:string,init:RequestInit):Promise<Response>{const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");const res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);if(!res.ok)throw new SheetsHttpError(res.status,`Sheets HTTP ${res.status}: ${await res.text()}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));return res;}
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})});}
 export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})});}
+export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});}
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+export async function getSheetId(env:Env,title:string):Promise<number>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};
+  const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;
+  if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
+  return Number(found);
+}
 export async function bootstrapSheets(env:Env):Promise<void>{
   const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));
   const definitions=[
@@ -28,7 +35,7 @@ export async function bootstrapSheets(env:Env):Promise<void>{
     [env.SHEET_WAGE_HISTORY,["Wage_ID","Employee_ID","Staff_Name","Daily_Wage_Baht","Effective_From","Effective_To","Source","Note","Version","Created_At","Updated_At"]],
     [env.SHEET_SHIFT_SCHEDULE,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Daily_Wage_Snapshot_Baht","Wage_Source_ID","Status","Note","Version","Updated_At"]],
     [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
-    [env.SHEET_EXPENSE_RAW,["Expense_ID","Transaction_Date","Description","Amount_Baht","Payment_Key","Source_Wallet","Category","Status","Message_ID","Trace_ID"]],
+    [env.SHEET_EXPENSE_RAW,["Expense_ID","Transaction_Date","Description","Amount_Baht","Payment_Key","Source_Wallet","Category","Status","Message_ID","Trace_ID","Submitted_By_Staff_ID","Branch_ID","Document_ID","Document_Type","Vendor","Document_Number","Order_ID"]],
     [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
   ] as const;
   const requests=definitions.filter(([name])=>!existing.has(name)).map(([title])=>({addSheet:{properties:{title,gridProperties:{frozenRowCount:1}}}}));if(requests.length)await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});

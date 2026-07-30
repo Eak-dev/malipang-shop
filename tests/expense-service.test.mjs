@@ -29,9 +29,11 @@ function harness(){
 test('cash text writes CONFIRMED expense and enqueues Sheets',async()=>{
   const h=harness();
   await handleExpenseText(h.env,h.event('ไข่ ทอน 375'),'trace_cash');
-  assert.equal(h.state.runs.length,1);
-  assert.match(h.state.runs[0].sql,/INSERT INTO expense_events/);
-  assert.equal(h.state.runs[0].args[9],'CONFIRMED');
+  assert.equal(h.state.runs.length,2);
+  const insert=h.state.runs.find(row=>row.sql.includes('INSERT INTO expense_events'));
+  assert.match(insert.sql,/INSERT INTO expense_events/);
+  assert.equal(insert.args[9],'CONFIRMED');
+  assert.ok(h.state.runs.some(row=>row.sql.includes('expense_audit_log')));
   assert.equal(h.state.batches.length,1);
   assert.equal(h.state.queue.length,1);
   assert.equal(h.state.queue[0].body.entityType,'EXPENSE');
@@ -40,8 +42,8 @@ test('cash text writes CONFIRMED expense and enqueues Sheets',async()=>{
 test('English transfer text waits for confirmation and does not enqueue Sheets',async()=>{
   const h=harness();
   await handleExpenseText(h.env,h.event('ค่าไฟ transfer 1200'),'trace_transfer');
-  assert.equal(h.state.runs.length,1);
-  assert.equal(h.state.runs[0].args[9],'WAITING_CONFIRM');
+  assert.equal(h.state.runs.length,2);
+  assert.equal(h.state.runs.find(row=>row.sql.includes('INSERT INTO expense_events')).args[9],'WAITING_CONFIRM');
   assert.equal(h.state.batches.length,0);
   assert.equal(h.state.queue.length,0);
 });

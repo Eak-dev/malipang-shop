@@ -23,7 +23,8 @@ test('valid bank slip creates linked WAITING_CONFIRM document and expense withou
   const h=harness();
   await handleExpenseImage(h.env,h.event,bankReading(),'expense/key.jpg','trace_bank','hash-new');
   assert.equal(h.state.batches.length,1);
-  const [documentInsert,expenseInsert]=h.state.batches[0];
+  const documentInsert=h.state.batches[0].find(statement=>statement.sql.includes('INSERT INTO expense_documents'));
+  const expenseInsert=h.state.batches[0].find(statement=>statement.sql.includes('INSERT INTO expense_events'));
   assert.match(documentInsert.sql,/INSERT INTO expense_documents/);
   assert.equal(documentInsert.args[5],'WAITING_CONFIRM');
   assert.equal(documentInsert.args[24],20000);
@@ -33,6 +34,7 @@ test('valid bank slip creates linked WAITING_CONFIRM document and expense withou
   assert.equal(expenseInsert.args[5],'transfer');
   assert.equal(expenseInsert.args[6],'SHOP_BANK');
   assert.equal(expenseInsert.args[8],'2026-07-21');
+  assert.ok(h.state.batches[0].some(statement=>statement.sql.includes('expense_audit_log')));
 });
 
 test('duplicate reference or image creates no new records',async()=>{

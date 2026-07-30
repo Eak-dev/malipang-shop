@@ -27,7 +27,7 @@ function validTime(value:string):boolean{
 
 export function validateBankSlip(reading:VisionResult):BankSlipValidation{
   const document=reading.document;
-  if(reading.kind!=="BANK_SLIP"||!document)return{ok:false,code:"BANK_SLIP_DATA_MISSING",missing:["document"],review:true,note:"The image was not read as a bank or wallet payment receipt."};
+  if(reading.kind!=="BANK_SLIP"||!document||document.documentType!=="BANK_SLIP")return{ok:false,code:"BANK_SLIP_DATA_MISSING",missing:["document"],review:true,note:"The image was not read as a bank or wallet payment receipt."};
   const missing:string[]=[];
   if(document.transactionStatus!=="SUCCESS")missing.push("successful status");
   if(!isIsoDate(document.paymentDate))missing.push("payment date");

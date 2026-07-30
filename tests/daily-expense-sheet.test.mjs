@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {candidateRows,dailyInputRanges,findMonthBlocks,legacySourceWallet,resolvePayment} from '../dist/sheets/daily-expense.js';
+import {candidateRows,dailyInputRanges,findMonthBlocks,legacySourceWallet,monthCapacityExpansionRequests,resolvePayment} from '../dist/sheets/daily-expense.js';
 
 function liveHeaders(){
   const rows=[Array(23).fill(''),Array(23).fill(''),Array(23).fill('')];
@@ -54,7 +54,11 @@ test('daily writes and undo clear only legacy input cells, never formula columns
   assert.equal(legacySourceWallet('transfer','SHOP_BANK'),'บัญชีร้าน');
 });
 
-test('refuses a full month instead of overwriting the total row',()=>{
+test('a full month is detected for formula-safe expansion instead of overwriting the total row',()=>{
   const body=[['',7,'','รายรับทั้งหมดในบัญชี'],['',7,22,'used'],['รวม',7,'','']];
-  assert.throws(()=>candidateRows(body,findMonthBlocks(body),7),/no empty expense row/);
+  assert.deepEqual(candidateRows(body,findMonthBlocks(body),7),[]);
+  assert.deepEqual(monthCapacityExpansionRequests(123,3),[
+    {insertDimension:{range:{sheetId:123,dimension:'ROWS',startIndex:2,endIndex:3},inheritFromBefore:true}},
+    {copyPaste:{source:{sheetId:123,startRowIndex:1,endRowIndex:2,startColumnIndex:0,endColumnIndex:23},destination:{sheetId:123,startRowIndex:2,endRowIndex:3,startColumnIndex:0,endColumnIndex:23},pasteType:'PASTE_NORMAL',pasteOrientation:'NORMAL'}}
+  ]);
 });

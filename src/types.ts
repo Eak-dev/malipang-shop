@@ -1,5 +1,5 @@
 export type RuntimeMode = "shadow" | "production";
-export type ImageKind = "CLOCK" | "RECEIPT" | "BANK_SLIP" | "ONLINE_ORDER" | "UNKNOWN";
+export type ImageKind = "CLOCK" | "RECEIPT" | "BANK_SLIP" | "ONLINE_ORDER" | "DELIVERY_ORDER" | "UNKNOWN";
 export type PunchType = "IN" | "OUT" | "DUPLICATE" | "COMPLETE" | "REVIEW";
 export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
 export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "SYSTEM_LOG";
@@ -162,8 +162,50 @@ export interface VisionResult {
   note: string;
   provider: string;
   raw: unknown;
-  document?: BankSlipDocument | null;
+  document?: ExpenseDocument | null;
 }
+
+export interface ExpenseDocumentItem {
+  sellerKey: string;
+  productCode: string;
+  description: string;
+  quantity: number | null;
+  unit: string;
+  unitPriceBaht: number | null;
+  discountBaht: number | null;
+  lineTotalBaht: number | null;
+  vatBaht: number | null;
+  confidence: number;
+  needsReview: boolean;
+}
+
+export interface PurchaseDocument {
+  documentType: "RECEIPT" | "TAX_INVOICE" | "RECEIPT_TAX_INVOICE" | "ONLINE_ORDER" | "DELIVERY_ORDER";
+  vendor: string;
+  legalVendorName: string;
+  documentNumber: string;
+  orderId: string;
+  documentDate: string;
+  paymentDate: string;
+  paymentTime: string;
+  currency: string;
+  subtotalBaht: number | null;
+  shippingBaht: number | null;
+  discountBaht: number | null;
+  subsidyBaht: number | null;
+  vatBaht: number | null;
+  grossAmountBaht: number | null;
+  finalPaidAmountBaht: number | null;
+  paymentMethod: string;
+  sourceWalletCandidate: string;
+  suggestedDescription: string;
+  suggestedCategory: string;
+  confidence: number;
+  needsReview: boolean;
+  reviewReasons: string[];
+  items: ExpenseDocumentItem[];
+}
+export type ExpenseDocument = BankSlipDocument | PurchaseDocument;
 
 export interface BankSlipDocument {
   documentType: "BANK_SLIP";

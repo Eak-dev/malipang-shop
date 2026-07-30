@@ -153,6 +153,12 @@ Avoid unrelated refactors. Do not rewrite working modules merely to make them lo
 
 ## Git workflow
 
+- Before inspecting, editing, testing, branching or deploying, synchronize with remote `main`:
+  1. Run `git fetch origin main`.
+  2. Compare the local `main` commit with `origin/main`.
+  3. When the worktree is clean, switch to `main` and run `git merge --ff-only origin/main`.
+  4. Create the task branch from that updated `main`.
+  5. If local changes or divergent history prevent a fast-forward, stop and report it. Do not use force reset, rebase or overwrite user changes automatically.
 - One task per branch.
 - One task per pull request.
 - Use branch names such as:

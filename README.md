@@ -445,6 +445,7 @@ Migration 0010 เพิ่ม append-only audit
 - Receipt
 - Bank slip
 - Online order
+- Delivery order supporting evidence
 - Flex confirmation
 - Undo
 
@@ -499,6 +500,17 @@ Source wallet = SHOP_BANK
 Undo เปลี่ยนเป็น `CANCELLED`
 
 audit trail ต้องคงอยู่
+
+### Expense Document Foundation V1.2
+
+Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured document เดียวกันใน D1: ข้อมูลเอกสาร, ยอดเงินแบบ satang, line items, seller case, document links และ append-only audit.  D1 เป็นข้อมูลจริง; `V52_EXPENSE_RAW` และ `รายวัน` เป็น mirror เท่านั้น.
+
+- ยอดรายวันคือ `final paid` หลังส่วนลด/voucher/subsidy ไม่ใช่ราคาก่อนลด
+- Online order ใช้วันที่จ่ายเงินจริงเท่านั้น; ถ้าไม่เห็นวันที่หรือบัตร ให้ยืนยันก่อน จึงห้ามเดา card wallet
+- Delivery Order เดี่ยวเป็น supporting evidence และไม่สร้างยอดจ่าย
+- ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
+- ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม
+- `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม โดย row mapping หลัง total จะถูกเลื่อนอย่างสอดคล้อง
 
 ---
 

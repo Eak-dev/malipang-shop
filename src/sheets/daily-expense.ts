@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { batchClearValues,batchGetSheetValues,batchWriteValues } from "./client";
+import { batchClearValues,batchGetSheetValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId } from "./client";
 
 export interface DailyExpenseRecord{
   expenseId:string;transactionDate:string;description:string;amountBaht:number;
@@ -43,12 +43,28 @@ export function resolvePayment(headers:unknown[][],paymentKey:string,year:number
 
 export function candidateRows(body:unknown[][],blocks:MonthBlock[],month:number):number[]{
   const block=blocks.find(item=>item.month===month);if(!block)throw new Error(`Daily sheet month block not found: ${month}`);const rows:number[]=[];
-  for(let row=block.headerRow+1;row<block.totalRow;row++){const values=body[row-1]||[];if(normalize(values[0])!==normalize("รวม")&&String(values[3]??"").trim()==="")rows.push(row);}
-  if(!rows.length)throw new Error(`Daily sheet month ${month} has no empty expense row before total`);return rows;
+  for(let row=block.headerRow+1;row<block.totalRow;row++){const values=body[row-1]||[];if(String(values[0]??"").trim()===""&&String(values[3]??"").trim()==="")rows.push(row);}
+  return rows;
+}
+export function monthCapacityExpansionRequests(sheetId:number,totalRow:number):unknown[]{
+  // Sheets row indexes are zero based and the total row must stay below the
+  // new detail row. Copying the preceding detail row preserves its formulas
+  // and formatting; input cells are explicitly cleared before use.
+  const index=totalRow-1;
+  return[
+    {insertDimension:{range:{sheetId,dimension:"ROWS",startIndex:index,endIndex:index+1},inheritFromBefore:true}},
+    {copyPaste:{source:{sheetId,startRowIndex:index-1,endRowIndex:index,startColumnIndex:0,endColumnIndex:23},destination:{sheetId,startRowIndex:index,endRowIndex:index+1,startColumnIndex:0,endColumnIndex:23},pasteType:"PASTE_NORMAL",pasteOrientation:"NORMAL"}}
+  ];
+}
+function monthCapacityExpansionRequestsWithMarker(sheetId:number,totalRow:number,marker:string):unknown[]{
+  return[...monthCapacityExpansionRequests(sheetId,totalRow),{updateCells:{start:{sheetId,rowIndex:totalRow-1,columnIndex:0},rows:[{values:[{userEnteredValue:{stringValue:marker}}]}],fields:"userEnteredValue"}}];
 }
 
 async function loadLayout(env:Env):Promise<DailyLayout>{
-  const [body=[],headers=[]]=await batchGetSheetValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,"A1:D1000"),sheetRange(env.SHEET_EXPENSE_DAILY,"A1:W3")]);return{body,headers,blocks:findMonthBlocks(body)};
+  // The production daily tab already exceeds 1,000 rows.  This bounded range
+  // deliberately covers the current 2,533-row layout plus room for safe
+  // monthly expansion, instead of silently losing later months.
+  const [body=[],headers=[]]=await batchGetSheetValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,"A1:D5000"),sheetRange(env.SHEET_EXPENSE_DAILY,"A1:W3")]);return{body,headers,blocks:findMonthBlocks(body)};
 }
 export async function checkDailyExpenseSheet(env:Env):Promise<{sheet:string;monthBlocks:number[];amountColumns:Record<string,string>}>{
   const layout=await loadLayout(env),monthBlocks=layout.blocks.map(block=>block.month),missing=Array.from({length:12},(_,i)=>i+1).filter(month=>!monthBlocks.includes(month));if(missing.length)throw new Error(`Daily sheet is missing month blocks: ${missing.join(",")}`);
@@ -63,12 +79,32 @@ async function reserveRow(env:Env,expenseId:string,candidates:number[]):Promise<
   }
   throw new Error("Unable to reserve an empty daily expense row");
 }
+async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout):Promise<boolean>{
+  const now=new Date().toISOString(),locked=await env.DB.prepare(`INSERT OR IGNORE INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,block.month,now).run();
+  if(Number(locked.meta.changes||0)!==1)return false;
+  try{
+    const existing=await env.DB.prepare(`SELECT anchor_total_row,marker,state FROM daily_sheet_capacity_expansions WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).first<{anchor_total_row:number;marker:string;state:string}>(),marker=existing?.marker||`__MALIPANG_CAPACITY_${block.month}_${block.totalRow}__`,markerRow=layout.body.findIndex(row=>String(row?.[0]??"")===marker)+1;
+    if(existing?.state==="MAPPED"&&markerRow>0){await batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${markerRow}`)]);await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();return true;}
+    const anchor=existing?.anchor_total_row||block.totalRow;
+    if(!existing||existing.state==="COMPLETED")await env.DB.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES(?,?,?,?, 'PREPARED',?,?) ON CONFLICT(sheet_name,month) DO UPDATE SET anchor_total_row=excluded.anchor_total_row,marker=excluded.marker,state='PREPARED',updated_at=excluded.updated_at`).bind(env.SHEET_EXPENSE_DAILY,block.month,block.totalRow,marker,now,now).run();
+    if(markerRow===0){const sheetId=await getSheetId(env,env.SHEET_EXPENSE_DAILY);await batchUpdateSpreadsheet(env,monthCapacityExpansionRequestsWithMarker(sheetId,anchor,marker));}
+    // The marker makes a timeout after Sheets mutation observable.  Mapping is
+    // advanced exactly once by the PREPARED -> MAPPED state transition.
+    const mapped=await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='MAPPED',updated_at=? WHERE sheet_name=? AND month=? AND state='PREPARED'`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();
+    if(Number(mapped.meta.changes||0)===1)await env.DB.prepare(`UPDATE sheet_row_index SET row_number=row_number+1 WHERE sheet_name=? AND row_number>=?`).bind(env.SHEET_EXPENSE_DAILY,anchor).run();
+    const refreshed=await loadLayout(env),refreshedMarkerRow=refreshed.body.findIndex(row=>String(row?.[0]??"")===marker)+1;if(refreshedMarkerRow>0)await batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${refreshedMarkerRow}`)]);
+    await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(new Date().toISOString(),env.SHEET_EXPENSE_DAILY,block.month).run();
+    return true;
+  }finally{await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).run();}
+}
 export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{return normalize(paymentKey)==="cash"||normalize(sourceWallet)==="cashdrawer"?"ทอน/หน้าร้าน":"บัญชีร้าน";}
 export function dailyInputRanges(sheet:string,row:number):string[]{return[sheetRange(sheet,`B${row}:D${row}`),sheetRange(sheet,`F${row}:H${row}`),sheetRange(sheet,`K${row}:Q${row}`),sheetRange(sheet,`V${row}:W${row}`)];}
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
   if(!record.description.trim()||!Number.isFinite(record.amountBaht)||record.amountBaht<=0)throw new Error("Invalid confirmed expense for daily sheet");
-  const {year,month,day}=parseTransactionDate(record.transactionDate),layout=await loadLayout(env),payment=resolvePayment(layout.headers,record.paymentKey,year,month,day),existing=await mappedRow(env,record.expenseId),row=existing||await reserveRow(env,record.expenseId,candidateRows(layout.body,layout.blocks,payment.postingMonth)),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet);
+  const {year,month,day}=parseTransactionDate(record.transactionDate);let layout=await loadLayout(env),payment=resolvePayment(layout.headers,record.paymentKey,year,month,day),existing=await mappedRow(env,record.expenseId);
+  if(!existing&&candidateRows(layout.body,layout.blocks,payment.postingMonth).length===0){const block=layout.blocks.find(item=>item.month===payment.postingMonth);if(!block)throw new Error(`Daily sheet month block not found: ${payment.postingMonth}`);const expanded=await expandMonthCapacity(env,block,layout);if(!expanded)throw new Error(`Daily sheet capacity expansion is busy for month ${payment.postingMonth}; retry safely.`);layout=await loadLayout(env);payment=resolvePayment(layout.headers,record.paymentKey,year,month,day);}
+  const row=existing||await reserveRow(env,record.expenseId,candidateRows(layout.body,layout.blocks,payment.postingMonth)),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet);
   await batchClearValues(env,dailyInputRanges(env.SHEET_EXPENSE_DAILY,row));
   await batchWriteValues(env,[
     {range:sheetRange(env.SHEET_EXPENSE_DAILY,`B${row}:D${row}`),values:[[payment.postingMonth,payment.postingDay,record.description]]},

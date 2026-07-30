@@ -2,6 +2,12 @@
 
 D1 เป็น Source of Truth ส่วน Google Sheets ใช้สำหรับ Input, ตรวจสอบ และรายงานสำหรับ Owner
 
+## Expense Documents V1.2
+
+`V52_EXPENSE_RAW` คง 10 คอลัมน์เดิมไว้ก่อน แล้วเพิ่มท้ายแบบ additive: `Submitted_By_Staff_ID`, `Branch_ID`, `Document_ID`, `Document_Type`, `Vendor`, `Document_Number`, `Order_ID`. ห้ามใช้ Sheet เป็นแหล่งสิทธิ์หรือแก้สถานะ Expense โดยตรง.
+
+`รายวัน` รับเฉพาะ Expense `CONFIRMED`. จำนวนเงินคือ final cash outflow หลังส่วนลด/subsidy. เมื่อเดือนนั้นไม่มี detail row ว่าง Worker จะ insert detail row ก่อนแถว `รวม`, คัดลอกรูปแบบ/สูตรจาก detail row ก่อนหน้า, ล้างเฉพาะ writable input cells และเลื่อน `sheet_row_index` หลัง total อย่าง idempotent. สูตร, total และ manual/fixed row ห้ามถูกเขียนทับ.
+
 ## Attendance LINE flow
 
 พนักงานใช้ Flow เดิม:

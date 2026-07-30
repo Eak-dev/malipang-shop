@@ -20,10 +20,24 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
       '0001_initial.sql','0002_rc2_reliability.sql','0003_daily_expense_sheet.sql','0004_bank_slip_expenses.sql',
       '0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql',
       '0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql',
-      '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql'
+      '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql'
     ])apply(db,name);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM employees WHERE employee_id='OWN002'`)[0].count,1);
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_document_items'`)[0].count,1);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('0013 adds V1.2 Expense document storage without changing historical expense rows',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'malipang-expense-v12-'));
+  const db=join(directory,'production-shaped.sqlite');
+  try{
+    for(const name of ['0001_initial.sql','0002_rc2_reliability.sql','0003_daily_expense_sheet.sql','0004_bank_slip_expenses.sql','0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql','0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql','0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql'])apply(db,name);
+    sqlite(db,`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at) VALUES('legacy_exp','legacy_msg','legacy_line','legacy',100,'cash','CASH_DRAWER','general','2026-07-30','CONFIRMED','2026-07-30T00:00:00Z');`);
+    apply(db,'0013_expense_document_foundation.sql');
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM expense_events WHERE expense_id='legacy_exp' AND amount_satang=100`)[0].count,1);
+    for(const table of ['expense_document_items','expense_document_cases','expense_document_links','expense_audit_log','daily_sheet_capacity_locks','daily_sheet_capacity_expansions'])assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='${table}'`)[0].count,1,table);
+    assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 

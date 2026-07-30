@@ -21,14 +21,14 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     if(event.type==="postback"){
       if(!actor||!authorize(actor,"expense.self.read",{employeeId:actor?.employeeId})){await respondTextToLineEvent(env,event,"You are not authorized to use this menu.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
       if(env.EXPENSE_ENABLED!=="true"){await respondTextToLineEvent(env,event,"The expense system is currently disabled.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"POSTBACK","IGNORED");return;}
-      await handleExpensePostback(env,event,actor.employee);await completeInboundEvent(env,webhookId,"POSTBACK","COMPLETED");return;
+      await handleExpensePostback(env,event,actor.employee,actor);await completeInboundEvent(env,webhookId,"POSTBACK","COMPLETED");return;
     }
     if(event.type!=="message"||!event.message){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.type==="text"){
       if(await handleHrText(env,event,actor,job.traceId)){await completeInboundEvent(env,webhookId,"HR_REGISTRATION","COMPLETED");return;}
       if(actor&&await requestOwnAttendanceCorrection(env,event,actor,event.message.text||"",job.traceId)){await completeInboundEvent(env,webhookId,"SELF_SERVICE_CORRECTION","COMPLETED");return;}
       if(await handleOwnerPayrollText(env,event,actor)){await completeInboundEvent(env,webhookId,"OWNER_OT_TEXT","COMPLETED");return;}
-      if(env.EXPENSE_ENABLED==="true"&&actor?.employee.canSubmitExpense&&authorize(actor,"expense.submit",{employeeId:actor.employeeId})){const outcome=await handleExpenseText(env,event,job.traceId);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
+      if(env.EXPENSE_ENABLED==="true"&&actor?.employee.canSubmitExpense&&authorize(actor,"expense.submit",{employeeId:actor.employeeId})){const outcome=await handleExpenseText(env,event,job.traceId,actor);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
       else{await respondTextToLineEvent(env,event,env.EXPENSE_ENABLED==="true"?"You are not authorized to record expenses.":"The expense system is currently disabled.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"EXPENSE_TEXT","REJECTED");}return;
     }
     if(event.message.type!=="image"){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
@@ -44,9 +44,9 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     if(reading.kind==="CLOCK"){
       if(actor.employee.status!=="ACTIVE"||!authorize(actor,"attendance.self.write",{employeeId:actor.employeeId})||env.ATTENDANCE_ENABLED!=="true"){const code="ATTENDANCE_NOT_ALLOWED";await respondTextToLineEvent(env,event,attendanceNotAllowedMessage(),{traceId:job.traceId,purpose:"ATTENDANCE_REJECTION",identitySuffix:"attendance-rejection"});await completeInboundEvent(env,webhookId,"ATTENDANCE", "REJECTED",code);return;}
       const recorded=await handleAttendance(env,event,actor.employee,reading,original,job.traceId);await completeInboundEvent(env,webhookId,"ATTENDANCE",recorded?"COMPLETED":"REJECTED",recorded?"":"CLOCK_VALIDATION_FAILED");
-    }else if(["RECEIPT","BANK_SLIP","ONLINE_ORDER"].includes(reading.kind)){
+    }else if(["RECEIPT","BANK_SLIP","ONLINE_ORDER","DELIVERY_ORDER"].includes(reading.kind)){
       if(!actor.employee.canSubmitExpense||!authorize(actor,"expense.submit",{employeeId:actor.employeeId})||env.EXPENSE_ENABLED!=="true"){const code="EXPENSE_IMAGE_NOT_ALLOWED";await respondTextToLineEvent(env,event,`The expense image was not recorded. ❌\nReason: This account is not authorized, or the expense system is disabled.\nAction: Please contact the shop administrator.\nCode: ${code}`,{traceId:job.traceId,purpose:"EXPENSE_RESPONSE"});await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","REJECTED",code);return;}
-      const hash=await sha256Hex(original),key=`expense/${new Date(event.timestamp).toISOString().slice(0,10)}/${event.message.id}-${hash.slice(0,12)}.jpg`;await saveEvidence(env,key,original,{lineUserId:to,messageId:event.message.id,traceId:job.traceId});await handleExpenseImage(env,event,reading,key,job.traceId,hash);await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
+      const hash=await sha256Hex(original),key=`expense/${new Date(event.timestamp).toISOString().slice(0,10)}/${event.message.id}-${hash.slice(0,12)}.jpg`;await saveEvidence(env,key,original,{lineUserId:to,messageId:event.message.id,traceId:job.traceId});await handleExpenseImage(env,event,reading,key,job.traceId,hash,actor);await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
     }else{const rejection=describeVisionRejection(reading);await respondTextToLineEvent(env,event,rejection.message,{traceId:job.traceId,purpose:"ATTENDANCE_REJECTION",identitySuffix:"attendance-rejection"});await completeInboundEvent(env,webhookId,"UNKNOWN_IMAGE","REVIEW",rejection.code);}
   }catch(error){await completeInboundEvent(env,webhookId,"ERROR","FAILED",String(error));throw error;}finally{try{await recordMetric(env,job.traceId,"inbound_total_ms",Date.now()-t0);}catch(error){console.error("metric",error);}}
 }

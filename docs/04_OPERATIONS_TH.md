@@ -27,6 +27,13 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 คำสั่งนี้ใช้ D1 เป็นข้อมูลจริงและเขียนแท็บ `V52_*` ใหม่แบบ idempotent รวมทั้ง backfill ค่าใช้จ่ายที่ยืนยันแล้วลง `รายวัน` โดยไม่แตะสูตร
 
+## Expense document review และ recovery
+
+- Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` ต้องตรวจ vendor, final paid, payment source, category และ date บน Flex ก่อน Save
+- Delivery Order เดี่ยวและเอกสารที่ยอด/วันที่จ่ายไม่ครบเป็น `WAITING_REVIEW`; ห้ามสร้างยอดเองจากราคา list หรือ expected delivery
+- หากเดือนใน `รายวัน` เต็ม ระบบขยาย row ก่อน `รวม` อัตโนมัติแบบ formula-safe. ถ้า Sheets ตอบ error ให้ปล่อย sync job retry; ห้ามแทรกแถวหรือย้าย total ด้วยมือระหว่าง job กำลัง retry
+- ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Undo/CANCELLED ต้องคงหลักฐานและ audit ไว้
+
 ## LINE Reply และ Push quota
 
 ผลจาก event พนักงาน ทั้ง Attendance, Expense และ postback ใช้ Reply API กับ `replyToken` ของ event เดิมเป็นหลัก จึงไม่ถูกนับในโควตาข้อความ Push รายเดือน และไม่ตั้งใจหน่วงคำตอบปกติไป Queue เมื่อ reply token ยังใช้ได้

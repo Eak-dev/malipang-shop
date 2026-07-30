@@ -140,9 +140,21 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
   const expenseId=draft?randomId("exp"):null;
   const base=[documentId,messageId,to,document.documentType,imageKey,documentStatus,JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,draft?.needsReview||document.needsReview?1:0,reviewReason,imageHash,expenseId];
   try{
-    const statements=[documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,expenseId,actor),...documentItemStatements(documentId,expenseId,document.items,now,randomId).map(item=>itemInsert(env,item)),...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.lineTotalSatang,finalSatang:item.lineTotalSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))];
+    // D1 batches enforce foreign keys statement-by-statement.  Create the
+    // parent Expense before any item, seller case, link or audit references it.
+    // The whole batch remains atomic, so a later duplicate/document failure
+    // still rolls this parent insert back.
+    const statements=[] as ReturnType<typeof documentInsert>[];
     if(draft&&expenseId){
       statements.push(env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId));
+    }
+    statements.push(
+      documentInsert(env,base),
+      purchaseDocumentUpdate(env,documentId,document,expenseId,actor),
+      ...documentItemStatements(documentId,expenseId,document.items,now,randomId).map(item=>itemInsert(env,item)),
+      ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.lineTotalSatang,finalSatang:item.lineTotalSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))
+    );
+    if(draft&&expenseId){
       statements.push(env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PRIMARY_PURCHASE_DOCUMENT','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Document creates draft",now));
       statements.push(expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:document.documentType,status:"WAITING_CONFIRM"},reason:reviewReason}));
     }else statements.push(expenseAudit(env,{actor,action:"EXTRACT",documentId,after:{documentType:document.documentType,status:"WAITING_REVIEW"},reason:reviewReason}));

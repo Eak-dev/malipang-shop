@@ -9,9 +9,22 @@ function document(overrides={}){
   return{documentType:'RECEIPT',vendor:'Mali Supplier',legalVendorName:'Mali Supplier Co',documentNumber:'INV-1',orderId:'',documentDate:'2026-07-27',paymentDate:'2026-07-27',paymentTime:'10:00',currency:'THB',subtotalBaht:180,shippingBaht:0,discountBaht:0,subsidyBaht:0,vatBaht:0,grossAmountBaht:180,finalPaidAmountBaht:180,paymentMethod:'Cash',sourceWalletCandidate:'CASH_DRAWER',suggestedDescription:'Ingredients',suggestedCategory:'ingredients',confidence:.98,needsReview:false,reviewReasons:[],items:[{sellerKey:'Mali Supplier',productCode:'E45',description:'Egg',quantity:4,unit:'pcs',unitPriceBaht:45,discountBaht:0,lineTotalBaht:180,vatBaht:0,confidence:.98,needsReview:false}],...overrides};
 }
 function reading(doc){return{kind:doc.documentType==='ONLINE_ORDER'?'ONLINE_ORDER':doc.documentType==='DELIVERY_ORDER'?'DELIVERY_ORDER':'RECEIPT',hour:null,minute:null,month:null,day:null,weekday:null,confidence:doc.confidence,clockFullyVisible:null,needsNewPhoto:false,note:'',provider:'openai',raw:{},document:doc};}
-function harness(firstResults=[]){
+function harness(firstResults=[],{enforceForeignKeys=false}={}){
   const state={batches:[],runs:[]};
-  const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){return firstResults.shift()||null;},async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},async batch(items){state.batches.push(items.map(item=>({sql:item.sql,args:item.args})));return items.map(()=>({meta:{changes:1}}));}};
+  const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){return firstResults.shift()||null;},async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},async batch(items){
+    if(enforceForeignKeys){
+      const expenseIds=new Set(),documentIds=new Set();
+      for(const item of items){
+        if(item.sql.includes('INSERT INTO expense_events'))expenseIds.add(item.args[0]);
+        if(item.sql.includes('INSERT INTO expense_documents'))documentIds.add(item.args[0]);
+        if(item.sql.includes('expense_document_items')){assert.ok(documentIds.has(item.args[1]),'item document parent must exist first');assert.ok(item.args[2]==null||expenseIds.has(item.args[2]),'item expense parent must exist first');}
+        if(item.sql.includes('expense_document_cases')){assert.ok(documentIds.has(item.args[1]),'case document parent must exist first');assert.ok(item.args[7]==null||expenseIds.has(item.args[7]),'case expense parent must exist first');}
+        if(item.sql.includes('expense_document_links')){assert.ok(expenseIds.has(item.args[1]),'link expense parent must exist first');assert.ok(documentIds.has(item.args[2]),'link document parent must exist first');}
+        if(item.sql.includes('expense_audit_log')){assert.ok(item.args[3]==null||expenseIds.has(item.args[3]),'audit expense parent must exist first');assert.ok(item.args[4]==null||documentIds.has(item.args[4]),'audit document parent must exist first');}
+      }
+    }
+    state.batches.push(items.map(item=>({sql:item.sql,args:item.args})));return items.map(()=>({meta:{changes:1}}));
+  }};
   return{state,env:{DB,RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false'},event:{source:{type:'user',userId:'U_TEST'},message:{id:'img_1',type:'image'}},actor:{employeeId:'EMP001',branchId:'B001'}};
 }
 
@@ -44,6 +57,17 @@ test('receipt extraction persists structured document, normalized items, ownersh
   assert.ok(statements.some(item=>item.sql.includes('expense_audit_log')));
   const event=statements.find(item=>item.sql.includes('INSERT INTO expense_events'));
   assert.equal(event.args[4],18000);assert.equal(event.args[11],'EMP001');assert.equal(event.args[12],'B001');
+});
+
+test('purchase receipt creates parent Expense before all foreign-key dependent rows',async()=>{
+  const h=harness([],{enforceForeignKeys:true});
+  await handleExpenseImage(h.env,h.event,reading(document()),'expense/test.jpg','trace','hash',h.actor);
+  const statements=h.state.batches[0];
+  const expenseIndex=statements.findIndex(item=>item.sql.includes('INSERT INTO expense_events'));
+  assert.ok(expenseIndex>=0);
+  for(const fragment of ['expense_document_items','expense_document_cases','expense_document_links','expense_audit_log']){
+    assert.ok(statements.findIndex(item=>item.sql.includes(fragment))>expenseIndex,`${fragment} must follow the Expense parent`);
+  }
 });
 
 test('Delivery Order is stored as supporting evidence without creating a payable expense',async()=>{

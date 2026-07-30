@@ -23,6 +23,16 @@ This system affects real employee attendance, payroll, expenses and business rec
 - Legacy Apps Script workflows may still exist outside this repository or as spreadsheet-bound projects during migration. Treat them as external legacy dependencies until their deployments and triggers are inventoried.
 - Do not add new Apps Script dependencies, modify legacy Apps Script code, disable triggers, delete legacy sheets or remove legacy deployments without an explicit task and owner approval.
 
+## Task authority and scope
+
+The task must state one authority mode. If it does not, use `REVIEW_ONLY`.
+
+- `REVIEW_ONLY`: inspect, diagnose, test locally and propose changes only.
+- `DEV_OWNED`: implement, test, commit, push and open a pull request. Merge and Production release still require explicit authorization.
+- `AUTO_RELEASE`: only when the owner explicitly grants it for the named task. Codex may merge and release after every release gate passes.
+
+Before editing, record the acceptance criteria, affected systems, risk level and explicit out-of-scope items. Do not broaden scope or refactor unrelated code; record useful follow-up ideas as backlog instead. Explicit task authority overrides the default Git merge/deploy restrictions below, but never overrides safety invariants or secret handling.
+
 ## Required reading
 
 Before changing code, read:
@@ -73,6 +83,14 @@ Do not claim completion unless both commands pass. When relevant, also run the t
 
 Do not run live integration tests, remote database migrations or a real deployment unless the task explicitly authorizes them.
 
+## Test requirements by change type
+
+- Identity or authorization: positive, negative, privilege-escalation and idempotency tests.
+- Attendance, payroll or expense: regression, duplicate-protection and failed-notification tests.
+- Google Sheets: column mapping and formula-safe write tests.
+- Schema migration: clean database, Production-shaped database, retry/idempotency and integrity tests.
+- LINE interaction: Reply-first behaviour and notification-recovery tests.
+
 ## Environment boundaries
 
 - Local/Test is for typecheck, automated tests, local D1 and dry-run only.
@@ -100,6 +118,10 @@ Never:
 - Change the LINE webhook without a documented cutover and rollback plan
 
 Use mock or local values for tests.
+
+## Privacy and Production data
+
+Never expose raw LINE user IDs, private evidence URLs, access tokens, personal staff/customer data or production payloads in chat, logs, screenshots, test fixtures, pull requests or issues. Use sanitized counts, masked identifiers and redacted examples. Admin endpoints that return operational diagnostics must not return raw identity identifiers unless an explicitly approved incident procedure requires it.
 
 ## Attendance invariants
 
@@ -135,6 +157,10 @@ Expense changes must preserve these rules:
 - R2 evidence keys must not be exposed as public permanent URLs.
 - Schema changes require versioned migrations and a rollback or forward-fix plan.
 
+## Database migration gate
+
+Production migrations must be additive, idempotent and retry-safe. Before applying one, create a fresh private backup, verify its download checksum, restore it locally and run an integrity check. Record before/after counts for every affected entity and run foreign-key validation afterwards. Do not rewrite immutable raw evidence without explicit approval; preserve it and add a safe relational resolution path instead.
+
 ## Change discipline
 
 For every task:
@@ -167,7 +193,7 @@ Avoid unrelated refactors. Do not rewrite working modules merely to make them lo
   - `codex/test-<short-name>`
   - `codex/docs-<short-name>`
 - Do not push directly to `main`.
-- Do not merge the pull request.
+- Do not merge the pull request unless the task explicitly grants `AUTO_RELEASE` authority and required checks are green.
 - Keep commits focused and reversible.
 - Do not rewrite existing history.
 - Start from a GitHub issue using the repository issue forms whenever possible.
@@ -202,6 +228,14 @@ A task is complete only when:
 - Documentation is updated when behaviour or configuration changes
 - The pull request is ready for independent review
 - Manual UAT and rollback steps are specific enough to execute
+
+For an authorized Production release, also require:
+
+- Exact merged and deployed SHA plus Worker version recorded
+- CI, dry-run, backup/restore and migration validation passed
+- Health, readiness, affected D1 records and Sheets reconciliation passed
+- No new unexplained lost, duplicate or failed jobs
+- Sanitized release evidence posted to the related issue or pull request
 
 ## Communication
 

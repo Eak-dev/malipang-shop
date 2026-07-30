@@ -67,7 +67,7 @@ function fixture(options={}){
   return{state,env};
 }
 
-const employee={employeeId:"EMP_TEST",staffName:"Test",lineUserId:"U1",scheduledIn:"04:00",scheduledOut:"16:00",dailyWageSatang:50000,graceMin:10,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:"ACTIVE"};
+const employee={employeeId:"OWN001",staffName:"Test",lineUserId:"U1",scheduledIn:"04:00",scheduledOut:"16:00",dailyWageSatang:50000,graceMin:10,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:"ACTIVE"};
 const event={type:"message",timestamp:Date.parse("2026-07-28T21:13:34.700Z"),source:{type:"user",userId:"U1"},message:{id:"M1",type:"image"},webhookEventId:"W1"};
 const replyEvent={...event,replyToken:"reply-token"};
 const validReading={kind:"CLOCK",hour:null,minute:null,month:null,day:null,weekday:null,confidence:.99,clockFullyVisible:true,clockPresent:true,clockConfidence:.99,overlayPresent:true,overlayTextWhite:true,photoDate:"2026-07-29",photoTime:"04:13:18",latitude:13.89682,longitude:100.60830,locationText:"Yingcharoen Market",overlayRawText:"29 Jul 2026 04:13:18 +13.89682,+100.60830",overlayConfidence:.99,needsNewPhoto:false,note:"",provider:"test",raw:null};

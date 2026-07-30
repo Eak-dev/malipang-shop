@@ -42,11 +42,11 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/attendance/correct")return Response.json({ok:true,...await correctAttendance(env,await request.json())});
     if(request.method==="POST"&&url.pathname==="/admin/attendance/notification-smoke"){
       const body=await request.json() as{employeeId?:string;scenario?:string;runId?:string};
-      if(body.employeeId!=="EMP_TEST")throw new Error("notification smoke is restricted to EMP_TEST");
+      if(body.employeeId!=="OWN001")throw new Error("notification smoke is restricted to OWN001");
       if(body.scenario!=="SUCCESS"&&body.scenario!=="REJECTION")throw new Error("scenario must be SUCCESS or REJECTION");
       if(!body.runId||!/^[A-Za-z0-9_-]{8,64}$/.test(body.runId))throw new Error("valid runId is required");
-      const employee=await env.DB.prepare(`SELECT line_user_id,status FROM employees WHERE employee_id='EMP_TEST' LIMIT 1`).first<{line_user_id:string;status:string}>();
-      if(!employee||employee.status!=="ACTIVE"||!employee.line_user_id)throw new Error("EMP_TEST must be ACTIVE and linked to LINE");
+      const employee=await env.DB.prepare(`SELECT line_user_id,status FROM employees WHERE employee_id='OWN001' LIMIT 1`).first<{line_user_id:string;status:string}>();
+      if(!employee||employee.status!=="ACTIVE"||!employee.line_user_id)throw new Error("OWN001 must be ACTIVE and linked to LINE");
       const success=body.scenario==="SUCCESS";
       await enqueueAttendanceNotification(env,{
         to:employee.line_user_id,

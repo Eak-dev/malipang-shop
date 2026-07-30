@@ -10,7 +10,9 @@ Backend กลางของร้าน **มะลิปัง (MaliPang)** �
 >
 > **Legacy Apps Script:** ไม่ใช่ core runtime ของ V5.2 แต่ยังถือเป็น external legacy dependency จนกว่าจะผ่าน parity / shutdown gate แยก ห้ามปิด Trigger, Deployment หรือลบ Legacy sheets จากงาน V5.2 โดยพลการ
 
-> **V1.1 Identity & Access:** เพิ่ม role/branch scope, LINE HR registration และ Owner approval แบบ additive โดยไม่เปลี่ยน employee ID หรือข้อมูล Attendance/Payroll เดิม
+> **V1.1 Identity & Access:** เพิ่ม role/branch scope, LINE HR registration และ Owner approval โดย D1 เป็นแหล่งสิทธิ์หลัก; Issue #100 ทำ canonical owner migration แบบรักษาตัวตนเดิมและประวัติทั้งหมด
+
+> **Canonical staff IDs:** `OWN001 = Eak`, `OWN002 = Nea`, `EMP001 = Win`, `EMP002 = Tualek`, `EMP003 = Laws non`. สิทธิ์มาจาก role/scope/status และ LINE binding ที่ยืนยันแล้ว ไม่ใช่ prefix ของ Staff ID
 
 ---
 
@@ -671,7 +673,7 @@ Reconcile ห้ามสร้าง business transaction ใหม่
 
 ### Incident
 
-EMP_TEST ส่งรูปลงเวลาประมาณ `04:13` วันที่ 29 กรกฎาคม 2026
+Eak (ขณะนั้นยังใช้รหัสประวัติ `EMP_TEST`) ส่งรูปลงเวลาประมาณ `04:13` วันที่ 29 กรกฎาคม 2026
 
 ผลจริง:
 

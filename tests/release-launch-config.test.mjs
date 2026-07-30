@@ -19,8 +19,8 @@ test("release control uses the first real payroll cycle and verifies its sources
     'default: "2026-08-05"',
     'expected="PRODUCTION-2026-07-29"',
     'expected="APPLY-PAYROLL-2026-08-05"',
-    "active_total == 4",
-    "authorized_active == 4",
+    "active_total == 5",
+    "authorized_active == 5",
     "uat_inactive == 3",
     "wage_rows == 4",
     "shift_rows == 620",
@@ -31,6 +31,9 @@ test("release control uses the first real payroll cycle and verifies its sources
     "/admin/import-employees-from-sheet",
     "/admin/import-shifts-from-sheet"
   ])assert.match(workflow,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
+  assert.match(workflow,/OWN001/);
+  assert.match(workflow,/OWN002/);
+  assert.doesNotMatch(workflow,/employee_id IN \('EMP_TEST','EMP001'/);
   assert.ok(workflow.indexOf("Import Staff Config")<workflow.indexOf("Verify exact active employee set after staff import"));
   assert.ok(workflow.indexOf("Verify exact active employee set after staff import")<workflow.indexOf("Import Shift Schedule"));
   assert.doesNotMatch(workflow,/default: "2026-07-23"/);

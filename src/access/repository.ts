@@ -49,6 +49,13 @@ export async function getStaffActorByEmployeeId(env:Env,employeeId:string):Promi
   return row?actorFromRow(row):null;
 }
 
+// Legacy aliases exist only to resolve immutable historical evidence.  They
+// are not accepted by HR registration or any operational authorization path.
+export async function resolveCanonicalStaffId(env:Env,employeeId:string):Promise<string>{
+  const alias=await env.DB.prepare(`SELECT canonical_employee_id FROM staff_identity_aliases WHERE legacy_employee_id=? LIMIT 1`).bind(employeeId).first<{canonical_employee_id:string}>();
+  return alias?.canonical_employee_id||employeeId;
+}
+
 async function audit(env:Env,input:{actorType:"STAFF"|"SYSTEM"|"MIGRATION";actorId:string;action:string;targetEmployeeId?:string|null;branchId?:string|null;reason?:string;before?:unknown;after?:unknown}):Promise<void>{
   await env.DB.prepare(`INSERT INTO access_audit_log(audit_id,actor_type,actor_id,action,target_employee_id,branch_id,reason,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(
     crypto.randomUUID(),input.actorType,input.actorId,input.action,input.targetEmployeeId??null,input.branchId??null,input.reason??"",input.before===undefined?null:JSON.stringify(input.before),input.after===undefined?null:JSON.stringify(input.after),new Date().toISOString()
@@ -130,8 +137,9 @@ export async function assignStaffRole(env:Env,owner:StaffActor,input:{employeeId
 
 export async function ensureImportedStaffRole(env:Env,input:{employeeId:string;role?:StaffRole;branchId?:string;status:"ACTIVE"|"INACTIVE"}):Promise<void>{
   const existing=await env.DB.prepare(`SELECT role_assignment_id,role,scope,branch_id,status FROM staff_roles WHERE employee_id=? AND status='ACTIVE' LIMIT 1`).bind(input.employeeId).first<Row>();
-  if(existing&&!input.role)return;
-  const role=input.role||"EMPLOYEE",branchId=role==="OWNER"?null:(input.branchId||"B001"),scope=role==="OWNER"?"ORGANIZATION":"BRANCH",status=input.status==="ACTIVE"?"ACTIVE":"INACTIVE",now=new Date().toISOString();
+  if(existing&&!input.role&&input.status==="ACTIVE")return;
+  const role=input.role||(existing?asRole(existing.role):"EMPLOYEE"),branchId=role==="OWNER"?null:(input.branchId||String(existing?.branch_id||"B001")),scope=role==="OWNER"?"ORGANIZATION":"BRANCH",status=input.status==="ACTIVE"?"ACTIVE":"INACTIVE",now=new Date().toISOString();
+  if(existing&&String(existing.role)===role&&String(existing.scope)===scope&&(existing.branch_id==null?null:String(existing.branch_id))===branchId&&status==="ACTIVE")return;
   if(branchId){const branch=await env.DB.prepare(`SELECT branch_id FROM branches WHERE branch_id=? AND status='ACTIVE' LIMIT 1`).bind(branchId).first<{branch_id:string}>();if(!branch)throw new Error("BRANCH_NOT_ACTIVE");}
   await env.DB.batch([
     env.DB.prepare(`UPDATE staff_roles SET status='INACTIVE',effective_to=?,updated_at=? WHERE employee_id=? AND status='ACTIVE'`).bind(now,now,input.employeeId),

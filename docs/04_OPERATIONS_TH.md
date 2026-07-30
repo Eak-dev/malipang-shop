@@ -39,7 +39,7 @@ Cron จะกู้ outbox ที่ค้างจาก Queue enqueue ล้�
 
 ตรวจ `/admin/status` หรือ `/admin/readiness` เพื่อดู target limit, consumption และสถานะ Push การหมดโควตา Push แสดง `DEGRADED/EXHAUSTED` แต่ไม่ทำให้ readiness ล้ม หาก LINE authentication และ Reply capability ยังผ่าน
 
-`POST /admin/attendance/notification-smoke` เป็นการทดสอบ Push fallback เท่านั้น ไม่ใช่หลักฐานว่า Reply API ทำงาน การยืนยัน Reply path ต้องใช้ event inbound ปัจจุบันของ `EMP_TEST` ที่มี reply token และตรวจว่าไม่มี Push fallback job ถูกสร้างเมื่อ Reply สำเร็จ
+`POST /admin/attendance/notification-smoke` เป็นการทดสอบ Push fallback เท่านั้น และจำกัดกับ `OWN001` (Eak) ไม่ใช่หลักฐานว่า Reply API ทำงาน การยืนยัน Reply path ต้องใช้ event inbound ปัจจุบันที่มี reply token และตรวจว่าไม่มี Push fallback job ถูกสร้างเมื่อ Reply สำเร็จ
 
 Flex ที่ผู้ใช้ต้องกด `Save` หรือ `Cancel` เพื่อให้ Workflow เดินต่อยังเป็น actionable notification แบบ strict หากส่งไม่สำเร็จ Queue จะ retry และกรณีสลิปเดิมมี `WAITING_CONFIRM` อยู่แล้ว ระบบจะส่งการ์ดเดิมซ้ำแทนการสร้าง Expense ซ้ำหรือปฏิเสธว่าเป็นสลิปซ้ำ
 

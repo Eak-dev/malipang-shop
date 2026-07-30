@@ -31,9 +31,8 @@ test("release control uses the first real payroll cycle and verifies its sources
     "/admin/import-employees-from-sheet",
     "/admin/import-shifts-from-sheet"
   ])assert.match(workflow,new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")));
-  assert.match(workflow,/OWN001/);
-  assert.match(workflow,/OWN002/);
-  assert.doesNotMatch(workflow,/employee_id IN \('EMP_TEST','EMP001'/);
+  assert.match(workflow,/Verify employee launch statuses before migrations[\s\S]*EMP_TEST[\s\S]*active_total == 4/);
+  assert.match(workflow,/Verify exact active employee set after staff import[\s\S]*OWN001[\s\S]*OWN002[\s\S]*active_total == 5/);
   assert.ok(workflow.indexOf("Import Staff Config")<workflow.indexOf("Verify exact active employee set after staff import"));
   assert.ok(workflow.indexOf("Verify exact active employee set after staff import")<workflow.indexOf("Import Shift Schedule"));
   assert.doesNotMatch(workflow,/default: "2026-07-23"/);

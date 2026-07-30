@@ -136,10 +136,10 @@ export async function assignStaffRole(env:Env,owner:StaffActor,input:{employeeId
 }
 
 export async function ensureImportedStaffRole(env:Env,input:{employeeId:string;role?:StaffRole;branchId?:string;status:"ACTIVE"|"INACTIVE"}):Promise<void>{
-  const existing=await env.DB.prepare(`SELECT role_assignment_id,role,scope,branch_id,status FROM staff_roles WHERE employee_id=? AND status='ACTIVE' LIMIT 1`).bind(input.employeeId).first<Row>();
-  if(existing&&!input.role&&input.status==="ACTIVE")return;
+  const existing=await env.DB.prepare(`SELECT role_assignment_id,role,scope,branch_id,status FROM staff_roles WHERE employee_id=? ORDER BY CASE status WHEN 'ACTIVE' THEN 0 ELSE 1 END,effective_from DESC,created_at DESC LIMIT 1`).bind(input.employeeId).first<Row>();
+  if(existing&&String(existing.status)==="ACTIVE"&&!input.role&&input.status==="ACTIVE")return;
   const role=input.role||(existing?asRole(existing.role):"EMPLOYEE"),branchId=role==="OWNER"?null:(input.branchId||String(existing?.branch_id||"B001")),scope=role==="OWNER"?"ORGANIZATION":"BRANCH",status=input.status==="ACTIVE"?"ACTIVE":"INACTIVE",now=new Date().toISOString();
-  if(existing&&String(existing.role)===role&&String(existing.scope)===scope&&(existing.branch_id==null?null:String(existing.branch_id))===branchId&&status==="ACTIVE")return;
+  if(existing&&String(existing.status)==="ACTIVE"&&String(existing.role)===role&&String(existing.scope)===scope&&(existing.branch_id==null?null:String(existing.branch_id))===branchId&&status==="ACTIVE")return;
   if(branchId){const branch=await env.DB.prepare(`SELECT branch_id FROM branches WHERE branch_id=? AND status='ACTIVE' LIMIT 1`).bind(branchId).first<{branch_id:string}>();if(!branch)throw new Error("BRANCH_NOT_ACTIVE");}
   await env.DB.batch([
     env.DB.prepare(`UPDATE staff_roles SET status='INACTIVE',effective_to=?,updated_at=? WHERE employee_id=? AND status='ACTIVE'`).bind(now,now,input.employeeId),

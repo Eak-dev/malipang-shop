@@ -15,6 +15,19 @@ CREATE TABLE IF NOT EXISTS staff_identity_aliases(
 CREATE INDEX IF NOT EXISTS idx_staff_identity_aliases_canonical
 ON staff_identity_aliases(canonical_employee_id);
 
+-- Never merge two independently-created identities.  If a prior/manual
+-- operation has already created OWN001 while EMP_TEST is still operational,
+-- abort before changing any staff data and require a deliberately reviewed
+-- remediation instead.
+CREATE TABLE IF NOT EXISTS issue100_identity_collision_guard(
+  must_be_one INTEGER NOT NULL CHECK(must_be_one=1)
+);
+INSERT INTO issue100_identity_collision_guard(must_be_one)
+SELECT 0
+WHERE EXISTS(SELECT 1 FROM employees WHERE employee_id='EMP_TEST')
+  AND EXISTS(SELECT 1 FROM employees WHERE employee_id='OWN001');
+DROP TABLE issue100_identity_collision_guard;
+
 -- D1 migrations execute atomically but prohibit SQL BEGIN/COMMIT.  Therefore
 -- make a canonical parent row first, re-key all mutable children, then remove
 -- the legacy parent only after it has no relational references.  This is the

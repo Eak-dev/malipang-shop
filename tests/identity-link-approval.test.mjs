@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {approveIdentityLinkRequest,assignStaffRole,getStaffActorByLineId} from '../dist/access/repository.js';
+import {approveIdentityLinkRequest,assignStaffRole,ensureImportedStaffRole,getStaffActorByLineId} from '../dist/access/repository.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'OWN001',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
 function db(state){return {prepare(sql){return {sql,values:[],bind(...values){this.values=values;return this;},async first(){
@@ -34,6 +34,19 @@ test('duplicate owner approval is idempotent and does not make a second binding'
 
 test('an Owner cannot silently remove or downgrade their own Owner role',async()=>{
   await assert.rejects(()=>assignStaffRole({DB:db({sql:[]})},owner,{employeeId:'OWN001',role:'BRANCH_MANAGER',branchId:'B001',reason:'test'}),/OWNER_CANNOT_CHANGE_OWN_ROLE/);
+});
+
+test('optional-role Staff Config reactivation restores the latest historical Owner role',async()=>{
+  const state={sql:[]};
+  const database={prepare(sql){return{sql,values:[],bind(...values){this.values=values;return this;},async first(){
+    if(sql.startsWith('SELECT role_assignment_id,role,scope'))return{role_assignment_id:'old_owner',role:'OWNER',scope:'ORGANIZATION',branch_id:null,status:'INACTIVE'};
+    return null;
+  },async run(){state.sql.push({sql,values:this.values});return{meta:{changes:1}};}};},async batch(statements){for(const statement of statements)state.sql.push({sql:statement.sql,values:statement.values});return[];}};
+  await ensureImportedStaffRole({DB:database},{employeeId:'OWN002',status:'ACTIVE'});
+  const inserted=state.sql.find(entry=>String(entry.sql).startsWith('INSERT INTO staff_roles'));
+  assert.ok(inserted);
+  assert.ok(inserted.values.includes('OWNER'));
+  assert.ok(inserted.values.includes('ORGANIZATION'));
 });
 
 test('verified active binding retains ACTIVE status for both actor and employee image gates',async()=>{

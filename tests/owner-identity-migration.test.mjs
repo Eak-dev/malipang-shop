@@ -26,6 +26,19 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 
+test('0012 aborts before mutation if EMP_TEST and OWN001 already coexist',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'malipang-owner-identity-collision-'));
+  const db=join(directory,'collision.sqlite');
+  try{
+    for(const name of ['0001_initial.sql','0002_rc2_reliability.sql','0003_daily_expense_sheet.sql','0004_bank_slip_expenses.sql','0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql','0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql'])apply(db,name);
+    sqlite(db,`INSERT INTO employees VALUES('EMP_TEST','Eak','U12345678901234567890','04:00','16:00',50000,10,0,0,1,'ACTIVE','2026-07-30T00:00:00Z');
+      INSERT INTO employees VALUES('OWN001','Other','U12345678901234567891','04:00','16:00',0,10,0,0,1,'ACTIVE','2026-07-30T00:00:00Z');`);
+    apply(db,'0011_identity_access_foundation.sql');
+    sqlite(db,`INSERT INTO attendance_events(event_id,webhook_event_id,message_id,employee_id,work_date,punch_type,status,validation_code,created_at,version) VALUES('att_collision','w','m','EMP_TEST','2026-07-30','IN','NORMAL','OK','2026-07-30T00:00:00Z',1);`);
+    assert.throws(()=>apply(db,'0012_owner_identity_canonicalization.sql'),/CHECK constraint failed/);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
 test('0012 canonicalizes Eak in place, preserves relational history, and provisions unbound Nea idempotently',()=>{
   const directory=mkdtempSync(join(tmpdir(),'malipang-owner-identity-'));
   const db=join(directory,'production-shaped.sqlite');

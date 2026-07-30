@@ -15,14 +15,20 @@ CREATE TABLE IF NOT EXISTS staff_identity_aliases(
 CREATE INDEX IF NOT EXISTS idx_staff_identity_aliases_canonical
 ON staff_identity_aliases(canonical_employee_id);
 
-BEGIN IMMEDIATE;
-PRAGMA defer_foreign_keys = ON;
-
--- Rename Eak in place and re-key every mutable relational reference.  The
--- append-only access audit and raw webhook/evidence payloads intentionally
--- retain historical EMP_TEST literals; staff_identity_aliases resolves them.
-UPDATE employees
-SET employee_id='OWN001',updated_at=datetime('now')
+-- D1 migrations execute atomically but prohibit SQL BEGIN/COMMIT.  Therefore
+-- make a canonical parent row first, re-key all mutable children, then remove
+-- the legacy parent only after it has no relational references.  This is the
+-- smallest D1-compatible identity-preserving replacement operation.
+INSERT INTO employees(
+  employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,
+  daily_wage_satang,grace_min,late_deduction_satang,early_deduction_satang,
+  can_submit_expense,status,updated_at
+)
+SELECT
+  'OWN001',staff_name,'PENDING_OWN001_MIGRATION',scheduled_in,scheduled_out,
+  daily_wage_satang,grace_min,late_deduction_satang,early_deduction_satang,
+  can_submit_expense,status,updated_at
+FROM employees
 WHERE employee_id='EMP_TEST'
   AND NOT EXISTS(SELECT 1 FROM employees WHERE employee_id='OWN001');
 
@@ -31,8 +37,19 @@ UPDATE attendance_daily SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
 UPDATE payroll_weekly SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
 UPDATE employee_wage_history SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
 DROP TRIGGER IF EXISTS shift_schedule_audit_no_update;
-UPDATE employee_shift_days SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
+-- The shift audit has a composite foreign key to employee_shift_days.  Copy
+-- its new parent first, re-key the audit, then remove only the old cache row.
+INSERT OR IGNORE INTO employee_shift_days(
+  employee_id,work_date,scheduled_in,scheduled_out,daily_wage_snapshot_satang,
+  wage_source_id,status,note,version,created_at,updated_at,created_action_id
+)
+SELECT
+  'OWN001',work_date,scheduled_in,scheduled_out,daily_wage_snapshot_satang,
+  wage_source_id,status,note,version,created_at,updated_at,created_action_id
+FROM employee_shift_days
+WHERE employee_id='EMP_TEST';
 UPDATE shift_schedule_audit SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
+DELETE FROM employee_shift_days WHERE employee_id='EMP_TEST';
 UPDATE ot_requests SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
 UPDATE staff_roles SET employee_id='OWN001' WHERE employee_id='EMP_TEST';
 UPDATE staff_roles SET assigned_by='OWN001' WHERE assigned_by='EMP_TEST';
@@ -82,6 +99,19 @@ INSERT OR IGNORE INTO staff_identity_aliases(
 SELECT 'EMP_TEST','OWN001','Issue #100 canonical Eak owner ID',datetime('now')
 WHERE EXISTS(SELECT 1 FROM employees WHERE employee_id='OWN001');
 
+-- All mutable relational links now use OWN001, so EMP_TEST is no longer an
+-- operational staff record.  Immutable JSON payloads intentionally remain.
+DELETE FROM employees
+WHERE employee_id='EMP_TEST'
+  AND EXISTS(SELECT 1 FROM employees WHERE employee_id='OWN001');
+UPDATE employees
+SET line_user_id=COALESCE((
+  SELECT external_user_id FROM line_identity_bindings
+  WHERE provider='LINE' AND employee_id='OWN001' AND status='VERIFIED'
+  LIMIT 1
+),line_user_id),updated_at=datetime('now')
+WHERE employee_id='OWN001';
+
 -- Provision Nea as a staff identity only.  The LINE account remains unbound
 -- until the ordinary HR registration and verified Owner approval flow runs.
 INSERT OR IGNORE INTO employees(
@@ -129,6 +159,3 @@ SELECT
   NULL,'{"role":"OWNER","scope":"ORGANIZATION","line":"PENDING_HR_REGISTRATION"}',datetime('now')
 WHERE EXISTS(SELECT 1 FROM employees WHERE employee_id='OWN002')
   AND NOT EXISTS(SELECT 1 FROM access_audit_log WHERE audit_id='audit_issue100_nea_provisioned');
-
-COMMIT;
-PRAGMA foreign_keys = ON;

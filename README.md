@@ -10,7 +10,7 @@ Backend กลางของร้าน **มะลิปัง (MaliPang)** �
 >
 > **Legacy Apps Script:** ไม่ใช่ core runtime ของ V5.2 แต่ยังถือเป็น external legacy dependency จนกว่าจะผ่าน parity / shutdown gate แยก ห้ามปิด Trigger, Deployment หรือลบ Legacy sheets จากงาน V5.2 โดยพลการ
 
-> **V1.1 Identity & Access:** เพิ่ม role/branch scope, LINE HR registration และ Owner approval โดย D1 เป็นแหล่งสิทธิ์หลัก; Issue #100 ทำ canonical owner migration แบบรักษาตัวตนเดิมและประวัติทั้งหมด
+> **V1.1 Identity & Access:** เพิ่ม role/branch scope, LINE HR registration และ Owner approval โดย D1 เป็นแหล่งสิทธิ์หลัก; Issue #100 ทำ canonical owner migration แบบ atomic ที่รักษาตัวตนเดิมและประวัติทั้งหมด
 
 > **Canonical staff IDs:** `OWN001 = Eak`, `OWN002 = Nea`, `EMP001 = Win`, `EMP002 = Tualek`, `EMP003 = Laws non`. สิทธิ์มาจาก role/scope/status และ LINE binding ที่ยืนยันแล้ว ไม่ใช่ prefix ของ Staff ID
 

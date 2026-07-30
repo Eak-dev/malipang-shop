@@ -83,7 +83,7 @@ Role, Branch_ID
 | Tualek (`EMP002`) | EMPLOYEE | BRANCH | B001 | ACTIVE |
 | Laws non (`EMP003`) | EMPLOYEE | BRANCH | B001 | ACTIVE |
 
-Issue #100 เปลี่ยน primary identity ของ Eak จาก `EMP_TEST` เป็น `OWN001` แบบ in-place แล้ว re-key ความสัมพันธ์ที่แก้ไขได้ (Attendance, Payroll, wage, shift, role, verified LINE binding และ request) โดยไม่ลบหรือสร้าง Eak ใหม่. `EMP_TEST` ไม่อยู่ใน `employees` จึงใช้สมัคร HR หรือเป็น operational actor ไม่ได้. Raw webhook/evidence JSON และ before/after JSON ของ audit ที่เป็น immutable อาจมี literal เดิมได้ แต่ alias จะชี้กลับไป `OWN001`; relational audit actor/target ถูก canonicalize แล้ว.
+Issue #100 เปลี่ยน primary identity ของ Eak จาก `EMP_TEST` เป็น `OWN001` ด้วย atomic identity-preserving replacement ที่ D1 รองรับ: สร้าง canonical parent ชั่วคราว, re-key ความสัมพันธ์ที่แก้ไขได้ (Attendance, Payroll, wage, shift, role, verified LINE binding และ request) แล้วลบ legacy parent เมื่อไม่มี reference เหลือ. จึงไม่มี Eak ซ้ำและไม่มีประวัติถูกลบ. `EMP_TEST` ไม่อยู่ใน `employees` จึงใช้สมัคร HR หรือเป็น operational actor ไม่ได้. Raw webhook/evidence JSON และ before/after JSON ของ audit ที่เป็น immutable อาจมี literal เดิมได้ แต่ alias จะชี้กลับไป `OWN001`; relational audit actor/target ถูก canonicalize แล้ว.
 
 ## Nea second owner
 

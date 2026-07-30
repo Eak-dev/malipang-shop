@@ -31,8 +31,9 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 - Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` ต้องตรวจ vendor, final paid, payment source, category และ date บน Flex ก่อน Save
 - Delivery Order เดี่ยวและเอกสารที่ยอด/วันที่จ่ายไม่ครบเป็น `WAITING_REVIEW`; ห้ามสร้างยอดเองจากราคา list หรือ expected delivery
+- เมื่อ Receipt/Tax Invoice ถูกยืนยันและยอด line item รวมตรงกับยอดจ่ายจริง `รายวัน` จะลงหนึ่งแถวต่อ item. ตรวจว่าผลรวมแถว item เท่ากับยอด Expense ใน D1 และ `V52_EXPENSE_RAW` ยังมีเพียงหนึ่งแถว summary. หากยอดแบ่งไม่ได้จากหลักฐาน (เช่น voucher/subsidy/shipping) ระบบจะลง summary เดียวเพื่อรักษายอดบัญชี.
 - หากเดือนใน `รายวัน` เต็ม ระบบขยาย row ก่อน `รวม` อัตโนมัติแบบ formula-safe. ถ้า Sheets ตอบ error ให้ปล่อย sync job retry; ห้ามแทรกแถวหรือย้าย total ด้วยมือระหว่าง job กำลัง retry
-- ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Undo/CANCELLED ต้องคงหลักฐานและ audit ไว้
+- ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Reconcile ใช้ key `Expense_ID|Item_ID` จึงเขียนซ้ำไม่ได้. Undo/CANCELLED ต้องล้างทุก row key ของ Expense นั้น แต่คงหลักฐานและ audit ไว้
 
 ## LINE Reply และ Push quota
 

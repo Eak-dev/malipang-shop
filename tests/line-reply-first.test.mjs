@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {respondFlexToLineEvent,respondTextToLineEvent} from "../dist/line/event-response.js";
 import {getLineMessageQuota} from "../dist/line/api.js";
-import {lineCapabilityChecks} from "../dist/admin/readiness.js";
+import {checkReadiness,lineCapabilityChecks} from "../dist/admin/readiness.js";
 
 function db(state){
   return{
@@ -100,4 +100,20 @@ test("readiness treats exhausted Push as degraded while Reply capability remains
   assert.equal(checks.linePushCapacity.ok,true);
   assert.equal(checks.linePushCapacity.detail.status,"EXHAUSTED");
   assert.equal(checks.linePushCapacity.detail.severity,"DEGRADED");
+});
+
+test("readiness never returns a raw LINE bot user ID",async()=>{
+  const state={sql:[],queued:[],failed:0},testEnv=env(state),originalFetch=globalThis.fetch;
+  globalThis.fetch=async url=>{
+    const value=String(url);
+    if(value.endsWith("/bot/info"))return Response.json({userId:"U-SENSITIVE",displayName:"MaliPang",basicId:"@malipang",pictureUrl:"https://example.test/avatar"});
+    if(value.endsWith("/quota"))return Response.json({type:"limited",value:300});
+    if(value.endsWith("/quota/consumption"))return Response.json({totalUsage:1});
+    return Response.json({});
+  };
+  try{
+    const result=await checkReadiness(testEnv);
+    assert.deepEqual(result.checks.line.detail,{status:"CONNECTED",displayName:"MaliPang",basicId:"@malipang"});
+    assert.doesNotMatch(JSON.stringify(result),/U-SENSITIVE|avatar/);
+  }finally{globalThis.fetch=originalFetch;}
 });

@@ -2,9 +2,9 @@
 
 สถานะเอกสาร: Closeout baseline สำหรับ Issue #114  
 วันที่ตรวจ: 31 กรกฎาคม 2026 (Asia/Bangkok)  
-Functional baseline / Production source SHA: `d9ef490a6e0d9bce0c4153b0166c912b8dfd11a5`  
-Worker version ที่ตรวจล่าสุด: `9bedd01b-c17a-460b-ae4d-d7fb6666c28f`  
-Rollback target ที่ใกล้ที่สุด: `e1b4e327-9e06-49a4-848a-ac1fb0d15111`
+Functional baseline / Production source SHA: `94da673e387cb814072de2e9d89f15321358ed64`
+Worker version ที่ตรวจล่าสุด: `a710ad84-995f-4a56-9e5d-71d52c6e8121`
+Rollback target ที่ยืนยันก่อน closeout: `429a032c-fbb1-4988-be3f-1bc8d4466d22`
 
 เอกสารนี้เป็น **baseline การใช้งาน V1** ไม่ใช่แผนสร้าง V2 และไม่ทำให้มี V2 UI, V2 session หรือระบบบัญชีใหม่เพิ่มขึ้น
 
@@ -99,6 +99,8 @@ failed job ทางประวัติศาสตร์ต้องผ่า
 - notification หรือ job ชนิดใหม่ที่จัดประเภทไม่ได้ จะยัง OPEN เพื่อให้ operator ตรวจเอง
 
 ดังนั้น `LOST=0` หมายถึงไม่มีธุรกรรมที่หายแบบอธิบายไม่ได้ ไม่ได้หมายถึงลบประวัติความล้มเหลว. รายการใหม่ที่ไม่เข้า pattern นี้ต้องถือเป็น incident จนกว่าจะมี root cause และ reconciliation.
+
+ผล closeout ที่ตรวจแล้ว: incident history 40 รายการถูกบันทึก reconciliation แบบ append-only ครบ; มี 5 ภาพที่ไม่มีหลักฐานสำหรับกู้คืนและถูกระบุ `IMAGE_RESUBMISSION_REQUIRED` โดยไม่สร้างยอดแทน และไม่มี failed job ที่ยัง OPEN หลังตรวจซ้ำ. LINE Push quota ยังอยู่ในสถานะ degraded สำหรับ fallback เท่านั้น แต่ LINE Reply capability ผ่าน จึงไม่กระทบเส้นทางปกติของธุรกรรมใหม่.
 
 ## 6. การตรวจ Production และ Sheets
 

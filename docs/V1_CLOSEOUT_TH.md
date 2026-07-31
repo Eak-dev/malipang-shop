@@ -95,7 +95,7 @@ failed job ทางประวัติศาสตร์ต้องผ่า
 - ถ้ามี Attendance/Expense/Expense document ใน D1 แล้ว จะบันทึกผลว่า transaction commit สำเร็จ และปิดเฉพาะ failed-job record
 - ข้อความที่ไม่มีธุรกรรม และภาพที่ไม่มีทั้งธุรกรรมหรือหลักฐานเก็บไว้ จะถูก audit เป็นผลเฉพาะรายการ; ภาพแบบหลังต้องส่งใหม่ ไม่สร้างยอดเดาเอง
 - notification smoke ที่หมด retry จะเป็น delivery-only incident และไม่สร้างธุรกรรม
-- notification เชิงธุรกิจที่หมด Push quota ใช้ `/admin/recover-line-notifications` แบบจำกัดจำนวนและ purpose เพื่อ retry เฉพาะ notification เดิม; ห้าม replay source business event
+- notification เชิงธุรกิจที่หมด Push quota ใช้ `/admin/recover-line-notifications` แบบจำกัดจำนวนและ purpose เพื่อ retry เฉพาะ notification เดิม; หาก retry แล้ว quota ยังหมด จะถูก audit เป็น delivery exhaustion โดยไม่ replay source business event
 - notification หรือ job ชนิดใหม่ที่จัดประเภทไม่ได้ จะยัง OPEN เพื่อให้ operator ตรวจเอง
 
 ดังนั้น `LOST=0` หมายถึงไม่มีธุรกรรมที่หายแบบอธิบายไม่ได้ ไม่ได้หมายถึงลบประวัติความล้มเหลว. รายการใหม่ที่ไม่เข้า pattern นี้ต้องถือเป็น incident จนกว่าจะมี root cause และ reconciliation.

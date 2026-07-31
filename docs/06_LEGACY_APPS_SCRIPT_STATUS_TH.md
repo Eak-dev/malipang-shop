@@ -1,5 +1,7 @@
 # สถานะ Legacy Apps Script — MaliPang
 
+> เอกสาร historical/retirement safety: baseline runtime V1 ปัจจุบันอยู่ที่ [V1_CLOSEOUT_TH.md](V1_CLOSEOUT_TH.md) เสมอ เอกสารนี้ยังคงไว้เพื่อใช้ inventory, backup และ staged retirement โดยห้ามตีความว่ามีสิทธิ์ปิดหรือลบ Legacy เอง
+
 อัปเดต: 23 กรกฎาคม 2026
 
 ## สรุปผู้บริหาร

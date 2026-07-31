@@ -1,5 +1,7 @@
 # Release, UAT และ Cutover Plan — MaliPang Backend V5.2
 
+> เอกสาร historical release plan: production baseline และกติกา V1 ที่ใช้งานจริงอยู่ใน [V1_CLOSEOUT_TH.md](V1_CLOSEOUT_TH.md) ให้ใช้เอกสารนี้สำหรับหลักฐาน cutover/rollback เดิม ไม่ใช่เพื่อย้อนเปลี่ยน runtime หรือ payroll rule ที่ปิดแล้ว
+
 อัปเดต: 23 กรกฎาคม 2026
 
 ## 1. เป้าหมาย

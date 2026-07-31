@@ -93,6 +93,36 @@ export async function recoverPendingLineNotifications(env:Env,staleAfterSeconds=
   return enqueued;
 }
 
+/**
+ * Monthly Push quota exhaustion is intentionally not retried by the cron: a
+ * tight automatic loop would only consume queue attempts.  An authenticated
+ * operator may request one bounded recovery after capacity is available.  It
+ * re-enqueues only the notification payload, never its source business event.
+ */
+export async function recoverQuotaExhaustedLineNotifications(env:Env,input:{purpose?:LineNotificationPurpose;limit?:number}={}):Promise<number>{
+  if(!lineOutputEnabled(env))return 0;
+  const safeLimit=Math.min(20,Math.max(1,Math.floor(input.limit??1)));
+  const rows=await env.DB.prepare(`SELECT id,trace_id,payload_json,updated_at FROM failed_jobs
+    WHERE queue_name='malipang-jobs' AND status='OPEN' AND job_key LIKE 'LINE_NOTIFICATION:%'
+      AND error='LINE_PUSH_QUOTA_EXHAUSTED'
+      AND (?='' OR json_extract(payload_json,'$.purpose')=?)
+    ORDER BY updated_at LIMIT ?`).bind(input.purpose??"",input.purpose??"",safeLimit).all<RecoverableLineNotificationRow>();
+  let enqueued=0;
+  for(const row of rows.results||[]){
+    let job:LineNotificationJob;
+    try{job=JSON.parse(String(row.payload_json)) as LineNotificationJob;}catch{continue;}
+    if(job.kind!=="LINE_NOTIFICATION"||!job.retryKey||!Array.isArray(job.messages))continue;
+    const now=new Date().toISOString();
+    const claimed=await env.DB.prepare(`UPDATE failed_jobs SET error='LINE_NOTIFICATION_MANUAL_RECOVERY_ENQUEUED',updated_at=?
+      WHERE id=? AND status='OPEN' AND updated_at=? AND error='LINE_PUSH_QUOTA_EXHAUSTED'`).bind(now,row.id,row.updated_at).run();
+    if(Number(claimed.meta.changes||0)!==1)continue;
+    try{await env.JOB_QUEUE.send(job);enqueued++;}
+    catch(error){await createFailedJob(env,"malipang-jobs",String(row.trace_id),job,"LINE_NOTIFICATION_ENQUEUE_FAILED");}
+  }
+  if(enqueued)await safeRecordMetric(env,"admin","line_notification_manual_recovered",0,{count:String(enqueued),purpose:input.purpose??"ALL"});
+  return enqueued;
+}
+
 export async function enqueueAttendanceNotification(env:Env,input:{
   to:string;
   text:string;

@@ -7,6 +7,7 @@ import {
   pushOwnerAlert,
   pushText
 } from "../dist/line/api.js";
+import {recoverQuotaExhaustedLineNotifications} from "../dist/line/attendance-notification.js";
 
 function testEnv(metrics){
   return {
@@ -86,4 +87,21 @@ test("shadow mode suppresses owner DLQ alerts with all other LINE output",async(
   }finally{
     globalThis.fetch=originalFetch;
   }
+});
+
+test("manual quota recovery re-enqueues only an existing notification payload",async()=>{
+  const writes=[],sent=[];
+  const job={kind:"LINE_NOTIFICATION",to:"test-recipient",messages:[{type:"text",text:"saved"}],purpose:"EXPENSE_RESPONSE",retryKey:"retry-key",traceId:"trace"};
+  const env={
+    RUNTIME_MODE:"production",SHADOW_LINE_OUTPUT:"false",LINE_CHANNEL_ACCESS_TOKEN:"test-token",EXTERNAL_API_TIMEOUT_MS:"1000",
+    JOB_QUEUE:{async send(value){sent.push(value);}},
+    DB:{prepare(sql){return{bind(...values){return{
+      async all(){return{results:sql.includes("LINE_PUSH_QUOTA_EXHAUSTED")?[{id:"failed",trace_id:"trace",payload_json:JSON.stringify(job),updated_at:"2026-07-31T00:00:00Z"}]:[]};},
+      async run(){writes.push({sql,values});return{meta:{changes:1}};}
+    };}};}}
+  };
+  const count=await recoverQuotaExhaustedLineNotifications(env,{purpose:"EXPENSE_RESPONSE",limit:1});
+  assert.equal(count,1);
+  assert.deepEqual(sent,[job]);
+  assert.equal(writes.filter(item=>item.sql.includes("LINE_NOTIFICATION_MANUAL_RECOVERY_ENQUEUED")).length,1);
 });

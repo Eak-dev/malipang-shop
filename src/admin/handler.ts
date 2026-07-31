@@ -15,7 +15,7 @@ import { reconcileSheets } from "./reconcile-sheets";
 import { reconcileExpenseItemRows } from "../sheets/sync";
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
-import { enqueueAttendanceNotification } from "../line/attendance-notification";
+import { enqueueAttendanceNotification,recoverQuotaExhaustedLineNotifications } from "../line/attendance-notification";
 import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
@@ -62,6 +62,14 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
+    if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
+      const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
+      const purpose=typeof body.purpose==="string"?body.purpose:undefined;
+      const allowed=new Set(["ATTENDANCE_RESULT","ATTENDANCE_REJECTION","ATTENDANCE_SMOKE","EMPLOYEE_RESPONSE","EXPENSE_RESPONSE","OWNER_RESPONSE"]);
+      if(purpose!==undefined&&!allowed.has(purpose))throw new Error("valid notification purpose is required");
+      const limit=typeof body.limit==="number"?body.limit:undefined;
+      return Response.json({ok:true,enqueued:await recoverQuotaExhaustedLineNotifications(env,{...(purpose?{purpose:purpose as import("../types").LineNotificationPurpose}:{}),...(limit===undefined?{}:{limit})})});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-historical-failed-jobs"){
       const body=await request.json().catch(()=>({})) as{createdBefore?:unknown;dryRun?:unknown};
       const createdBefore=typeof body.createdBefore==="string"?body.createdBefore:"";

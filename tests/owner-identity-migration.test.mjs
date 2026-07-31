@@ -20,11 +20,29 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
       '0001_initial.sql','0002_rc2_reliability.sql','0003_daily_expense_sheet.sql','0004_bank_slip_expenses.sql',
       '0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql',
       '0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql',
-      '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql'
+      '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql',
+      '0014_failed_job_reconciliation.sql'
     ])apply(db,name);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM employees WHERE employee_id='OWN002'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_document_items'`)[0].count,1);
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='failed_job_reconciliations'`)[0].count,1);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('0014 appends reconciliation history without rewriting failed job payload or error',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'malipang-failed-job-reconciliation-'));
+  const db=join(directory,'production-shaped.sqlite');
+  try{
+    for(const name of ['0001_initial.sql','0002_rc2_reliability.sql'])apply(db,name);
+    sqlite(db,`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at)
+      VALUES('failed_1','malipang-jobs','trace_1','LINE_EVENT:event_1','{"kind":"LINE_EVENT"}','original failure','OPEN',3,'2026-07-30T00:00:00Z','2026-07-30T00:00:00Z');`);
+    apply(db,'0014_failed_job_reconciliation.sql');
+    sqlite(db,`INSERT INTO failed_job_reconciliations(reconciliation_id,failed_job_id,outcome,reason,reconciled_by,reconciled_at)
+      VALUES('reconciliation_1','failed_1','TEXT_NO_BUSINESS_TRANSACTION','no mutation','SYSTEM_V1_CLOSEOUT','2026-07-31T00:00:00Z');`);
+    assert.deepEqual(rows(db,`SELECT payload_json,error,status FROM failed_jobs WHERE id='failed_1'`),[{payload_json:'{"kind":"LINE_EVENT"}',error:'original failure',status:'OPEN'}]);
+    assert.deepEqual(rows(db,`SELECT outcome,reconciled_by FROM failed_job_reconciliations WHERE failed_job_id='failed_1'`),[{outcome:'TEXT_NO_BUSINESS_TRANSACTION',reconciled_by:'SYSTEM_V1_CLOSEOUT'}]);
+    assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 

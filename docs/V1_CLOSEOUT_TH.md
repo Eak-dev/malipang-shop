@@ -17,17 +17,16 @@ Rollback target ที่ใกล้ที่สุด: `e1b4e327-9e06-49a4-848
 | Evidence | R2 private evidence; ห้ามเปิด public และห้ามลบจากการแก้รายการ |
 | Ingress | LINE OA webhook → Queue → D1/service → Sheets sync |
 | Reporting | Google Sheets Direct API; Sheets เป็น mirror/report/config ไม่ใช่ตัวตัดสินธุรกรรม |
-| Migration | additive chain `0001`–`0013`; `0013_expense_document_foundation.sql` คือ migration ล่าสุด |
+| Migration | additive chain `0001`–`0014`; `0014_failed_job_reconciliation.sql` บันทึกผลกู้ incident แบบ append-only |
 | Sheets sync | เปิดใช้งาน; sync/reconcile ใช้ key และ version เพื่อ idempotency |
 
 `/health` ต้องตอบ production และ `/admin/readiness` ต้องผ่าน D1, LINE Reply, Google Sheets, R2 และ attendance configuration ก่อนทำงานดูแลระบบที่มีผลต่อข้อมูล
 
 ## 2. Identity และสิทธิ์
 
-- `OWN001` (Eak) เป็น `OWNER / ORGANIZATION / ACTIVE` พร้อม verified LINE binding เดิม
-- `OWN002` (Nea) เป็น `OWNER / ORGANIZATION / ACTIVE`; binding ต้องผ่าน flow `HR` → `OWN002` → Owner approve เท่านั้น
-- `EMP001`, `EMP002`, `EMP003` ยังเป็นพนักงาน B001 ตามข้อมูลเดิม
-- `EMP_TEST` เป็น historical alias เพื่อ resolve หลักฐานเก่าเท่านั้น ไม่ใช่ Staff ID ที่ใช้งานได้
+- Owner หลักและ Owner ลำดับที่สองเป็น `OWNER / ORGANIZATION / ACTIVE`; การผูก LINE ของ Owner ลำดับที่สองต้องผ่าน flow HR และ Owner approval เท่านั้น
+- พนักงานเดิมของสาขา B001 ยังคงสถานะและสิทธิ์ตามข้อมูลเดิม
+- รหัสทดสอบเดิมเป็น historical alias เพื่อ resolve หลักฐานเก่าเท่านั้น ไม่ใช่ Staff ID ที่ใช้งานได้
 - บทบาทจริงมาจาก `staff_roles.role + scope + branch_id` ไม่ใช่ prefix ของ Staff ID
 - `ADMIN_TOKEN` เป็น developer/system admin authentication แยกจาก human RBAC
 
@@ -91,13 +90,14 @@ Rollback target ที่ใกล้ที่สุด: `e1b4e327-9e06-49a4-848
 
 ### Failed-job baseline ณ closeout
 
-พบ `failed_jobs` แบบ OPEN ที่เป็น incident history ก่อน hotfix ทั้งหมด 40 รายการ:
+failed job ทางประวัติศาสตร์ต้องผ่าน `/admin/reconcile-historical-failed-jobs` ก่อน closeout เสมอ โดย route นี้ไม่ replay webhook เก่าแบบ generic และไม่ลบ payload/error เดิม:
 
-- 37 รายการ: DLQ จาก purchase-document foreign-key และ placeholder mismatch ก่อน PR #108/#110
-- 2 รายการ: LINE Push HTTP 429
-- 1 รายการ: LINE Push quota exhausted
+- ถ้ามี Attendance/Expense/Expense document ใน D1 แล้ว จะบันทึกผลว่า transaction commit สำเร็จ และปิดเฉพาะ failed-job record
+- ข้อความที่ไม่มีธุรกรรม และภาพที่ไม่มีทั้งธุรกรรมหรือหลักฐานเก็บไว้ จะถูก audit เป็นผลเฉพาะรายการ; ภาพแบบหลังต้องส่งใหม่ ไม่สร้างยอดเดาเอง
+- notification smoke ที่หมด retry จะเป็น delivery-only incident และไม่สร้างธุรกรรม
+- notification หรือ job ชนิดใหม่ที่จัดประเภทไม่ได้ จะยัง OPEN เพื่อให้ operator ตรวจเอง
 
-รายการกลุ่มแรกไม่ถูก generic replay โดยตั้งใจ เพราะ replay transaction เก่าจาก DLQ เสี่ยงสร้างธุรกรรมซ้ำ; ผู้ส่งภาพใหม่จะได้ fresh idempotency key หลัง hotfix. กลุ่ม Push ไม่กระทบธุรกรรมที่ commit แล้ว และ Reply-first เป็น path ปกติ. ทั้ง 40 รายการจึงเป็น **explained historical baseline**, ไม่ใช่ Lost หรือ duplicate finalized business record ของ runtime ปัจจุบัน. รายการใหม่ที่ไม่เข้า pattern นี้ต้องถือเป็น incident จนกว่าจะมี root cause และ reconciliation.
+ดังนั้น `LOST=0` หมายถึงไม่มีธุรกรรมที่หายแบบอธิบายไม่ได้ ไม่ได้หมายถึงลบประวัติความล้มเหลว. รายการใหม่ที่ไม่เข้า pattern นี้ต้องถือเป็น incident จนกว่าจะมี root cause และ reconciliation.
 
 ## 6. การตรวจ Production และ Sheets
 

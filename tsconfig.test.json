@@ -17,6 +17,7 @@
     "src/expense/service.ts",
     "src/evidence/retention.ts",
     "src/line/signature.ts",
+    "src/line/attendance-notification.ts",
     "src/admin/staff-import.ts",
     "src/admin/shift-import.ts",
     "src/admin/shift-schedule.ts",

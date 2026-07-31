@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {classifyHistoricalFailedJob} from "../dist/admin/failed-job-reconciliation.js";
 
-const base={kind:"LINE_EVENT",messageType:"image",purpose:"",hasAttendance:false,hasExpense:false,hasDocument:false};
+const base={kind:"LINE_EVENT",messageType:"image",purpose:"",attemptCount:0,hasAttendance:false,hasExpense:false,hasDocument:false};
 
 test("historical failed job reconciliation never replays an already committed attendance",()=>{
   const decision=classifyHistoricalFailedJob({...base,hasAttendance:true});
@@ -32,6 +32,15 @@ test("ordinary notification failures remain open for manual review",()=>{
   const decision=classifyHistoricalFailedJob({...base,kind:"LINE_NOTIFICATION",purpose:"EXPENSE_RESPONSE"});
   assert.equal(decision.outcome,"NOTIFICATION_REVIEW_REQUIRED");
   assert.equal(decision.resolved,false);
+});
+
+test("an Expense notification remains explicit but can close only after a bounded manual retry is exhausted",()=>{
+  const pending=classifyHistoricalFailedJob({...base,kind:"LINE_NOTIFICATION",purpose:"EXPENSE_RESPONSE",attemptCount:2});
+  const exhausted=classifyHistoricalFailedJob({...base,kind:"LINE_NOTIFICATION",purpose:"EXPENSE_RESPONSE",attemptCount:3});
+  assert.equal(pending.resolved,false);
+  assert.equal(exhausted.outcome,"NOTIFICATION_REVIEW_REQUIRED");
+  assert.equal(exhausted.resolved,true);
+  assert.match(exhausted.reason,/manually retried/i);
 });
 
 test("attendance smoke notification is delivery-only and safely reconciled",()=>{

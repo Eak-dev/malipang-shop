@@ -14,6 +14,7 @@ export interface HistoricalFailedJobFacts {
   kind:string;
   messageType:string;
   purpose:string;
+  attemptCount:number;
   hasAttendance:boolean;
   hasExpense:boolean;
   hasDocument:boolean;
@@ -36,6 +37,10 @@ export function classifyHistoricalFailedJob(facts:HistoricalFailedJobFacts):Fail
     if(facts.purpose==="ATTENDANCE_SMOKE")return {
       outcome:"SMOKE_NOTIFICATION_EXHAUSTED",resolved:true,
       reason:"A non-business smoke notification exhausted delivery retries; no attendance or expense transaction was created."
+    };
+    if(facts.purpose==="EXPENSE_RESPONSE"&&facts.attemptCount>=3)return {
+      outcome:"NOTIFICATION_REVIEW_REQUIRED",resolved:true,
+      reason:"The persisted Expense response notification was manually retried once and remains blocked by monthly Push quota; delivery exhaustion is recorded without replaying its source business event."
     };
     return {
       outcome:"NOTIFICATION_REVIEW_REQUIRED",resolved:false,
@@ -77,6 +82,7 @@ interface FailedJobRow {
   kind:unknown;
   message_type:unknown;
   purpose:unknown;
+  attempt_count:unknown;
   has_attendance:unknown;
   has_expense:unknown;
   has_document:unknown;
@@ -102,6 +108,7 @@ export async function reconcileHistoricalFailedJobs(env:Env,input:ReconcileHisto
       json_extract(f.payload_json,'$.kind') AS kind,
       json_extract(f.payload_json,'$.event.message.type') AS message_type,
       json_extract(f.payload_json,'$.purpose') AS purpose,
+      f.attempt_count,
       EXISTS(SELECT 1 FROM attendance_events a WHERE a.message_id=json_extract(f.payload_json,'$.event.message.id')) AS has_attendance,
       EXISTS(SELECT 1 FROM expense_events e WHERE e.message_id=json_extract(f.payload_json,'$.event.message.id')) AS has_expense,
       EXISTS(SELECT 1 FROM expense_documents d WHERE d.message_id=json_extract(f.payload_json,'$.event.message.id')) AS has_document
@@ -116,7 +123,7 @@ export async function reconcileHistoricalFailedJobs(env:Env,input:ReconcileHisto
   const result:ReconcileHistoricalFailedJobsResult={scanned:0,reconciled:0,requiresResubmission:0,requiresManualReview:0,outcomes:{}};
   for(const row of rows.results||[]){
     const decision=classifyHistoricalFailedJob({
-      kind:string(row.kind),messageType:string(row.message_type),purpose:string(row.purpose),
+      kind:string(row.kind),messageType:string(row.message_type),purpose:string(row.purpose),attemptCount:Math.max(0,Number(row.attempt_count)||0),
       hasAttendance:bool(row.has_attendance),hasExpense:bool(row.has_expense),hasDocument:bool(row.has_document)
     });
     result.scanned+=1;

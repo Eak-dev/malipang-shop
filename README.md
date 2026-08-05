@@ -503,17 +503,18 @@ audit trail ต้องคงอยู่
 
 ### Expense Document Foundation V1.2
 
-Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured document เดียวกันใน D1: ข้อมูลเอกสาร, ยอดเงินแบบ satang, line items, seller case, document links และ append-only audit.  D1 เป็นข้อมูลจริง; `V52_EXPENSE_RAW` และ `รายวัน` เป็น mirror เท่านั้น.
+Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured document เดียวกันใน D1: ข้อมูลเอกสาร, vendor, ยอดเงินแบบ satang, line items, seller case, document links และ append-only audit. D1 เป็นข้อมูลจริง; Google Sheets เป็น mirror เท่านั้น.
 
 - ยอดรายวันคือ `final paid` หลังส่วนลด/voucher/subsidy ไม่ใช่ราคาก่อนลด
 - Online order ใช้วันที่จ่ายเงินจริงเท่านั้น; ถ้าไม่เห็นวันที่หรือบัตร ให้ยืนยันก่อน จึงห้ามเดา card wallet
 - Delivery Order เดี่ยวเป็น supporting evidence และไม่สร้างยอดจ่าย
 - ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
 - ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม
-- Receipt / Tax Invoice ที่ line item ใน D1 รวมตรงกับ final paid จะลง `รายวัน` หนึ่งแถวต่อ item ด้วย key `Expense_ID|Item_ID`; ไม่สร้าง summary ซ้ำ ขณะที่ `V52_EXPENSE_RAW` ยังคง summary หนึ่งแถวต่อ Expense
-- แถว summary ใน `รายวัน` ที่สร้างก่อน feature นี้ถูกเก็บไว้ตามเดิม. การแก้ย้อนหลังทำได้เฉพาะแบบระบุ Expense เดียวผ่าน admin reconcile หลังพิสูจน์ว่ารายการย่อยรวมเท่ายอดจ่ายจริง; ระบบจะไม่ mass-rewrite ประวัติ.
-- หากยอดสุดท้ายแบ่งลง item ไม่ได้อย่าง deterministic เพราะ voucher, subsidy, shipping หรือข้อมูลไม่ครบ ระบบใช้ summary fallback เพื่อไม่ให้ยอดรายวันเกิน/ขาด; Delivery Order ไม่สร้าง item row ซ้ำ
-- `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม โดย row mapping หลัง total จะถูกเลื่อนอย่างสอดคล้อง และขยายได้หลายแถวตามจำนวน item ที่ต้องลง
+- `รายวัน` ลง **หนึ่งแถวสรุปต่อ Expense** เสมอ โดยใช้ final paid เพื่อให้ยอดรายวันและสูตรเดิมคงรูปแบบเดิม
+- `รายละเอียดการซื้อ` เป็นแท็บ private ใหม่: หนึ่งแถวต่อ line item ด้วย mapping key `Expense_ID|Item_ID`; เก็บ Vendor, เลขเอกสาร, จำนวน, หน่วย, ราคา และยอดรายการแยกจาก Description ของ Expense
+- ส่วนลด/subsidy/shipping ระดับเอกสารถูกเก็บเป็น adjustment ของเอกสาร (ไม่เดาแจกแจงลงสินค้า) และ `รายวัน` ใช้ยอด final paid เสมอ
+- แถวเก่าจะไม่ถูก mass-rewrite. การแก้ย้อนหลังทำได้เฉพาะ Expense ที่ระบุชัดผ่าน admin reconcile และต้องตรวจยอดก่อน
+- `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม; `รายละเอียดการซื้อ` เป็น append-only ledger ที่ไม่แก้สูตรรายวัน
 
 ---
 
@@ -867,6 +868,7 @@ Rollback Worker version ก่อน แล้วทำ forward-fix ถ้าจ
 | `SHEET_SHIFT_SCHEDULE` | `HR_SHIFT_SCHEDULE` |
 | `SHEET_EXPENSE_RAW` | `V52_EXPENSE_RAW` |
 | `SHEET_EXPENSE_DAILY` | `รายวัน` |
+| `SHEET_PURCHASE_DETAILS` | `รายละเอียดการซื้อ` |
 | `SHEET_SYSTEM_LOG` | `V52_SYSTEM_LOG` |
 
 `SHADOW_LINE_OUTPUT=false` ปิด output เฉพาะเมื่อ runtime เป็น Shadow; ใน Production `RUNTIME_MODE=production` ระบบส่ง Reply/Push ตาม logic ปัจจุบัน

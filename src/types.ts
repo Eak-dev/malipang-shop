@@ -47,6 +47,8 @@ export interface Env {
   SHEET_OT_REQUESTS: string;
   SHEET_EXPENSE_RAW: string;
   SHEET_EXPENSE_DAILY: string;
+  /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
+  SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;
   LINE_CHANNEL_SECRET: string;
   LINE_CHANNEL_ACCESS_TOKEN: string;

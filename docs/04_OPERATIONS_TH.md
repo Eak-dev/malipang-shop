@@ -31,10 +31,10 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 - Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` ต้องตรวจ vendor, final paid, payment source, category และ date บน Flex ก่อน Save
 - Delivery Order เดี่ยวและเอกสารที่ยอด/วันที่จ่ายไม่ครบเป็น `WAITING_REVIEW`; ห้ามสร้างยอดเองจากราคา list หรือ expected delivery
-- เมื่อ Receipt/Tax Invoice ถูกยืนยันและยอด line item รวมตรงกับยอดจ่ายจริง `รายวัน` จะลงหนึ่งแถวต่อ item. ตรวจว่าผลรวมแถว item เท่ากับยอด Expense ใน D1 และ `V52_EXPENSE_RAW` ยังมีเพียงหนึ่งแถว summary. หากยอดแบ่งไม่ได้จากหลักฐาน (เช่น voucher/subsidy/shipping) ระบบจะลง summary เดียวเพื่อรักษายอดบัญชี.
+- เมื่อ Receipt/Tax Invoice ถูกยืนยัน `รายวัน` จะลงหนึ่งแถว summary จาก final paid เสมอ. ตรวจ `V52_EXPENSE_RAW` ว่ามีหนึ่ง summary row และตรวจ `รายละเอียดการซื้อ` ว่ามีหนึ่งแถวต่อ item ที่อยู่ใน D1. Adjustment ระดับเอกสารไม่ถูกแจกเดาให้สินค้า.
 - หากเดือนใน `รายวัน` เต็ม ระบบขยาย row ก่อน `รวม` อัตโนมัติแบบ formula-safe. ถ้า Sheets ตอบ error ให้ปล่อย sync job retry; ห้ามแทรกแถวหรือย้าย total ด้วยมือระหว่าง job กำลัง retry
-- ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Reconcile ใช้ key `Expense_ID|Item_ID` จึงเขียนซ้ำไม่ได้. Undo/CANCELLED ต้องล้างทุก row key ของ Expense นั้น แต่คงหลักฐานและ audit ไว้
-- แถว summary เก่าที่มีอยู่ก่อนระบบ line-item จะไม่ถูกแปลงอัตโนมัติ. หากตรวจสอบรายการหนึ่งแล้วว่าเป็น `CONFIRMED`, มี Primary Receipt/Tax Invoice และผลรวม line item ตรงกับยอดจ่ายจริง ให้ใช้ `POST /admin/reconcile-expense-items` พร้อม `{"expenseId":"<id>"}` เพื่อแทนที่เฉพาะแถว summary ของ Expense นั้นด้วยแถว item. คำสั่งจะปฏิเสธรายการที่แบ่งยอดอย่างปลอดภัยไม่ได้, ไม่เรียก OCR/Vision และไม่สร้าง Expense ใหม่; ตรวจผลรวม, mapping, สูตรรายเดือน และ `V52_EXPENSE_RAW` หลังทำทุกครั้ง.
+- ตรวจ D1 `expense_events`, `expense_documents`, `expense_document_items`, `expense_document_cases`, `expense_document_links` และ `expense_audit_log` ก่อน reconcile เสมอ. Detail mapping ใช้ `Expense_ID|Item_ID` จึงเขียนซ้ำไม่ได้. Undo/CANCELLED อัปเดตเฉพาะ detail row ของ Expense เป็น CANCELLED แต่คงหลักฐานและ audit ไว้
+- รายการเก่าจะไม่ถูกแปลงอัตโนมัติ. หากตรวจสอบ Expense ที่ระบุชัด ให้ใช้ `POST /admin/reconcile-expense-items` พร้อม `{"expenseId":"<id>"}` เพื่อทำให้ `รายวัน` เหลือ summary หนึ่งแถวและเขียน detail ledger จาก D1 เท่านั้น; ไม่เรียก OCR/Vision และไม่สร้าง Expense ใหม่. ตรวจ mapping, สูตรรายเดือน และ `V52_EXPENSE_RAW` หลังทำทุกครั้ง.
 
 ## LINE Reply และ Push quota
 

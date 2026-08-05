@@ -8,6 +8,10 @@ import { readImageWithWorkersAI } from "./workers-ai";
 export interface VisionReadOptions {
   usageMetric?: string;
   enforceDailyLimit?: boolean;
+  /** Receipt documents are extracted by OpenAI directly: Workers AI added an
+   * observed ~1.7s classification stage while usually falling back anyway. */
+  directOpenAI?: boolean;
+  expenseMetrics?: boolean;
 }
 
 function completeAttendanceCandidate(result:VisionResult):boolean{
@@ -38,9 +42,9 @@ function failedVision(provider: string, note: string): VisionResult {
 
 export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: ArrayBuffer, traceId="", options:VisionReadOptions={}): Promise<VisionResult> {
   let primary: VisionResult | null = null;
-  if (isTrue(env.WORKERS_AI_ENABLED)) {
+  if (isTrue(env.WORKERS_AI_ENABLED)&&!options.directOpenAI) {
     const started=Date.now();let primaryError="";try { primary = await withTimeout(readImageWithWorkersAI(env, preview),numberEnv(env.VISION_TIMEOUT_MS,45000),"Workers AI"); } catch (error) { primaryError=String(error instanceof Error?error.message:error).slice(0,240);console.error("workers-ai",error); }finally{await safeRecordMetric(env,traceId,"vision_primary_ms",Date.now()-started,{provider:"workers-ai",success:String(Boolean(primary)),error:primaryError});}
-  }
+  }else if(options.expenseMetrics)await safeRecordMetric(env,traceId,"expense_image_classification_ms",0,{route:"direct-openai"});
   const threshold = numberEnv(env.ATTENDANCE_OVERLAY_MIN_CONFIDENCE,0.9);
   const clockIncomplete=primary?.kind==="CLOCK"&&(primary.clockPresent!==true||!primary.overlayPresent||!primary.overlayTextWhite||!primary.photoDate||!primary.photoTime||primary.latitude==null||primary.longitude==null||primary.overlayConfidence<threshold);
   const needsFallback = !primary || primary.kind === "UNKNOWN" || primary.needsNewPhoto || clockIncomplete || (primary.kind === "BANK_SLIP" && !primary.document);
@@ -69,5 +73,9 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
     }
   }
   catch(error){fallbackError=String(error instanceof Error?error.message:error).slice(0,240);console.error("openai-vision",error);return primary||failedVision("openai-error","OpenAI vision request failed");}
-  finally{await safeRecordMetric(env,traceId,"vision_fallback_ms",Date.now()-started,{provider:"openai",success:String(!fallbackError),error:fallbackError});}
+  finally{
+    const elapsed=Date.now()-started;
+    await safeRecordMetric(env,traceId,"vision_fallback_ms",elapsed,{provider:"openai",success:String(!fallbackError),error:fallbackError});
+    if(options.expenseMetrics)await safeRecordMetric(env,traceId,"expense_image_extraction_ms",elapsed,{provider:"openai",success:String(!fallbackError)});
+  }
 }

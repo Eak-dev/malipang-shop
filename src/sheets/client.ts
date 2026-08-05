@@ -36,9 +36,14 @@ export async function bootstrapSheets(env:Env):Promise<void>{
     [env.SHEET_SHIFT_SCHEDULE,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Daily_Wage_Snapshot_Baht","Wage_Source_ID","Status","Note","Version","Updated_At"]],
     [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
     [env.SHEET_EXPENSE_RAW,["Expense_ID","Transaction_Date","Description","Amount_Baht","Payment_Key","Source_Wallet","Category","Status","Message_ID","Trace_ID","Submitted_By_Staff_ID","Branch_ID","Document_ID","Document_Type","Vendor","Document_Number","Order_ID"]],
+    [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",["Purchase_Item_ID","Expense_ID","Document_ID","วันที่ซื้อ","บริษัท/ร้านค้า","เลขที่เอกสาร","รายการสินค้า","จำนวน","หน่วย","ราคาต่อหน่วย","ส่วนลดรายการ","จำนวนเงินรายการ","ส่วนลด/ปรับยอดระดับเอกสาร","ยอดจ่ายจริงของ Expense","หมวด","สาขา","สถานะ","Evidence ref (private)","Created_At","Updated_At / Cancelled_At"]],
     [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
   ] as const;
   const requests=definitions.filter(([name])=>!existing.has(name)).map(([title])=>({addSheet:{properties:{title,gridProperties:{frozenRowCount:1}}}}));if(requests.length)await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});
-  await batchWriteValues(env,definitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
+  // Never rewrite an existing sheet's headers: several operational tabs carry
+  // formulas, formatting and manually maintained labels.  New tabs get their
+  // complete header row at creation time.
+  const newDefinitions=definitions.filter(([name])=>!existing.has(name));
+  await batchWriteValues(env,newDefinitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
 }
 function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

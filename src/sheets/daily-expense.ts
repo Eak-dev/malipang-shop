@@ -17,9 +17,7 @@ export interface DailyExpenseDocumentItem{
 export interface DailyExpenseEntry{
   rowKey:string;description:string;amountBaht:number;
 }
-export interface DailyExpensePostingPlan{
-  mode:"ITEMIZED"|"SUMMARY_FALLBACK";reason:string;entries:DailyExpenseEntry[];
-}
+export interface DailyExpensePostingPlan{mode:"SUMMARY";reason:string;entries:DailyExpenseEntry[];}
 export interface DailyExpenseItemPostingOptions{replaceLegacySummary?:boolean}
 export interface DailyExpensePlacement{entityKey:string;row:number;postingMonth:number;postingDay:number;amountColumn:string;sourceWallet:string}
 interface MonthBlock{month:number;headerRow:number;totalRow:number}
@@ -27,12 +25,10 @@ interface DailyLayout{body:unknown[][];headers:unknown[][];blocks:MonthBlock[]}
 
 const normalize=(value:unknown)=>String(value??"").trim().toLowerCase().replace(/[\s_\-/]+/g,"");
 const sheetRange=(sheet:string,range:string)=>`'${sheet.replace(/'/g,"''")}'!${range}`;
-const itemizedDocumentTypes=new Set(["RECEIPT","TAX_INVOICE","RECEIPT_TAX_INVOICE"]);
 
 export function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}
 function positiveInt(value:unknown):number|null{const n=Number(value);return Number.isInteger(n)&&n>0?n:null;}
 function normalizedText(value:unknown):string{return String(value??"").trim();}
-function satangFromBaht(value:number):number|null{if(!Number.isFinite(value))return null;const satang=Math.round(value*100);return Number.isSafeInteger(satang)?satang:null;}
 function displayNumber(value:number):string{return Number.isInteger(value)?String(value):String(Number(value.toFixed(4)));}
 function displayBahtFromSatang(value:number):string{return value%100===0?String(value/100):(value/100).toFixed(2);}
 function parseTransactionDate(iso:string):{year:number;month:number;day:number}{const match=/^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);if(!match)throw new Error(`Invalid expense transaction date: ${iso}`);const year=Number(match[1]),month=Number(match[2]),day=Number(match[3]),date=new Date(Date.UTC(year,month-1,day));if(date.getUTCFullYear()!==year||date.getUTCMonth()+1!==month||date.getUTCDate()!==day)throw new Error(`Invalid expense transaction date: ${iso}`);return{year,month,day};}
@@ -51,21 +47,15 @@ export function dailyItemDescription(document:DailyExpenseDocument,item:DailyExp
 }
 
 export function buildDailyExpenseEntries(record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[]):DailyExpensePostingPlan{
-  const summary={rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht};
-  const fallback=(reason:string):DailyExpensePostingPlan=>({mode:"SUMMARY_FALLBACK",reason,entries:[summary]});
-  const finalSatang=satangFromBaht(record.amountBaht);
-  if(!summary.description||finalSatang==null||finalSatang<=0)return fallback("Invalid finalized expense amount or description");
-  if(!document)return fallback("No primary purchase document");
-  if(!itemizedDocumentTypes.has(normalizedText(document.documentType).toUpperCase()))return fallback("Document type is not itemized in daily sheet");
-  if(!items.length)return fallback("No normalized document line items");
-  const itemIds=new Set<string>();let totalSatang=0;
-  for(const item of items){
-    const itemId=normalizedText(item.itemId),lineTotal=item.lineTotalSatang;
-    if(!itemId||itemIds.has(itemId)||normalizedText(item.documentId)!==document.documentId||item.expenseId!==record.expenseId||!normalizedText(item.description)||!Number.isSafeInteger(lineTotal)||lineTotal!<=0)return fallback("Line items are incomplete or invalid");
-    itemIds.add(itemId);totalSatang+=lineTotal!;
-  }
-  if(totalSatang!==finalSatang)return fallback("Line totals do not reconcile to final paid amount");
-  return{mode:"ITEMIZED",reason:"Exact line totals reconcile to final paid amount",entries:items.map(item=>({rowKey:`${record.expenseId}|${item.itemId}`,description:dailyItemDescription(document,item),amountBaht:Number(item.lineTotalSatang)/100}))};
+  // `รายวัน` is the cash-outflow ledger: exactly one row per finalized
+  // Expense.  Purchase detail is written separately to `รายละเอียดการซื้อ`.
+  // Keep the arguments for compatibility with callers and to make the policy
+  // explicit at this boundary; neither a long receipt nor a retry may change
+  // the ledger cardinality.
+  void document;void items;
+  const description=record.description.trim()||"Expense document";
+  if(!Number.isFinite(record.amountBaht)||record.amountBaht<=0)throw new Error("Invalid finalized expense amount");
+  return{mode:"SUMMARY",reason:"Daily ledger is one summary row per Expense",entries:[{rowKey:record.expenseId,description,amountBaht:record.amountBaht}]};
 }
 
 export function findMonthBlocks(body:unknown[][]):MonthBlock[]{
@@ -209,15 +199,16 @@ async function clearLegacySummaryMapping(env:Env,expenseId:string):Promise<boole
 
 export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[],options:DailyExpenseItemPostingOptions={}):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[];replacedLegacySummary:boolean}>{
   const plan=buildDailyExpenseEntries(record,document,items);
-  // Existing summary mappings are historical reporting rows.  Keep them as-is
-  // on automatic reconcile; only newly posted expenses acquire item row keys.
-  const legacySummaryExists=plan.mode==="ITEMIZED"&&await mappedRow(env,record.expenseId);
-  if(legacySummaryExists&&!options.replaceLegacySummary){
-    const summary:DailyExpensePostingPlan={mode:"SUMMARY_FALLBACK",reason:"Existing legacy summary mapping is preserved",entries:[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}]};
-    return{plan:summary,placements:await writeDailyExpenseEntries(env,record,summary.entries),replacedLegacySummary:false};
+  const existing=await mappedRowsForExpense(env,record.expenseId);
+  const hasLegacyItemRows=existing.some(item=>item.entityKey!==record.expenseId);
+  // A pre-#119 itemized daily entry is historical.  Never add a second daily
+  // cash-outflow row automatically; an explicit bounded reconcile is required.
+  if(hasLegacyItemRows&&!options.replaceLegacySummary)return{plan,placements:[],replacedLegacySummary:false};
+  if(hasLegacyItemRows&&options.replaceLegacySummary){
+    await batchClearValues(env,existing.flatMap(item=>dailyInputRanges(env.SHEET_EXPENSE_DAILY,item.row)));
+    await env.DB.prepare(`DELETE FROM sheet_row_index WHERE sheet_name=? AND (entity_key=? OR substr(entity_key,1,length(?)+1)=? || '|')`).bind(env.SHEET_EXPENSE_DAILY,record.expenseId,record.expenseId).run();
   }
-  const replacedLegacySummary=legacySummaryExists?await clearLegacySummaryMapping(env,record.expenseId):false;
-  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries),replacedLegacySummary};
+  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries),replacedLegacySummary:hasLegacyItemRows};
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{

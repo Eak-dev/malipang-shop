@@ -68,15 +68,15 @@ test('a full month is detected for formula-safe expansion instead of overwriting
   ]);
 });
 
-test('confirmed receipt posts four normalized 45 baht items as four stable daily entries totaling 180 baht',()=>{
+test('confirmed receipt posts exactly one 180 baht summary row in รายวัน',()=>{
   const plan=buildDailyExpenseEntries(receiptRecord(),receiptDocument(),[1,2,3,4].map(receiptItem));
-  assert.equal(plan.mode,'ITEMIZED');
-  assert.equal(plan.entries.length,4);
-  assert.deepEqual(plan.entries.map(entry=>entry.rowKey),['exp_receipt_180|item_1','exp_receipt_180|item_2','exp_receipt_180|item_3','exp_receipt_180|item_4']);
+  assert.equal(plan.mode,'SUMMARY');
+  assert.equal(plan.entries.length,1);
+  assert.deepEqual(plan.entries.map(entry=>entry.rowKey),['exp_receipt_180']);
   assert.equal(plan.entries.reduce((total,entry)=>total+entry.amountBaht,0),180);
 });
 
-test('KCC multi-item descriptions retain vendor, document number, item and quantity/price traceability',()=>{
+test('a long unseen-vendor invoice remains one daily cash-outflow row',()=>{
   const record=receiptRecord({expenseId:'exp_kcc',amountBaht:1341,description:'KCC purchase'});
   const document=receiptDocument({documentId:'doc_kcc',documentType:'TAX_INVOICE',vendorName:'KCC',documentNumber:'S26001-007778'});
   const items=[
@@ -85,53 +85,52 @@ test('KCC multi-item descriptions retain vendor, document number, item and quant
     receiptItem(3,{documentId:'doc_kcc',expenseId:'exp_kcc',description:'อุปกรณ์',quantity:1,unit:'ชิ้น',unitPriceSatang:4800,lineTotalSatang:4800})
   ];
   const plan=buildDailyExpenseEntries(record,document,items);
-  assert.equal(plan.mode,'ITEMIZED');
-  assert.match(plan.entries[0].description,/KCC \| S26001-007778 \| แฮมหมูใหญ่ 1 กก\. ศรีไทย \| 1 กก\. x 1215/);
-  assert.equal(plan.entries.reduce((total,entry)=>total+entry.amountBaht,0),1341);
+  assert.equal(plan.mode,'SUMMARY');
+  assert.equal(plan.entries.length,1);
+  assert.equal(plan.entries[0].amountBaht,1341);
 });
 
-test('retry and reconciliation produce exactly the same item keys and row write plan without touching formulas',()=>{
+test('retry and reconciliation produce the same summary row plan without touching formulas',()=>{
   const record=receiptRecord(),entries=buildDailyExpenseEntries(record,receiptDocument(),[1,2,3,4].map(receiptItem)).entries;
   const rows=new Map(entries.map((entry,index)=>[entry.rowKey,100+index]));
   const payment=resolvePayment(liveHeaders(),'cash',2026,7,27);
   const first=buildDailySheetWritePlan('รายวัน',record,payment,'ทอน/หน้าร้าน',entries,rows);
   const retry=buildDailySheetWritePlan('รายวัน',record,payment,'ทอน/หน้าร้าน',entries,rows);
   assert.deepEqual(retry,first);
-  assert.equal(first.writes.length,12,'three bounded writes per item row');
-  assert.equal(first.clearRanges.length,16,'four formula-safe clear ranges per item row');
+  assert.equal(first.writes.length,3,'three bounded writes for the one summary row');
+  assert.equal(first.clearRanges.length,4,'four formula-safe clear ranges for one row');
   for(const protectedColumn of ['I','J','R','S','U'])assert.equal(first.clearRanges.some(range=>range.includes(`${protectedColumn}10`)),false,protectedColumn);
 });
 
-test('missing items, document discount, Paotang subsidy and Shopee list-price mismatch preserve accounting with one summary fallback',()=>{
+test('items, document discount, Paotang subsidy and Shopee list-price mismatch always preserve one final summary amount',()=>{
   const missing=buildDailyExpenseEntries(receiptRecord(),receiptDocument(),[]);
-  assert.equal(missing.mode,'SUMMARY_FALLBACK');
+  assert.equal(missing.mode,'SUMMARY');
   const discounted=buildDailyExpenseEntries(receiptRecord({amountBaht:160}),receiptDocument(),[1,2,3,4].map(receiptItem));
-  assert.equal(discounted.mode,'SUMMARY_FALLBACK');
+  assert.equal(discounted.mode,'SUMMARY');
   const paotang=buildDailyExpenseEntries(receiptRecord({expenseId:'exp_paotang',amountBaht:132}),receiptDocument({documentId:'doc_paotang'}),[receiptItem(1,{documentId:'doc_paotang',expenseId:'exp_paotang',lineTotalSatang:33000,unitPriceSatang:33000})]);
-  assert.equal(paotang.mode,'SUMMARY_FALLBACK');
+  assert.equal(paotang.mode,'SUMMARY');
   assert.equal(paotang.entries[0].amountBaht,132);
   const shopee=buildDailyExpenseEntries(receiptRecord({expenseId:'exp_shopee',amountBaht:356}),receiptDocument({documentId:'doc_shopee',documentType:'ONLINE_ORDER'}),[receiptItem(1,{documentId:'doc_shopee',expenseId:'exp_shopee',lineTotalSatang:47500,unitPriceSatang:47500})]);
-  assert.equal(shopee.mode,'SUMMARY_FALLBACK');
+  assert.equal(shopee.mode,'SUMMARY');
   assert.equal(shopee.entries[0].amountBaht,356);
 });
 
-test('delivery orders cannot duplicate a linked purchase and stay on safe summary fallback',()=>{
+test('delivery orders cannot duplicate a linked purchase and remain one daily summary when finalized',()=>{
   const plan=buildDailyExpenseEntries(receiptRecord(),receiptDocument({documentType:'DELIVERY_ORDER'}),[1,2,3,4].map(receiptItem));
-  assert.equal(plan.mode,'SUMMARY_FALLBACK');
+  assert.equal(plan.mode,'SUMMARY');
   assert.equal(plan.entries.length,1);
 });
 
-test('capacity requirement scales to all missing item rows before the monthly total',()=>{
-  assert.equal(requiredMonthlyCapacityExpansions(2,10),8);
-  assert.equal(requiredMonthlyCapacityExpansions(10,10),0);
-  assert.equal(requiredMonthlyCapacityExpansions(0,4),4);
+test('capacity requirement remains formula-safe for a single summary row',()=>{
+  assert.equal(requiredMonthlyCapacityExpansions(0,1),1);
+  assert.equal(requiredMonthlyCapacityExpansions(1,1),0);
 });
 
 test('cancel scope includes every item mapping and only that Expense mappings',()=>{
   assert.deepEqual(['exp_1','exp_1|item_a','exp_1|item_b','exp_10|item_a'].filter(key=>isDailyExpenseMappingKey('exp_1',key)),['exp_1','exp_1|item_a','exp_1|item_b']);
 });
 
-test('V52_EXPENSE_RAW remains exactly one summary row per Expense while รายวัน is itemized separately',()=>{
+test('V52_EXPENSE_RAW and รายวัน are each exactly one summary row per Expense',()=>{
   const values=buildExpenseRawSheetValues({expense_id:'exp_1',transaction_date:'2026-07-27',description:'Receipt purchase',amount_satang:18000,payment_key:'cash',source_wallet:'CASH_DRAWER',category:'ingredients',status:'CONFIRMED',message_id:'msg_1',trace_id:'trace_1',submitted_by_employee_id:'EMP001',branch_id:'B001'},{document_id:'doc_1',document_type:'RECEIPT',vendor_name:'Makro',document_number:'008901508651',order_id:''});
   assert.equal(values.length,17);
   assert.equal(values[0],'exp_1');

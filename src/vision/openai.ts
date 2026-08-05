@@ -70,10 +70,11 @@ function normalizePurchaseDocument(value:unknown):PurchaseDocument|null{
   if(!types.includes(type as typeof types[number]))return null;
   const category=text(obj.suggestedCategory)||"general",items=Array.isArray(obj.items)?obj.items.map(item=>{
     const row=item&&typeof item==="object"?item as Record<string,unknown>:{};
-    // A code is a traceable, non-invented fallback when the model did not
-    // transcribe a description.  It is never replaced by the vendor name.
-    const productCode=text(row.productCode),description=text(row.description)||productCode;
-    return{sellerKey:text(row.sellerKey),productCode,description,quantity:money(row.quantity),unit:text(row.unit),unitPriceBaht:money(row.unitPriceBaht),discountBaht:money(row.discountBaht),lineTotalBaht:money(row.lineTotalBaht),vatBaht:money(row.vatBaht),confidence:Number(row.confidence||0),needsReview:Boolean(row.needsReview)||!text(row.description)} satisfies ExpenseDocumentItem;
+    // The fallback is deliberately generic: visible item text wins, then a
+    // visible document-level description, then a printed product code.  A
+    // vendor is never substituted for a product description.
+    const productCode=text(row.productCode),visibleDescription=text(row.description),description=visibleDescription||text(obj.suggestedDescription)||productCode;
+    return{sellerKey:text(row.sellerKey),productCode,description,quantity:money(row.quantity),unit:text(row.unit),unitPriceBaht:money(row.unitPriceBaht),discountBaht:money(row.discountBaht),lineTotalBaht:money(row.lineTotalBaht),vatBaht:money(row.vatBaht),confidence:Number(row.confidence||0),needsReview:Boolean(row.needsReview)||!visibleDescription} satisfies ExpenseDocumentItem;
   }).filter(item=>item.description):[];
   return{documentType:type as PurchaseDocument["documentType"],vendor:text(obj.vendor),legalVendorName:text(obj.legalVendorName),documentNumber:text(obj.documentNumber),orderId:text(obj.orderId),documentDate:text(obj.documentDate),paymentDate:text(obj.paymentDate),paymentTime:text(obj.paymentTime),currency:text(obj.currency).toUpperCase()||"THB",subtotalBaht:money(obj.subtotalBaht),shippingBaht:money(obj.shippingBaht),discountBaht:money(obj.discountBaht),subsidyBaht:money(obj.subsidyBaht),vatBaht:money(obj.vatBaht),grossAmountBaht:money(obj.grossAmountBaht),finalPaidAmountBaht:money(obj.finalPaidAmountBaht),paymentMethod:text(obj.paymentMethod),sourceWalletCandidate:text(obj.sourceWalletCandidate),suggestedDescription:text(obj.suggestedDescription),suggestedCategory:category,confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),reviewReasons:Array.isArray(obj.reviewReasons)?obj.reviewReasons.map(text).filter(Boolean):[],items};
 }

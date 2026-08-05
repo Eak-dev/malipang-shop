@@ -20,11 +20,12 @@ const allowedPayments=expensePayments;
 const allowedSources=expenseWallets;
 const allowedCategories=expenseCategories;
 type ExpenseActor=Pick<StaffActor,"employeeId">&{branchId?:string|null};
-function respondText(env:Env,event:LineEvent,text:string,traceId:string):Promise<unknown>{
-  return respondTextToLineEvent(env,event,text,{traceId,purpose:"EXPENSE_RESPONSE"});
+export type ExpenseResponseTiming={replyMs:number};
+async function respondText(env:Env,event:LineEvent,text:string,traceId:string,timing?:ExpenseResponseTiming):Promise<unknown>{
+  const started=Date.now();try{return await respondTextToLineEvent(env,event,text,{traceId,purpose:"EXPENSE_RESPONSE"});}finally{if(timing)timing.replyMs+=Date.now()-started;}
 }
-function respondFlex(env:Env,event:LineEvent,message:unknown,traceId:string):Promise<unknown>{
-  return respondFlexToLineEvent(env,event,message,{traceId,purpose:"EXPENSE_RESPONSE"});
+async function respondFlex(env:Env,event:LineEvent,message:unknown,traceId:string,timing?:ExpenseResponseTiming):Promise<unknown>{
+  const started=Date.now();try{return await respondFlexToLineEvent(env,event,message,{traceId,purpose:"EXPENSE_RESPONSE"});}finally{if(timing)timing.replyMs+=Date.now()-started;}
 }
 
 function recordFromRow(row:ExpenseRow):ExpenseFlexRecord{return{
@@ -82,16 +83,16 @@ async function findDuplicateDocument(env:Env,referenceKey:string,imageHash:strin
   if(referenceKey)return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE reference_key=? OR image_hash=? LIMIT 1`).bind(referenceKey,imageHash).first<ExpenseRow>();
   return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE image_hash=? LIMIT 1`).bind(imageHash).first<ExpenseRow>();
 }
-async function pushDuplicateDocument(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string):Promise<void>{
+async function pushDuplicateDocument(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string,timing?:ExpenseResponseTiming):Promise<void>{
   const existing=duplicate?.document_id?`\nExisting review ID: ${String(duplicate.document_id)}`:"";
-  await respondText(env,event,`Duplicate receipt not saved. ❌\nReason: This receipt reference or image is already in the system.${existing}\nAction: Do not submit the same receipt again.\nCode: BANK_SLIP_DUPLICATE`,traceId);
+  await respondText(env,event,`Duplicate receipt not saved. ❌\nReason: This receipt reference or image is already in the system.${existing}\nAction: Do not submit the same receipt again.\nCode: BANK_SLIP_DUPLICATE`,traceId,timing);
 }
-async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string):Promise<boolean>{
+async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string,timing?:ExpenseResponseTiming):Promise<boolean>{
   const to=event.source.userId||"";
   if(String(duplicate?.status||"")!=="WAITING_CONFIRM"||!duplicate?.expense_id)return false;
   const expense=await findExpense(env,String(duplicate.expense_id),to);
   if(!expense||expense.status!=="WAITING_CONFIRM")return false;
-  await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);
+  await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId,timing);
   return true;
 }
 
@@ -120,8 +121,8 @@ function purchaseDocumentUpdate(env:Env,documentId:string,document:PurchaseDocum
 }
 function itemInsert(env:Env,item:ReturnType<typeof documentItemStatements>[number]){return env.DB.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang,vat_satang,confidence,needs_review,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.itemId,item.documentId,item.expenseId,item.sellerKey,item.productCode,item.description,item.quantity,item.unit,item.unitPriceSatang,item.discountSatang,item.lineTotalSatang,item.vatSatang,item.confidence,item.needsReview,item.now,item.now);}
 function sellerCaseInsert(env:Env,input:{documentId:string;sellerKey:string;vendorName:string;grossSatang:number|null;finalSatang:number|null;status:string;expenseId:string|null;now:string}){return env.DB.prepare(`INSERT INTO expense_document_cases(case_id,document_id,seller_key,vendor_name,gross_satang,final_paid_satang,status,expense_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(randomId("seller_case"),input.documentId,input.sellerKey,input.vendorName,input.grossSatang,input.finalSatang,input.status,input.expenseId,input.now,input.now);}
-async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocument,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor):Promise<void>{
-  const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId))return;await pushDuplicateDocument(env,event,duplicate,traceId);return;}
+async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocument,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor,timing?:ExpenseResponseTiming):Promise<void>{
+  const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
   const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),sellerCases=sellerDocumentCases(document),multiSeller=sellerCases.length>1,draft=multiSeller?null:purchaseExpenseDraft(document),ownership=actorValues(actor);
   const exactMatch=await findExactLinkedExpenseDocument(env,document);
   if(exactMatch&&exactMatch.documentType!==document.documentType&&exactMatch.expenseId){
@@ -134,7 +135,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ]);
-    await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId);return;
+    await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?(document.documentType==="DELIVERY_ORDER"?"Delivery Order is supporting evidence; add payment evidence before finalizing.":"Missing final paid amount or payment date."):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
   const expenseId=draft?randomId("exp"):null;
@@ -159,26 +160,26 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       statements.push(expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:document.documentType,status:"WAITING_CONFIRM"},reason:reviewReason}));
     }else statements.push(expenseAudit(env,{actor,action:"EXTRACT",documentId,after:{documentType:document.documentType,status:"WAITING_REVIEW"},reason:reviewReason}));
     await env.DB.batch(statements);
-  }catch(error){if(String(error).includes("UNIQUE")){const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId))return;await pushDuplicateDocument(env,event,existing,traceId);return;}throw error;}
-  if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId);return;}
-  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason}),traceId);
+  }catch(error){if(String(error).includes("UNIQUE")){const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
+  if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
+  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason}),traceId,timing);
 }
 
-export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionResult,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor):Promise<void>{
-  if(isPurchaseDocument(reading.document))return handlePurchaseImage(env,event,reading.document,imageKey,traceId,imageHash,actor);
+export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionResult,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor,timing?:ExpenseResponseTiming):Promise<void>{
+  if(isPurchaseDocument(reading.document))return handlePurchaseImage(env,event,reading.document,imageKey,traceId,imageHash,actor,timing);
   const to=event.source.userId||"",messageId=event.message?.id||"",document=reading.kind==="BANK_SLIP"?reading.document:null,referenceKey=document?bankSlipReferenceKey(document as BankSlipDocument):"",duplicate=await findDuplicateDocument(env,referenceKey,imageHash);
-  if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId))return;await pushDuplicateDocument(env,event,duplicate,traceId);return;}
+  if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
   const documentId=randomId("doc"),now=new Date().toISOString();
   if(!document){
     try{await documentInsert(env,[documentId,messageId,to,reading.kind,imageKey,"WAITING_REVIEW",JSON.stringify(reading.raw),traceId,now,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,null,reading.confidence,1,reading.note||"Detailed receipt accounting is not enabled for this document type.",imageHash,null]).run();}
-    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,"",imageHash),traceId);return;}throw error;}
-    await respondText(env,event,`${reading.kind} image received. ✅\nReview queue ID: ${documentId}\nReason: This document is not a supported bank or wallet payment receipt for automatic posting.\nAction: Review it manually before recording an amount.`,traceId);return;
+    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,"",imageHash),traceId,timing);return;}throw error;}
+    await respondText(env,event,`${reading.kind} image received. ✅\nReview queue ID: ${documentId}\nReason: This document is not a supported bank or wallet payment receipt for automatic posting.\nAction: Review it manually before recording an amount.`,traceId,timing);return;
   }
   const validation=validateBankSlip(reading),ownership=actorValues(actor),documentArgs=[documentId,messageId,to,"BANK_SLIP",imageKey,validation.ok?"WAITING_CONFIRM":"WAITING_REVIEW",JSON.stringify(document),traceId,now,document.channel,document.institution,document.transactionType,document.transactionStatus,document.paymentDate,document.paymentTime,document.referenceId,referenceKey,document.sender,document.senderAccountMasked,document.recipient,document.recipientAccountMasked,document.merchant,satangOrNull(document.grossAmountBaht),satangOrNull(document.discountAmountBaht),satangOrNull(document.paidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,validation.review?1:0,validation.note,imageHash,null];
   if(!validation.ok){
     try{await documentInsert(env,documentArgs).run();}
-    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,referenceKey,imageHash),traceId);return;}throw error;}
-    await respondText(env,event,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId);return;
+    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,referenceKey,imageHash),traceId,timing);return;}throw error;}
+    await respondText(env,event,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId,timing);return;
   }
   const expenseId=randomId("exp"),draft=bankSlipExpenseDraft(document);documentArgs[31]=expenseId;
   try{await env.DB.batch([
@@ -187,8 +188,8 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
     env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId),
     env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PAYMENT_EVIDENCE','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Bank or wallet payment evidence",now),
     expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:"BANK_SLIP",status:"WAITING_CONFIRM"}})
-  ]);}catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId))return;await pushDuplicateDocument(env,event,existing,traceId);return;}throw error;}
-  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId,...draft,status:"WAITING_CONFIRM",documentType:"BANK_SLIP",channel:document.channel,institution:document.institution,referenceId:document.referenceId,grossAmountSatang:satangOrNull(document.grossAmountBaht),discountAmountSatang:satangOrNull(document.discountAmountBaht)}),traceId);
+  ]);}catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
+  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId,...draft,status:"WAITING_CONFIRM",documentType:"BANK_SLIP",channel:document.channel,institution:document.institution,referenceId:document.referenceId,grossAmountSatang:satangOrNull(document.grossAmountBaht),discountAmountSatang:satangOrNull(document.discountAmountBaht)}),traceId,timing);
 }
 
 export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employee,accessActor?:ExpenseActor):Promise<void>{

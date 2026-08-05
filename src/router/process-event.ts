@@ -14,7 +14,7 @@ import { classifyAndRead } from "../vision/service";
 import { describeVisionRejection } from "../vision/failure-reason";
 import { attendanceNotAllowedMessage, unauthorizedImageMessage, unsupportedImageMessage } from "../attendance/messages";
 export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContext):Promise<void>{
-  const t0=Date.now(),event=job.event,webhookId=event.webhookEventId||`message:${event.message?.id||job.traceId}`,claim=await claimInboundEvent(env,event,job.traceId,job.receivedAtIso);if(claim==="TERMINAL")return;if(claim==="BUSY")throw new InboundBusyError();
+  const t0=Date.now(),event=job.event,webhookId=event.webhookEventId||`message:${event.message?.id||job.traceId}`,claim=await claimInboundEvent(env,event,job.traceId,job.receivedAtIso);let expenseImage=false;if(claim==="TERMINAL")return;if(claim==="BUSY")throw new InboundBusyError();
   try{
     const to=event.source.type==="user"?event.source.userId||"":"";if(!to){await completeInboundEvent(env,webhookId,"UNSUPPORTED_CHAT","IGNORED");return;}
     const actor=await getStaffActorByLineId(env,to);
@@ -47,12 +47,13 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     const previewPromise=env.WORKERS_AI_ENABLED==="true"?downloadLineContent(env,event.message.id,true,job.traceId).catch(()=>originalPromise):originalPromise;
     const [preview,original]=await Promise.all([previewPromise,originalPromise]);
     const downloadMs=Date.now()-downloadStarted,visionStarted=Date.now();
-    const reading=await classifyAndRead(env,preview,original,job.traceId,{usageMetric:"expense_image_openai_fallback"});
+    const reading=await classifyAndRead(env,preview,original,job.traceId);
     const visionMs=Date.now()-visionStarted;
     if(reading.kind==="CLOCK"){
       if(actor.employee.status!=="ACTIVE"||!authorize(actor,"attendance.self.write",{employeeId:actor.employeeId})||env.ATTENDANCE_ENABLED!=="true"){const code="ATTENDANCE_NOT_ALLOWED";await respondTextToLineEvent(env,event,attendanceNotAllowedMessage(),{traceId:job.traceId,purpose:"ATTENDANCE_REJECTION",identitySuffix:"attendance-rejection"});await completeInboundEvent(env,webhookId,"ATTENDANCE", "REJECTED",code);return;}
       const recorded=await handleAttendance(env,event,actor.employee,reading,original,job.traceId);await completeInboundEvent(env,webhookId,"ATTENDANCE",recorded?"COMPLETED":"REJECTED",recorded?"":"CLOCK_VALIDATION_FAILED");
     }else if(["RECEIPT","BANK_SLIP","ONLINE_ORDER","DELIVERY_ORDER"].includes(reading.kind)){
+      expenseImage=true;
       await recordMetric(env,job.traceId,"expense_image_queue_wait_ms",Math.max(0,Date.now()-Date.parse(job.receivedAtIso)));
       await recordMetric(env,job.traceId,"expense_image_download_ms",downloadMs);
       // The current general vision call classifies and extracts together.  The
@@ -62,7 +63,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
       if(!actor.employee.canSubmitExpense||!authorize(actor,"expense.submit",{employeeId:actor.employeeId})||env.EXPENSE_ENABLED!=="true"){const code="EXPENSE_IMAGE_NOT_ALLOWED";await respondTextToLineEvent(env,event,`The expense image was not recorded. ❌\nReason: This account is not authorized, or the expense system is disabled.\nAction: Please contact the shop administrator.\nCode: ${code}`,{traceId:job.traceId,purpose:"EXPENSE_RESPONSE"});await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","REJECTED",code);return;}
       const hash=await sha256Hex(original),key=`expense/${new Date(event.timestamp).toISOString().slice(0,10)}/${event.message.id}-${hash.slice(0,12)}.jpg`;
       const r2Started=Date.now();await saveEvidence(env,key,original,{lineUserId:to,messageId:event.message.id,traceId:job.traceId});await recordMetric(env,job.traceId,"expense_image_r2_ms",Date.now()-r2Started);
-      const persistStarted=Date.now();await handleExpenseImage(env,event,reading,key,job.traceId,hash,actor);await recordMetric(env,job.traceId,"expense_image_d1_ms",Date.now()-persistStarted,{includesReply:"true"});await recordMetric(env,job.traceId,"expense_image_reply_ms",0,{includedIn:"expense_image_d1_ms"});await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
+      const persistStarted=Date.now(),responseTiming={replyMs:0};await handleExpenseImage(env,event,reading,key,job.traceId,hash,actor,responseTiming);const persistAndReplyMs=Date.now()-persistStarted;await recordMetric(env,job.traceId,"expense_image_d1_ms",Math.max(0,persistAndReplyMs-responseTiming.replyMs));await recordMetric(env,job.traceId,"expense_image_reply_ms",responseTiming.replyMs);await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
     }else{const rejection=describeVisionRejection(reading);await respondTextToLineEvent(env,event,rejection.message,{traceId:job.traceId,purpose:"ATTENDANCE_REJECTION",identitySuffix:"attendance-rejection"});await completeInboundEvent(env,webhookId,"UNKNOWN_IMAGE","REVIEW",rejection.code);}
-  }catch(error){await completeInboundEvent(env,webhookId,"ERROR","FAILED",String(error));throw error;}finally{try{const elapsed=Date.now()-t0;await recordMetric(env,job.traceId,"inbound_total_ms",elapsed);if(event.message?.type==="image")await recordMetric(env,job.traceId,"expense_image_total_ms",elapsed);}catch(error){console.error("metric",error);}}
+  }catch(error){await completeInboundEvent(env,webhookId,"ERROR","FAILED",String(error));throw error;}finally{try{const elapsed=Date.now()-t0;await recordMetric(env,job.traceId,"inbound_total_ms",elapsed);if(expenseImage)await recordMetric(env,job.traceId,"expense_image_total_ms",elapsed);}catch(error){console.error("metric",error);}}
 }

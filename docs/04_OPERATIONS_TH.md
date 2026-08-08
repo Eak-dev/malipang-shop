@@ -29,7 +29,8 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 ## Expense document review และ recovery
 
-- Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` ต้องตรวจ vendor, final paid, payment source, category และ date บน Flex ก่อน Save
+- Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` แสดงเฉพาะ field ที่ยังค้างจริงบน Flex (payment, รายการ, หมวดหมู่, วันที่) และ Worker เป็นผู้บังคับ validation ก่อนบันทึกเสมอ
+- หาก `รายการ` ค้าง ผู้ใช้กดรับข้อความเดิมหรือกดพิมพ์แก้ได้; `expense_pending_edits` เก็บ pending edit ต่อ LINE account เพียงหนึ่งรายการ อายุ 15 นาที และข้อความถัดไปอัปเดตได้เฉพาะ draft ที่ยัง `WAITING_CONFIRM` เท่านั้น
 - Delivery Order เดี่ยวและเอกสารที่ยอด/วันที่จ่ายไม่ครบเป็น `WAITING_REVIEW`; ห้ามสร้างยอดเองจากราคา list หรือ expected delivery
 - เมื่อ Receipt/Tax Invoice ถูกยืนยัน `รายวัน` จะลงหนึ่งแถว summary จาก final paid เสมอ. ตรวจ `V52_EXPENSE_RAW` ว่ามีหนึ่ง summary row และตรวจ `รายละเอียดการซื้อ` ว่ามีหนึ่งแถวต่อ item ที่อยู่ใน D1. Adjustment ระดับเอกสารไม่ถูกแจกเดาให้สินค้า.
 - หากเดือนใน `รายวัน` เต็ม ระบบขยาย row ก่อน `รวม` อัตโนมัติแบบ formula-safe. ถ้า Sheets ตอบ error ให้ปล่อย sync job retry; ห้ามแทรกแถวหรือย้าย total ด้วยมือระหว่าง job กำลัง retry

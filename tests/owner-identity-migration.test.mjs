@@ -21,12 +21,15 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
       '0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql',
       '0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql',
       '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql',
-      '0014_failed_job_reconciliation.sql'
+      '0014_failed_job_reconciliation.sql','0015_expense_guided_review.sql'
     ])apply(db,name);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM employees WHERE employee_id='OWN002'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_document_items'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='failed_job_reconciliations'`)[0].count,1);
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_pending_edits'`)[0].count,1);
+    apply(db,'0015_expense_guided_review.sql');
+    assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
 

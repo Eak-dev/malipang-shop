@@ -510,6 +510,7 @@ Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured
 - Delivery Order เดี่ยวเป็น supporting evidence และไม่สร้างยอดจ่าย
 - ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
 - ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม
+- Expense Review เป็น Thai-first และแสดงเฉพาะ field ที่ยังต้องตรวจจริง (`วิธีชำระเงิน`, `รายการ`, `หมวดหมู่`, `วันที่`) ไม่ใช้ข้อความกว้าง ๆ ว่า `Document facts`; รายการที่ไม่แน่ใจยอมรับหรือพิมพ์แก้ได้ใน draft อายุ 15 นาที
 - `รายวัน` ลง **หนึ่งแถวสรุปต่อ Expense** เสมอ โดยใช้ final paid เพื่อให้ยอดรายวันและสูตรเดิมคงรูปแบบเดิม
 - `รายละเอียดการซื้อ` เป็นแท็บ private ใหม่: หนึ่งแถวต่อ line item ด้วย mapping key `Expense_ID|Item_ID`; เก็บ Vendor, เลขเอกสาร, จำนวน, หน่วย, ราคา และยอดรายการแยกจาก Description ของ Expense
 - ส่วนลด/subsidy/shipping ระดับเอกสารถูกเก็บเป็น adjustment ของเอกสาร (ไม่เดาแจกแจงลงสินค้า) และ `รายวัน` ใช้ยอด final paid เสมอ

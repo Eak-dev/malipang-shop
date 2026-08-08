@@ -5,12 +5,13 @@ import { addDays,isIsoDate,isoDateInBangkok } from "../shared/time";
 import type { Employee,Env,LineEvent,VisionResult } from "../types";
 import {
   buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentConfirmationFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
-  buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
+  buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
 import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
 import { parseExpenseText } from "./text-parser";
+import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyReviewState,purchaseReviewState,stateFromStoredDocument,type ExpenseReviewField,type ExpenseReviewState,unresolvedReviewFields } from "./review-state";
 import type { StaffActor } from "../access/repository";
 import type { BankSlipDocument,PurchaseDocument } from "../types";
 
@@ -35,12 +36,23 @@ function recordFromRow(row:ExpenseRow):ExpenseFlexRecord{return{
   ...(row.document_type?{documentType:String(row.document_type)}:{}),...(row.channel?{channel:String(row.channel)}:{}),
   ...(row.institution?{institution:String(row.institution)}:{}),...(row.reference_id?{referenceId:String(row.reference_id)}:{}),
   ...(row.document_type?{grossAmountSatang:row.gross_amount_satang==null?null:Number(row.gross_amount_satang),discountAmountSatang:row.discount_amount_satang==null?null:Number(row.discount_amount_satang)}:{}),
-  ...(row.review_note?{reviewNote:String(row.review_note)}:{})
+  ...(row.review_note?{reviewNote:String(row.review_note)}:{}),
+  ...reviewFieldsFromRow(row)
 };}
+function parseJson(value:unknown):Record<string,unknown>{
+  if(typeof value!=="string"||!value.trim())return{};
+  try{const parsed=JSON.parse(value);return parsed&&typeof parsed==="object"&&!Array.isArray(parsed)?parsed as Record<string,unknown>:{};}catch{return{};}
+}
+function reviewFieldsFromRow(row:ExpenseRow):{reviewRequiredFields:string[];reviewConfirmedFields:string[]}{
+  const stored=stateFromStoredDocument(parseJson(row.normalized_json));
+  const fallback=legacyReviewState({description:String(row.description||""),amountSatang:Number(row.amount_satang||0),paymentKey:String(row.payment_key||""),sourceWallet:String(row.source_wallet||""),category:String(row.category||""),transactionDate:String(row.transaction_date||""),reviewNote:String(row.review_note||""),needsReview:Number(row.needs_review||0)===1});
+  const state=stored||fallback;
+  return{reviewRequiredFields:state.requiredFields,reviewConfirmedFields:state.confirmedFields};
+}
 async function findExpense(env:Env,id:string,to:string):Promise<ExpenseFlexRecord|null>{
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=? AND line_user_id=? LIMIT 1`).bind(id,to).first<ExpenseRow>();
   if(!row)return null;
-  const document=await env.DB.prepare(`SELECT document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang,review_note FROM expense_documents WHERE expense_id=? LIMIT 1`).bind(id).first<ExpenseRow>();
+  const document=await env.DB.prepare(`SELECT document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang,review_note,normalized_json,needs_review FROM expense_documents WHERE expense_id=? LIMIT 1`).bind(id).first<ExpenseRow>();
   return recordFromRow(document?{...row,...document}:row);
 }
 async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<ExpenseFlexRecord|null>{
@@ -52,11 +64,9 @@ async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,tra
   else await respondText(env,event,"This item was cancelled.",traceId);
 }
 
-type ConfirmationField="payment"|"amount"|"date"|"category"|"description"|"document";
-function hasOtherRequiredDocumentReview(expense:ExpenseFlexRecord):boolean{
-  return (expense.reviewNote||"").split(";").map(value=>value.trim()).filter(Boolean).some(reason=>
-    reason!=="Payment source must be confirmed"&&reason!=="Please review visible document facts before saving."
-  );
+type ConfirmationField=ExpenseReviewField;
+function reviewStateForExpense(expense:ExpenseFlexRecord):ExpenseReviewState{
+  return{requiredFields:(expense.reviewRequiredFields||[]).filter((field):field is ExpenseReviewField=>["payment","amount","date","category","description"].includes(field)),confirmedFields:(expense.reviewConfirmedFields||[]).filter((field):field is ExpenseReviewField=>["payment","amount","date","category","description"].includes(field))};
 }
 function confirmationIssues(expense:ExpenseFlexRecord):ConfirmationField[]{
   const issues:ConfirmationField[]=[];
@@ -65,8 +75,9 @@ function confirmationIssues(expense:ExpenseFlexRecord):ConfirmationField[]{
   if(!isIsoDate(expense.transactionDate))issues.push("date");
   if(!allowedCategories.has(expense.category))issues.push("category");
   if(!paymentOptionForPair(expense.paymentKey,expense.sourceWallet))issues.push("payment");
-  if(hasOtherRequiredDocumentReview(expense))issues.push("document");
-  return issues;
+  const order:ConfirmationField[]=["payment","description","category","date","amount"];
+  const combined=new Set<ConfirmationField>([...issues,...unresolvedReviewFields(reviewStateForExpense(expense))]);
+  return order.filter(field=>combined.has(field));
 }
 function withConfirmationIssues(expense:ExpenseFlexRecord):ExpenseFlexRecord{
   return{...expense,unresolvedRequiredFields:confirmationIssues(expense)};
@@ -74,6 +85,25 @@ function withConfirmationIssues(expense:ExpenseFlexRecord):ExpenseFlexRecord{
 function isPaymentOnlyUnresolved(expense:ExpenseFlexRecord):boolean{
   const issues=confirmationIssues(expense);
   return issues.length===1&&issues[0]==="payment";
+}
+
+async function storedReviewState(env:Env,expense:ExpenseFlexRecord):Promise<{documentId:string;raw:string;state:ExpenseReviewState}|null>{
+  const row=await env.DB.prepare(`SELECT document_id,normalized_json,review_note,needs_review FROM expense_documents WHERE expense_id=? AND status='WAITING_CONFIRM' LIMIT 1`).bind(expense.expenseId).first<ExpenseRow>();
+  if(!row?.document_id)return null;
+  const raw=String(row.normalized_json||""),stored=stateFromStoredDocument(parseJson(raw)),fallback=legacyReviewState({description:expense.description,amountSatang:expense.amountSatang,paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet,category:expense.category,transactionDate:expense.transactionDate,reviewNote:String(row.review_note||""),needsReview:Number(row.needs_review||0)===1});
+  return{documentId:String(row.document_id),raw,state:stored||fallback};
+}
+async function confirmStoredReviewField(env:Env,expense:ExpenseFlexRecord,field:ExpenseReviewField):Promise<boolean>{
+  const stored=await storedReviewState(env,expense);if(!stored)return true;
+  const document=parseJson(stored.raw),nextState=confirmReviewField(stored.state,field),nextJson=JSON.stringify(documentWithReviewState(document,nextState));
+  const changed=await env.DB.prepare(`UPDATE expense_documents SET normalized_json=?,updated_at=? WHERE document_id=? AND expense_id=? AND status='WAITING_CONFIRM' AND normalized_json IS ?`).bind(nextJson,new Date().toISOString(),stored.documentId,expense.expenseId,stored.raw||null).run();
+  return Number(changed.meta.changes||0)===1;
+}
+async function showOrFinalizeCurrent(env:Env,event:LineEvent,id:string,to:string,traceId:string,actor:ExpenseActor|undefined):Promise<void>{
+  const current=await findExpense(env,id,to);if(!current){await respondText(env,event,"This item was not found or has expired.",traceId);return;}
+  if(current.status!=="WAITING_CONFIRM"){await showCurrent(env,event,current,traceId);return;}
+  if(!confirmationIssues(current).length&&await confirmExpense(env,event,current,to,traceId,actor))return;
+  const refreshed=await findExpense(env,id,to);if(refreshed)await showCurrent(env,event,refreshed,traceId);else await respondText(env,event,"This item was not found or has expired.",traceId);
 }
 
 async function confirmExpense(
@@ -98,7 +128,34 @@ function expenseAudit(env:Env,input:{actor?:ExpenseActor|undefined;action:string
   return env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,document_id,branch_id,reason,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(randomId("exp_audit"),actor.employeeId,input.action,input.expenseId??null,input.documentId??null,actor.branchId,input.reason??"",input.before===undefined?null:JSON.stringify(input.before),input.after===undefined?null:JSON.stringify(input.after),now);
 }
 
+interface PendingExpenseEdit{expense_id:unknown;field:unknown;expires_at:unknown;}
+async function handlePendingExpenseEdit(env:Env,event:LineEvent,traceId:string,actor?:ExpenseActor):Promise<ExpenseTextOutcome|null>{
+  const to=event.source.userId||"",pending=await env.DB.prepare(`SELECT expense_id,field,expires_at FROM expense_pending_edits WHERE line_user_id=? LIMIT 1`).bind(to).first<PendingExpenseEdit>();
+  if(!pending)return null;
+  if(String(pending.expires_at||"")<=new Date().toISOString()){
+    await env.DB.prepare(`DELETE FROM expense_pending_edits WHERE line_user_id=?`).bind(to).run();
+    await respondText(env,event,"การแก้ไขรายการหมดอายุแล้ว กรุณาเปิดรายการนั้นใหม่ค่ะ",traceId);return"REJECTED";
+  }
+  if(String(pending.field)!=="description")return null;
+  const expense=await findExpense(env,String(pending.expense_id),to),description=(event.message?.text||"").trim().replace(/\s+/g," ");
+  if(!expense||expense.status!=="WAITING_CONFIRM"){
+    await env.DB.prepare(`DELETE FROM expense_pending_edits WHERE line_user_id=?`).bind(to).run();
+    await respondText(env,event,"รายการนี้ถูกบันทึกหรือยกเลิกแล้ว จึงแก้ไขไม่ได้ค่ะ",traceId);return"REJECTED";
+  }
+  if(!description||description.length>200){await respondText(env,event,"กรุณาพิมพ์รายการสั้น ๆ ไม่เกิน 200 ตัวอักษรค่ะ",traceId);return"REJECTED";}
+  const changed=await env.DB.prepare(`UPDATE expense_events SET description=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(description,new Date().toISOString(),expense.expenseId,to).run();
+  if(Number(changed.meta.changes||0)!==1){await showOrFinalizeCurrent(env,event,expense.expenseId,to,traceId,actor);return"WAITING_CONFIRM";}
+  if(!await confirmStoredReviewField(env,{...expense,description},"description")){await showOrFinalizeCurrent(env,event,expense.expenseId,to,traceId,actor);return"WAITING_CONFIRM";}
+  await env.DB.batch([
+    env.DB.prepare(`DELETE FROM expense_pending_edits WHERE line_user_id=? AND expense_id=? AND field='description'`).bind(to,expense.expenseId),
+    expenseAudit(env,{actor,action:"EDIT",expenseId:expense.expenseId,before:{description:expense.description},after:{description},reason:"Description corrected through guided review"})
+  ]);
+  await showOrFinalizeCurrent(env,event,expense.expenseId,to,traceId,actor);
+  const current=await findExpense(env,expense.expenseId,to);return current?.status==="CONFIRMED"?"CONFIRMED":"WAITING_CONFIRM";
+}
+
 export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,actor?:ExpenseActor):Promise<ExpenseTextOutcome>{
+  const pending=await handlePendingExpenseEdit(env,event,traceId,actor);if(pending)return pending;
   const to=event.source.userId||"",messageId=event.message?.id||"",parsed=parseExpenseText(event.message?.text||"");
   if(!parsed){await respondText(env,event,["Invalid expense format. ❌","","Examples:","• Egg change 375","• Electricity transfer 1200","• Boxes kbank 350","• 28/01 Egg change 375"].join("\n"),traceId);return"REJECTED";}
   const id=randomId("exp"),status=parsed.quickSave?"CONFIRMED":"WAITING_CONFIRM",now=new Date().toISOString();
@@ -152,18 +209,18 @@ async function findExactLinkedExpenseDocument(env:Env,document:PurchaseDocument)
   const existing={documentId:String(row.document_id),expenseId:row.expense_id==null?null:String(row.expense_id),documentType:String(row.document_type),legalVendorName:String(row.legal_vendor_name||""),documentNumber:String(row.document_number||""),orderId:String(row.order_id||"")};
   return exactDocumentMatch(document,existing).matched?existing:null;
 }
-function purchaseDocumentUpdate(env:Env,documentId:string,document:PurchaseDocument,expenseId:string|null,actor?:ExpenseActor){
+function purchaseDocumentUpdate(env:Env,documentId:string,document:PurchaseDocument,expenseId:string|null,actor?:ExpenseActor,reviewState?:ExpenseReviewState){
   const ownership=actorValues(actor);
   return env.DB.prepare(`UPDATE expense_documents SET vendor_name=?,legal_vendor_name=?,document_number=?,order_id=?,document_date=?,payment_date=?,payment_time=?,currency=?,subtotal_satang=?,shipping_satang=?,discount_amount_satang=?,subsidy_satang=?,vat_satang=?,gross_amount_satang=?,final_paid_satang=?,paid_amount_satang=?,suggested_description=?,suggested_category=?,confidence=?,needs_review=?,review_note=?,normalized_json=?,submitted_by_employee_id=?,branch_id=?,expense_id=?,updated_at=? WHERE document_id=?`).bind(
     document.vendor,document.legalVendorName,document.documentNumber,document.orderId,document.documentDate,document.paymentDate,document.paymentTime,document.currency,
-    toSatang(document.subtotalBaht),toSatang(document.shippingBaht),toSatang(document.discountBaht),toSatang(document.subsidyBaht),toSatang(document.vatBaht),toSatang(document.grossAmountBaht),toSatang(document.finalPaidAmountBaht),toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,document.needsReview?1:0,document.reviewReasons.join("; "),JSON.stringify(document),ownership.employeeId,ownership.branchId,expenseId,new Date().toISOString(),documentId
+    toSatang(document.subtotalBaht),toSatang(document.shippingBaht),toSatang(document.discountBaht),toSatang(document.subsidyBaht),toSatang(document.vatBaht),toSatang(document.grossAmountBaht),toSatang(document.finalPaidAmountBaht),toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,document.needsReview?1:0,document.reviewReasons.join("; "),JSON.stringify(reviewState?documentWithReviewState(document as unknown as Record<string,unknown>,reviewState):document),ownership.employeeId,ownership.branchId,expenseId,new Date().toISOString(),documentId
   );
 }
 function itemInsert(env:Env,item:ReturnType<typeof documentItemStatements>[number]){return env.DB.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang,vat_satang,confidence,needs_review,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.itemId,item.documentId,item.expenseId,item.sellerKey,item.productCode,item.description,item.quantity,item.unit,item.unitPriceSatang,item.discountSatang,item.lineTotalSatang,item.vatSatang,item.confidence,item.needsReview,item.now,item.now);}
 function sellerCaseInsert(env:Env,input:{documentId:string;sellerKey:string;vendorName:string;grossSatang:number|null;finalSatang:number|null;status:string;expenseId:string|null;now:string}){return env.DB.prepare(`INSERT INTO expense_document_cases(case_id,document_id,seller_key,vendor_name,gross_satang,final_paid_satang,status,expense_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)`).bind(randomId("seller_case"),input.documentId,input.sellerKey,input.vendorName,input.grossSatang,input.finalSatang,input.status,input.expenseId,input.now,input.now);}
 async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocument,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor,timing?:ExpenseResponseTiming):Promise<void>{
   const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
-  const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),sellerCases=sellerDocumentCases(document),multiSeller=sellerCases.length>1,draft=multiSeller?null:purchaseExpenseDraft(document),ownership=actorValues(actor);
+  const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),sellerCases=sellerDocumentCases(document),multiSeller=sellerCases.length>1,draft=multiSeller?null:purchaseExpenseDraft(document),reviewState=draft?purchaseReviewState(document,draft):null,ownership=actorValues(actor);
   const exactMatch=await findExactLinkedExpenseDocument(env,document);
   if(exactMatch&&exactMatch.documentType!==document.documentType&&exactMatch.expenseId){
     const reviewReason=`Linked to an existing expense by ${document.orderId.trim()?"exact order ID":"exact vendor and document number"}.`;
@@ -191,7 +248,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     }
     statements.push(
       documentInsert(env,base),
-      purchaseDocumentUpdate(env,documentId,document,expenseId,actor),
+      purchaseDocumentUpdate(env,documentId,document,expenseId,actor,reviewState||undefined),
       ...documentItemStatements(documentId,expenseId,document.items,now,randomId).map(item=>itemInsert(env,item)),
       ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.lineTotalSatang,finalSatang:item.lineTotalSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))
     );
@@ -202,7 +259,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     await env.DB.batch(statements);
   }catch(error){if(String(error).includes("UNIQUE")){const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
   if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
-  const expense={expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason};
+  const expense={expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason,reviewRequiredFields:reviewState?.requiredFields||[],reviewConfirmedFields:reviewState?.confirmedFields||[]};
   await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);
 }
 
@@ -222,15 +279,15 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
     catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,referenceKey,imageHash),traceId,timing);return;}throw error;}
     await respondText(env,event,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId,timing);return;
   }
-  const expenseId=randomId("exp"),draft=bankSlipExpenseDraft(document);documentArgs[31]=expenseId;
+  const expenseId=randomId("exp"),draft=bankSlipExpenseDraft(document),reviewState=bankSlipReviewState(document,draft,validation.review);documentArgs[31]=expenseId;
   try{await env.DB.batch([
     documentInsert(env,documentArgs),
-    env.DB.prepare(`UPDATE expense_documents SET submitted_by_employee_id=?,branch_id=?,normalized_json=?,currency='THB',final_paid_satang=?,updated_at=? WHERE document_id=?`).bind(ownership.employeeId,ownership.branchId,JSON.stringify(document),satangOrNull(document.paidAmountBaht),now,documentId),
+    env.DB.prepare(`UPDATE expense_documents SET submitted_by_employee_id=?,branch_id=?,normalized_json=?,currency='THB',final_paid_satang=?,updated_at=? WHERE document_id=?`).bind(ownership.employeeId,ownership.branchId,JSON.stringify(documentWithReviewState(document as unknown as Record<string,unknown>,reviewState)),satangOrNull(document.paidAmountBaht),now,documentId),
     env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,'WAITING_CONFIRM',?,?,?,?)`).bind(expenseId,messageId,to,draft.description,draft.amountSatang,draft.paymentKey,draft.sourceWallet,draft.category,draft.transactionDate,traceId,now,ownership.employeeId,ownership.branchId),
     env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PAYMENT_EVIDENCE','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Bank or wallet payment evidence",now),
     expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:"BANK_SLIP",status:"WAITING_CONFIRM"}})
   ]);}catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
-  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId,...draft,status:"WAITING_CONFIRM",documentType:"BANK_SLIP",channel:document.channel,institution:document.institution,referenceId:document.referenceId,grossAmountSatang:satangOrNull(document.grossAmountBaht),discountAmountSatang:satangOrNull(document.discountAmountBaht)}),traceId,timing);
+  await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues({expenseId,...draft,status:"WAITING_CONFIRM",documentType:"BANK_SLIP",channel:document.channel,institution:document.institution,referenceId:document.referenceId,grossAmountSatang:satangOrNull(document.grossAmountBaht),discountAmountSatang:satangOrNull(document.discountAmountBaht),reviewNote:validation.note,reviewRequiredFields:reviewState.requiredFields,reviewConfirmedFields:reviewState.confirmedFields})),traceId,timing);
 }
 
 export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employee,accessActor?:ExpenseActor):Promise<void>{
@@ -263,44 +320,61 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
   if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}
-  if(action==="expense_payment_menu"){if(expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpensePaymentFlex(expense),traceId);return;}
-  if(action==="expense_source_menu"){if(expense.documentType==="BANK_SLIP")await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);else await respondFlex(env,event,buildExpenseSourceFlex(expense),traceId);return;}
-  if(action==="expense_category_menu"){await respondFlex(env,event,buildExpenseCategoryFlex(expense),traceId);return;}
-  if(action==="expense_date_menu"){await respondFlex(env,event,buildExpenseDateFlex(expense),traceId);return;}
+  if(action==="expense_payment_menu"){if(!confirmationIssues(expense).includes("payment")||expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpensePaymentFlex(expense),traceId);return;}
+  if(action==="expense_source_menu"){if(!confirmationIssues(expense).includes("payment")||expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,buildExpenseSourceFlex(expense),traceId);return;}
+  if(action==="expense_item_menu"){if(!confirmationIssues(expense).includes("description")){await showCurrent(env,event,expense,traceId);return;}await respondFlex(env,event,buildExpenseItemFlex(expense),traceId);return;}
+  if(action==="expense_accept_description"){
+    if(!confirmationIssues(expense).includes("description")){await showCurrent(env,event,expense,traceId);return;}
+    if(!await confirmStoredReviewField(env,expense,"description")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
+    await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{descriptionConfirmed:true},reason:"Description accepted through guided review"}).run();
+    await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;
+  }
+  if(action==="expense_edit_description"){
+    if(!confirmationIssues(expense).includes("description")){await showCurrent(env,event,expense,traceId);return;}
+    const now=new Date(),expires=new Date(now.getTime()+15*60*1000).toISOString();
+    const changed=await env.DB.prepare(`INSERT INTO expense_pending_edits(line_user_id,expense_id,field,created_at,expires_at) VALUES(?,?, 'description',?,?) ON CONFLICT(line_user_id) DO UPDATE SET expense_id=excluded.expense_id,field=excluded.field,created_at=excluded.created_at,expires_at=excluded.expires_at`).bind(to,id,now.toISOString(),expires).run();
+    if(Number(changed.meta.changes||0)>=1){await respondText(env,event,"พิมพ์ชื่อรายการที่ถูกต้องในข้อความถัดไปได้เลยค่ะ\n(ระบบจะเปลี่ยนเฉพาะรายการนี้ภายใน 15 นาที)",traceId);return;}
+    await showCurrent(env,event,expense,traceId);return;
+  }
+  if(action==="expense_category_menu"){if(!confirmationIssues(expense).includes("category")){await showCurrent(env,event,expense,traceId);return;}await respondFlex(env,event,buildExpenseCategoryFlex(expense),traceId);return;}
+  if(action==="expense_date_menu"){if(!confirmationIssues(expense).includes("date")){await showCurrent(env,event,expense,traceId);return;}await respondFlex(env,event,buildExpenseDateFlex(expense),traceId);return;}
   if(action==="expense_set_payment"){
-    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
+    if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const payment=q.get("payment")||"";if(!allowedPayments.has(payment))throw new Error("Invalid expense payment");expense.paymentKey=payment;expense.sourceWallet=paymentWallet(payment);
     const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();
-    if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showCurrent(env,event,expense,traceId);return;}
+    if(Number(changed.meta.changes||0)===1){await confirmStoredReviewField(env,expense,"payment");await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
     const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_resolve_payment"){
-    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
+    if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const payment=q.get("payment")||"",source=q.get("source")||"",choice=paymentOptionForPair(payment,source);
     if(!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
     const selected={...expense,paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet};
     const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND (payment_key='unconfirmed' OR source_wallet='UNCONFIRMED')`).bind(choice.paymentKey,choice.sourceWallet,new Date().toISOString(),id,to).run();
     if(Number(changed.meta.changes||0)!==1){const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
+    if(!await confirmStoredReviewField(env,selected,"payment")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
     await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet},reason:"Payment selected from confirmation chooser"}).run();
-    if(await confirmExpense(env,event,selected,to,traceId,accessActor||actor))return;
-    const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;
+    await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;
   }
   if(action==="expense_set_source"){
-    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
+    if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const source=q.get("source")||"";if(!allowedSources.has(source))throw new Error("Invalid expense source");expense.sourceWallet=source;expense.paymentKey=paymentForWallet(source,expense.paymentKey);
-    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await confirmStoredReviewField(env,expense,"payment");await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_category"){
+    if(!confirmationIssues(expense).includes("category")){await showCurrent(env,event,expense,traceId);return;}
     const category=q.get("category")||"";if(!allowedCategories.has(category))throw new Error("Invalid expense category");expense.category=category;
-    const changed=await env.DB.prepare(`UPDATE expense_events SET category=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(category,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{category}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET category=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(category,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){if(!await confirmStoredReviewField(env,expense,"category")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{category}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_date_rel"){
+    if(!confirmationIssues(expense).includes("date")){await showCurrent(env,event,expense,traceId);return;}
     const days=Math.min(1,Math.max(0,Number(q.get("days")||0)));expense.transactionDate=addDays(isoDateInBangkok(),-days);
-    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.transactionDate,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:expense.transactionDate}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.transactionDate,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){if(!await confirmStoredReviewField(env,expense,"date")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:expense.transactionDate}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_date"){
+    if(!confirmationIssues(expense).includes("date")){await showCurrent(env,event,expense,traceId);return;}
     const date=event.postback?.params?.date||"";if(!isIsoDate(date))throw new Error("Invalid expense date");expense.transactionDate=date;
-    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(date,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:date}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(date,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){if(!await confirmStoredReviewField(env,expense,"date")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:date}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   await respondText(env,event,"Unknown command. Please send the expense again.",traceId);
 }

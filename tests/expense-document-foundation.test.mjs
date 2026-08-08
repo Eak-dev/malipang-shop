@@ -86,7 +86,8 @@ test('a payment-unknown receipt with another unresolved document fact stays in R
     assert.match(text,/expense_payment_menu/);
     assert.doesNotMatch(text,/expense_resolve_payment/);
     assert.doesNotMatch(text,/expense_confirm/);
-    assert.match(text,/Document facts/);
+    assert.match(text,/รายการ/);
+    assert.doesNotMatch(text,/Document facts/);
   }finally{globalThis.fetch=originalFetch;}
 });
 

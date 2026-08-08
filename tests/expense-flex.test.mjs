@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   buildExpenseSummaryFlex,buildExpensePaymentFlex,buildExpenseSourceFlex,buildExpenseCategoryFlex,
-  buildExpenseDateFlex,buildExpenseSavedFlex,buildExpensePaymentConfirmationFlex,collectFlexActionLabels,paymentWallet,paymentForWallet
+  buildExpenseDateFlex,buildExpenseItemFlex,buildExpenseSavedFlex,buildExpensePaymentConfirmationFlex,collectFlexActionLabels,paymentWallet,paymentForWallet
 } from '../dist/expense/flex.js';
 import {expensePaymentOptions} from '../dist/expense/document.js';
 
 const expense={expenseId:'exp_test_001',description:'Electricity',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-22',status:'WAITING_CONFIRM'};
-const builders=[buildExpenseSummaryFlex,buildExpensePaymentFlex,buildExpenseSourceFlex,buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpenseSavedFlex,buildExpensePaymentConfirmationFlex];
+const builders=[buildExpenseSummaryFlex,buildExpensePaymentFlex,buildExpenseSourceFlex,buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpenseItemFlex,buildExpenseSavedFlex,buildExpensePaymentConfirmationFlex];
 
 test('expense Flex cards satisfy the LINE action-label contract',()=>{
   for(const build of builders){
@@ -21,21 +21,27 @@ test('expense Flex cards satisfy the LINE action-label contract',()=>{
   }
 });
 
-test('summary Flex preserves the original editable flow',()=>{
-  const text=JSON.stringify(buildExpenseSummaryFlex(expense));
-  for(const action of ['expense_confirm','expense_payment_menu','expense_source_menu','expense_category_menu','expense_date_menu','expense_cancel'])assert.match(text,new RegExp(action));
+test('summary Flex renders only actions for the actual unresolved fields',()=>{
+  const text=JSON.stringify(buildExpenseSummaryFlex({...expense,unresolvedRequiredFields:['description','category']}));
+  for(const action of ['expense_item_menu','expense_category_menu','expense_cancel'])assert.match(text,new RegExp(action));
+  for(const absent of ['expense_confirm','expense_payment_menu','expense_source_menu','expense_date_menu'])assert.doesNotMatch(text,new RegExp(absent));
+  assert.match(text,/ยังต้องตรวจสอบ/);assert.match(text,/รายการ/);assert.match(text,/หมวดหมู่/);assert.doesNotMatch(text,/Document facts/);
 });
 
 test('saved Flex offers audit-safe undo',()=>{
   assert.match(JSON.stringify(buildExpenseSavedFlex({...expense,status:'CONFIRMED'})),/expense_undo/);
 });
 
-test('expense Flex system UI is English only',()=>{
-  for(const build of builders.filter(build=>build!==buildExpensePaymentConfirmationFlex)){
+test('guided review Flex is Thai-first while preserving usable action labels',()=>{
+  for(const build of [buildExpenseSummaryFlex,buildExpenseItemFlex,buildExpensePaymentConfirmationFlex]){
     const text=JSON.stringify(build(expense));
-    assert.doesNotMatch(text,/[ก-๙]/,build.name);
-    assert.match(text,/[A-Za-z]/,build.name);
+    assert.match(text,/[ก-๙]/,build.name);
   }
+});
+
+test('item confirmation offers accept or text correction without a new web UI',()=>{
+  const text=JSON.stringify(buildExpenseItemFlex(expense));
+  for(const action of ['expense_accept_description','expense_edit_description','expense_back'])assert.match(text,new RegExp(action));
 });
 
 test('payment-only chooser gives context and resolves canonical payment/source pairs in one tap',()=>{

@@ -16,6 +16,8 @@ export interface ExpenseFlexRecord {
   grossAmountSatang?: number | null;
   discountAmountSatang?: number | null;
   reviewNote?: string;
+  reviewRequiredFields?: string[];
+  reviewConfirmedFields?: string[];
   unresolvedRequiredFields?: string[];
 }
 
@@ -56,10 +58,10 @@ export const paymentForWallet=(wallet:string,current="cash"):string=>{
 };
 
 export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
-  const id=encodeURIComponent(expense.expenseId),body=[...title("Review expense 🧾"),
-    {type:"separator",margin:"md"},row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),
-    row("Category",categoryLabels[expense.category]||expense.category),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),
-    row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Date",displayDate(expense.transactionDate))];
+  const id=encodeURIComponent(expense.expenseId),body=[...title("ตรวจสอบค่าใช้จ่าย 🧾"),
+    {type:"separator",margin:"md"},row("รายการ",expense.description),row("ยอด",`${money(expense.amountSatang)} บาท`),
+    row("หมวดหมู่",categoryLabels[expense.category]||expense.category),row("ชำระ",paymentLabels[expense.paymentKey]||expense.paymentKey),
+    row("จ่ายจาก",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("วันที่",displayDate(expense.transactionDate))];
   if(expense.documentType){
     body.push(row("Document",expense.documentType.replaceAll("_"," ")));
   }
@@ -70,23 +72,36 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
     if(expense.discountAmountSatang!=null&&expense.discountAmountSatang>0)body.push(row("Discount",`${money(expense.discountAmountSatang)} THB`));
     if(expense.referenceId)body.push(row("Reference",`…${referenceSuffix(expense.referenceId)}`));
   }
-  if(expense.reviewNote)body.push(row("Review",expense.reviewNote));
+  if(expense.reviewNote&&!/document facts|visible document|confirm.*before saving|item and category|รายการ.*หมวด/i.test(expense.reviewNote))body.push(row("หมายเหตุ",expense.reviewNote));
   const unresolved=expense.unresolvedRequiredFields||[],canSave=unresolved.length===0;
-  if(unresolved.length)body.push(row("Required",unresolved.map(requiredLabel).join(", ")));
-  const editActions=expense.documentType==="BANK_SLIP"?[
-    action("🏷️ Category",`a=expense_category_menu&id=${id}`),action("📅 Date",`a=expense_date_menu&id=${id}`)
-  ]:[
-    action("💳 Payment",`a=expense_payment_menu&id=${id}`),action("🧺 Paid from",`a=expense_source_menu&id=${id}`),
-    action("🏷️ Category",`a=expense_category_menu&id=${id}`),action("📅 Date",`a=expense_date_menu&id=${id}`)
+  if(unresolved.length)body.push(row("ยังต้องตรวจสอบ",unresolved.map(requiredLabel).join(" • ")));
+  const required=new Set(unresolved),editActions=[
+    ...(required.has("payment")?[action("💳 วิธีชำระ",`a=expense_payment_menu&id=${id}`,"primary",brownButton)]:[]),
+    ...(required.has("description")?[action("📝 รายการ",`a=expense_item_menu&id=${id}`)]:[]),
+    ...(required.has("category")?[action("🏷️ หมวดหมู่",`a=expense_category_menu&id=${id}`)]:[]),
+    ...(required.has("date")?[action("📅 วันที่",`a=expense_date_menu&id=${id}`)]:[])
   ];
-  return{type:"flex",altText:`Review expense: ${expense.description} ${money(expense.amountSatang)} THB`,contents:{
+  return{type:"flex",altText:`ตรวจสอบค่าใช้จ่าย: ${expense.description} ${money(expense.amountSatang)} บาท`,contents:{
     type:"bubble",size:"mega",header:{type:"box",layout:"vertical",backgroundColor:"#FFF3E0",contents:title("MaliPang Expense")},
     body:{type:"box",layout:"vertical",contents:body},footer:{type:"box",layout:"vertical",spacing:"sm",contents:[
-      ...(canSave?[action("✅ Save",`a=expense_confirm&id=${id}`,"primary",green)]:expense.paymentKey==="unconfirmed"||expense.sourceWallet==="UNCONFIRMED"?[action("💳 Choose payment",`a=expense_payment_menu&id=${id}`,"primary",brownButton)]:[]),
+      ...(canSave?[action("✅ บันทึก",`a=expense_confirm&id=${id}`,"primary",green)]:[]),
       ...editActions,
-      action("❌ Cancel",`a=expense_cancel&id=${id}`)
+      action("❌ ยกเลิก",`a=expense_cancel&id=${id}`)
     ]}}
   };
+}
+
+export function buildExpenseItemFlex(expense:ExpenseFlexRecord):FlexMessage{
+  const id=encodeURIComponent(expense.expenseId);
+  return{type:"flex",altText:"ยืนยันหรือแก้ไขรายการค่าใช้จ่าย",contents:{type:"bubble",size:"mega",
+    header:{type:"box",layout:"vertical",backgroundColor:"#FFF3E0",contents:title("ตรวจสอบรายการ")},
+    body:{type:"box",layout:"vertical",spacing:"md",contents:[row("รายการที่อ่านได้",expense.description||"(ไม่มีรายการ)")]},
+    footer:{type:"box",layout:"vertical",spacing:"sm",contents:[
+      action("✅ ใช้รายการนี้",`a=expense_accept_description&id=${id}`,"primary",green),
+      action("✏️ พิมพ์แก้ไข",`a=expense_edit_description&id=${id}`),
+      action("↩️ กลับ",`a=expense_back&id=${id}`)
+    ]}
+  }};
 }
 
 export function buildExpensePaymentFlex(expense:ExpenseFlexRecord):FlexMessage{
@@ -128,7 +143,7 @@ export function buildExpenseSavedFlex(expense:ExpenseFlexRecord):FlexMessage{
 
 function menu(heading:string,buttons:Record<string,unknown>[],id:string):FlexMessage{return{type:"flex",altText:heading,contents:{type:"bubble",size:"mega",body:{type:"box",layout:"vertical",spacing:"md",contents:title(heading)},footer:{type:"box",layout:"vertical",spacing:"sm",contents:[...buttons,action("↩️ Back",`a=expense_back&id=${id}`)]}}};}
 function shortCategory(key:string):string{return({ingredients:"Ingredients",fillings:"Fillings",packaging:"Packaging",gas:"Gas",utilities:"Utilities",rent:"Rent",staff:"Staff",transport:"Transport",marketing:"Marketing",equipment:"Equipment",cleaning:"Cleaning",bank_fee:"Bank fee",general:"General"} as Record<string,string>)[key]||key;}
-function requiredLabel(key:string):string{return({payment:"Payment",amount:"Amount",date:"Date",category:"Category",description:"Merchant / item",document:"Document facts"} as Record<string,string>)[key]||key;}
+function requiredLabel(key:string):string{return({payment:"วิธีชำระเงิน",amount:"ยอดเงิน",date:"วันที่",category:"หมวดหมู่",description:"รายการ"} as Record<string,string>)[key]||key;}
 
 export function collectFlexActionLabels(value:unknown):string[]{
   const labels:string[]=[];const walk=(node:unknown)=>{if(!node||typeof node!=="object")return;const obj=node as Record<string,unknown>,actionNode=obj.action as Record<string,unknown>|undefined;if(actionNode?.label!==undefined)labels.push(String(actionNode.label));for(const child of Object.values(obj))Array.isArray(child)?child.forEach(walk):walk(child);};walk(value);return labels;

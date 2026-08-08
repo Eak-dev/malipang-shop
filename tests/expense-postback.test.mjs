@@ -1,9 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {handleExpensePostback} from '../dist/expense/service.js';
+import {expensePaymentOptions} from '../dist/expense/document.js';
 
-function harness(status='WAITING_CONFIRM'){
-  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status};
+function harness(status='WAITING_CONFIRM',overrides={}){
+  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status,...overrides};
   const state={row,batches:[],queue:[]};
   const DB={
     prepare(sql){
@@ -48,4 +49,55 @@ test('confirmation persists and enqueues Google Sheets before LINE output',async
 test('undo is audit-safe and enqueues a second Sheets version',async()=>{
   const h=harness('CONFIRMED');await handleExpensePostback(h.env,h.event('a=expense_undo&id=exp_1'),h.actor);
   assert.equal(h.state.row.status,'CANCELLED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,2);
+});
+
+test('Save cannot finalize a draft with an unconfirmed payment',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});
+  await handleExpensePostback(h.env,h.event('a=expense_confirm&id=exp_1'),h.actor);
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('each canonical payment chooser option resolves method and source then finalizes once',async()=>{
+  for(const option of expensePaymentOptions){
+    const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});
+    await handleExpensePostback(h.env,h.event(`a=expense_resolve_payment&id=exp_1&payment=${option.paymentKey}&source=${option.sourceWallet}`),h.actor);
+    assert.equal(h.state.row.payment_key,option.paymentKey,option.paymentKey);
+    assert.equal(h.state.row.source_wallet,option.sourceWallet,option.paymentKey);
+    assert.equal(h.state.row.status,'CONFIRMED',option.paymentKey);
+    assert.equal(h.state.queue.length,1,option.paymentKey);
+  }
+});
+
+test('payment chooser double tap and postback redelivery finalize only one Expense',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});
+  const event=h.event('a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER');
+  await handleExpensePostback(h.env,event,h.actor);
+  await handleExpensePostback(h.env,event,h.actor);
+  assert.equal(h.state.row.status,'CONFIRMED');
+  assert.equal(h.state.queue.length,1);
+});
+
+test('stale payment postback cannot alter a confirmed Expense',async()=>{
+  const h=harness('CONFIRMED');
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER'),h.actor);
+  assert.equal(h.state.row.payment_key,'transfer');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('a selected payment returns to review without finalizing when another required field is unresolved',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'transfer');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('Cancel from the payment chooser leaves no finalized Expense',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});
+  await handleExpensePostback(h.env,h.event('a=expense_cancel&id=exp_1'),h.actor);
+  assert.equal(h.state.row.status,'CANCELLED');
+  assert.equal(h.state.queue.length,0);
 });

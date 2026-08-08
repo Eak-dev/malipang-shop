@@ -4,11 +4,11 @@ import { randomId } from "../shared/ids";
 import { addDays,isIsoDate,isoDateInBangkok } from "../shared/time";
 import type { Employee,Env,LineEvent,VisionResult } from "../types";
 import {
-  buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
+  buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentConfirmationFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
   buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
-import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
+import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
 import { parseExpenseText } from "./text-parser";
 import type { StaffActor } from "../access/repository";
@@ -47,9 +47,49 @@ async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE message_id=? AND line_user_id=? LIMIT 1`).bind(messageId,to).first<ExpenseRow>();return row?recordFromRow(row):null;
 }
 async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,traceId:string):Promise<void>{
-  if(expense.status==="WAITING_CONFIRM")await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);
+  if(expense.status==="WAITING_CONFIRM")await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
   else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
   else await respondText(env,event,"This item was cancelled.",traceId);
+}
+
+type ConfirmationField="payment"|"amount"|"date"|"category"|"description"|"document";
+function hasOtherRequiredDocumentReview(expense:ExpenseFlexRecord):boolean{
+  return (expense.reviewNote||"").split(";").map(value=>value.trim()).filter(Boolean).some(reason=>
+    reason!=="Payment source must be confirmed"&&reason!=="Please review visible document facts before saving."
+  );
+}
+function confirmationIssues(expense:ExpenseFlexRecord):ConfirmationField[]{
+  const issues:ConfirmationField[]=[];
+  if(!Number.isSafeInteger(expense.amountSatang)||expense.amountSatang<=0)issues.push("amount");
+  if(!expense.description.trim())issues.push("description");
+  if(!isIsoDate(expense.transactionDate))issues.push("date");
+  if(!allowedCategories.has(expense.category))issues.push("category");
+  if(!paymentOptionForPair(expense.paymentKey,expense.sourceWallet))issues.push("payment");
+  if(hasOtherRequiredDocumentReview(expense))issues.push("document");
+  return issues;
+}
+function withConfirmationIssues(expense:ExpenseFlexRecord):ExpenseFlexRecord{
+  return{...expense,unresolvedRequiredFields:confirmationIssues(expense)};
+}
+function isPaymentOnlyUnresolved(expense:ExpenseFlexRecord):boolean{
+  const issues=confirmationIssues(expense);
+  return issues.length===1&&issues[0]==="payment";
+}
+
+async function confirmExpense(
+  env:Env,event:LineEvent,expense:ExpenseFlexRecord,to:string,traceId:string,actor:ExpenseActor|undefined
+):Promise<boolean>{
+  const issues=confirmationIssues(expense);
+  if(issues.length)return false;
+  const reviewer=actorValues(actor),confirmedAt=new Date().toISOString();
+  const changed=await env.DB.prepare(`UPDATE expense_events SET status='CONFIRMED',reviewed_by_employee_id=?,approved_at=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND payment_key=? AND source_wallet=?`).bind(reviewer.employeeId,confirmedAt,confirmedAt,expense.expenseId,to,expense.paymentKey,expense.sourceWallet).run();
+  if(Number(changed.meta.changes||0)!==1)return false;
+  expense.status="CONFIRMED";
+  await env.DB.prepare(`UPDATE expense_documents SET status='CONFIRMED',updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),expense.expenseId).run();
+  await expenseAudit(env,{actor,action:"CONFIRM",expenseId:expense.expenseId,before:{status:"WAITING_CONFIRM"},after:{status:"CONFIRMED"}}).run();
+  await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:1,traceId});
+  await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
+  return true;
 }
 
 function actorValues(actor?:ExpenseActor|undefined):{employeeId:string|null;branchId:string|null}{return{employeeId:actor?.employeeId||null,branchId:actor?.branchId||null};}
@@ -92,7 +132,7 @@ async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:Exp
   if(String(duplicate?.status||"")!=="WAITING_CONFIRM"||!duplicate?.expense_id)return false;
   const expense=await findExpense(env,String(duplicate.expense_id),to);
   if(!expense||expense.status!=="WAITING_CONFIRM")return false;
-  await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId,timing);
+  await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);
   return true;
 }
 
@@ -162,7 +202,8 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     await env.DB.batch(statements);
   }catch(error){if(String(error).includes("UNIQUE")){const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
   if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
-  await respondFlex(env,event,buildExpenseSummaryFlex({expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason}),traceId,timing);
+  const expense={expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason};
+  await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);
 }
 
 export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionResult,imageKey:string,traceId:string,imageHash:string,actor?:ExpenseActor,timing?:ExpenseResponseTiming):Promise<void>{
@@ -200,13 +241,16 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   if(action==="expense_confirm"){
     if(expense.status==="CANCELLED"){await showCurrent(env,event,expense,traceId);return;}
     if(expense.status==="WAITING_CONFIRM"){
-      if(expense.paymentKey==="unconfirmed"||expense.sourceWallet==="UNCONFIRMED"){await respondText(env,event,"Please choose the actual payment method and source before saving this document.",traceId);await respondFlex(env,event,buildExpensePaymentFlex(expense),traceId);return;}
-      const reviewer=actorValues(accessActor||actor),confirmedAt=new Date().toISOString();
-      await env.DB.prepare(`UPDATE expense_events SET status='CONFIRMED',reviewed_by_employee_id=?,approved_at=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(reviewer.employeeId,confirmedAt,confirmedAt,id,to).run();expense.status="CONFIRMED";
-      await env.DB.prepare(`UPDATE expense_documents SET status='CONFIRMED',updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id).run();
-      await expenseAudit(env,{actor:accessActor||actor,action:"CONFIRM",expenseId:id,before:{status:"WAITING_CONFIRM"},after:{status:"CONFIRMED"}}).run();
+      const issues=confirmationIssues(expense);
+      if(issues.length){
+        await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
+        return;
+      }
+      if(await confirmExpense(env,event,expense,to,traceId,accessActor||actor))return;
+      const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);
+      return;
     }
-    await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:1,traceId});await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);return;
+    await showCurrent(env,event,expense,traceId);return;
   }
   if(action==="expense_cancel"){
     const changed=await env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),id,to).run();
@@ -218,32 +262,45 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     if(Number(changed.meta.changes||0)===1){await env.DB.prepare(`UPDATE expense_documents SET status='CANCELLED',updated_at=? WHERE expense_id=? AND status='CONFIRMED'`).bind(new Date().toISOString(),id).run();await expenseAudit(env,{actor:accessActor||actor,action:"UNDO",expenseId:id,before:{status:"CONFIRMED"},after:{status:"CANCELLED"}}).run();await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:2,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history, and its status has been updated in Google Sheets.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
-  if(action==="expense_back"){await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;}
-  if(action==="expense_payment_menu"){if(expense.documentType==="BANK_SLIP")await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);else await respondFlex(env,event,buildExpensePaymentFlex(expense),traceId);return;}
+  if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}
+  if(action==="expense_payment_menu"){if(expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpensePaymentFlex(expense),traceId);return;}
   if(action==="expense_source_menu"){if(expense.documentType==="BANK_SLIP")await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);else await respondFlex(env,event,buildExpenseSourceFlex(expense),traceId);return;}
   if(action==="expense_category_menu"){await respondFlex(env,event,buildExpenseCategoryFlex(expense),traceId);return;}
   if(action==="expense_date_menu"){await respondFlex(env,event,buildExpenseDateFlex(expense),traceId);return;}
   if(action==="expense_set_payment"){
-    if(expense.documentType==="BANK_SLIP"){await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;}
+    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
     const payment=q.get("payment")||"";if(!allowedPayments.has(payment))throw new Error("Invalid expense payment");expense.paymentKey=payment;expense.sourceWallet=paymentWallet(payment);
-    await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();
+    if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showCurrent(env,event,expense,traceId);return;}
+    const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+  }
+  if(action==="expense_resolve_payment"){
+    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
+    const payment=q.get("payment")||"",source=q.get("source")||"",choice=paymentOptionForPair(payment,source);
+    if(!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
+    const selected={...expense,paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet};
+    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND (payment_key='unconfirmed' OR source_wallet='UNCONFIRMED')`).bind(choice.paymentKey,choice.sourceWallet,new Date().toISOString(),id,to).run();
+    if(Number(changed.meta.changes||0)!==1){const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
+    await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet},reason:"Payment selected from confirmation chooser"}).run();
+    if(await confirmExpense(env,event,selected,to,traceId,accessActor||actor))return;
+    const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;
   }
   if(action==="expense_set_source"){
-    if(expense.documentType==="BANK_SLIP"){await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;}
+    if(expense.documentType==="BANK_SLIP"){await showCurrent(env,event,expense,traceId);return;}
     const source=q.get("source")||"";if(!allowedSources.has(source))throw new Error("Invalid expense source");expense.sourceWallet=source;expense.paymentKey=paymentForWallet(source,expense.paymentKey);
-    await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_category"){
     const category=q.get("category")||"";if(!allowedCategories.has(category))throw new Error("Invalid expense category");expense.category=category;
-    await env.DB.prepare(`UPDATE expense_events SET category=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(category,new Date().toISOString(),id,to).run();await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{category}}).run();await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET category=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(category,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{category}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_date_rel"){
     const days=Math.min(1,Math.max(0,Number(q.get("days")||0)));expense.transactionDate=addDays(isoDateInBangkok(),-days);
-    await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.transactionDate,new Date().toISOString(),id,to).run();await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:expense.transactionDate}}).run();await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.transactionDate,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:expense.transactionDate}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   if(action==="expense_set_date"){
     const date=event.postback?.params?.date||"";if(!isIsoDate(date))throw new Error("Invalid expense date");expense.transactionDate=date;
-    await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(date,new Date().toISOString(),id,to).run();await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:date}}).run();await respondFlex(env,event,buildExpenseSummaryFlex(expense),traceId);return;
+    const changed=await env.DB.prepare(`UPDATE expense_events SET transaction_date=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(date,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{transactionDate:date}}).run();await showCurrent(env,event,expense,traceId);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
   }
   await respondText(env,event,"Unknown command. Please send the expense again.",traceId);
 }

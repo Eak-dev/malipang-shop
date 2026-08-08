@@ -77,6 +77,8 @@ Worker จำแนกรูปอัตโนมัติเพื่อให�
 
 Receipt, Tax Invoice และ Online Order ที่อ่านยอดจ่ายจริงและวันที่จ่ายได้ จะสร้าง `WAITING_CONFIRM` พร้อม Review Flex ภาษาอังกฤษเหมือน flow เดิม โดยแสดง vendor, date, final paid amount, payment/source, category และ document type. ผู้ใช้ยืนยัน/ยกเลิก หรือแก้ payment, source, category และ date ก่อนบันทึกได้
 
+เมื่อข้อมูลจำเป็นอื่นครบ แต่ Vision ยังยืนยันช่องทางชำระเงิน/แหล่งเงินไม่ได้ ระบบจะไม่แสดง `Save` ก่อนเวลา แต่แสดงการ์ดหัวข้อ **เลือกวิธีชำระเงิน** ทันที พร้อม merchant/item, ยอด และวันที่ ผู้ใช้เลือก Cash, Transfer / QR หรือบัตรจาก Wallet Master ได้ในหนึ่งครั้ง ระบบจะแปลงเป็น `payment_key` และ `source_wallet` คนละ field ตามคู่ที่กำหนด แล้วบันทึกทันทีเฉพาะเมื่อไม่มี field จำเป็นอื่นค้างอยู่ หากมี field อื่นค้าง จะกลับไป Review โดย `Save` ยังไม่ถูกแสดงเป็น action หลัก และ D1 ยังคงบังคับ validation นี้แม้ postback ถูกสร้างเอง
+
 - ไม่มี final paid amount, วันที่จ่าย หรือแหล่งบัตรที่ยืนยันได้: เก็บเป็น reviewable document เท่านั้น ไม่เดาและไม่ลงชีท
 - Delivery Order เดี่ยว: ตอบว่ารับ supporting evidence แล้ว และรอ payment evidence จึงไม่สร้าง finalized Expense
 - Receipt/Tax Invoice เก็บ line item ที่เห็นทั้งหมดใน D1 เพื่อใช้ V2 ต่อได้ แต่ไม่เปิด Supplier/Inventory UI ใน V1.2

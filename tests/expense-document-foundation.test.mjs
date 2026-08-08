@@ -61,6 +61,35 @@ test('receipt extraction persists structured document, normalized items, ownersh
   assert.equal(event.args.length,13,'purchase draft bind count must match the fourteen insert columns including literal status');
 });
 
+test('a receipt with only payment unresolved opens the direct payment chooser, not Save review',async()=>{
+  const h=harness();
+  const originalFetch=globalThis.fetch,calls=[];
+  const event={...h.event,replyToken:'reply-payment-only',webhookEventId:'W-payment-only'};
+  try{
+    globalThis.fetch=async(_url,init)=>{calls.push(JSON.parse(String(init?.body||'{}')));return new Response('',{status:200});};
+    await handleExpenseImage({...h.env,RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000'},event,reading(document({sourceWalletCandidate:'',needsReview:false,reviewReasons:[]})),'expense/payment-only.jpg','trace','hash-payment-only',h.actor);
+    const text=JSON.stringify(calls[0]?.messages?.[0]||{});
+    assert.match(text,/เลือกวิธีชำระเงิน/);
+    assert.match(text,/expense_resolve_payment/);
+    assert.doesNotMatch(text,/expense_confirm/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test('a payment-unknown receipt with another unresolved document fact stays in Review',async()=>{
+  const h=harness();
+  const originalFetch=globalThis.fetch,calls=[];
+  const event={...h.event,replyToken:'reply-payment-and-document',webhookEventId:'W-payment-and-document'};
+  try{
+    globalThis.fetch=async(_url,init)=>{calls.push(JSON.parse(String(init?.body||'{}')));return new Response('',{status:200});};
+    await handleExpenseImage({...h.env,RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000'},event,reading(document({sourceWalletCandidate:'',needsReview:true,reviewReasons:['Merchant must be confirmed']})),'expense/payment-document.jpg','trace','hash-payment-document',h.actor);
+    const text=JSON.stringify(calls[0]?.messages?.[0]||{});
+    assert.match(text,/expense_payment_menu/);
+    assert.doesNotMatch(text,/expense_resolve_payment/);
+    assert.doesNotMatch(text,/expense_confirm/);
+    assert.match(text,/Document facts/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
 test('purchase receipt creates parent Expense before all foreign-key dependent rows',async()=>{
   const h=harness([],{enforceForeignKeys:true});
   await handleExpenseImage(h.env,h.event,reading(document()),'expense/test.jpg','trace','hash',h.actor);

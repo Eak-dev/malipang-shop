@@ -1,5 +1,5 @@
 import { isIsoDate } from "../shared/time";
-import type { ExpenseDocumentItem,PurchaseDocument } from "../types";
+import type { PurchaseDocument } from "../types";
 
 export const expenseCategories=new Set(["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"]);
 
@@ -72,14 +72,15 @@ export function purchaseExpenseDraft(document:PurchaseDocument):PurchaseExpenseD
   return{description,amountSatang,paymentKey:payment?.paymentKey||"unconfirmed",sourceWallet:payment?.sourceWallet||"UNCONFIRMED",category,transactionDate:date,needsPaymentConfirmation,needsReview:document.needsReview||document.confidence<0.85||needsPaymentConfirmation||category==="general",reviewReasons:[...new Set(reviewReasons)]};
 }
 
-export function documentItemStatements(documentId:string,expenseId:string|null,items:ExpenseDocumentItem[],now:string,randomId:(prefix:string)=>string){
-  return items.map(item=>({
-    itemId:randomId("item"),documentId,expenseId,sellerKey:item.sellerKey.trim(),productCode:item.productCode.trim(),description:item.description.trim(),quantity:item.quantity,
+export function documentItemStatements(documentId:string,expenseId:string|null,document:PurchaseDocument,now:string,randomId:(prefix:string)=>string){
+  const issuer=document.legalVendorName.trim()||document.vendor.trim()||"UNSPECIFIED";
+  return document.items.map(item=>({
+    itemId:randomId("item"),documentId,expenseId,sellerKey:document.documentType==="ONLINE_ORDER"?(item.sellerKey.trim()||issuer):issuer,productCode:item.productCode.trim(),description:item.description.trim(),quantity:item.quantity,
     unit:item.unit.trim(),unitPriceSatang:toSatang(item.unitPriceBaht),discountSatang:toSatang(item.discountBaht),lineTotalSatang:toSatang(item.lineTotalBaht),vatSatang:toSatang(item.vatBaht),confidence:item.confidence,needsReview:item.needsReview?1:0,now
   })).filter(item=>item.description);
 }
 
-export interface SellerDocumentCase{sellerKey:string;vendorName:string;lineTotalSatang:number|null;requiresReview:boolean;}
+export interface SellerDocumentCase{sellerKey:string;vendorName:string;grossSatang:number|null;finalPaidSatang:number|null;requiresReview:boolean;}
 export function sellerDocumentCases(document:PurchaseDocument):SellerDocumentCase[]{
   const issuer=document.legalVendorName.trim()||document.vendor.trim()||"UNSPECIFIED";
   // A receipt, tax invoice or delivery document has one issuing seller.
@@ -87,7 +88,7 @@ export function sellerDocumentCases(document:PurchaseDocument):SellerDocumentCas
   // manufacturer and must not turn a single-issuer document into a marketplace
   // multi-seller case. Only ONLINE_ORDER supports per-item seller grouping.
   if(document.documentType!=="ONLINE_ORDER"){
-    return[{sellerKey:issuer,vendorName:issuer,lineTotalSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
+    return[{sellerKey:issuer,vendorName:issuer,grossSatang:toSatang(document.grossAmountBaht),finalPaidSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
   }
   const grouped=new Map<string,{vendorName:string;total:number;complete:boolean}>();
   for(const item of document.items){
@@ -96,7 +97,7 @@ export function sellerDocumentCases(document:PurchaseDocument):SellerDocumentCas
     const total=toSatang(item.lineTotalBaht);if(total==null)existing.complete=false;else existing.total+=total;
     grouped.set(sellerKey,existing);
   }
-  if(!grouped.size)return[{sellerKey:issuer,vendorName:issuer,lineTotalSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
+  if(!grouped.size)return[{sellerKey:issuer,vendorName:issuer,grossSatang:toSatang(document.grossAmountBaht),finalPaidSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
   const finalTotal=toSatang(document.finalPaidAmountBaht),sum=[...grouped.values()].reduce((total,item)=>total+item.total,0),allocationSafe=finalTotal!=null&&sum===finalTotal&&[...grouped.values()].every(item=>item.complete);
-  return[...grouped.entries()].map(([sellerKey,item])=>({sellerKey,vendorName:item.vendorName,lineTotalSatang:item.complete?item.total:null,requiresReview:document.needsReview||grouped.size>1&&!allocationSafe}));
+  return[...grouped.entries()].map(([sellerKey,item])=>({sellerKey,vendorName:item.vendorName,grossSatang:item.complete?item.total:null,finalPaidSatang:item.complete?item.total:null,requiresReview:document.needsReview||grouped.size>1&&!allocationSafe}));
 }

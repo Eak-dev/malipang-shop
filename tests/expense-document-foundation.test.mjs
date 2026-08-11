@@ -64,7 +64,8 @@ test('single-issuer CPF tax invoice ignores buyer and ship-to item seller labels
   assert.equal(cases.length,1);
   assert.equal(cases[0].sellerKey,'CPF Global Food Solution Public Company Limited');
   assert.equal(cases[0].vendorName,'CPF Global Food Solution Public Company Limited');
-  assert.equal(cases[0].lineTotalSatang,112800);
+  assert.equal(cases[0].grossSatang,142500);
+  assert.equal(cases[0].finalPaidSatang,112800);
   assert.equal(cases[0].requiresReview,false);
 });
 
@@ -103,7 +104,14 @@ test('CPF-shaped single-issuer invoice creates one payable draft and one seller 
   const statements=h.state.batches[0];
   assert.ok(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),'single issuer must create an Expense draft');
   assert.equal(statements.filter(item=>item.sql.includes('expense_document_cases')).length,1);
-  assert.equal(statements.find(item=>item.sql.includes('expense_document_cases')).args[3],'CPF Global Food Solution Public Company Limited');
+  const issuer='CPF Global Food Solution Public Company Limited';
+  const itemStatements=statements.filter(item=>item.sql.includes('expense_document_items'));
+  assert.equal(itemStatements.length,2);
+  assert.ok(itemStatements.every(item=>item.args[3]===issuer),'persisted item seller keys must use the legal issuer');
+  const sellerCase=statements.find(item=>item.sql.includes('expense_document_cases'));
+  assert.equal(sellerCase.args[3],issuer);
+  assert.equal(sellerCase.args[4],142500,'seller case gross must preserve the printed gross amount');
+  assert.equal(sellerCase.args[5],112800,'seller case final paid must preserve the actual cash outflow');
 });
 
 test('a receipt with only payment unresolved opens the direct payment chooser, not Save review',async()=>{

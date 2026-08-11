@@ -227,8 +227,8 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     const base=[documentId,messageId,to,document.documentType,imageKey,"WAITING_REVIEW",JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,1,reviewReason,imageHash,null];
     await env.DB.batch([
       documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,null,actor),
-      ...documentItemStatements(documentId,null,document.items,now,randomId).map(item=>itemInsert(env,item)),
-      ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.lineTotalSatang,finalSatang:item.lineTotalSatang,status:"WAITING_REVIEW",expenseId:null,now})),
+      ...documentItemStatements(documentId,null,document,now,randomId).map(item=>itemInsert(env,item)),
+      ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.grossSatang,finalSatang:item.finalPaidSatang,status:"WAITING_REVIEW",expenseId:null,now})),
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ]);
@@ -249,8 +249,8 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     statements.push(
       documentInsert(env,base),
       purchaseDocumentUpdate(env,documentId,document,expenseId,actor,reviewState||undefined),
-      ...documentItemStatements(documentId,expenseId,document.items,now,randomId).map(item=>itemInsert(env,item)),
-      ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.lineTotalSatang,finalSatang:item.lineTotalSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))
+      ...documentItemStatements(documentId,expenseId,document,now,randomId).map(item=>itemInsert(env,item)),
+      ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.grossSatang,finalSatang:item.finalPaidSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))
     );
     if(draft&&expenseId){
       statements.push(env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PRIMARY_PURCHASE_DOCUMENT','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Document creates draft",now));

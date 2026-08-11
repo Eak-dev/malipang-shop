@@ -20,6 +20,8 @@ test('OpenAI fallback uses photo timestamp and GPS as the attendance source',()=
   assert.match(prompt,/note to an empty string/i);
   assert.match(prompt,/Never classify a banking, Paotang, or G-Wallet payment receipt as ONLINE_ORDER/i);
   assert.match(prompt,/paidAmountBaht is the actual amount leaving the wallet or account/i);
+  assert.match(prompt,/Buyer, customer, bill-to, ship-to, receiver, delivery address, product brand and manufacturer are never sellers/i);
+  assert.match(prompt,/Only for ONLINE_ORDER, sellerKey may identify each marketplace seller or store/i);
   assert.match(prompt,/price 40, subsidy 24, paid 16/i);
   assert.match(payload.input[0].content[1].image_url,/^data:image\/jpeg;base64,/);
   assert.equal(payload.input[0].content[1].detail,'high');

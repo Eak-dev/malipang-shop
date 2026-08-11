@@ -81,14 +81,22 @@ export function documentItemStatements(documentId:string,expenseId:string|null,i
 
 export interface SellerDocumentCase{sellerKey:string;vendorName:string;lineTotalSatang:number|null;requiresReview:boolean;}
 export function sellerDocumentCases(document:PurchaseDocument):SellerDocumentCase[]{
+  const issuer=document.legalVendorName.trim()||document.vendor.trim()||"UNSPECIFIED";
+  // A receipt, tax invoice or delivery document has one issuing seller.
+  // Item-level labels may contain a buyer, ship-to party, product brand or
+  // manufacturer and must not turn a single-issuer document into a marketplace
+  // multi-seller case. Only ONLINE_ORDER supports per-item seller grouping.
+  if(document.documentType!=="ONLINE_ORDER"){
+    return[{sellerKey:issuer,vendorName:issuer,lineTotalSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
+  }
   const grouped=new Map<string,{vendorName:string;total:number;complete:boolean}>();
   for(const item of document.items){
-    const sellerKey=item.sellerKey.trim()||document.vendor.trim()||"UNSPECIFIED";
+    const sellerKey=item.sellerKey.trim()||issuer;
     const existing=grouped.get(sellerKey)||{vendorName:sellerKey,total:0,complete:true};
     const total=toSatang(item.lineTotalBaht);if(total==null)existing.complete=false;else existing.total+=total;
     grouped.set(sellerKey,existing);
   }
-  if(!grouped.size)return[{sellerKey:document.vendor.trim()||"UNSPECIFIED",vendorName:document.vendor.trim(),lineTotalSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
+  if(!grouped.size)return[{sellerKey:issuer,vendorName:issuer,lineTotalSatang:toSatang(document.finalPaidAmountBaht),requiresReview:document.needsReview}];
   const finalTotal=toSatang(document.finalPaidAmountBaht),sum=[...grouped.values()].reduce((total,item)=>total+item.total,0),allocationSafe=finalTotal!=null&&sum===finalTotal&&[...grouped.values()].every(item=>item.complete);
   return[...grouped.entries()].map(([sellerKey,item])=>({sellerKey,vendorName:item.vendorName,lineTotalSatang:item.complete?item.total:null,requiresReview:document.needsReview||grouped.size>1&&!allocationSafe}));
 }

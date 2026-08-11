@@ -18,6 +18,8 @@ test('valid retained CPF document creates one auditable WAITING_CONFIRM recovery
   assert.equal(plan.summary.sheets_sync_created,false);
   assert.equal(plan.statements[0].params[0],'exp_recovered');
   assert.match(plan.statements[0].sql,/WHERE EXISTS/);
+  assert.match(plan.statements[0].sql,/normalized_json=\?/);
+  assert.match(plan.statements[0].sql,/message_id=\? AND line_user_id=\?/);
   assert.match(plan.statements[0].sql,/COUNT\(\*\).*expense_document_items/);
   assert.match(plan.statements[0].sql,/NOT EXISTS\(SELECT 1 FROM expense_document_links/);
   assert.equal(plan.statements[2].params[1],'CPF Global Food Solution Public Company Limited');

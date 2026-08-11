@@ -47,6 +47,27 @@ test('one marketplace image with two sellers creates two separate review cases',
   assert.equal(cases.length,2);assert.ok(cases.every(item=>item.requiresReview));
 });
 
+test('single-issuer CPF tax invoice ignores buyer and ship-to item seller labels',()=>{
+  const cases=sellerDocumentCases(document({
+    documentType:'TAX_INVOICE',
+    vendor:'CPF Global Food Solution PCL',
+    legalVendorName:'CPF Global Food Solution Public Company Limited',
+    subtotalBaht:1425,
+    discountBaht:297,
+    grossAmountBaht:1425,
+    finalPaidAmountBaht:1128,
+    items:[
+      {sellerKey:'CPF Global Food Solution PCL',productCode:'CPF-1',description:'Food ingredient A',quantity:7,unit:'pack',unitPriceBaht:85,discountBaht:0,lineTotalBaht:595,vatBaht:0,confidence:.96,needsReview:false},
+      {sellerKey:'MaliPang / ship-to customer',productCode:'CPF-2',description:'Food ingredient B',quantity:10,unit:'pack',unitPriceBaht:83,discountBaht:0,lineTotalBaht:830,vatBaht:0,confidence:.96,needsReview:false}
+    ]
+  }));
+  assert.equal(cases.length,1);
+  assert.equal(cases[0].sellerKey,'CPF Global Food Solution Public Company Limited');
+  assert.equal(cases[0].vendorName,'CPF Global Food Solution Public Company Limited');
+  assert.equal(cases[0].lineTotalSatang,112800);
+  assert.equal(cases[0].requiresReview,false);
+});
+
 test('receipt extraction persists structured document, normalized items, ownership, link and append-only audit',async()=>{
   const h=harness();await handleExpenseImage(h.env,h.event,reading(document()),'expense/test.jpg','trace','hash',h.actor);
   const statements=h.state.batches[0];
@@ -59,6 +80,30 @@ test('receipt extraction persists structured document, normalized items, ownersh
   assert.equal(event.args[4],18000);assert.equal(event.args[11],'EMP001');assert.equal(event.args[12],'B001');
   assert.match(event.sql,/VALUES\(\?,\?,\?,\?,\?,\?,\?,\?,\?,'WAITING_CONFIRM',\?,\?,\?,\?\)/);
   assert.equal(event.args.length,13,'purchase draft bind count must match the fourteen insert columns including literal status');
+});
+
+test('CPF-shaped single-issuer invoice creates one payable draft and one seller case',async()=>{
+  const h=harness();
+  const cpf=document({
+    documentType:'TAX_INVOICE',
+    vendor:'CPF Global Food Solution PCL',
+    legalVendorName:'CPF Global Food Solution Public Company Limited',
+    documentNumber:'SANITIZED-CPF-INVOICE',
+    subtotalBaht:1425,
+    discountBaht:297,
+    grossAmountBaht:1425,
+    finalPaidAmountBaht:1128,
+    suggestedDescription:'CPF ingredients',
+    items:[
+      {sellerKey:'CPF Global Food Solution PCL',productCode:'CPF-1',description:'Food ingredient A',quantity:7,unit:'pack',unitPriceBaht:85,discountBaht:0,lineTotalBaht:595,vatBaht:0,confidence:.96,needsReview:false},
+      {sellerKey:'MaliPang / delivery recipient',productCode:'CPF-2',description:'Food ingredient B',quantity:10,unit:'pack',unitPriceBaht:83,discountBaht:0,lineTotalBaht:830,vatBaht:0,confidence:.96,needsReview:false}
+    ]
+  });
+  await handleExpenseImage(h.env,h.event,reading(cpf),'expense/cpf-sanitized.jpg','trace-cpf','hash-cpf',h.actor);
+  const statements=h.state.batches[0];
+  assert.ok(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),'single issuer must create an Expense draft');
+  assert.equal(statements.filter(item=>item.sql.includes('expense_document_cases')).length,1);
+  assert.equal(statements.find(item=>item.sql.includes('expense_document_cases')).args[3],'CPF Global Food Solution Public Company Limited');
 });
 
 test('a receipt with only payment unresolved opens the direct payment chooser, not Save review',async()=>{

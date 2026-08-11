@@ -129,7 +129,7 @@ jobs:
           verify="$RUNNER_TEMP/verify-${short_sha}-${stamp}.sql.gz"
           date_path="$(TZ=Asia/Bangkok date +%Y/%m/%d)"
           object_key="d1/${date_path}/$(basename "$gz")"
-          npx wrangler d1 export malipang-v5-2 --remote --output="$sql" --skip-confirmation
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
           gzip -9 "$sql"
           sha="$(sha256sum "$gz" | awk '{print $1}')"
           gzip -t "$gz"

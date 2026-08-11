@@ -1,0 +1,213 @@
+name: One-shot CPF Production Hotfix
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/production-hotfix-cpf.yml
+      - scripts/cpf-bounded-recovery.mjs
+      - tests/cpf-bounded-recovery.test.mjs
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-production
+  cancel-in-progress: false
+
+jobs:
+  release-and-recover:
+    name: exact SHA release and bounded CPF recovery
+    if: github.event.before == '10e656cd498baab79d2746584fbe0f47de3cfe57'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      TARGET_SHA: 10e656cd498baab79d2746584fbe0f47de3cfe57
+      PREVIOUS_KNOWN_GOOD_SHA: 6a622f4e7df3a5de6a4cb01f9c7cba79f1c32287
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      MALIPANG_D1_DATABASE_ID: 1a0744d4-5df7-41e9-b92d-4ccb732ac77a
+
+    steps:
+      - name: Checkout one-shot control code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce one-shot trigger and exact main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "${{ github.event.before }}" == "$TARGET_SHA" ]]
+          git cat-file -e "$TARGET_SHA^{commit}"
+          git merge-base --is-ancestor "$TARGET_SHA" "$GITHUB_SHA"
+          changed="$(git diff --name-only "$TARGET_SHA" "$GITHUB_SHA")"
+          unexpected="$(printf '%s\n' "$changed" | grep -Ev '^(\.github/workflows/production-hotfix-cpf\.yml|scripts/cpf-bounded-recovery\.mjs|tests/cpf-bounded-recovery\.test\.mjs)$' || true)"
+          [[ -z "$unexpected" ]] || { echo "Unexpected files in one-shot control change" >&2; exit 1; }
+
+      - name: Checkout exact release SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: release-source
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+
+      - name: Validate required credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$MALIPANG_ADMIN_TOKEN"
+          test -n "$MALIPANG_WORKER_URL"
+
+      - name: Validate exact release code
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npm ci
+          npm run check
+          npx wrangler deploy --dry-run
+          git diff --check
+
+      - name: Create evidence directory
+        run: mkdir -p release-artifacts
+
+      - name: Record current Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-before.json
+
+      - name: Verify pre-release health, readiness and status
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-before.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-before.raw.json"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o release-artifacts/status-before.json
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-before.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-before.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-before.raw.json" > release-artifacts/readiness-before.json
+          jq -e '.ok == true' release-artifacts/status-before.json >/dev/null
+
+      - name: Inspect bounded CPF target before any mutation
+        run: node scripts/cpf-bounded-recovery.mjs --release-dir=release-source --artifact-dir=release-artifacts
+
+      - name: Prove no remote D1 migration is pending
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-pending.txt
+          if grep -Eq '[0-9]{4}_[A-Za-z0-9_-]+\.sql' ../release-artifacts/migrations-pending.txt; then
+            echo "Remote D1 has pending migrations; this no-migration hotfix is blocked" >&2
+            exit 1
+          fi
+
+      - name: Export and verify fresh D1 backup
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(TZ=Asia/Bangkok date +%Y%m%d-%H%M%S)"
+          short_sha="$(git rev-parse --short=9 HEAD)"
+          sql="$RUNNER_TEMP/malipang-v5-2-before-${short_sha}-${stamp}.sql"
+          gz="${sql}.gz"
+          verify="$RUNNER_TEMP/verify-${short_sha}-${stamp}.sql.gz"
+          date_path="$(TZ=Asia/Bangkok date +%Y/%m/%d)"
+          object_key="d1/${date_path}/$(basename "$gz")"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -9 "$sql"
+          sha="$(sha256sum "$gz" | awk '{print $1}')"
+          gzip -t "$gz"
+          npx wrangler r2 object put "malipang-private-backups/${object_key}" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/${object_key}" --file="$verify" --remote
+          [[ "$sha" == "$(sha256sum "$verify" | awk '{print $1}')" ]]
+          gzip -t "$verify"
+          jq -n --arg object_key "$object_key" --arg sha256 "$sha" --arg release_sha "$TARGET_SHA" --arg created_at "$(date -u +%FT%TZ)" '{private_r2_bucket:"malipang-private-backups",object_key:$object_key,sha256:$sha256,release_sha:$release_sha,created_at:$created_at,download_verification:"PASS",gzip_integrity:"PASS"}' > ../release-artifacts/backup-metadata.json
+
+      - name: Deploy exact approved SHA without migration
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npx wrangler deploy | tee ../release-artifacts/deploy.txt
+
+      - name: Record deployed Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-after.json
+
+      - name: Verify post-deploy health and readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          for attempt in $(seq 1 12); do
+            if curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-after.json; then break; fi
+            [[ "$attempt" == "12" ]] && exit 1
+            sleep 5
+          done
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-after.raw.json"
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-after.json >/dev/null
+          touch release-artifacts/health-after.pass
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-after.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-after.raw.json" > release-artifacts/readiness-after.json
+          touch release-artifacts/readiness-after.pass
+
+      - name: Apply atomic bounded recovery to the verified CPF document
+        run: node scripts/cpf-bounded-recovery.mjs --apply --release-dir=release-source --artifact-dir=release-artifacts
+
+      - name: Verify no queue, failed-job or pre-confirmation Sheets regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o release-artifacts/status-after.json
+          jq -e '.ok == true' release-artifacts/status-after.json >/dev/null
+          before_failed="$(jq -r '.openFailedJobs' release-artifacts/status-before.json)"
+          after_failed="$(jq -r '.openFailedJobs' release-artifacts/status-after.json)"
+          [[ "$after_failed" -le "$before_failed" ]]
+          jq -e '.sync_count == 0 and .expense_status == "WAITING_CONFIRM" and .active_case_count == 1 and .canonical_item_count == 2' release-artifacts/cpf-recovery-result.json >/dev/null
+
+      - name: Write sanitized release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## One-shot CPF Production Hotfix"
+            echo "- Approved release SHA: \`$TARGET_SHA\`"
+            echo "- Trigger previous main SHA: \`${{ github.event.before }}\`"
+            echo "- Workflow control SHA: \`$GITHUB_SHA\`"
+            if [[ -f release-artifacts/backup-metadata.json ]]; then echo "- Fresh D1 backup verification: PASS"; fi
+            if [[ -f release-artifacts/health-after.pass ]]; then echo "- Health after deploy: PASS"; fi
+            if [[ -f release-artifacts/readiness-after.pass ]]; then echo "- Readiness after deploy: PASS"; fi
+            if [[ -f release-artifacts/cpf-recovery-result.json ]]; then
+              echo "- CPF bounded recovery: APPLIED"
+              echo "- Recovered state: WAITING_CONFIRM"
+              echo "- Sheet sync before confirmation: 0"
+              echo "- Next action: resend the same CPF image in LINE to resume guided confirmation"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload sanitized operational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpf-production-hotfix-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14

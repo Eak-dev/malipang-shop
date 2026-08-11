@@ -163,8 +163,10 @@ jobs:
           done
           curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-after.raw.json"
           jq -e '.ok == true and .mode == "production"' release-artifacts/health-after.json >/dev/null
+          touch release-artifacts/health-after.pass
           jq -e '.ok == true' "$RUNNER_TEMP/readiness-after.raw.json" >/dev/null
           jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-after.raw.json" > release-artifacts/readiness-after.json
+          touch release-artifacts/readiness-after.pass
 
       - name: Apply atomic bounded recovery to the verified CPF document
         run: node scripts/cpf-bounded-recovery.mjs --apply --release-dir=release-source --artifact-dir=release-artifacts
@@ -191,8 +193,8 @@ jobs:
             echo "- Trigger previous main SHA: \`${{ github.event.before }}\`"
             echo "- Workflow control SHA: \`$GITHUB_SHA\`"
             if [[ -f release-artifacts/backup-metadata.json ]]; then echo "- Fresh D1 backup verification: PASS"; fi
-            if [[ -f release-artifacts/health-after.json ]]; then echo "- Health after deploy: PASS"; fi
-            if [[ -f release-artifacts/readiness-after.json ]]; then echo "- Readiness after deploy: PASS"; fi
+            if [[ -f release-artifacts/health-after.pass ]]; then echo "- Health after deploy: PASS"; fi
+            if [[ -f release-artifacts/readiness-after.pass ]]; then echo "- Readiness after deploy: PASS"; fi
             if [[ -f release-artifacts/cpf-recovery-result.json ]]; then
               echo "- CPF bounded recovery: APPLIED"
               echo "- Recovered state: WAITING_CONFIRM"

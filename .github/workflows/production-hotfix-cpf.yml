@@ -96,10 +96,11 @@ jobs:
           set -euo pipefail
           base_url="${MALIPANG_WORKER_URL%/}"
           curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-before.json
-          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o release-artifacts/readiness-before.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-before.raw.json"
           curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o release-artifacts/status-before.json
           jq -e '.ok == true and .mode == "production"' release-artifacts/health-before.json >/dev/null
-          jq -e '.ok == true' release-artifacts/readiness-before.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-before.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-before.raw.json" > release-artifacts/readiness-before.json
           jq -e '.ok == true' release-artifacts/status-before.json >/dev/null
 
       - name: Inspect bounded CPF target before any mutation
@@ -160,9 +161,10 @@ jobs:
             [[ "$attempt" == "12" ]] && exit 1
             sleep 5
           done
-          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o release-artifacts/readiness-after.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-after.raw.json"
           jq -e '.ok == true and .mode == "production"' release-artifacts/health-after.json >/dev/null
-          jq -e '.ok == true' release-artifacts/readiness-after.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-after.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-after.raw.json" > release-artifacts/readiness-after.json
 
       - name: Apply atomic bounded recovery to the verified CPF document
         run: node scripts/cpf-bounded-recovery.mjs --apply --release-dir=release-source --artifact-dir=release-artifacts

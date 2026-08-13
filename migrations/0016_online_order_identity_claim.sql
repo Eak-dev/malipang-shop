@@ -23,20 +23,25 @@ ON expense_online_order_claims(expense_id) WHERE expense_id IS NOT NULL;
 -- Backfill without choosing the newest document or upgrading review-only
 -- evidence.  A single linked/direct Expense owns the identity; no Expense is
 -- REVIEW_ONLY; more than one is explicitly AMBIGUOUS and must fail closed.
-WITH documents AS (
+WITH order_ids AS (
+  SELECT DISTINCT trim(order_id) AS order_id
+  FROM expense_documents
+  WHERE document_type='ONLINE_ORDER'
+    AND order_id IS NOT NULL
+    AND trim(order_id)<>''
+), documents AS (
   SELECT
-    trim(d.order_id) AS order_id,
+    ids.order_id,
     d.document_id,
+    d.document_type,
     d.expense_id,
     d.created_at
   FROM expense_documents d
-  WHERE d.document_type='ONLINE_ORDER'
-    AND d.order_id IS NOT NULL
-    AND trim(d.order_id)<>''
+  JOIN order_ids ids ON ids.order_id=trim(d.order_id)
 ), resolved AS (
-  SELECT order_id,document_id,expense_id,created_at FROM documents
+  SELECT order_id,document_id,document_type,expense_id,created_at FROM documents
   UNION ALL
-  SELECT d.order_id,d.document_id,l.expense_id,d.created_at
+  SELECT d.order_id,d.document_id,d.document_type,l.expense_id,d.created_at
   FROM documents d
   JOIN expense_document_links l ON l.document_id=d.document_id
 ), summary AS (
@@ -58,12 +63,12 @@ SELECT
     WHEN s.expense_count=1 THEN (
       SELECT r.document_id FROM resolved r
       WHERE r.order_id=s.order_id AND r.expense_id=s.one_expense_id
-      ORDER BY r.created_at,r.document_id LIMIT 1
+      ORDER BY (r.document_type='ONLINE_ORDER') DESC,r.created_at,r.document_id LIMIT 1
     )
     ELSE (
       SELECT r.document_id FROM resolved r
       WHERE r.order_id=s.order_id
-      ORDER BY r.created_at,r.document_id LIMIT 1
+      ORDER BY (r.document_type='ONLINE_ORDER') DESC,r.created_at,r.document_id LIMIT 1
     )
   END,
   CASE WHEN s.expense_count=1 THEN s.one_expense_id ELSE NULL END,

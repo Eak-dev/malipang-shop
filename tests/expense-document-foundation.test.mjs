@@ -83,7 +83,7 @@ test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens so
 });
 
 test('duplicate Online Order submission cannot create another Expense',async()=>{
-  const h=harness([{document_count:1,expense_count:1,one_expense_id:'exp_existing',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_existing',claim_expense_id:'exp_existing'},null]);
+  const h=harness([{document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_existing',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_existing',claim_expense_id:'exp_existing'},null]);
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'MASKED-DUPLICATE'})),'expense/duplicate-online.jpg','trace-duplicate','hash-duplicate',h.actor);
   assert.equal(h.state.batches.length,0);
   assert.equal(h.state.runs.length,0);
@@ -110,7 +110,7 @@ test('more than one Expense for an Online Order fails closed with a sanitized op
 
 test('concurrent different-image submissions use the unique claim as the transaction boundary',async()=>{
   const identityNone={document_count:0,expense_count:0,one_expense_id:null,claim_state:null,claim_document_id:null,claim_expense_id:null};
-  const identityOwned={document_count:1,expense_count:1,one_expense_id:'exp_winner',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_winner',claim_expense_id:'exp_winner'};
+  const identityOwned={document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_winner',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_winner',claim_expense_id:'exp_winner'};
   const expense={expense_id:'exp_winner',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
   const stored={document_type:'ONLINE_ORDER',normalized_json:'{}',needs_review:1};
   const h=harness([identityNone,null,null,identityOwned,expense,stored],{batchErrors:[new Error('UNIQUE constraint failed: expense_online_order_claims.order_id')]});
@@ -277,9 +277,8 @@ test('a Delivery Order with an exact order ID links supporting evidence and neve
 
 test('an Online Order may link to a different supported document type without creating a second Expense',async()=>{
   const h=harness([
-    {document_count:0,expense_count:0,one_expense_id:null,claim_state:null,claim_document_id:null,claim_expense_id:null},
+    {document_count:1,online_document_count:0,expense_count:1,one_expense_id:'exp_purchase',claim_state:null,claim_document_id:null,claim_expense_id:null},
     null,
-    {document_id:'doc_invoice',expense_id:'exp_purchase',document_type:'TAX_INVOICE',legal_vendor_name:'Mali Supplier Co',document_number:'INV-1',order_id:'ORDER-CROSS-TYPE'}
   ]);
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',documentNumber:'',orderId:'ORDER-CROSS-TYPE'})),'expense/order-linked.jpg','trace-order-linked','hash-order-linked',h.actor);
   const statements=h.state.batches[0];
@@ -290,6 +289,16 @@ test('an Online Order may link to a different supported document type without cr
   assert.equal(claim.args[0],'ORDER-CROSS-TYPE');
   assert.equal(claim.args[2],'exp_purchase');
   assert.equal(claim.args[3],'EXPENSE_OWNED');
+});
+
+test('multiple cross-document owners for an Online Order ID fail closed before latest-row matching',async()=>{
+  const orderId='ORDER-CROSS-TYPE-CONFLICT';
+  const h=harness([{document_count:2,online_document_count:0,expense_count:2,one_expense_id:'exp_a',claim_state:null,claim_document_id:null,claim_expense_id:null}]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId})),'expense/cross-type-conflict.jpg','trace-cross-conflict','hash-cross-conflict',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,1);
+  assert.match(h.state.runs[0].sql,/INSERT INTO failed_jobs/);
+  assert.doesNotMatch(JSON.stringify(h.state.runs[0].args),new RegExp(orderId));
 });
 
 test('only exact printed identifiers permit automatic document matching',()=>{

@@ -21,14 +21,50 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
       '0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql',
       '0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql',
       '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql',
-      '0014_failed_job_reconciliation.sql','0015_expense_guided_review.sql'
+      '0014_failed_job_reconciliation.sql','0015_expense_guided_review.sql','0016_online_order_identity_claim.sql'
     ])apply(db,name);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM employees WHERE employee_id='OWN002'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_document_items'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='failed_job_reconciliations'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_pending_edits'`)[0].count,1);
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_online_order_claims'`)[0].count,1);
     apply(db,'0015_expense_guided_review.sql');
+    assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
+  }finally{rmSync(directory,{recursive:true,force:true});}
+});
+
+test('0016 backfills exact Online Order identities without upgrading legacy review rows',()=>{
+  const directory=mkdtempSync(join(tmpdir(),'malipang-online-order-identity-'));
+  const db=join(directory,'production-shaped.sqlite');
+  try{
+    for(const name of [
+      '0001_initial.sql','0002_rc2_reliability.sql','0003_daily_expense_sheet.sql','0004_bank_slip_expenses.sql',
+      '0005_attendance_timestamp_gps.sql','0006_sync_job_lease.sql','0007_payroll_wage_history_fixed_ot.sql',
+      '0008_wednesday_pay_date_and_payroll_runs.sql','0009_evidence_retention.sql','0010_shift_schedule_audit.sql',
+      '0011_identity_access_foundation.sql','0012_owner_identity_canonicalization.sql','0013_expense_document_foundation.sql',
+      '0014_failed_job_reconciliation.sql','0015_expense_guided_review.sql'
+    ])apply(db,name);
+    sqlite(db,`
+      INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at) VALUES
+        ('exp_one','msg_exp_one','line_owner','Online order',5400,'unconfirmed','UNCONFIRMED','general','2026-08-12','WAITING_CONFIRM','2026-08-13T12:13:47Z'),
+        ('exp_a','msg_exp_a','line_owner','Conflict A',100,'cash','CASH_DRAWER','general','2026-08-12','CONFIRMED','2026-08-13T12:14:00Z'),
+        ('exp_b','msg_exp_b','line_owner','Conflict B',100,'cash','CASH_DRAWER','general','2026-08-12','CONFIRMED','2026-08-13T12:15:00Z');
+      INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,order_id,expense_id) VALUES
+        ('doc_old','msg_doc_old','line_owner','ONLINE_ORDER','WAITING_REVIEW','2026-08-12T10:08:00Z',' ORDER-ONE ',NULL),
+        ('doc_one','msg_doc_one','line_owner','ONLINE_ORDER','WAITING_CONFIRM','2026-08-13T12:13:47Z','ORDER-ONE','exp_one'),
+        ('doc_review','msg_doc_review','line_owner','ONLINE_ORDER','WAITING_REVIEW','2026-08-13T12:16:00Z','ORDER-REVIEW',NULL),
+        ('doc_a','msg_doc_a','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:17:00Z','ORDER-CONFLICT','exp_a'),
+        ('doc_b','msg_doc_b','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:18:00Z','ORDER-CONFLICT','exp_b');
+    `);
+    apply(db,'0016_online_order_identity_claim.sql');
+    apply(db,'0016_online_order_identity_claim.sql');
+    assert.deepEqual(rows(db,`SELECT order_id,document_id,expense_id,state FROM expense_online_order_claims ORDER BY order_id`),[
+      {order_id:'ORDER-CONFLICT',document_id:null,expense_id:null,state:'AMBIGUOUS'},
+      {order_id:'ORDER-ONE',document_id:'doc_one',expense_id:'exp_one',state:'EXPENSE_OWNED'},
+      {order_id:'ORDER-REVIEW',document_id:'doc_review',expense_id:null,state:'REVIEW_ONLY'}
+    ]);
+    assert.deepEqual(rows(db,`SELECT document_id,status,expense_id FROM expense_documents WHERE document_id='doc_old'`),[{document_id:'doc_old',status:'WAITING_REVIEW',expense_id:null}]);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });

@@ -9,7 +9,7 @@ function document(overrides={}){
   return{documentType:'RECEIPT',vendor:'Mali Supplier',legalVendorName:'Mali Supplier Co',documentNumber:'INV-1',orderId:'',documentDate:'2026-07-27',paymentDate:'2026-07-27',paymentTime:'10:00',currency:'THB',subtotalBaht:180,shippingBaht:0,discountBaht:0,subsidyBaht:0,vatBaht:0,grossAmountBaht:180,finalPaidAmountBaht:180,paymentMethod:'Cash',sourceWalletCandidate:'CASH_DRAWER',suggestedDescription:'Ingredients',suggestedCategory:'ingredients',confidence:.98,needsReview:false,reviewReasons:[],items:[{sellerKey:'Mali Supplier',productCode:'E45',description:'Egg',quantity:4,unit:'pcs',unitPriceBaht:45,discountBaht:0,lineTotalBaht:180,vatBaht:0,confidence:.98,needsReview:false}],...overrides};
 }
 function reading(doc){return{kind:doc.documentType==='ONLINE_ORDER'?'ONLINE_ORDER':doc.documentType==='DELIVERY_ORDER'?'DELIVERY_ORDER':'RECEIPT',hour:null,minute:null,month:null,day:null,weekday:null,confidence:doc.confidence,clockFullyVisible:null,needsNewPhoto:false,note:'',provider:'openai',raw:{},document:doc};}
-function harness(firstResults=[],{enforceForeignKeys=false}={}){
+function harness(firstResults=[],{enforceForeignKeys=false,batchErrors=[]}={}){
   const state={batches:[],runs:[]};
   const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){return firstResults.shift()||null;},async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},async batch(items){
     if(enforceForeignKeys){
@@ -23,6 +23,7 @@ function harness(firstResults=[],{enforceForeignKeys=false}={}){
         if(item.sql.includes('expense_audit_log')){assert.ok(item.args[3]==null||expenseIds.has(item.args[3]),'audit expense parent must exist first');assert.ok(item.args[4]==null||documentIds.has(item.args[4]),'audit document parent must exist first');}
       }
     }
+    const failure=batchErrors.shift();if(failure)throw failure;
     state.batches.push(items.map(item=>({sql:item.sql,args:item.args})));return items.map(()=>({meta:{changes:1}}));
   }};
   return{state,env:{DB,RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false'},event:{source:{type:'user',userId:'U_TEST'},message:{id:'img_1',type:'image'}},actor:{employeeId:'EMP001',branchId:'B001'}};
@@ -67,6 +68,12 @@ test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens so
     assert.equal(expense.args[6],'UNCONFIRMED');
     assert.equal(expense.args[8],'2026-08-12');
     assert.match(expense.sql,/WAITING_CONFIRM/);
+    const identityClaim=statements.find(item=>item.sql.includes('expense_online_order_claims'));
+    assert.ok(identityClaim,'exact Online Order identity must be claimed in the business batch');
+    assert.equal(identityClaim.args[0],'MASKED-ORDER');
+    assert.equal(identityClaim.args[2],expense.args[0]);
+    assert.equal(identityClaim.args[3],'EXPENSE_OWNED');
+    assert.equal(statements.at(-1),identityClaim,'unique identity claim must close the atomic batch');
     assert.equal(statements.some(item=>item.sql.includes('sheet_sync')),false);
     const message=JSON.stringify(calls[0]?.messages?.[0]||{});
     assert.match(message,/เลือกวิธีชำระเงิน/);
@@ -76,10 +83,40 @@ test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens so
 });
 
 test('duplicate Online Order submission cannot create another Expense',async()=>{
-  const h=harness([{document_id:'doc_existing',expense_id:'exp_existing',status:'CONFIRMED'}]);
+  const h=harness([{document_count:1,expense_count:1,one_expense_id:'exp_existing',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_existing',claim_expense_id:'exp_existing'},null]);
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'MASKED-DUPLICATE'})),'expense/duplicate-online.jpg','trace-duplicate','hash-duplicate',h.actor);
   assert.equal(h.state.batches.length,0);
   assert.equal(h.state.runs.length,0);
+});
+
+test('review-only Online Order identity is never auto-upgraded by a newer paid image',async()=>{
+  const h=harness([{document_count:1,expense_count:0,one_expense_id:null,claim_state:'REVIEW_ONLY',claim_document_id:'doc_review',claim_expense_id:null}]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-REVIEW-ONLY'})),'expense/new-paid-image.jpg','trace-review-only','different-image-hash',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,0);
+});
+
+test('more than one Expense for an Online Order fails closed with a sanitized operational alert',async()=>{
+  const orderId='ORDER-PRIVATE-CONFLICT';
+  const h=harness([{document_count:2,expense_count:2,one_expense_id:'exp_a',claim_state:'AMBIGUOUS',claim_document_id:null,claim_expense_id:null}]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId})),'expense/conflict.jpg','trace-conflict','different-conflict-hash',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,1);
+  assert.match(h.state.runs[0].sql,/INSERT INTO failed_jobs/);
+  const serialized=JSON.stringify(h.state.runs[0].args);
+  assert.doesNotMatch(serialized,new RegExp(orderId));
+  assert.match(serialized,/ONLINE_ORDER_IDENTITY_CONFLICT/);
+});
+
+test('concurrent different-image submissions use the unique claim as the transaction boundary',async()=>{
+  const identityNone={document_count:0,expense_count:0,one_expense_id:null,claim_state:null,claim_document_id:null,claim_expense_id:null};
+  const identityOwned={document_count:1,expense_count:1,one_expense_id:'exp_winner',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_winner',claim_expense_id:'exp_winner'};
+  const expense={expense_id:'exp_winner',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:'{}',needs_review:1};
+  const h=harness([identityNone,null,null,identityOwned,expense,stored],{batchErrors:[new Error('UNIQUE constraint failed: expense_online_order_claims.order_id')]});
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-RACE'})),'expense/race-loser.jpg','trace-race','hash-race-loser',h.actor);
+  assert.equal(h.state.batches.length,0,'the losing D1 batch must be rolled back as a unit');
+  assert.equal(h.state.runs.length,0,'the loser must not create a second document or Expense outside the batch');
 });
 
 test('conflicting or unsupported Online Order amount evidence creates no Expense or Sheets sync',async()=>{
@@ -236,6 +273,23 @@ test('a Delivery Order with an exact order ID links supporting evidence and neve
   assert.equal(h.state.batches[0].some(item=>item.sql.includes('INSERT INTO expense_events')),false);
   const link=h.state.batches[0].find(item=>item.sql.includes('expense_document_links'));
   assert.equal(link.args[1],'exp_purchase');assert.equal(link.args[3],'SUPPORTING_DOCUMENT');
+});
+
+test('an Online Order may link to a different supported document type without creating a second Expense',async()=>{
+  const h=harness([
+    {document_count:0,expense_count:0,one_expense_id:null,claim_state:null,claim_document_id:null,claim_expense_id:null},
+    null,
+    {document_id:'doc_invoice',expense_id:'exp_purchase',document_type:'TAX_INVOICE',legal_vendor_name:'Mali Supplier Co',document_number:'INV-1',order_id:'ORDER-CROSS-TYPE'}
+  ]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',documentNumber:'',orderId:'ORDER-CROSS-TYPE'})),'expense/order-linked.jpg','trace-order-linked','hash-order-linked',h.actor);
+  const statements=h.state.batches[0];
+  assert.equal(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),false);
+  const link=statements.find(item=>item.sql.includes('expense_document_links'));
+  assert.equal(link.args[1],'exp_purchase');
+  const claim=statements.find(item=>item.sql.includes('expense_online_order_claims'));
+  assert.equal(claim.args[0],'ORDER-CROSS-TYPE');
+  assert.equal(claim.args[2],'exp_purchase');
+  assert.equal(claim.args[3],'EXPENSE_OWNED');
 });
 
 test('only exact printed identifiers permit automatic document matching',()=>{

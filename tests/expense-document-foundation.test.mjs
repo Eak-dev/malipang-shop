@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {purchaseExpenseDraft,sellerDocumentCases} from '../dist/expense/document.js';
+import {purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases} from '../dist/expense/document.js';
 import {handleExpenseImage} from '../dist/expense/service.js';
 import {exactDocumentMatch} from '../dist/expense/linking.js';
 import {normalizeOpenAIVisionResult} from '../dist/vision/openai.js';
@@ -37,6 +37,75 @@ test('approved accounting amounts preserve paid amount after subsidy and marketp
 test('Delivery Order and online order without payment date are review-only, never final drafts',()=>{
   assert.equal(purchaseExpenseDraft(document({documentType:'DELIVERY_ORDER'})),null);
   assert.equal(purchaseExpenseDraft(document({documentType:'ONLINE_ORDER',paymentDate:''})),null);
+});
+
+test('incomplete purchase feedback names only the fields that actually failed',()=>{
+  assert.deepEqual(purchaseDraftMissingReasons(document({finalPaidAmountBaht:null})),['Missing final paid amount']);
+  assert.deepEqual(purchaseDraftMissingReasons(document({paymentDate:'',documentDate:''})),['Missing or invalid payment date']);
+  assert.deepEqual(purchaseDraftMissingReasons(document({documentType:'ONLINE_ORDER',finalPaidAmountBaht:null,paymentDate:'31-02-2026'})),['Missing final paid amount','Missing or invalid payment date']);
+});
+
+test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens source chooser',async()=>{
+  const normalized=normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:document({
+    documentType:'ONLINE_ORDER',orderId:'MASKED-ORDER',documentDate:'2026-08-12',paymentDate:'12-08-2026',paymentDateFormat:'DMY',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',subtotalBaht:54,grossAmountBaht:54,finalPaidAmountBaht:null,orderTotalBaht:54,orderTotalLabel:'ยอดรวมคำสั่งซื้อ',paymentStatus:'PAID',paymentMethod:'บัตรเครดิต/บัตรเดบิต',sourceWalletCandidate:'CARD_KBANK',suggestedDescription:'Online order',suggestedCategory:'ingredients',items:[{sellerKey:'Store',productCode:'',description:'One item',quantity:1,unit:'item',unitPriceBaht:54,discountBaht:0,lineTotalBaht:54,vatBaht:0,confidence:.98,needsReview:false}]
+  })},{}).document;
+  const draft=purchaseExpenseDraft(normalized);
+  assert.equal(draft.amountSatang,5400);
+  assert.equal(draft.transactionDate,'2026-08-12');
+  assert.equal(draft.paymentKey,'unconfirmed');
+  assert.equal(draft.sourceWallet,'UNCONFIRMED');
+  assert.deepEqual(draft.reviewReasons,['Payment source must be selected']);
+
+  const h=harness(),originalFetch=globalThis.fetch,calls=[];
+  const event={...h.event,replyToken:'reply-online-order',webhookEventId:'W-online-order'};
+  try{
+    globalThis.fetch=async(_url,init)=>{calls.push(JSON.parse(String(init?.body||'{}')));return new Response('',{status:200});};
+    await handleExpenseImage({...h.env,RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000'},event,reading(normalized),'expense/online-order.jpg','trace','hash-online-order',h.actor);
+    const statements=h.state.batches[0],expense=statements.find(item=>item.sql.includes('INSERT INTO expense_events'));
+    assert.equal(expense.args[4],5400);
+    assert.equal(expense.args[5],'unconfirmed');
+    assert.equal(expense.args[6],'UNCONFIRMED');
+    assert.equal(expense.args[8],'2026-08-12');
+    assert.match(expense.sql,/WAITING_CONFIRM/);
+    assert.equal(statements.some(item=>item.sql.includes('sheet_sync')),false);
+    const message=JSON.stringify(calls[0]?.messages?.[0]||{});
+    assert.match(message,/เลือกวิธีชำระเงิน/);
+    assert.match(message,/expense_resolve_payment/);
+    assert.doesNotMatch(message,/expense_confirm/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test('duplicate Online Order submission cannot create another Expense',async()=>{
+  const h=harness([{document_id:'doc_existing',expense_id:'exp_existing',status:'CONFIRMED'}]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'MASKED-DUPLICATE'})),'expense/duplicate-online.jpg','trace-duplicate','hash-duplicate',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,0);
+});
+
+test('conflicting or unsupported Online Order amount evidence creates no Expense or Sheets sync',async()=>{
+  for(const overrides of [
+    {orderTotalLabel:'Unsupported total',finalPaidAmountBaht:54},
+    {orderTotalLabel:'',finalPaidAmountBaht:54},
+    {orderTotalLabel:'ยอดรวมคำสั่งซื้อ',orderTotalBaht:54,finalPaidAmountBaht:59}
+  ]){
+    const normalized=normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:document({documentType:'ONLINE_ORDER',paymentDate:'2026-08-12',paymentDateFormat:'YMD',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',paymentStatus:'PAID',orderTotalBaht:54,orderTotalLabel:'ยอดรวมคำสั่งซื้อ',finalPaidAmountBaht:null,...overrides})},{}).document;
+    assert.equal(purchaseExpenseDraft(normalized),null);
+    const h=harness();
+    await handleExpenseImage(h.env,h.event,reading(normalized),'expense/invalid-amount.jpg','trace-invalid-amount','hash-invalid-amount',h.actor);
+    const statements=h.state.batches[0];
+    assert.equal(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),false);
+    assert.equal(statements.some(item=>item.sql.includes('sheet_sync')),false);
+  }
+});
+
+test('every generic card label remains UNCONFIRMED and requires the payment chooser',()=>{
+  for(const paymentMethod of ['credit card','debit card','บัตรเครดิต','บัตรเดบิต','บัตรเครดิต/บัตรเดบิต']){
+    const normalized=normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:document({documentType:'ONLINE_ORDER',paymentDate:'2026-08-12',paymentDateFormat:'YMD',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',paymentStatus:'PAID',orderTotalBaht:54,orderTotalLabel:'Order total',finalPaidAmountBaht:54,paymentMethod,sourceWalletCandidate:'CARD_KBANK'})},{}).document;
+    const draft=purchaseExpenseDraft(normalized);
+    assert.equal(draft.sourceWallet,'UNCONFIRMED',paymentMethod);
+    assert.equal(draft.paymentKey,'unconfirmed',paymentMethod);
+    assert.equal(draft.needsPaymentConfirmation,true,paymentMethod);
+  }
 });
 
 test('one marketplace image with two sellers creates two separate review cases',()=>{

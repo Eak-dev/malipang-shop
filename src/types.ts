@@ -189,6 +189,9 @@ export interface PurchaseDocument {
   orderId: string;
   documentDate: string;
   paymentDate: string;
+  /** Extraction evidence used by deterministic purchase-date normalization. */
+  paymentDateFormat?: "YMD" | "DMY" | "UNKNOWN";
+  paymentDatePurpose?: "PAYMENT" | "EXPECTED_DELIVERY" | "UNKNOWN";
   paymentTime: string;
   currency: string;
   subtotalBaht: number | null;
@@ -198,6 +201,10 @@ export interface PurchaseDocument {
   vatBaht: number | null;
   grossAmountBaht: number | null;
   finalPaidAmountBaht: number | null;
+  /** Visible Online Order total and its printed label, before paid-evidence gating. */
+  orderTotalBaht?: number | null;
+  orderTotalLabel?: string;
+  paymentStatus?: "PAID" | "PENDING" | "UNPAID" | "UNKNOWN";
   paymentMethod: string;
   sourceWalletCandidate: string;
   suggestedDescription: string;

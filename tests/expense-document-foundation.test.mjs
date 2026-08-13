@@ -182,6 +182,36 @@ test('concurrent different-image submissions use the unique claim as the transac
   assert.equal(h.state.runs.length,0,'the loser must not create a second document or Expense outside the batch');
 });
 
+test('a payable receipt with an exact order ID joins the same atomic claim boundary',async()=>{
+  const h=harness();
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',orderId:'ORDER-SHARED'})),'expense/receipt-order.jpg','trace-receipt-order','hash-receipt-order',h.actor);
+  const statements=h.state.batches[0],expense=statements.find(item=>item.sql.includes('INSERT INTO expense_events'));
+  const claim=statements.find(item=>item.sql.includes('expense_online_order_claims'));
+  assert.ok(expense);
+  assert.ok(claim,'every expense-creating purchase document with an exact order ID must acquire the shared claim');
+  assert.equal(claim.args[0],'ORDER-SHARED');
+  assert.equal(claim.args[2],expense.args[0]);
+  assert.equal(statements.at(-1),claim,'the shared unique claim must close the atomic business batch');
+});
+
+test('concurrent Online Order and receipt cannot create separate Expenses for one exact order ID',async()=>{
+  const identityNone={document_count:0,online_document_count:0,matching_document_count:0,expense_count:0,one_expense_id:null,claim_state:null,claim_document_id:null,claim_expense_id:null};
+  const identityOwned={document_count:1,online_document_count:1,matching_document_count:0,expense_count:1,one_expense_id:'exp_online_winner',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_online_winner',claim_expense_id:'exp_online_winner'};
+  const expense={expense_id:'exp_online_winner',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:'{}',needs_review:1};
+  const h=harness([identityNone,null,null,identityOwned,expense,stored],{batchErrors:[new Error('UNIQUE constraint failed: expense_online_order_claims.order_id')]});
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',orderId:'ORDER-CROSS-TYPE-RACE'})),'expense/receipt-race-loser.jpg','trace-cross-type-race','hash-receipt-race-loser',h.actor);
+  assert.equal(h.state.batches.length,0,'the losing receipt batch must roll back its document and Expense together');
+  assert.equal(h.state.runs.length,0,'the loser must only resume the winning Expense');
+});
+
+test('supporting non-payable documents do not reserve an exact order claim',async()=>{
+  const h=harness();
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'DELIVERY_ORDER',orderId:'ORDER-SUPPORTING',finalPaidAmountBaht:null,paymentDate:''})),'expense/supporting-order.jpg','trace-supporting-order','hash-supporting-order',h.actor);
+  assert.equal(h.state.batches[0].some(item=>item.sql.includes('expense_online_order_claims')),false);
+  assert.equal(h.state.batches[0].some(item=>item.sql.includes('INSERT INTO expense_events')),false);
+});
+
 test('conflicting or unsupported Online Order amount evidence creates no Expense or Sheets sync',async()=>{
   for(const overrides of [
     {orderTotalLabel:'Unsupported total',finalPaidAmountBaht:54},

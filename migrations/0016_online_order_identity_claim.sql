@@ -20,6 +20,18 @@ CREATE TABLE IF NOT EXISTS expense_online_order_claims(
 CREATE INDEX IF NOT EXISTS idx_expense_online_order_claim_expense
 ON expense_online_order_claims(expense_id) WHERE expense_id IS NOT NULL;
 
+-- Once the global order identity exists, the first supporting document of a
+-- new type also needs a transactional winner.  This exact composite key lets
+-- one batch attach that type while concurrent duplicates roll back.
+CREATE TABLE IF NOT EXISTS expense_order_document_type_claims(
+  order_id TEXT NOT NULL CHECK(order_id<>'' AND order_id=trim(order_id)),
+  document_type TEXT NOT NULL CHECK(document_type<>''),
+  document_id TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  PRIMARY KEY(order_id,document_type),
+  FOREIGN KEY(document_id) REFERENCES expense_documents(document_id)
+);
+
 -- Backfill without choosing the newest document or upgrading review-only
 -- evidence.  A single linked/direct Expense owns the identity; no Expense is
 -- REVIEW_ONLY; more than one is explicitly AMBIGUOUS and must fail closed.
@@ -78,3 +90,28 @@ SELECT
   s.first_created_at,
   s.first_created_at
 FROM summary s;
+
+-- Backfill one deterministic anchor for every document type already present
+-- under an Online Order business identity.  Existing document rows remain
+-- unchanged even when legacy data contains more than one row of a type.
+WITH order_ids AS (
+  SELECT DISTINCT trim(order_id) AS order_id
+  FROM expense_documents
+  WHERE document_type='ONLINE_ORDER'
+    AND order_id IS NOT NULL
+    AND trim(order_id)<>''
+), ranked AS (
+  SELECT ids.order_id,d.document_type,d.document_id,d.created_at,
+         ROW_NUMBER() OVER (
+           PARTITION BY ids.order_id,d.document_type
+           ORDER BY d.created_at,d.document_id
+         ) AS row_rank
+  FROM expense_documents d
+  JOIN order_ids ids ON ids.order_id=trim(d.order_id)
+)
+INSERT OR IGNORE INTO expense_order_document_type_claims(
+  order_id,document_type,document_id,created_at
+)
+SELECT order_id,document_type,document_id,created_at
+FROM ranked
+WHERE row_rank=1;

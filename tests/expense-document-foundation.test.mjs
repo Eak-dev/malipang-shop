@@ -73,7 +73,11 @@ test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens so
     assert.equal(identityClaim.args[0],'MASKED-ORDER');
     assert.equal(identityClaim.args[2],expense.args[0]);
     assert.equal(identityClaim.args[3],'EXPENSE_OWNED');
-    assert.equal(statements.at(-1),identityClaim,'unique identity claim must close the atomic batch');
+    const typeClaim=statements.find(item=>item.sql.includes('expense_order_document_type_claims'));
+    assert.ok(typeClaim,'the exact Online Order document type must be claimed in the business batch');
+    assert.equal(typeClaim.args[0],'MASKED-ORDER');
+    assert.equal(typeClaim.args[1],'ONLINE_ORDER');
+    assert.equal(statements.at(-1),typeClaim,'the document-type concurrency claim must close the atomic batch');
     assert.equal(statements.some(item=>item.sql.includes('sheet_sync')),false);
     const message=JSON.stringify(calls[0]?.messages?.[0]||{});
     assert.match(message,/เลือกวิธีชำระเงิน/);
@@ -187,11 +191,14 @@ test('a payable receipt with an exact order ID joins the same atomic claim bound
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',orderId:'ORDER-SHARED'})),'expense/receipt-order.jpg','trace-receipt-order','hash-receipt-order',h.actor);
   const statements=h.state.batches[0],expense=statements.find(item=>item.sql.includes('INSERT INTO expense_events'));
   const claim=statements.find(item=>item.sql.includes('expense_online_order_claims'));
+  const typeClaim=statements.find(item=>item.sql.includes('expense_order_document_type_claims'));
   assert.ok(expense);
   assert.ok(claim,'every expense-creating purchase document with an exact order ID must acquire the shared claim');
   assert.equal(claim.args[0],'ORDER-SHARED');
   assert.equal(claim.args[2],expense.args[0]);
-  assert.equal(statements.at(-1),claim,'the shared unique claim must close the atomic business batch');
+  assert.ok(typeClaim);
+  assert.equal(typeClaim.args[1],'RECEIPT');
+  assert.equal(statements.at(-1),typeClaim,'the document-type claim must close the atomic business batch');
 });
 
 test('concurrent Online Order and receipt cannot create separate Expenses for one exact order ID',async()=>{
@@ -394,7 +401,22 @@ test('cross-type evidence reuses an existing order claim and commits its documen
   assert.ok(statements.some(item=>item.sql.includes('INSERT INTO expense_documents')));
   assert.ok(statements.some(item=>item.sql.includes('expense_document_links')));
   assert.equal(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),false);
-  assert.equal(statements.some(item=>item.sql.includes('expense_online_order_claims')),false,'the existing claim must be preserved rather than reinserted');
+  assert.equal(statements.some(item=>item.sql.includes('expense_online_order_claims')),false,'the existing global claim must be preserved rather than reinserted');
+  const typeClaim=statements.find(item=>item.sql.includes('expense_order_document_type_claims'));
+  assert.ok(typeClaim,'the first receipt type must acquire its own concurrency claim');
+  assert.equal(typeClaim.args[1],'RECEIPT');
+  assert.equal(statements.at(-1),typeClaim);
+});
+
+test('concurrent first receipts for an existing Online Order serialize on the document-type claim',async()=>{
+  const identityBefore={document_count:1,online_document_count:1,matching_document_count:0,expense_count:1,one_expense_id:'exp_online',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_online',claim_expense_id:'exp_online',type_claim_document_id:null};
+  const identityAfter={document_count:2,online_document_count:1,matching_document_count:1,expense_count:1,one_expense_id:'exp_online',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_online',claim_expense_id:'exp_online',type_claim_document_id:'doc_receipt_winner'};
+  const expense={expense_id:'exp_online',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:'{}',needs_review:1};
+  const h=harness([identityBefore,null,identityAfter,expense,stored],{batchErrors:[new Error('UNIQUE constraint failed: expense_order_document_type_claims.order_id, expense_order_document_type_claims.document_type')]});
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',documentNumber:'',orderId:'ORDER-TYPE-RACE'})),'expense/receipt-type-loser.jpg','trace-type-race','hash-type-race-loser',h.actor);
+  assert.equal(h.state.batches.length,0,'the losing same-type evidence batch must roll back as a unit');
+  assert.equal(h.state.runs.length,0);
 });
 
 test('legacy same-type owner uses the projected document count and creates no duplicate link',async()=>{

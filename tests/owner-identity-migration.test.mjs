@@ -29,6 +29,7 @@ test('full migration chain applies to a clean D1-shaped database',()=>{
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='failed_job_reconciliations'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_pending_edits'`)[0].count,1);
     assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_online_order_claims'`)[0].count,1);
+    assert.equal(rows(db,`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name='expense_order_document_type_claims'`)[0].count,1);
     apply(db,'0015_expense_guided_review.sql');
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);
   }finally{rmSync(directory,{recursive:true,force:true});}
@@ -70,6 +71,14 @@ test('0016 backfills exact Online Order identities without upgrading legacy revi
       {order_id:'ORDER-DIRECT-LINK-CONFLICT',document_id:null,expense_id:null,state:'AMBIGUOUS'},
       {order_id:'ORDER-ONE',document_id:'doc_one',expense_id:'exp_one',state:'EXPENSE_OWNED'},
       {order_id:'ORDER-REVIEW',document_id:'doc_review',expense_id:null,state:'REVIEW_ONLY'}
+    ]);
+    assert.deepEqual(rows(db,`SELECT order_id,document_type,document_id FROM expense_order_document_type_claims ORDER BY order_id,document_type`),[
+      {order_id:'ORDER-CONFLICT',document_type:'ONLINE_ORDER',document_id:'doc_a'},
+      {order_id:'ORDER-CROSS-TYPE',document_type:'ONLINE_ORDER',document_id:'doc_online_cross'},
+      {order_id:'ORDER-CROSS-TYPE',document_type:'TAX_INVOICE',document_id:'doc_invoice_cross'},
+      {order_id:'ORDER-DIRECT-LINK-CONFLICT',document_type:'ONLINE_ORDER',document_id:'doc_link_conflict'},
+      {order_id:'ORDER-ONE',document_type:'ONLINE_ORDER',document_id:'doc_old'},
+      {order_id:'ORDER-REVIEW',document_type:'ONLINE_ORDER',document_id:'doc_review'}
     ]);
     assert.deepEqual(rows(db,`SELECT document_id,status,expense_id FROM expense_documents WHERE document_id='doc_old'`),[{document_id:'doc_old',status:'WAITING_REVIEW',expense_id:null}]);
     assert.deepEqual(rows(db,'PRAGMA foreign_key_check'),[]);

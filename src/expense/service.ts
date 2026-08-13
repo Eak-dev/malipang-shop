@@ -202,7 +202,7 @@ async function findPurchaseDuplicate(env:Env,document:PurchaseDocument,imageHash
 }
 interface OnlineOrderIdentityRow extends ExpenseRow{
   document_count?:unknown;online_document_count?:unknown;matching_document_count?:unknown;expense_count?:unknown;one_expense_id?:unknown;
-  claim_state?:unknown;claim_document_id?:unknown;claim_expense_id?:unknown;
+  claim_state?:unknown;claim_document_id?:unknown;claim_expense_id?:unknown;type_claim_document_id?:unknown;
 }
 type OnlineOrderIdentity=
   |{kind:"NONE"}
@@ -230,13 +230,17 @@ async function findOnlineOrderIdentity(env:Env,orderId:string,incomingDocumentTy
   )
   SELECT facts.document_count,facts.online_document_count,facts.matching_document_count,facts.expense_count,facts.one_expense_id,
          claim.state AS claim_state,claim.document_id AS claim_document_id,
-         claim.expense_id AS claim_expense_id
+         claim.expense_id AS claim_expense_id,type_claim.document_id AS type_claim_document_id
   FROM facts
-  LEFT JOIN expense_online_order_claims claim ON claim.order_id=?`).bind(orderId,incomingDocumentType,orderId).first<OnlineOrderIdentityRow>();
+  LEFT JOIN expense_online_order_claims claim ON claim.order_id=?
+  LEFT JOIN expense_order_document_type_claims type_claim
+    ON type_claim.order_id=? AND type_claim.document_type=?`).bind(orderId,incomingDocumentType,orderId,orderId,incomingDocumentType).first<OnlineOrderIdentityRow>();
   const documentCount=Number(row?.document_count||0),onlineDocumentCount=Number(row?.online_document_count||0),matchingDocumentCount=Number(row?.matching_document_count??(incomingDocumentType==="ONLINE_ORDER"?onlineDocumentCount:0)),expenseCount=Number(row?.expense_count||0);
   const expenseId=String(row?.one_expense_id||""),claimState=String(row?.claim_state||"");
   const claimExpenseId=String(row?.claim_expense_id||"");
+  const hasTypeClaim=Boolean(row?.type_claim_document_id);
   if(expenseCount>1||claimState==="AMBIGUOUS")return{kind:"CONFLICT",documentCount,expenseCount,reason:"MULTIPLE_EXPENSES"};
+  if(hasTypeClaim&&matchingDocumentCount===0)return{kind:"CONFLICT",documentCount,expenseCount,reason:"TYPE_CLAIM_MISMATCH"};
   if(claimState==="EXPENSE_OWNED"&&(expenseCount!==1||!expenseId||claimExpenseId!==expenseId))return{kind:"CONFLICT",documentCount,expenseCount,reason:"CLAIM_MISMATCH"};
   if(claimState==="REVIEW_ONLY"&&expenseCount!==0)return{kind:"CONFLICT",documentCount,expenseCount,reason:"CLAIM_MISMATCH"};
   if(expenseCount===1&&expenseId)return{kind:"EXPENSE_OWNED",documentCount,onlineDocumentCount,matchingDocumentCount,expenseId,hasClaim:Boolean(claimState)};
@@ -246,6 +250,9 @@ async function findOnlineOrderIdentity(env:Env,orderId:string,incomingDocumentTy
 }
 function onlineOrderClaimInsert(env:Env,input:{orderId:string;documentId:string;expenseId:string|null;now:string}){
   return env.DB.prepare(`INSERT INTO expense_online_order_claims(order_id,document_id,expense_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?)`).bind(input.orderId,input.documentId,input.expenseId,input.expenseId?"EXPENSE_OWNED":"REVIEW_ONLY",input.now,input.now);
+}
+function orderDocumentTypeClaimInsert(env:Env,input:{orderId:string;documentType:string;documentId:string;now:string}){
+  return env.DB.prepare(`INSERT INTO expense_order_document_type_claims(order_id,document_type,document_id,created_at) VALUES(?,?,?,?)`).bind(input.orderId,input.documentType,input.documentId,input.now);
 }
 async function recordOnlineOrderIdentityConflict(env:Env,orderId:string,traceId:string,identity:Extract<OnlineOrderIdentity,{kind:"CONFLICT"}>):Promise<void>{
   const orderIdHash=await sha256Hex(new TextEncoder().encode(orderId).buffer as ArrayBuffer);
@@ -313,6 +320,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ];
     if(exactClaimedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
+    if(exactClaimedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:exactClaimedOrderId,documentType:document.documentType,documentId,now}));
     try{await env.DB.batch(linkedStatements);}
     catch(error){if(String(error).includes("UNIQUE")&&exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
@@ -339,7 +347,10 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       statements.push(env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,'PRIMARY_PURCHASE_DOCUMENT','EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),expenseId,documentId,ownership.employeeId,"Document creates draft",now));
       statements.push(expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId,documentId,after:{documentType:document.documentType,status:"WAITING_CONFIRM"},reason:reviewReason}));
     }else statements.push(expenseAudit(env,{actor,action:"EXTRACT",documentId,after:{documentType:document.documentType,status:"WAITING_REVIEW"},reason:reviewReason}));
-    if(exactClaimedOrderId)statements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId,now}));
+    if(exactClaimedOrderId){
+      statements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId,now}));
+      statements.push(orderDocumentTypeClaimInsert(env,{orderId:exactClaimedOrderId,documentType:document.documentType,documentId,now}));
+    }
     await env.DB.batch(statements);
   }catch(error){if(String(error).includes("UNIQUE")){if(exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
   if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}

@@ -84,9 +84,72 @@ test('paid 54 THB Online Order creates only a WAITING_CONFIRM draft and opens so
 
 test('duplicate Online Order submission cannot create another Expense',async()=>{
   const h=harness([{document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_existing',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_existing',claim_expense_id:'exp_existing'},null]);
-  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:'MASKED-DUPLICATE'})),'expense/duplicate-online.jpg','trace-duplicate','hash-duplicate',h.actor);
+  const differentMessage={...h.event,message:{id:'img_different_message',type:'image'}};
+  await handleExpenseImage(h.env,differentMessage,reading(document({documentType:'ONLINE_ORDER',orderId:'MASKED-DUPLICATE'})),'expense/duplicate-online.jpg','trace-duplicate','different-image-hash',h.actor);
   assert.equal(h.state.batches.length,0);
   assert.equal(h.state.runs.length,0);
+});
+
+test('existing WAITING_CONFIRM Online Order resumes the payment chooser',async()=>{
+  const identity={document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_waiting',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_waiting',claim_expense_id:'exp_waiting'};
+  const expense={expense_id:'exp_waiting',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}}),needs_review:1};
+  const h=harness([identity,expense,stored]),originalFetch=globalThis.fetch,calls=[];
+  const event={...h.event,replyToken:'reply-existing-order',webhookEventId:'W-existing-order',message:{id:'img_new_message',type:'image'}};
+  try{
+    globalThis.fetch=async(_url,init)=>{calls.push(JSON.parse(String(init?.body||'{}')));return new Response('',{status:200});};
+    await handleExpenseImage({...h.env,RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000'},event,reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-WAITING'})),'expense/new-image.jpg','trace-existing','different-image-hash',h.actor);
+    assert.equal(h.state.batches.length,0);
+    assert.equal(h.state.runs.some(item=>item.sql.includes('INSERT INTO expense_events')||item.sql.includes('sync_jobs')),false);
+    const message=JSON.stringify(calls[0]?.messages?.[0]||{});
+    assert.match(message,/เลือกวิธีชำระเงิน/);
+    assert.match(message,/expense_resolve_payment/);
+    assert.doesNotMatch(message,/expense_confirm/);
+  }finally{globalThis.fetch=originalFetch;}
+});
+
+test('existing CONFIRMED Online Order creates no new Expense, link, or Sheets sync',async()=>{
+  const identity={document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_confirmed',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_confirmed',claim_expense_id:'exp_confirmed'};
+  const expense={expense_id:'exp_confirmed',description:'Online order',amount_satang:5400,payment_key:'kbank',source_wallet:'CARD_KBANK',category:'general',transaction_date:'2026-08-12',status:'CONFIRMED'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:'{}',needs_review:0};
+  const h=harness([identity,expense,stored]);
+  await handleExpenseImage(h.env,{...h.event,message:{id:'img_confirmed_repeat',type:'image'}},reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-CONFIRMED'})),'expense/confirmed-repeat.jpg','trace-confirmed-repeat','different-confirmed-hash',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,0);
+});
+
+test('different exact Online Order IDs create separate identity claims',async()=>{
+  const h=harness();
+  await handleExpenseImage(h.env,{...h.event,message:{id:'img_order_a',type:'image'}},reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-A'})),'expense/order-a.jpg','trace-a','hash-a',h.actor);
+  await handleExpenseImage(h.env,{...h.event,message:{id:'img_order_b',type:'image'}},reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-B'})),'expense/order-b.jpg','trace-b','hash-b',h.actor);
+  assert.equal(h.state.batches.length,2);
+  const claims=h.state.batches.map(batch=>batch.find(item=>item.sql.includes('expense_online_order_claims')));
+  assert.deepEqual(claims.map(claim=>claim.args[0]),['ORDER-A','ORDER-B']);
+  assert.notEqual(claims[0].args[2],claims[1].args[2]);
+});
+
+test('Online Order with empty order ID keeps the existing image duplicate guard',async()=>{
+  const h=harness([{document_id:'doc_image_duplicate',expense_id:null,status:'WAITING_REVIEW'}]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'ONLINE_ORDER',orderId:''})),'expense/empty-order.jpg','trace-empty-order','same-image-hash',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,0);
+});
+
+test('failed duplicate-flow LINE reply queues notification only and never replays the Online Order transaction',async()=>{
+  const identity={document_count:1,online_document_count:1,expense_count:1,one_expense_id:'exp_notify',claim_state:'EXPENSE_OWNED',claim_document_id:'doc_notify',claim_expense_id:'exp_notify'};
+  const expense={expense_id:'exp_notify',description:'Online order',amount_satang:5400,payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'general',transaction_date:'2026-08-12',status:'WAITING_CONFIRM'};
+  const stored={document_type:'ONLINE_ORDER',normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}}),needs_review:1};
+  const h=harness([identity,expense,stored,null]),originalFetch=globalThis.fetch,queued=[];
+  const env={...h.env,RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'test-token',EXTERNAL_API_TIMEOUT_MS:'1000',JOB_QUEUE:{async send(job){queued.push(job);}}};
+  const event={...h.event,replyToken:'reply-fails',webhookEventId:'W-reply-fails',message:{id:'img_notify_repeat',type:'image'}};
+  try{
+    globalThis.fetch=async()=>new Response('temporary',{status:503});
+    await handleExpenseImage(env,event,reading(document({documentType:'ONLINE_ORDER',orderId:'ORDER-NOTIFY'})),'expense/notify-repeat.jpg','trace-notify','different-notify-hash',h.actor);
+    assert.equal(h.state.batches.length,0);
+    assert.equal(h.state.runs.some(item=>item.sql.includes('INSERT INTO expense_events')||item.sql.includes('INSERT INTO expense_documents')||item.sql.includes('sync_jobs')),false);
+    assert.equal(queued.length,1);
+    assert.equal(queued[0].kind,'LINE_NOTIFICATION');
+  }finally{globalThis.fetch=originalFetch;}
 });
 
 test('review-only Online Order identity is never auto-upgraded by a newer paid image',async()=>{
@@ -304,6 +367,7 @@ test('multiple cross-document owners for an Online Order ID fail closed before l
 test('only exact printed identifiers permit automatic document matching',()=>{
   const incoming=document({orderId:'ORDER-100'}),existing={documentId:'doc',expenseId:'exp',documentType:'TAX_INVOICE',legalVendorName:'Different vendor',documentNumber:'X',orderId:'ORDER-100'};
   assert.equal(exactDocumentMatch(incoming,existing).matched,true);
+  assert.equal(exactDocumentMatch(document({orderId:'ORDER-10'}),existing).matched,false,'partial order IDs must never fuzzy-match');
   assert.equal(exactDocumentMatch(document({orderId:'',documentNumber:'INV-1'}),{...existing,orderId:'',legalVendorName:'Other',documentNumber:'INV-1'}).matched,false);
 });
 

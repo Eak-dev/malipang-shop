@@ -259,7 +259,11 @@ async function handleExistingOnlineOrder(env:Env,event:LineEvent,orderId:string,
   }
   if(identity.kind==="EXPENSE_OWNED"){
     const existing=await findExpense(env,identity.expenseId,event.source.userId||"");
-    if(existing){await showCurrent(env,event,existing,traceId);return true;}
+    if(existing){
+      if(existing.status==="WAITING_CONFIRM")await respondFlex(env,event,isPaymentOnlyUnresolved(existing)?buildExpensePaymentConfirmationFlex(existing):buildExpenseSummaryFlex(withConfirmationIssues(existing)),traceId,timing);
+      else await showCurrent(env,event,existing,traceId);
+      return true;
+    }
   }
   await respondText(env,event,"Duplicate online order was not saved. ✅\nAn existing record already owns this exact order ID.\nNo new Expense or primary purchase document was created.\nCode: ONLINE_ORDER_ALREADY_RECORDED",traceId,timing);return true;
 }

@@ -207,7 +207,7 @@ interface OnlineOrderIdentityRow extends ExpenseRow{
 type OnlineOrderIdentity=
   |{kind:"NONE"}
   |{kind:"REVIEW_ONLY";documentCount:number;onlineDocumentCount:number;matchingDocumentCount:number}
-  |{kind:"EXPENSE_OWNED";documentCount:number;onlineDocumentCount:number;matchingDocumentCount:number;expenseId:string}
+  |{kind:"EXPENSE_OWNED";documentCount:number;onlineDocumentCount:number;matchingDocumentCount:number;expenseId:string;hasClaim:boolean}
   |{kind:"CONFLICT";documentCount:number;expenseCount:number;reason:string};
 async function findOnlineOrderIdentity(env:Env,orderId:string,incomingDocumentType="ONLINE_ORDER"):Promise<OnlineOrderIdentity>{
   const row=await env.DB.prepare(`WITH documents AS (
@@ -228,7 +228,7 @@ async function findOnlineOrderIdentity(env:Env,orderId:string,incomingDocumentTy
            MIN(resolved_expense_id) AS one_expense_id
     FROM matches
   )
-  SELECT facts.document_count,facts.online_document_count,facts.expense_count,facts.one_expense_id,
+  SELECT facts.document_count,facts.online_document_count,facts.matching_document_count,facts.expense_count,facts.one_expense_id,
          claim.state AS claim_state,claim.document_id AS claim_document_id,
          claim.expense_id AS claim_expense_id
   FROM facts
@@ -239,7 +239,7 @@ async function findOnlineOrderIdentity(env:Env,orderId:string,incomingDocumentTy
   if(expenseCount>1||claimState==="AMBIGUOUS")return{kind:"CONFLICT",documentCount,expenseCount,reason:"MULTIPLE_EXPENSES"};
   if(claimState==="EXPENSE_OWNED"&&(expenseCount!==1||!expenseId||claimExpenseId!==expenseId))return{kind:"CONFLICT",documentCount,expenseCount,reason:"CLAIM_MISMATCH"};
   if(claimState==="REVIEW_ONLY"&&expenseCount!==0)return{kind:"CONFLICT",documentCount,expenseCount,reason:"CLAIM_MISMATCH"};
-  if(expenseCount===1&&expenseId)return{kind:"EXPENSE_OWNED",documentCount,onlineDocumentCount,matchingDocumentCount,expenseId};
+  if(expenseCount===1&&expenseId)return{kind:"EXPENSE_OWNED",documentCount,onlineDocumentCount,matchingDocumentCount,expenseId,hasClaim:Boolean(claimState)};
   if(onlineDocumentCount>0||claimState==="REVIEW_ONLY")return{kind:"REVIEW_ONLY",documentCount,onlineDocumentCount,matchingDocumentCount};
   if(claimState)return{kind:"CONFLICT",documentCount,expenseCount,reason:"CLAIM_MISMATCH"};
   return{kind:"NONE"};
@@ -293,10 +293,10 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
   // when they can create an Expense, closing the cross-type concurrent race
   // without letting supporting/review-only evidence reserve the identity.
   const exactClaimedOrderId=(document.documentType==="ONLINE_ORDER"||draft)?document.orderId.trim():"";
-  let crossTypeExpenseId="";
+  let crossTypeExpenseId="",crossTypeClaimExists=false;
   if(exactClaimedOrderId){
     const identity=await findOnlineOrderIdentity(env,exactClaimedOrderId,document.documentType);
-    if(identity.kind==="EXPENSE_OWNED"&&identity.matchingDocumentCount===0)crossTypeExpenseId=identity.expenseId;
+    if(identity.kind==="EXPENSE_OWNED"&&identity.matchingDocumentCount===0){crossTypeExpenseId=identity.expenseId;crossTypeClaimExists=identity.hasClaim;}
     else if(await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing,identity))return;
   }
   const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
@@ -312,7 +312,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ];
-    if(exactClaimedOrderId)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
+    if(exactClaimedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
     try{await env.DB.batch(linkedStatements);}
     catch(error){if(String(error).includes("UNIQUE")&&exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;

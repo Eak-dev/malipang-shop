@@ -384,6 +384,29 @@ test('an Online Order may link to a different supported document type without cr
   assert.equal(claim.args[3],'EXPENSE_OWNED');
 });
 
+test('cross-type evidence reuses an existing order claim and commits its document link',async()=>{
+  const h=harness([{
+    document_count:1,online_document_count:1,matching_document_count:0,expense_count:1,one_expense_id:'exp_online',
+    claim_state:'EXPENSE_OWNED',claim_document_id:'doc_online',claim_expense_id:'exp_online'
+  },null]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',documentNumber:'',orderId:'ORDER-CLAIMED'})),'expense/receipt-linked.jpg','trace-receipt-linked','hash-receipt-linked',h.actor);
+  const statements=h.state.batches[0];
+  assert.ok(statements.some(item=>item.sql.includes('INSERT INTO expense_documents')));
+  assert.ok(statements.some(item=>item.sql.includes('expense_document_links')));
+  assert.equal(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),false);
+  assert.equal(statements.some(item=>item.sql.includes('expense_online_order_claims')),false,'the existing claim must be preserved rather than reinserted');
+});
+
+test('legacy same-type owner uses the projected document count and creates no duplicate link',async()=>{
+  const identity={document_count:1,online_document_count:0,matching_document_count:1,expense_count:1,one_expense_id:'exp_receipt',claim_state:null,claim_document_id:null,claim_expense_id:null};
+  const expense={expense_id:'exp_receipt',description:'Receipt',amount_satang:18000,payment_key:'cash',source_wallet:'CASH_DRAWER',category:'ingredients',transaction_date:'2026-07-27',status:'WAITING_CONFIRM'};
+  const stored={document_type:'RECEIPT',normalized_json:'{}',needs_review:0};
+  const h=harness([identity,expense,stored]);
+  await handleExpenseImage(h.env,h.event,reading(document({documentType:'RECEIPT',documentNumber:'',orderId:'ORDER-LEGACY-RECEIPT'})),'expense/legacy-receipt-repeat.jpg','trace-legacy-receipt','hash-legacy-receipt',h.actor);
+  assert.equal(h.state.batches.length,0);
+  assert.equal(h.state.runs.length,0);
+});
+
 test('multiple cross-document owners for an Online Order ID fail closed before latest-row matching',async()=>{
   const orderId='ORDER-CROSS-TYPE-CONFLICT';
   const h=harness([{document_count:2,online_document_count:0,expense_count:2,one_expense_id:'exp_a',claim_state:null,claim_document_id:null,claim_expense_id:null}]);

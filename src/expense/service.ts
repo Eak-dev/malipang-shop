@@ -210,11 +210,16 @@ type OnlineOrderIdentity=
   |{kind:"EXPENSE_OWNED";documentCount:number;expenseId:string}
   |{kind:"CONFLICT";documentCount:number;expenseCount:number;reason:string};
 async function findOnlineOrderIdentity(env:Env,orderId:string):Promise<OnlineOrderIdentity>{
-  const row=await env.DB.prepare(`WITH matches AS (
-    SELECT d.document_id,COALESCE(d.expense_id,l.expense_id) AS resolved_expense_id
+  const row=await env.DB.prepare(`WITH documents AS (
+    SELECT d.document_id,d.expense_id
     FROM expense_documents d
-    LEFT JOIN expense_document_links l ON l.document_id=d.document_id
     WHERE d.document_type='ONLINE_ORDER' AND trim(d.order_id)=?
+  ), matches AS (
+    SELECT document_id,expense_id AS resolved_expense_id FROM documents
+    UNION ALL
+    SELECT d.document_id,l.expense_id
+    FROM documents d
+    JOIN expense_document_links l ON l.document_id=d.document_id
   ), facts AS (
     SELECT COUNT(DISTINCT document_id) AS document_count,
            COUNT(DISTINCT resolved_expense_id) AS expense_count,

@@ -55,12 +55,16 @@ test('0016 backfills exact Online Order identities without upgrading legacy revi
         ('doc_one','msg_doc_one','line_owner','ONLINE_ORDER','WAITING_CONFIRM','2026-08-13T12:13:47Z','ORDER-ONE','exp_one'),
         ('doc_review','msg_doc_review','line_owner','ONLINE_ORDER','WAITING_REVIEW','2026-08-13T12:16:00Z','ORDER-REVIEW',NULL),
         ('doc_a','msg_doc_a','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:17:00Z','ORDER-CONFLICT','exp_a'),
-        ('doc_b','msg_doc_b','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:18:00Z','ORDER-CONFLICT','exp_b');
+        ('doc_b','msg_doc_b','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:18:00Z','ORDER-CONFLICT','exp_b'),
+        ('doc_link_conflict','msg_doc_link_conflict','line_owner','ONLINE_ORDER','CONFIRMED','2026-08-13T12:19:00Z','ORDER-DIRECT-LINK-CONFLICT','exp_a');
+      INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,reason,created_at)
+        VALUES('link_conflict','exp_b','doc_link_conflict','SUPPORTING_DOCUMENT','EXACT_IDENTIFIER','migration conflict fixture','2026-08-13T12:19:01Z');
     `);
     apply(db,'0016_online_order_identity_claim.sql');
     apply(db,'0016_online_order_identity_claim.sql');
     assert.deepEqual(rows(db,`SELECT order_id,document_id,expense_id,state FROM expense_online_order_claims ORDER BY order_id`),[
       {order_id:'ORDER-CONFLICT',document_id:null,expense_id:null,state:'AMBIGUOUS'},
+      {order_id:'ORDER-DIRECT-LINK-CONFLICT',document_id:null,expense_id:null,state:'AMBIGUOUS'},
       {order_id:'ORDER-ONE',document_id:'doc_one',expense_id:'exp_one',state:'EXPENSE_OWNED'},
       {order_id:'ORDER-REVIEW',document_id:'doc_review',expense_id:null,state:'REVIEW_ONLY'}
     ]);

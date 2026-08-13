@@ -23,17 +23,22 @@ ON expense_online_order_claims(expense_id) WHERE expense_id IS NOT NULL;
 -- Backfill without choosing the newest document or upgrading review-only
 -- evidence.  A single linked/direct Expense owns the identity; no Expense is
 -- REVIEW_ONLY; more than one is explicitly AMBIGUOUS and must fail closed.
-WITH resolved AS (
+WITH documents AS (
   SELECT
     trim(d.order_id) AS order_id,
     d.document_id,
-    COALESCE(d.expense_id,l.expense_id) AS expense_id,
+    d.expense_id,
     d.created_at
   FROM expense_documents d
-  LEFT JOIN expense_document_links l ON l.document_id=d.document_id
   WHERE d.document_type='ONLINE_ORDER'
     AND d.order_id IS NOT NULL
     AND trim(d.order_id)<>''
+), resolved AS (
+  SELECT order_id,document_id,expense_id,created_at FROM documents
+  UNION ALL
+  SELECT d.order_id,d.document_id,l.expense_id,d.created_at
+  FROM documents d
+  JOIN expense_document_links l ON l.document_id=d.document_id
 ), summary AS (
   SELECT
     order_id,

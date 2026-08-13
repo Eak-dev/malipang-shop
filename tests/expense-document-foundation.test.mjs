@@ -82,6 +82,32 @@ test('duplicate Online Order submission cannot create another Expense',async()=>
   assert.equal(h.state.runs.length,0);
 });
 
+test('conflicting or unsupported Online Order amount evidence creates no Expense or Sheets sync',async()=>{
+  for(const overrides of [
+    {orderTotalLabel:'Unsupported total',finalPaidAmountBaht:54},
+    {orderTotalLabel:'',finalPaidAmountBaht:54},
+    {orderTotalLabel:'ยอดรวมคำสั่งซื้อ',orderTotalBaht:54,finalPaidAmountBaht:59}
+  ]){
+    const normalized=normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:document({documentType:'ONLINE_ORDER',paymentDate:'2026-08-12',paymentDateFormat:'YMD',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',paymentStatus:'PAID',orderTotalBaht:54,orderTotalLabel:'ยอดรวมคำสั่งซื้อ',finalPaidAmountBaht:null,...overrides})},{}).document;
+    assert.equal(purchaseExpenseDraft(normalized),null);
+    const h=harness();
+    await handleExpenseImage(h.env,h.event,reading(normalized),'expense/invalid-amount.jpg','trace-invalid-amount','hash-invalid-amount',h.actor);
+    const statements=h.state.batches[0];
+    assert.equal(statements.some(item=>item.sql.includes('INSERT INTO expense_events')),false);
+    assert.equal(statements.some(item=>item.sql.includes('sheet_sync')),false);
+  }
+});
+
+test('every generic card label remains UNCONFIRMED and requires the payment chooser',()=>{
+  for(const paymentMethod of ['credit card','debit card','บัตรเครดิต','บัตรเดบิต','บัตรเครดิต/บัตรเดบิต']){
+    const normalized=normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:document({documentType:'ONLINE_ORDER',paymentDate:'2026-08-12',paymentDateFormat:'YMD',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',paymentStatus:'PAID',orderTotalBaht:54,orderTotalLabel:'Order total',finalPaidAmountBaht:54,paymentMethod,sourceWalletCandidate:'CARD_KBANK'})},{}).document;
+    const draft=purchaseExpenseDraft(normalized);
+    assert.equal(draft.sourceWallet,'UNCONFIRMED',paymentMethod);
+    assert.equal(draft.paymentKey,'unconfirmed',paymentMethod);
+    assert.equal(draft.needsPaymentConfirmation,true,paymentMethod);
+  }
+});
+
 test('one marketplace image with two sellers creates two separate review cases',()=>{
   const cases=sellerDocumentCases(document({documentType:'ONLINE_ORDER',vendor:'Shopee',items:[
     {sellerKey:'Seller A',productCode:'A',description:'A',quantity:1,unit:'pc',unitPriceBaht:100,discountBaht:0,lineTotalBaht:100,vatBaht:0,confidence:.9,needsReview:false},

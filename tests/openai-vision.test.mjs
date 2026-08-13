@@ -58,16 +58,21 @@ test('paid Online Order maps accepted Thai and English final-total labels determ
     assert.equal(document.paymentTime,'10:08',label);
     assert.equal(document.finalPaidAmountBaht,54,label);
   }
+  assert.equal(normalizedOnline({finalPaidAmountBaht:54}).finalPaidAmountBaht,54);
 });
 
 test('Online Order payment evidence and source selection fail closed',()=>{
-  assert.equal(normalizedOnline({paymentStatus:'PENDING'}).finalPaidAmountBaht,null);
-  assert.equal(normalizedOnline({paymentStatus:'UNPAID'}).finalPaidAmountBaht,null);
-  assert.equal(normalizedOnline({paymentStatus:'UNKNOWN'}).finalPaidAmountBaht,null);
-  assert.equal(normalizedOnline({orderTotalLabel:'Expected delivery total'}).finalPaidAmountBaht,null);
+  for(const paymentStatus of ['PENDING','UNPAID','UNKNOWN'])assert.equal(normalizedOnline({paymentStatus,finalPaidAmountBaht:54}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({orderTotalLabel:'Expected delivery total',finalPaidAmountBaht:54}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({orderTotalLabel:'',finalPaidAmountBaht:54}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({orderTotalBaht:null,finalPaidAmountBaht:54}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({orderTotalBaht:0,finalPaidAmountBaht:54}).finalPaidAmountBaht,null);
   assert.equal(normalizedOnline({paymentDate:'08/09/2026',paymentDateFormat:'UNKNOWN'}).paymentDate,'');
   assert.equal(normalizedOnline({paymentDatePurpose:'EXPECTED_DELIVERY'}).paymentDate,'');
-  assert.equal(normalizedOnline().sourceWalletCandidate,'','generic card must never select a specific card');
+  const conflict=normalizedOnline({finalPaidAmountBaht:59});
+  assert.equal(conflict.finalPaidAmountBaht,null);
+  assert.match(conflict.reviewReasons.join('; '),/amount evidence conflicts/i);
+  for(const paymentMethod of ['credit card','debit card','credit/debit card','บัตรเครดิต','บัตรเดบิต','บัตรเครดิต/บัตรเดบิต'])assert.equal(normalizedOnline({paymentMethod,sourceWalletCandidate:'CARD_KBANK'}).sourceWalletCandidate,'',paymentMethod);
 });
 
 test('OpenAI normalization preserves structured G-Wallet paid amount',()=>{

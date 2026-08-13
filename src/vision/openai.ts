@@ -16,7 +16,7 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     confidence:{type:"number"},needsReview:{type:"boolean"},note:{type:"string"}
   },required:["documentType","channel","institution","transactionType","transactionStatus","printedYear","paymentDate","paymentTime","referenceId","sender","senderAccountMasked","recipient","recipientAccountMasked","merchant","grossAmountBaht","discountAmountBaht","paidAmountBaht","currency","suggestedDescription","suggestedCategory","confidence","needsReview","note"],additionalProperties:false};
   const itemSchema={type:"object",properties:{sellerKey:{type:"string"},productCode:{type:"string"},description:{type:"string"},quantity:{type:["number","null"]},unit:{type:"string"},unitPriceBaht:{type:["number","null"]},discountBaht:{type:["number","null"]},lineTotalBaht:{type:["number","null"]},vatBaht:{type:["number","null"]},confidence:{type:"number"},needsReview:{type:"boolean"}},required:["sellerKey","productCode","description","quantity","unit","unitPriceBaht","discountBaht","lineTotalBaht","vatBaht","confidence","needsReview"],additionalProperties:false};
-  const purchaseSchema={type:"object",properties:{documentType:{type:"string",enum:["RECEIPT","TAX_INVOICE","RECEIPT_TAX_INVOICE","ONLINE_ORDER","DELIVERY_ORDER"]},vendor:{type:"string"},legalVendorName:{type:"string"},documentNumber:{type:"string"},orderId:{type:"string"},documentDate:{type:"string"},paymentDate:{type:"string"},paymentTime:{type:"string"},currency:{type:"string"},subtotalBaht:{type:["number","null"]},shippingBaht:{type:["number","null"]},discountBaht:{type:["number","null"]},subsidyBaht:{type:["number","null"]},vatBaht:{type:["number","null"]},grossAmountBaht:{type:["number","null"]},finalPaidAmountBaht:{type:["number","null"]},paymentMethod:{type:"string"},sourceWalletCandidate:{type:"string"},suggestedDescription:{type:"string"},suggestedCategory:{type:"string",enum:["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"]},confidence:{type:"number"},needsReview:{type:"boolean"},reviewReasons:{type:"array",items:{type:"string"}},items:{type:"array",items:itemSchema}},required:["documentType","vendor","legalVendorName","documentNumber","orderId","documentDate","paymentDate","paymentTime","currency","subtotalBaht","shippingBaht","discountBaht","subsidyBaht","vatBaht","grossAmountBaht","finalPaidAmountBaht","paymentMethod","sourceWalletCandidate","suggestedDescription","suggestedCategory","confidence","needsReview","reviewReasons","items"],additionalProperties:false};
+  const purchaseSchema={type:"object",properties:{documentType:{type:"string",enum:["RECEIPT","TAX_INVOICE","RECEIPT_TAX_INVOICE","ONLINE_ORDER","DELIVERY_ORDER"]},vendor:{type:"string"},legalVendorName:{type:"string"},documentNumber:{type:"string"},orderId:{type:"string"},documentDate:{type:"string"},paymentDate:{type:"string"},paymentDateFormat:{type:"string",enum:["YMD","DMY","UNKNOWN"]},paymentDatePurpose:{type:"string",enum:["PAYMENT","EXPECTED_DELIVERY","UNKNOWN"]},paymentTime:{type:"string"},currency:{type:"string"},subtotalBaht:{type:["number","null"]},shippingBaht:{type:["number","null"]},discountBaht:{type:["number","null"]},subsidyBaht:{type:["number","null"]},vatBaht:{type:["number","null"]},grossAmountBaht:{type:["number","null"]},finalPaidAmountBaht:{type:["number","null"]},orderTotalBaht:{type:["number","null"]},orderTotalLabel:{type:"string"},paymentStatus:{type:"string",enum:["PAID","PENDING","UNPAID","UNKNOWN"]},paymentMethod:{type:"string"},sourceWalletCandidate:{type:"string"},suggestedDescription:{type:"string"},suggestedCategory:{type:"string",enum:["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"]},confidence:{type:"number"},needsReview:{type:"boolean"},reviewReasons:{type:"array",items:{type:"string"}},items:{type:"array",items:itemSchema}},required:["documentType","vendor","legalVendorName","documentNumber","orderId","documentDate","paymentDate","paymentDateFormat","paymentDatePurpose","paymentTime","currency","subtotalBaht","shippingBaht","discountBaht","subsidyBaht","vatBaht","grossAmountBaht","finalPaidAmountBaht","orderTotalBaht","orderTotalLabel","paymentStatus","paymentMethod","sourceWalletCandidate","suggestedDescription","suggestedCategory","confidence","needsReview","reviewReasons","items"],additionalProperties:false};
   const schema={type:"object",properties:{kind:{type:"string",enum:["CLOCK","RECEIPT","BANK_SLIP","ONLINE_ORDER","DELIVERY_ORDER","UNKNOWN"]},hour:{type:["integer","null"]},minute:{type:["integer","null"]},month:{type:["integer","null"]},day:{type:["integer","null"]},weekday:{type:["string","null"]},confidence:{type:"number"},clockFullyVisible:{type:["boolean","null"]},clockPresent:{type:["boolean","null"]},clockConfidence:{type:"number"},overlayPresent:{type:"boolean"},overlayTextWhite:{type:"boolean"},photoDate:{type:["string","null"]},photoTime:{type:["string","null"]},latitude:{type:["number","null"]},longitude:{type:["number","null"]},locationText:{type:"string"},overlayRawText:{type:"string"},overlayConfidence:{type:"number"},needsNewPhoto:{type:"boolean"},note:{type:"string"},document:{anyOf:[bankSlipSchema,purchaseSchema,{type:"null"}]}},required:["kind","hour","minute","month","day","weekday","confidence","clockFullyVisible","clockPresent","clockConfidence","overlayPresent","overlayTextWhite","photoDate","photoTime","latitude","longitude","locationText","overlayRawText","overlayConfidence","needsNewPhoto","note","document"],additionalProperties:false};
   const prompt=[
     "Inspect this MaliPang LINE image and return only the requested structured result.",
@@ -25,12 +25,14 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "Never classify a banking, Paotang, or G-Wallet payment receipt as ONLINE_ORDER. ONLINE_ORDER is only a marketplace or order-summary screenshot such as Shopee or Lazada with products or an order number.",
     "For BANK_SLIP, RECEIPT, ONLINE_ORDER, or DELIVERY_ORDER, populate document. For every other kind, return document=null.",
     "For receipts, tax invoices and online orders, copy only visible facts. This must work for an unseen vendor and any layout: wrapped names, Thai or English units, non-grid rows, and columns that are visually separated. Extract every visible line item up to 40 rows; retain the product description even when it wraps across lines, and never use the vendor name as an item description. Do not truncate a long receipt. finalPaidAmountBaht is the final cash outflow after shipping, discounts, vouchers and subsidies. Do not use expected delivery as paymentDate. DELIVERY_ORDER is supporting evidence and needsReview=true unless visible payment evidence is present.",
+    "For ONLINE_ORDER, copy a visible final-order total into orderTotalBaht and copy its exact printed label into orderTotalLabel when the label is รวมคำสั่งซื้อ, ยอดรวมคำสั่งซื้อ, ยอดชำระ, Total order, Order total, or Paid total. Set paymentStatus=PAID only when the screen visibly proves payment through a payment timestamp, paid/completed status, or explicit completed payment details. Set PENDING or UNPAID when shown, otherwise UNKNOWN. A pending, unpaid, or unknown order total is never finalPaidAmountBaht.",
+    "For ONLINE_ORDER, finalPaidAmountBaht may use an accepted order total only when paymentStatus=PAID. A generic credit/debit-card label describes a payment method but not a specific shop card: keep sourceWalletCandidate empty so the user must select the source.",
     "For RECEIPT, TAX_INVOICE and RECEIPT_TAX_INVOICE, the seller is the document issuer or legal vendor. Use that same issuer as sellerKey for every item. Buyer, customer, bill-to, ship-to, receiver, delivery address, product brand and manufacturer are never sellers.",
     "Only for ONLINE_ORDER, sellerKey may identify each marketplace seller or store. Use one consistent visible seller name for every item from the same store; do not use the marketplace, buyer or delivery recipient as a seller when a store name is visible.",
     "For each purchase item, populate description from the printed product/service text. If that text is unclear, leave description empty and set needsReview=true; do not invent it from the vendor, category, totals, or a product code. Copy visible quantity, unit, unit price, discount and line total independently. A document-level discount, subsidy, shipping or tax adjustment is not a line-item allocation.",
     "For BANK_SLIP, extract only visible values: institution, transaction type and status, date, time, reference ID, sender, recipient or merchant, masked account identifiers, and amounts.",
     "Copy the year exactly as printed into printedYear before normalizing it. Examples: 26, 2026, or 2569.",
-    "Normalize paymentDate to YYYY-MM-DD. A visible two-digit year 00-79 means 2000-2079, so 26 means 2026. Convert a visible Buddhist Era year such as 2569 to Gregorian by subtracting 543. Normalize paymentTime to 24-hour HH:mm.",
+    "Copy the visible purchase date into paymentDate and classify its meaning as PAYMENT, EXPECTED_DELIVERY, or UNKNOWN in paymentDatePurpose. Only a PAYMENT date may become an Online Order payment date. Classify its explicit order as YMD, DMY, or UNKNOWN in paymentDateFormat. Use UNKNOWN when a numeric date is ambiguous and the source gives no day/month order context. Never guess US MM/DD/YYYY. A visible two-digit year 00-79 means 2000-2079 and 80-99 means 1980-1999. Buddhist Era years such as 2569 are allowed. Normalize paymentTime to 24-hour HH:mm.",
     "For Thai-baht receipts always return currency=THB, even when the image prints Baht, บาท, or the baht symbol.",
     "Set transactionStatus=SUCCESS only when the image visibly says completed or successful. Do not infer success from layout alone.",
     "paidAmountBaht is the actual amount leaving the wallet or account. For subsidy receipts, keep grossAmountBaht and discountAmountBaht separately and set paidAmountBaht to the final amount actually paid. Example: price 40, subsidy 24, paid 16 means paidAmountBaht=16.",
@@ -65,12 +67,59 @@ function normalizeBankSlipDocument(value:unknown):BankSlipDocument|null{
   const rawCurrency=text(obj.currency).toUpperCase(),currency=["THB","BAHT","บาท","฿"].includes(rawCurrency)?"THB":rawCurrency||"THB";
   return{documentType:"BANK_SLIP",channel,institution,transactionType,transactionStatus,printedYear,paymentDate,paymentTime:text(obj.paymentTime),referenceId:text(obj.referenceId),sender:text(obj.sender),senderAccountMasked:text(obj.senderAccountMasked),recipient:text(obj.recipient),recipientAccountMasked:text(obj.recipientAccountMasked),merchant:text(obj.merchant),grossAmountBaht:numberOrNull(obj.grossAmountBaht),discountAmountBaht:numberOrNull(obj.discountAmountBaht),paidAmountBaht:numberOrNull(obj.paidAmountBaht),currency,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:text(obj.suggestedCategory)||"general",confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),note:text(obj.note)};
 }
+
+export type PurchaseDateFormat="YMD"|"DMY"|"UNKNOWN";
+
+function purchaseYear(value:number,digits:number):number|null{
+  const year=digits===2?(value<=79?2000+value:1900+value):value>=2400?value-543:value;
+  return year>=1900&&year<=2200?year:null;
+}
+
+function calendarDate(year:number,month:number,day:number):string{
+  const date=new Date(Date.UTC(year,month-1,day));
+  if(date.getUTCFullYear()!==year||date.getUTCMonth()!==month-1||date.getUTCDate()!==day)return"";
+  return`${year.toString().padStart(4,"0")}-${month.toString().padStart(2,"0")}-${day.toString().padStart(2,"0")}`;
+}
+
+/**
+ * Normalize only date orders proven by the extracted source. Numeric dates
+ * where both day and month can be valid remain empty unless DMY is explicit.
+ */
+export function normalizePurchaseDate(value:unknown,format:PurchaseDateFormat="UNKNOWN"):string{
+  const raw=String(value??"").trim();
+  const ymd=/^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(raw);
+  if(ymd){
+    const year=purchaseYear(Number(ymd[1]),4);
+    return year==null?"":calendarDate(year,Number(ymd[2]),Number(ymd[3]));
+  }
+  const dmy=/^(\d{1,2})[-/](\d{1,2})[-/](\d{2}|\d{4})$/.exec(raw);
+  if(!dmy)return"";
+  const yearText=dmy[3]||"",day=Number(dmy[1]),month=Number(dmy[2]),year=purchaseYear(Number(yearText),yearText.length);
+  if(year==null||month<1||month>12||day<1||day>31)return"";
+  if(day<=12&&month<=12&&format!=="DMY")return"";
+  return calendarDate(year,month,day);
+}
+
+function normalizePaymentTime(value:unknown):string{
+  const match=/^(\d{1,2}):(\d{2})$/.exec(String(value??"").trim());
+  if(!match)return"";
+  const hour=Number(match[1]),minute=Number(match[2]);
+  return hour<=23&&minute<=59?`${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}`:"";
+}
+
+const finalOrderLabels=new Set(["รวมคำสั่งซื้อ","ยอดรวมคำสั่งซื้อ","ยอดชำระ","total order","order total","paid total"]);
+function acceptedFinalOrderLabel(value:unknown):string{
+  const label=String(value??"").trim().replace(/[:：]\s*$/,"").replace(/\s+/g," ");
+  return finalOrderLabels.has(label.toLocaleLowerCase("en-US"))?label:"";
+}
+function isGenericCardMethod(value:string):boolean{return/(?:credit.*debit|debit.*credit|เครดิต.*เดบิต|เดบิต.*เครดิต)/i.test(value);}
+
 function normalizePurchaseDocument(value:unknown):PurchaseDocument|null{
   if(!value||typeof value!=="object"||Array.isArray(value))return null;
   const obj=value as Record<string,unknown>,text=(v:unknown)=>String(v??"").trim(),money=(v:unknown):number|null=>v==null||v===""?null:Number.isFinite(Number(v))?Number(v):null;
   const types=["RECEIPT","TAX_INVOICE","RECEIPT_TAX_INVOICE","ONLINE_ORDER","DELIVERY_ORDER"] as const,type=text(obj.documentType);
   if(!types.includes(type as typeof types[number]))return null;
-  const category=text(obj.suggestedCategory)||"general",items=Array.isArray(obj.items)?obj.items.map(item=>{
+  const category=text(obj.suggestedCategory)||"general",dateFormats=["YMD","DMY","UNKNOWN"] as const,rawDateFormat=text(obj.paymentDateFormat),paymentDateFormat=dateFormats.includes(rawDateFormat as typeof dateFormats[number])?rawDateFormat as PurchaseDateFormat:"UNKNOWN",datePurposes=["PAYMENT","EXPECTED_DELIVERY","UNKNOWN"] as const,rawDatePurpose=text(obj.paymentDatePurpose),paymentDatePurpose=datePurposes.includes(rawDatePurpose as typeof datePurposes[number])?rawDatePurpose as typeof datePurposes[number]:"UNKNOWN",normalizedPaymentDate=normalizePurchaseDate(obj.paymentDate,paymentDateFormat),paymentDate=type==="ONLINE_ORDER"&&paymentDatePurpose!=="PAYMENT"?"":normalizedPaymentDate,documentDate=normalizePurchaseDate(obj.documentDate,paymentDateFormat),paymentTime=normalizePaymentTime(obj.paymentTime),paymentStatuses=["PAID","PENDING","UNPAID","UNKNOWN"] as const,rawPaymentStatus=text(obj.paymentStatus),paymentStatus=paymentStatuses.includes(rawPaymentStatus as typeof paymentStatuses[number])?rawPaymentStatus as typeof paymentStatuses[number]:"UNKNOWN",orderTotalLabel=acceptedFinalOrderLabel(obj.orderTotalLabel),orderTotalBaht=orderTotalLabel?money(obj.orderTotalBaht):null,rawFinalPaidAmountBaht=money(obj.finalPaidAmountBaht),finalPaidAmountBaht=type==="ONLINE_ORDER"?(paymentStatus==="PAID"?(rawFinalPaidAmountBaht??orderTotalBaht):null):rawFinalPaidAmountBaht,paymentMethod=text(obj.paymentMethod),sourceWalletCandidate=isGenericCardMethod(paymentMethod)?"":text(obj.sourceWalletCandidate),items=Array.isArray(obj.items)?obj.items.map(item=>{
     const row=item&&typeof item==="object"?item as Record<string,unknown>:{};
     // The fallback is deliberately generic: visible item text wins, then a
     // visible document-level description, then a printed product code.  A
@@ -78,7 +127,9 @@ function normalizePurchaseDocument(value:unknown):PurchaseDocument|null{
     const productCode=text(row.productCode),visibleDescription=text(row.description),description=visibleDescription||text(obj.suggestedDescription)||productCode;
     return{sellerKey:text(row.sellerKey),productCode,description,quantity:money(row.quantity),unit:text(row.unit),unitPriceBaht:money(row.unitPriceBaht),discountBaht:money(row.discountBaht),lineTotalBaht:money(row.lineTotalBaht),vatBaht:money(row.vatBaht),confidence:Number(row.confidence||0),needsReview:Boolean(row.needsReview)||!visibleDescription} satisfies ExpenseDocumentItem;
   }).filter(item=>item.description):[];
-  return{documentType:type as PurchaseDocument["documentType"],vendor:text(obj.vendor),legalVendorName:text(obj.legalVendorName),documentNumber:text(obj.documentNumber),orderId:text(obj.orderId),documentDate:text(obj.documentDate),paymentDate:text(obj.paymentDate),paymentTime:text(obj.paymentTime),currency:text(obj.currency).toUpperCase()||"THB",subtotalBaht:money(obj.subtotalBaht),shippingBaht:money(obj.shippingBaht),discountBaht:money(obj.discountBaht),subsidyBaht:money(obj.subsidyBaht),vatBaht:money(obj.vatBaht),grossAmountBaht:money(obj.grossAmountBaht),finalPaidAmountBaht:money(obj.finalPaidAmountBaht),paymentMethod:text(obj.paymentMethod),sourceWalletCandidate:text(obj.sourceWalletCandidate),suggestedDescription:text(obj.suggestedDescription),suggestedCategory:category,confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),reviewReasons:Array.isArray(obj.reviewReasons)?obj.reviewReasons.map(text).filter(Boolean):[],items};
+  const reviewReasons=Array.isArray(obj.reviewReasons)?obj.reviewReasons.map(text).filter(Boolean):[];
+  if(text(obj.paymentDate)&&!paymentDate)reviewReasons.push("Missing or invalid payment date");
+  return{documentType:type as PurchaseDocument["documentType"],vendor:text(obj.vendor),legalVendorName:text(obj.legalVendorName),documentNumber:text(obj.documentNumber),orderId:text(obj.orderId),documentDate,paymentDate,paymentDateFormat,paymentDatePurpose,paymentTime,currency:text(obj.currency).toUpperCase()||"THB",subtotalBaht:money(obj.subtotalBaht),shippingBaht:money(obj.shippingBaht),discountBaht:money(obj.discountBaht),subsidyBaht:money(obj.subsidyBaht),vatBaht:money(obj.vatBaht),grossAmountBaht:money(obj.grossAmountBaht),finalPaidAmountBaht,orderTotalBaht,orderTotalLabel,paymentStatus,paymentMethod,sourceWalletCandidate,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:category,confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),reviewReasons:[...new Set(reviewReasons)],items};
 }
 export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unknown):VisionResult{
   const num=(v:unknown):number|null=>v==null?null:Number.isFinite(Number(v))?Number(v):null;

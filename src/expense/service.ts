@@ -8,7 +8,7 @@ import {
   buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
-import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
+import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
 import { parseExpenseText } from "./text-parser";
 import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyReviewState,purchaseReviewState,stateFromStoredDocument,type ExpenseReviewField,type ExpenseReviewState,unresolvedReviewFields } from "./review-state";
@@ -234,7 +234,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     ]);
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
-  const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?(document.documentType==="DELIVERY_ORDER"?"Delivery Order is supporting evidence; add payment evidence before finalizing.":"Missing final paid amount or payment date."):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
+  const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
   const expenseId=draft?randomId("exp"):null;
   const base=[documentId,messageId,to,document.documentType,imageKey,documentStatus,JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,draft?.needsReview||document.needsReview?1:0,reviewReason,imageHash,expenseId];
   try{

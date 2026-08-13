@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildOpenAIVisionPayload,normalizeOpenAIVisionResult} from '../dist/vision/openai.js';
+import {buildOpenAIVisionPayload,normalizeOpenAIVisionResult,normalizePurchaseDate} from '../dist/vision/openai.js';
 
 test('OpenAI fallback uses photo timestamp and GPS as the attendance source',()=>{
   const payload=buildOpenAIVisionPayload('gpt-4o-mini',new Uint8Array([255,216,255,217]).buffer);
@@ -22,9 +22,52 @@ test('OpenAI fallback uses photo timestamp and GPS as the attendance source',()=
   assert.match(prompt,/paidAmountBaht is the actual amount leaving the wallet or account/i);
   assert.match(prompt,/Buyer, customer, bill-to, ship-to, receiver, delivery address, product brand and manufacturer are never sellers/i);
   assert.match(prompt,/Only for ONLINE_ORDER, sellerKey may identify each marketplace seller or store/i);
+  assert.match(prompt,/ยอดรวมคำสั่งซื้อ/);
+  assert.match(prompt,/Order total/);
+  assert.match(prompt,/paymentStatus=PAID only when the screen visibly proves payment/i);
+  assert.match(prompt,/generic credit\/debit-card label/i);
   assert.match(prompt,/price 40, subsidy 24, paid 16/i);
+  const purchaseSchema=payload.text.format.schema.properties.document.anyOf[1];
+  for(const field of ['paymentDateFormat','paymentDatePurpose','orderTotalBaht','orderTotalLabel','paymentStatus'])assert.ok(purchaseSchema.required.includes(field));
   assert.match(payload.input[0].content[1].image_url,/^data:image\/jpeg;base64,/);
   assert.equal(payload.input[0].content[1].detail,'high');
+});
+
+function onlineOrder(overrides={}){
+  return{documentType:'ONLINE_ORDER',vendor:'Marketplace',legalVendorName:'',documentNumber:'',orderId:'MASKED',documentDate:'2026-08-12',paymentDate:'12-08-2026',paymentDateFormat:'DMY',paymentDatePurpose:'PAYMENT',paymentTime:'10:08',currency:'THB',subtotalBaht:54,shippingBaht:0,discountBaht:0,subsidyBaht:0,vatBaht:0,grossAmountBaht:54,finalPaidAmountBaht:null,orderTotalBaht:54,orderTotalLabel:'ยอดรวมคำสั่งซื้อ',paymentStatus:'PAID',paymentMethod:'บัตรเครดิต/บัตรเดบิต',sourceWalletCandidate:'CARD_KBANK',suggestedDescription:'Online order',suggestedCategory:'general',confidence:.98,needsReview:false,reviewReasons:[],items:[{sellerKey:'Store',productCode:'',description:'Item',quantity:1,unit:'item',unitPriceBaht:54,discountBaht:0,lineTotalBaht:54,vatBaht:0,confidence:.98,needsReview:false}],...overrides};
+}
+function normalizedOnline(overrides={}){
+  return normalizeOpenAIVisionResult({kind:'ONLINE_ORDER',confidence:.98,document:onlineOrder(overrides)},{}).document;
+}
+
+test('purchase-date normalization supports proven formats and calendar-safe year policies',()=>{
+  assert.equal(normalizePurchaseDate('2026-08-12'),'2026-08-12');
+  assert.equal(normalizePurchaseDate('12-08-2026','DMY'),'2026-08-12');
+  assert.equal(normalizePurchaseDate('12/08/2026','DMY'),'2026-08-12');
+  assert.equal(normalizePurchaseDate('12-08-26','DMY'),'2026-08-12');
+  assert.equal(normalizePurchaseDate('12-08-2569','DMY'),'2026-08-12');
+  assert.equal(normalizePurchaseDate('31-02-2026','DMY'),'');
+  assert.equal(normalizePurchaseDate('08/09/2026','UNKNOWN'),'');
+  assert.equal(normalizePurchaseDate('09/08/2026','UNKNOWN'),'');
+});
+
+test('paid Online Order maps accepted Thai and English final-total labels deterministically',()=>{
+  for(const label of ['รวมคำสั่งซื้อ','ยอดรวมคำสั่งซื้อ','ยอดชำระ','Total order','Order total','Paid total']){
+    const document=normalizedOnline({orderTotalLabel:label});
+    assert.equal(document.paymentDate,'2026-08-12',label);
+    assert.equal(document.paymentTime,'10:08',label);
+    assert.equal(document.finalPaidAmountBaht,54,label);
+  }
+});
+
+test('Online Order payment evidence and source selection fail closed',()=>{
+  assert.equal(normalizedOnline({paymentStatus:'PENDING'}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({paymentStatus:'UNPAID'}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({paymentStatus:'UNKNOWN'}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({orderTotalLabel:'Expected delivery total'}).finalPaidAmountBaht,null);
+  assert.equal(normalizedOnline({paymentDate:'08/09/2026',paymentDateFormat:'UNKNOWN'}).paymentDate,'');
+  assert.equal(normalizedOnline({paymentDatePurpose:'EXPECTED_DELIVERY'}).paymentDate,'');
+  assert.equal(normalizedOnline().sourceWalletCandidate,'','generic card must never select a specific card');
 });
 
 test('OpenAI normalization preserves structured G-Wallet paid amount',()=>{

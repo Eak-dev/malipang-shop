@@ -67,9 +67,18 @@ export function purchaseExpenseDraft(document:PurchaseDocument):PurchaseExpenseD
   const description=(document.suggestedDescription.trim()||vendor||"Expense document").slice(0,200);
   const reviewReasons=[...document.reviewReasons];
   if(document.needsReview&&!reviewReasons.length)reviewReasons.push("Document facts must be confirmed");
-  if(needsPaymentConfirmation)reviewReasons.push("Payment source must be confirmed");
-  if(document.documentType==="ONLINE_ORDER"&&!document.paymentDate)reviewReasons.push("Payment date must be confirmed");
+  if(needsPaymentConfirmation)reviewReasons.push("Payment source must be selected");
   return{description,amountSatang,paymentKey:payment?.paymentKey||"unconfirmed",sourceWallet:payment?.sourceWallet||"UNCONFIRMED",category,transactionDate:date,needsPaymentConfirmation,needsReview:document.needsReview||document.confidence<0.85||needsPaymentConfirmation||category==="general",reviewReasons:[...new Set(reviewReasons)]};
+}
+
+export function purchaseDraftMissingReasons(document:PurchaseDocument):string[]{
+  if(document.documentType==="DELIVERY_ORDER")return["Delivery Order is supporting evidence; add payment evidence before finalizing."];
+  const reasons:string[]=[];
+  const amountSatang=toSatang(document.finalPaidAmountBaht);
+  const date=document.documentType==="ONLINE_ORDER"?document.paymentDate:(document.paymentDate||document.documentDate);
+  if(amountSatang==null||amountSatang<=0)reasons.push("Missing final paid amount");
+  if(!isIsoDate(date))reasons.push("Missing or invalid payment date");
+  return reasons;
 }
 
 export function documentItemStatements(documentId:string,expenseId:string|null,document:PurchaseDocument,now:string,randomId:(prefix:string)=>string){

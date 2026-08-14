@@ -496,6 +496,9 @@ Source wallet = SHOP_BANK
 
 - reference number
 - image hash
+- exact trimmed `order_id` สำหรับ `ONLINE_ORDER` โดยใช้ D1 unique identity claim
+
+ภาพหรือ LINE message ใหม่ของ Online Order เดิมต้องกลับไปแสดงรายการเดิมและห้ามสร้าง Expense หรือ primary purchase document ใหม่ แม้เกิดพร้อมกันหลาย event. เอกสารคนละชนิดที่มี order ID เดียวกันยัง link เป็น supporting evidence ได้ตาม relation model เดิม; ข้อมูลเก่า `WAITING_REVIEW` จะไม่ถูกยกระดับอัตโนมัติ.
 
 Undo เปลี่ยนเป็น `CANCELLED`
 

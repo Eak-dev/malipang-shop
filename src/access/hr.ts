@@ -1,5 +1,6 @@
 import { authorize } from "./authorization";
 import { approveIdentityLinkRequest,createEmployeeChangeRequest,listIdentityLinkRequests,rejectIdentityLinkRequest,startHrRegistration,submitHrStaffId } from "./repository";
+import { importEmployeesFromConfiguredSheet } from "../admin/staff-import";
 import { respondTextToLineEvent } from "../line/event-response";
 import type { Env,LineEvent } from "../types";
 import type { StaffActor } from "./repository";
@@ -11,13 +12,34 @@ function profile(actor:StaffActor):string{return tri(
   `HR Profile\nStaff ID: ${actor.employeeId}\nName: ${actor.employee.staffName}\nRole: ${actor.role}\nBranch: ${actor.branchName||"All branches"}\nLINE: Connected\nStatus: ${actor.employeeStatus}`,
   `HR ပရိုဖိုင်\nဝန်ထမ်း ID: ${actor.employeeId}\nအမည်: ${actor.employee.staffName}\nအခန်းကဏ္ဍ: ${actor.role}\nLINE: ချိတ်ဆက်ပြီး\nအခြေအနေ: ${actor.employeeStatus}`
 );}
-export async function handleHrText(env:Env,event:LineEvent,actor:StaffActor|null,traceId:string):Promise<boolean>{
+
+type HrDependencies={importConfiguredStaff?:typeof importEmployeesFromConfiguredSheet};
+
+export async function handleHrText(env:Env,event:LineEvent,actor:StaffActor|null,traceId:string,deps:HrDependencies={}):Promise<boolean>{
   const text=(event.message?.text||"").trim(),lineUserId=event.source.userId||"";
   if(!lineUserId)return false;
-  const ownerCommand=/^HR\s+(PENDING|APPROVE|REJECT)\b\s*(.*)$/i.exec(text);
+  const ownerCommand=/^HR\s+(PENDING|APPROVE|REJECT|SYNC)\b\s*(.*)$/i.exec(text);
   if(ownerCommand){
     if(!actor||actor.role!=="OWNER"||!authorize(actor,"identity.approve")){await reply(env,event,"HR identity administration is available only to a verified Owner LINE account.",traceId);return true;}
     const action=ownerCommand[1]!.toUpperCase(),args=ownerCommand[2]!.trim();
+    if(action==="SYNC"){
+      if(args){await reply(env,event,"Usage: HR SYNC",traceId);return true;}
+      try{
+        const result=await(deps.importConfiguredStaff||importEmployeesFromConfiguredSheet)(env);
+        await reply(env,event,tri(
+          `ซิงก์ข้อมูลพนักงานสำเร็จ\nประมวลผล ${result.count} รายการ\nพนักงานใหม่สามารถส่ง HR แล้วพิมพ์รหัสพนักงานได้`,
+          `HR staff sync completed.\nProcessed ${result.count} staff rows.\nNew staff can now send HR and enter their Staff ID.`,
+          `HR ဝန်ထမ်းစာရင်း sync ပြီးပါပြီ။\nဝန်ထမ်း ${result.count} ဦးကို စစ်ဆေးပြီးပါပြီ။\nဝန်ထမ်းအသစ်သည် HR ပို့ပြီး Staff ID ရိုက်ထည့်နိုင်ပါပြီ။`
+        ),traceId);
+      }catch{
+        await reply(env,event,tri(
+          "ซิงก์ข้อมูลพนักงานไม่สำเร็จ\nยังไม่มีการเชื่อม LINE ใหม่ กรุณาตรวจ HR_STAFF_CONFIG หรือติดต่อผู้ดูแลระบบ",
+          "HR staff sync failed.\nNo new LINE identity was linked. Please verify HR_STAFF_CONFIG or contact the system administrator.",
+          "HR ဝန်ထမ်းစာရင်း sync မအောင်မြင်ပါ။ LINE အကောင့်အသစ် မချိတ်ထားပါ။ HR_STAFF_CONFIG ကို စစ်ဆေးပါ။"
+        ),traceId);
+      }
+      return true;
+    }
     if(action==="PENDING"){
       const requests=await listIdentityLinkRequests(env);
       const rows=requests.map(request=>`${request.requestId} | ${request.requestedStaffId||"-"} | ${request.staffName||"-"} | ${request.role||"-"} | ${request.branchName||"All branches"}`).join("\n");
@@ -42,6 +64,11 @@ export async function handleHrText(env:Env,event:LineEvent,actor:StaffActor|null
   if(!actor&&/^[A-Za-z0-9_-]{1,40}$/.test(text)){
     const result=await submitHrStaffId(env,lineUserId,text);
     if(result.ok)await reply(env,event,tri(`ได้รับคำขอลงทะเบียนแล้ว\nพนักงาน: ${result.staffName}\nรอ Owner อนุมัติ`, `Registration request received.\nStaff: ${result.staffName}\nWaiting for Owner approval.`, `မှတ်ပုံတင်တောင်းဆိုချက်ကို လက်ခံရရှိပါပြီ။\nOwner အတည်ပြုချက်ကို စောင့်ပါ။`),traceId);
+    else if(result.code==="STAFF_ID_NOT_FOUND")await reply(env,event,tri(
+      "ยังไม่พบรหัสพนักงานนี้ในระบบ\nกรุณาให้ Owner ส่ง HR SYNC แล้วลองพิมพ์รหัสพนักงานอีกครั้ง",
+      "Staff ID is not provisioned yet.\nPlease ask the Owner to send HR SYNC, then enter your Staff ID again.",
+      "ဤ Staff ID ကို စနစ်ထဲတွင် မတွေ့သေးပါ။ Owner အား HR SYNC ပို့ခိုင်းပြီး Staff ID ကို ထပ်မံရိုက်ထည့်ပါ။"
+    ),traceId);
     else if(result.code!=="HR_REGISTRATION_NOT_STARTED")await reply(env,event,tri("ลงทะเบียนไม่สำเร็จ\nกรุณาตรวจรหัสพนักงานหรือสอบถาม Owner",`Registration was not accepted.\nCode: ${result.code}`,"မှတ်ပုံတင်ခြင်း မအောင်မြင်ပါ။ Owner ကို ဆက်သွယ်ပါ။"),traceId);
     else return false;
     return true;

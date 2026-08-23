@@ -16,6 +16,7 @@ function database(state){
 }
 function env(state){return {DB:database(state),JOB_QUEUE:{async send(){}},RUNTIME_MODE:'production',SHADOW_LINE_OUTPUT:'false',LINE_CHANNEL_ACCESS_TOKEN:'token',EXTERNAL_API_TIMEOUT_MS:'1000'};}
 function event(text){return {type:'message',timestamp:Date.now(),source:{type:'user',userId:'U00000000000000000001'},replyToken:'reply',webhookEventId:`W-${text}`,message:{id:`M-${text}`,type:'text',text}};}
+const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'OWN001',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
 
 async function lineReply(run){
   const calls=[],original=globalThis.fetch;
@@ -40,6 +41,13 @@ test('Staff ID alone only creates an approval request; it never creates a bindin
   assert.equal(state.sql.some(entry=>entry.sql.includes('INSERT INTO line_identity_bindings')),false);
 });
 
+test('missing Staff ID tells employee to ask verified Owner to run HR SYNC',async()=>{
+  const state={sql:[],actor:null,pending:true,staff:null,lineBound:false};
+  const calls=await lineReply(()=>handleHrText(env(state),event('EMP004'),null,'trace'));
+  assert.match(calls[0].messages[0].text,/HR SYNC/);
+  assert.equal(state.sql.some(entry=>entry.sql.includes('INSERT INTO line_identity_bindings')),false);
+});
+
 test('provisioned OWN002 follows the ordinary pending Owner approval flow',async()=>{
   const state={sql:[],actor:null,pending:true,staff:{employee_id:'OWN002',staff_name:'Nea',status:'ACTIVE',existing_binding:null},lineBound:false};
   const calls=await lineReply(()=>handleHrText(env(state),event('OWN002'),null,'trace'));
@@ -58,11 +66,35 @@ test('already linked HR returns a sanitised profile without raw LINE user ID',as
 
 test('only an already verified Owner LINE account can list pending identity requests',async()=>{
   const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
-  const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:null,branchName:null,employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{employeeId:'OWN001',staffName:'Eak',lineUserId:'U-owner',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:0,graceMin:0,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:true,status:'ACTIVE'}};
   const calls=await lineReply(()=>handleHrText(env(state),event('HR PENDING'),owner,'trace'));
   assert.match(calls[0].messages[0].text,/No pending requests/);
   const denied=await lineReply(()=>handleHrText(env(state),event('HR PENDING'),null,'trace'));
   assert.match(denied[0].messages[0].text,/verified Owner LINE account/);
+});
+
+test('verified Owner can run HR SYNC without creating a LINE binding',async()=>{
+  const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
+  let syncCalls=0;
+  const calls=await lineReply(()=>handleHrText(env(state),event('HR SYNC'),owner,'trace',{importConfiguredStaff:async()=>{syncCalls++;return{count:5,employees:[]};}}));
+  assert.equal(syncCalls,1);
+  assert.match(calls[0].messages[0].text,/Processed 5 staff rows/);
+  assert.equal(state.sql.some(entry=>entry.sql.includes('INSERT INTO line_identity_bindings')),false);
+});
+
+test('non-owner cannot run HR SYNC',async()=>{
+  const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
+  let syncCalls=0;
+  const calls=await lineReply(()=>handleHrText(env(state),event('HR SYNC'),null,'trace',{importConfiguredStaff:async()=>{syncCalls++;return{count:0,employees:[]};}}));
+  assert.equal(syncCalls,0);
+  assert.match(calls[0].messages[0].text,/verified Owner LINE account/);
+});
+
+test('HR SYNC failure is sanitized and does not create a binding',async()=>{
+  const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
+  const calls=await lineReply(()=>handleHrText(env(state),event('HR SYNC'),owner,'trace',{importConfiguredStaff:async()=>{throw new Error('private provider detail');}}));
+  assert.match(calls[0].messages[0].text,/HR staff sync failed/);
+  assert.doesNotMatch(calls[0].messages[0].text,/private provider detail/);
+  assert.equal(state.sql.some(entry=>entry.sql.includes('INSERT INTO line_identity_bindings')),false);
 });
 
 test('an already-bound target staff ID is rejected and creates no binding',async()=>{

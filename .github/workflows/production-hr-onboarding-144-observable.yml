@@ -17,12 +17,13 @@ concurrency:
 jobs:
   release:
     name: deploy and report HR onboarding #144
-    if: github.event.before == '51502fed27be605a8a40062ee33b553d8e9c4f4b'
+    if: github.event.before == '824d4290f7df154a282063e881e152f2b814b81e'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     environment: production
     env:
       TARGET_SHA: 495b93afb46f2b7ed5eaa7b164dbaa412072958b
+      BASE_CONTROL_SHA: 824d4290f7df154a282063e881e152f2b814b81e
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
@@ -39,12 +40,12 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$GITHUB_REF" == "refs/heads/main" ]]
-          [[ "${{ github.event.before }}" == "51502fed27be605a8a40062ee33b553d8e9c4f4b" ]]
+          [[ "${{ github.event.before }}" == "$BASE_CONTROL_SHA" ]]
           git cat-file -e "$TARGET_SHA^{commit}"
           git merge-base --is-ancestor "$TARGET_SHA" "$GITHUB_SHA"
-          changed="$(git diff --name-only 51502fed27be605a8a40062ee33b553d8e9c4f4b "$GITHUB_SHA")"
+          changed="$(git diff --name-only "$BASE_CONTROL_SHA" "$GITHUB_SHA")"
           unexpected="$(printf '%s\n' "$changed" | grep -Ev '^\.github/workflows/production-hr-onboarding-144-observable\.yml$' || true)"
-          [[ -z "$unexpected" ]] || { echo "Unexpected files in observable release control change" >&2; exit 1; }
+          [[ -z "$unexpected" ]] || { echo "Unexpected files in release-control change" >&2; exit 1; }
 
       - name: Checkout exact runtime SHA
         uses: actions/checkout@v4
@@ -99,6 +100,7 @@ jobs:
           jq -e '.ok == true' "$RUNNER_TEMP/readiness-before.raw.json" >/dev/null
           jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-before.raw.json" > release-artifacts/readiness-before.json
           jq -e '.ok == true' release-artifacts/status-before.json >/dev/null
+          touch release-artifacts/pre-health.PASS
 
       - name: Export and verify fresh D1 backup
         working-directory: release-source
@@ -135,22 +137,36 @@ jobs:
           con.close()
           PY
           jq -n --arg object_key "$object_key" --arg sha256 "$sha" --arg release_sha "$TARGET_SHA" --arg created_at "$(date -u +%FT%TZ)" '{private_r2_bucket:"malipang-private-backups",object_key:$object_key,sha256:$sha256,release_sha:$release_sha,created_at:$created_at,download_verification:"PASS",gzip_integrity:"PASS",restore_integrity:"PASS"}' > ../release-artifacts/backup-metadata.json
+          touch ../release-artifacts/backup.PASS
 
       - name: Record pending migrations
-        working-directory: release-source
-        run: npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-before.txt
-
-      - name: Apply remote migrations
-        working-directory: release-source
-        run: npx wrangler d1 migrations apply malipang-v5-2 --remote --yes | tee ../release-artifacts/migrations-apply.txt
-
-      - name: Verify HR onboarding schema
         working-directory: release-source
         shell: bash
         run: |
           set -euo pipefail
+          npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-before.txt
+
+      - name: Apply remote migrations
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf 'y\n' | npx wrangler d1 migrations apply malipang-v5-2 --remote | tee ../release-artifacts/migrations-apply.txt
+          touch ../release-artifacts/migrations-apply.PASS
+
+      - name: Verify HR onboarding schema and migration state
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-after.txt
+          if grep -q '0017_line_first_hr_onboarding.sql' ../release-artifacts/migrations-after.txt; then
+            echo '0017 is still pending after apply' >&2
+            exit 1
+          fi
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hr_onboarding_requests') AS onboarding_table,(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='staff_id_sequences') AS sequence_table,(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='staff_config_sync_outbox') AS outbox_table,(SELECT COUNT(*) FROM (SELECT external_user_id,COUNT(*) c FROM hr_onboarding_requests WHERE status='PENDING_OWNER_SETUP' GROUP BY external_user_id HAVING c>1)) AS duplicate_pending_rows" > ../release-artifacts/hr-schema.json
           jq -e '.[0].success == true and .[0].results[0].onboarding_table == 1 and .[0].results[0].sequence_table == 1 and .[0].results[0].outbox_table == 1 and .[0].results[0].duplicate_pending_rows == 0' ../release-artifacts/hr-schema.json >/dev/null
+          touch ../release-artifacts/hr-schema.PASS
 
       - name: Deploy exact merged runtime SHA
         working-directory: release-source
@@ -159,6 +175,7 @@ jobs:
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
           npx wrangler deploy | tee ../release-artifacts/deploy.txt
+          touch ../release-artifacts/deploy.PASS
 
       - name: Record post-release Worker versions
         working-directory: release-source
@@ -183,6 +200,9 @@ jobs:
           before_failed="$(jq -r '.openFailedJobs // 0' release-artifacts/status-before.json)"
           after_failed="$(jq -r '.openFailedJobs // 0' release-artifacts/status-after.json)"
           [[ "$after_failed" -le "$before_failed" ]]
+          touch release-artifacts/health-after.PASS
+          touch release-artifacts/readiness-after.PASS
+          touch release-artifacts/queue-baseline.PASS
 
       - name: Verify no duplicate active LINE identities
         working-directory: release-source
@@ -191,12 +211,13 @@ jobs:
           set -euo pipefail
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM (SELECT provider,external_user_id,COUNT(*) c FROM line_identity_bindings WHERE status='VERIFIED' GROUP BY provider,external_user_id HAVING c>1)) AS duplicate_external_bindings,(SELECT COUNT(*) FROM (SELECT provider,employee_id,COUNT(*) c FROM line_identity_bindings WHERE status='VERIFIED' GROUP BY provider,employee_id HAVING c>1)) AS duplicate_staff_bindings" > ../release-artifacts/identity-duplicates.json
           jq -e '.[0].success == true and .[0].results[0].duplicate_external_bindings == 0 and .[0].results[0].duplicate_staff_bindings == 0' ../release-artifacts/identity-duplicates.json >/dev/null
+          touch ../release-artifacts/identity-duplicates.PASS
 
       - name: Upload sanitized release evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: hr-onboarding-144-observable-production-${{ github.run_id }}
+          name: hr-onboarding-144-production-${{ github.run_id }}
           path: release-artifacts
           if-no-files-found: warn
           retention-days: 14
@@ -210,25 +231,24 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
             const fs = require('fs');
-            const exists = (p) => fs.existsSync(p);
+            const passMarker = (name) => fs.existsSync(`release-artifacts/${name}.PASS`);
             const status = process.env.RELEASE_JOB_STATUS || 'unknown';
-            const pass = status === 'success';
+            const required = ['backup','migrations-apply','hr-schema','deploy','health-after','readiness-after','queue-baseline','identity-duplicates'];
+            const pass = status === 'success' && required.every(passMarker);
             const lines = [
               `## HR Onboarding #144 Production Release`,
               `- Result: **${pass ? 'PASS' : 'FAIL'}**`,
               `- Runtime SHA: \`${process.env.TARGET_SHA}\``,
               `- Control SHA: \`${context.sha}\``,
               `- GitHub Actions run: \`${context.runId}\``,
-              `- Fresh D1 backup/verification evidence: ${exists('release-artifacts/backup-metadata.json') ? 'PASS' : 'NOT COMPLETED'}`,
-              `- HR schema verification: ${exists('release-artifacts/hr-schema.json') ? 'PASS' : 'NOT COMPLETED'}`,
-              `- Production health after deploy: ${exists('release-artifacts/health-after.json') ? 'PASS' : 'NOT COMPLETED'}`,
-              `- Production readiness after deploy: ${exists('release-artifacts/readiness-after.json') ? 'PASS' : 'NOT COMPLETED'}`,
-              `- Duplicate active LINE identity check: ${exists('release-artifacts/identity-duplicates.json') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Fresh D1 backup + download/checksum/restore: ${passMarker('backup') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Migration apply: ${passMarker('migrations-apply') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- HR schema + no pending 0017: ${passMarker('hr-schema') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Exact runtime deploy: ${passMarker('deploy') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Production health/readiness: ${passMarker('health-after') && passMarker('readiness-after') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Queue baseline: ${passMarker('queue-baseline') ? 'PASS' : 'NOT COMPLETED'}`,
+              `- Duplicate active LINE identity check: ${passMarker('identity-duplicates') ? 'PASS' : 'NOT COMPLETED'}`,
               pass ? '- Status: ready for live LINE HR onboarding.' : '- Status: release stopped fail-closed; inspect the Actions run before retrying.'
             ];
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: 143,
-              body: lines.join('\n')
-            });
+            await github.rest.issues.createComment({owner: context.repo.owner, repo: context.repo.repo, issue_number: 143, body: lines.join('\n')});
+            if (!pass) core.setFailed('Production release did not complete every required gate');

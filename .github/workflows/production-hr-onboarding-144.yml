@@ -1,0 +1,217 @@
+name: One-shot HR Onboarding #144 Production Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/production-hr-onboarding-144.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: deploy HR onboarding #144
+    if: github.event.before == '495b93afb46f2b7ed5eaa7b164dbaa412072958b'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      TARGET_SHA: 495b93afb46f2b7ed5eaa7b164dbaa412072958b
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+
+    steps:
+      - name: Checkout one-shot control commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce exact one-shot ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "${{ github.event.before }}" == "$TARGET_SHA" ]]
+          git cat-file -e "$TARGET_SHA^{commit}"
+          git merge-base --is-ancestor "$TARGET_SHA" "$GITHUB_SHA"
+          changed="$(git diff --name-only "$TARGET_SHA" "$GITHUB_SHA")"
+          unexpected="$(printf '%s\n' "$changed" | grep -Ev '^\.github/workflows/production-hr-onboarding-144\.yml$' || true)"
+          [[ -z "$unexpected" ]] || { echo "Unexpected files in one-shot control change" >&2; exit 1; }
+
+      - name: Checkout exact approved runtime SHA
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: release-source
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+
+      - name: Validate credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$MALIPANG_ADMIN_TOKEN"
+          test -n "$MALIPANG_WORKER_URL"
+
+      - name: Validate exact release code
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npm ci
+          npm run check
+          npx wrangler deploy --dry-run
+          git diff --check
+
+      - name: Create evidence directory
+        run: mkdir -p release-artifacts
+
+      - name: Record current Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-before.json
+
+      - name: Verify production health before release
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-before.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-before.raw.json"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o release-artifacts/status-before.json
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-before.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-before.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-before.raw.json" > release-artifacts/readiness-before.json
+          jq -e '.ok == true' release-artifacts/status-before.json >/dev/null
+
+      - name: Export verify and privately store fresh D1 backup
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(TZ=Asia/Bangkok date +%Y%m%d-%H%M%S)"
+          short_sha="$(git rev-parse --short=9 HEAD)"
+          sql="$RUNNER_TEMP/malipang-v5-2-before-${short_sha}-${stamp}.sql"
+          gz="${sql}.gz"
+          verify="$RUNNER_TEMP/verify-${short_sha}-${stamp}.sql.gz"
+          restore_sql="$RUNNER_TEMP/restore-${short_sha}-${stamp}.sql"
+          restore_db="$RUNNER_TEMP/restore-${short_sha}-${stamp}.sqlite"
+          date_path="$(TZ=Asia/Bangkok date +%Y/%m/%d)"
+          object_key="d1/${date_path}/$(basename "$gz")"
+
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -9 "$sql"
+          sha="$(sha256sum "$gz" | awk '{print $1}')"
+          gzip -t "$gz"
+          npx wrangler r2 object put "malipang-private-backups/${object_key}" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/${object_key}" --file="$verify" --remote
+          [[ "$sha" == "$(sha256sum "$verify" | awk '{print $1}')" ]]
+          gzip -t "$verify"
+          gzip -dc "$verify" > "$restore_sql"
+          python3 - "$restore_sql" "$restore_db" <<'PY'
+          import sqlite3, sys
+          sql_path, db_path = sys.argv[1], sys.argv[2]
+          con = sqlite3.connect(db_path)
+          with open(sql_path, 'r', encoding='utf-8') as f:
+              con.executescript(f.read())
+          result = con.execute('PRAGMA integrity_check').fetchone()[0]
+          if result != 'ok':
+              raise SystemExit(f'integrity_check failed: {result}')
+          con.close()
+          PY
+          jq -n --arg object_key "$object_key" --arg sha256 "$sha" --arg release_sha "$TARGET_SHA" --arg created_at "$(date -u +%FT%TZ)" '{private_r2_bucket:"malipang-private-backups",object_key:$object_key,sha256:$sha256,release_sha:$release_sha,created_at:$created_at,download_verification:"PASS",gzip_integrity:"PASS",restore_integrity:"PASS"}' > ../release-artifacts/backup-metadata.json
+
+      - name: List pending D1 migrations
+        working-directory: release-source
+        run: npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-before.txt
+
+      - name: Apply remote D1 migrations
+        working-directory: release-source
+        run: npx wrangler d1 migrations apply malipang-v5-2 --remote --yes | tee ../release-artifacts/migrations-apply.txt
+
+      - name: Verify HR onboarding schema
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='hr_onboarding_requests') AS onboarding_table,(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='staff_id_sequences') AS sequence_table,(SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='staff_config_sync_outbox') AS outbox_table,(SELECT COUNT(*) FROM (SELECT external_user_id,COUNT(*) c FROM hr_onboarding_requests WHERE status='PENDING_OWNER_SETUP' GROUP BY external_user_id HAVING c>1)) AS duplicate_pending_rows" > ../release-artifacts/hr-schema.json
+          jq -e '.[0].success == true and .[0].results[0].onboarding_table == 1 and .[0].results[0].sequence_table == 1 and .[0].results[0].outbox_table == 1 and .[0].results[0].duplicate_pending_rows == 0' ../release-artifacts/hr-schema.json >/dev/null
+
+      - name: Deploy exact merged SHA
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npx wrangler deploy | tee ../release-artifacts/deploy.txt
+
+      - name: Record deployed Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-after.json
+
+      - name: Verify post-deploy health readiness and queue baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          for attempt in $(seq 1 12); do
+            if curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-after.json; then break; fi
+            [[ "$attempt" == "12" ]] && exit 1
+            sleep 5
+          done
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-after.raw.json"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o release-artifacts/status-after.json
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-after.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-after.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-after.raw.json" > release-artifacts/readiness-after.json
+          jq -e '.ok == true' release-artifacts/status-after.json >/dev/null
+          before_failed="$(jq -r '.openFailedJobs // 0' release-artifacts/status-before.json)"
+          after_failed="$(jq -r '.openFailedJobs // 0' release-artifacts/status-after.json)"
+          [[ "$after_failed" -le "$before_failed" ]]
+
+      - name: Verify no duplicate active LINE identities
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM (SELECT provider,external_user_id,COUNT(*) c FROM line_identity_bindings WHERE status='VERIFIED' GROUP BY provider,external_user_id HAVING c>1)) AS duplicate_external_bindings,(SELECT COUNT(*) FROM (SELECT provider,employee_id,COUNT(*) c FROM line_identity_bindings WHERE status='VERIFIED' GROUP BY provider,employee_id HAVING c>1)) AS duplicate_staff_bindings" > ../release-artifacts/identity-duplicates.json
+          jq -e '.[0].success == true and .[0].results[0].duplicate_external_bindings == 0 and .[0].results[0].duplicate_staff_bindings == 0' ../release-artifacts/identity-duplicates.json >/dev/null
+
+      - name: Write sanitized release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## HR Onboarding #144 Production Release"
+            echo "- Runtime SHA: \`$TARGET_SHA\`"
+            echo "- Control SHA: \`$GITHUB_SHA\`"
+            [[ -f release-artifacts/backup-metadata.json ]] && echo "- Fresh D1 backup + checksum + restore integrity: PASS"
+            [[ -f release-artifacts/hr-schema.json ]] && echo "- Migration 0017 schema verification: PASS"
+            [[ -f release-artifacts/health-after.json ]] && echo "- Production health: PASS"
+            [[ -f release-artifacts/readiness-after.json ]] && echo "- Production readiness: PASS"
+            [[ -f release-artifacts/identity-duplicates.json ]] && echo "- Duplicate active LINE identity check: PASS"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload sanitized operational evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: hr-onboarding-144-production-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14

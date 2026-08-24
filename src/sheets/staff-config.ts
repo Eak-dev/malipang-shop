@@ -37,7 +37,7 @@ export interface StaffConfigRecord {
 }
 
 export function buildStaffConfigRow(headers: string[], existing: unknown[], record: StaffConfigRecord): unknown[] {
-  const row = Array.from({ length: headers.length }, (_, i) => existing[i] ?? "");
+  const row: unknown[] = Array.from({ length: headers.length }, (_, i) => existing[i] ?? "");
   const set = (name: string, value: unknown) => {
     const index = headers.indexOf(name);
     if (index >= 0) row[index] = value;

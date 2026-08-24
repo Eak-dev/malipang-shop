@@ -3,6 +3,23 @@ import type { Env, StaffConfigSyncJob } from "../types";
 export type { StaffConfigSyncJob } from "../types";
 
 const REQUIRED_HEADERS = ["Employee_ID", "Staff_Name", "Scheduled_In", "Scheduled_Out", "Status", "Daily_Wage", "Grace_Min"] as const;
+const OWNED_COLUMNS = [
+  "Employee_ID",
+  "Staff_Name",
+  "LINE_User_ID",
+  "Scheduled_In",
+  "Scheduled_Out",
+  "Status",
+  "Daily_Wage",
+  "Grace_Min",
+  "Deduct_Late",
+  "Late_Deduction_Baht",
+  "Deduct_Early",
+  "Early_Deduction_Baht",
+  "Can_Submit_Expense",
+  "Role",
+  "Branch_ID",
+] as const;
 const LEASE_MS = 15 * 60 * 1000;
 
 function columnName(index: number): string {
@@ -36,28 +53,54 @@ export interface StaffConfigRecord {
   branchId: string;
 }
 
+function ownedValue(record: StaffConfigRecord, name: (typeof OWNED_COLUMNS)[number]): unknown {
+  switch (name) {
+    case "Employee_ID": return record.employeeId;
+    case "Staff_Name": return record.staffName;
+    case "LINE_User_ID": return record.lineUserId;
+    case "Scheduled_In": return record.scheduledIn;
+    case "Scheduled_Out": return record.scheduledOut;
+    case "Status": return record.status;
+    case "Daily_Wage": return record.dailyWageBaht;
+    case "Grace_Min": return record.graceMin;
+    case "Deduct_Late": return record.lateDeductionBaht > 0;
+    case "Late_Deduction_Baht": return record.lateDeductionBaht;
+    case "Deduct_Early": return record.earlyDeductionBaht > 0;
+    case "Early_Deduction_Baht": return record.earlyDeductionBaht;
+    case "Can_Submit_Expense": return record.canSubmitExpense;
+    case "Role": return record.role;
+    case "Branch_ID": return record.branchId;
+  }
+}
+
 export function buildStaffConfigRow(headers: string[], existing: unknown[], record: StaffConfigRecord): unknown[] {
   const row: unknown[] = Array.from({ length: headers.length }, (_, i) => existing[i] ?? "");
-  const set = (name: string, value: unknown) => {
+  for (const name of OWNED_COLUMNS) {
     const index = headers.indexOf(name);
-    if (index >= 0) row[index] = value;
-  };
-  set("Employee_ID", record.employeeId);
-  set("Staff_Name", record.staffName);
-  set("LINE_User_ID", record.lineUserId);
-  set("Scheduled_In", record.scheduledIn);
-  set("Scheduled_Out", record.scheduledOut);
-  set("Status", record.status);
-  set("Daily_Wage", record.dailyWageBaht);
-  set("Grace_Min", record.graceMin);
-  set("Deduct_Late", record.lateDeductionBaht > 0);
-  set("Late_Deduction_Baht", record.lateDeductionBaht);
-  set("Deduct_Early", record.earlyDeductionBaht > 0);
-  set("Early_Deduction_Baht", record.earlyDeductionBaht);
-  set("Can_Submit_Expense", record.canSubmitExpense);
-  set("Role", record.role);
-  set("Branch_ID", record.branchId);
+    if (index >= 0) row[index] = ownedValue(record, name);
+  }
   return row;
+}
+
+/**
+ * Build RAW writes only for cells this service owns.  Never rewrite an entire
+ * operational row: owner-maintained cells may contain formulas, and the Sheets
+ * Values API returns their calculated values when read with UNFORMATTED_VALUE.
+ */
+export function buildStaffConfigOwnedWrites(
+  sheetName: string,
+  headers: string[],
+  rowNumber: number,
+  record: StaffConfigRecord,
+): Array<{ range: string; values: unknown[][] }> {
+  const writes: Array<{ range: string; values: unknown[][] }> = [];
+  for (const name of OWNED_COLUMNS) {
+    const index = headers.indexOf(name);
+    if (index < 0) continue;
+    const column = columnName(index + 1);
+    writes.push({ range: `'${sheetName}'!${column}${rowNumber}`, values: [[ownedValue(record, name)]] });
+  }
+  return writes;
 }
 
 async function loadStaffConfigRecord(env: Env, employeeId: string): Promise<StaffConfigRecord> {
@@ -110,12 +153,8 @@ export async function syncStaffConfigEmployee(
   const existingIndex = matches[0];
   const mode: "APPEND" | "UPDATE" = typeof existingIndex === "number" ? "UPDATE" : "APPEND";
   const rowNumber = typeof existingIndex === "number" ? existingIndex + 1 : values.length + 1;
-  const existing = typeof existingIndex === "number" ? values[existingIndex] || [] : [];
-  const row = buildStaffConfigRow(headers, existing, record);
-  const end = columnName(headers.length);
-  await batchWriteValues(env, [
-    { range: `'${env.SHEET_STAFF_CONFIG}'!A${rowNumber}:${end}${rowNumber}`, values: [row] },
-  ]);
+  const writes = buildStaffConfigOwnedWrites(env.SHEET_STAFF_CONFIG, headers, rowNumber, record);
+  await batchWriteValues(env, writes);
   return { rowNumber, mode };
 }
 
@@ -187,9 +226,22 @@ export async function processStaffConfigSyncJob(env: Env, job: StaffConfigSyncJo
   }
 }
 
-export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40): Promise<number> {
+export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs = Date.now()): Promise<number> {
   if (env.SHEETS_SYNC_ENABLED !== "true") return 0;
-  const now = new Date().toISOString();
+  const now = new Date(nowMs).toISOString();
+  const staleBefore = new Date(nowMs - LEASE_MS).toISOString();
+
+  // A queue delivery may be acknowledged while its outbox row is still leased
+  // by an earlier Worker.  Once that lease expires, move it back to FAILED so
+  // the scheduled recovery path can enqueue it again instead of stranding it.
+  await env.DB.prepare(
+    `UPDATE staff_config_sync_outbox
+     SET status='FAILED',next_attempt_at=?,last_error='PROCESSING_LEASE_EXPIRED',updated_at=?
+     WHERE status='PROCESSING' AND updated_at<=?`,
+  )
+    .bind(now, now, staleBefore)
+    .run();
+
   const rows = await env.DB.prepare(
     `SELECT employee_id,version,trace_id
      FROM staff_config_sync_outbox

@@ -4,7 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {buildStaffConfigOwnedWrites,buildStaffConfigRow} from '../dist/sheets/staff-config.js';
 
 test('line-first onboarding migration creates dedicated request, atomic sequence and durable sheet outbox',async()=>{
-  const sql=await readFile(new URL('../migrations/0016_line_first_hr_onboarding.sql',import.meta.url),'utf8');
+  const sql=await readFile(new URL('../migrations/0017_line_first_hr_onboarding.sql',import.meta.url),'utf8');
   assert.match(sql,/CREATE TABLE IF NOT EXISTS hr_onboarding_requests/i);
   assert.match(sql,/PENDING_OWNER_SETUP/);
   assert.match(sql,/CREATE UNIQUE INDEX IF NOT EXISTS idx_hr_onboarding_one_pending_line/i);

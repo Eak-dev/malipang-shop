@@ -1,5 +1,12 @@
 import { batchWriteValues,getSheetValues } from "./client";
-import type { Env,StaffConfigSyncJob } from "../types";
+import type { Env } from "../types";
+
+export interface StaffConfigSyncJob{
+  kind:"STAFF_CONFIG_SYNC";
+  employeeId:string;
+  version:number;
+  traceId:string;
+}
 
 const REQUIRED_HEADERS=["Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Status","Daily_Wage","Grace_Min"] as const;
 const LEASE_MS=15*60*1000;
@@ -75,7 +82,7 @@ export function staffConfigSyncOutboxStatement(env:Env,job:StaffConfigSyncJob,no
 }
 
 export async function enqueueStaffConfigSync(env:Env,job:StaffConfigSyncJob):Promise<void>{
-  try{await env.JOB_QUEUE.send(job);}catch(error){console.error("staff-config-sync-enqueue",{employeeId:job.employeeId,code:error instanceof Error?error.name:"ERROR"});}
+  try{await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).send(job);}catch(error){console.error("staff-config-sync-enqueue",{employeeId:job.employeeId,code:error instanceof Error?error.name:"ERROR"});}
 }
 
 export async function processStaffConfigSyncJob(env:Env,job:StaffConfigSyncJob,nowMs=Date.now()):Promise<void>{
@@ -98,6 +105,6 @@ export async function recoverPendingStaffConfigSyncs(env:Env,limit=40):Promise<n
   const now=new Date().toISOString(),rows=await env.DB.prepare(`SELECT employee_id,version,trace_id FROM staff_config_sync_outbox WHERE status IN ('PENDING','FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?) ORDER BY updated_at ASC LIMIT ?`).bind(now,Math.max(1,Math.min(100,Math.floor(limit)))).all<{employee_id:string;version:number;trace_id:string}>();
   const jobs:StaffConfigSyncJob[]=(rows.results||[]).map(row=>({kind:"STAFF_CONFIG_SYNC",employeeId:String(row.employee_id),version:Number(row.version),traceId:String(row.trace_id)}));
   if(!jobs.length)return 0;
-  for(let offset=0;offset<jobs.length;offset+=100)await env.JOB_QUEUE.sendBatch(jobs.slice(offset,offset+100).map(body=>({body})));
+  for(let offset=0;offset<jobs.length;offset+=100)await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).sendBatch(jobs.slice(offset,offset+100).map(body=>({body})));
   return jobs.length;
 }

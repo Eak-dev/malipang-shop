@@ -75,6 +75,7 @@ export interface LineEvent {
 
 export interface InboundJob { kind: "LINE_EVENT"; event: LineEvent; receivedAtIso: string; traceId: string }
 export interface SheetsSyncJob { kind: "SHEETS_SYNC"; entityType: SheetEntityType; entityKey: string; entityVersion: number; traceId: string }
+export interface StaffConfigSyncJob { kind: "STAFF_CONFIG_SYNC"; employeeId: string; version: number; traceId: string }
 export type LineNotificationPurpose =
   | "ATTENDANCE_RESULT"
   | "ATTENDANCE_REJECTION"

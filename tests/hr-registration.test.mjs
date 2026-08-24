@@ -96,7 +96,7 @@ test('Owner can choose an existing unbound EMP004 without creating a duplicate e
 test('HR LINK requires an explicit confirmation before binding EMP004',async()=>{
   const state={sql:[],actor:null,pending:false,staff:null,lineBound:false};
   let links=0;
-  const preview=await lineReply(()=>handleHrText(env(state),event('HR LINK req-new-1 EMP004'),owner,'trace',{getOnboarding:async()=>request,listUnboundStaff:async()=>[emp004],linkExisting:async()=>{links++;return{employeeId:'EMP004',staffName:'Noi',idempotent:false};}}));
+  const preview=await lineReply(()=>handleHrText(env(state),event('HR LINK req-new-1 EMP004'),owner,'trace',{getOnboarding:async()=>request,getUnboundStaff:async()=>emp004,linkExisting:async()=>{links++;return{employeeId:'EMP004',staffName:'Noi',idempotent:false};}}));
   assert.equal(links,0);
   assert.match(messageJson(preview),/HR LINK CONFIRM req-new-1 EMP004/);
   const confirmed=await lineReply(()=>handleHrText(env(state),event('HR LINK CONFIRM req-new-1 EMP004'),owner,'trace',{getOnboarding:async()=>request,linkExisting:async()=>{links++;return{employeeId:'EMP004',staffName:'Noi',idempotent:false};}}));

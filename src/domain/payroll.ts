@@ -1,7 +1,7 @@
 import { minutesOf } from "../shared/time";
 import type { Employee,MissingPunchType } from "../types";
 
-export const PAYROLL_POLICY_CODE="LATE_V1_FIXED_OT_V1";
+export const PAYROLL_POLICY_CODE="LATE_V1_CONFIG_OPT_OUT_FIXED_OT_V1";
 export const LATE_GRACE_MIN=5;
 export interface PayrollInput{
   employee:Employee;
@@ -34,8 +34,8 @@ export interface PayrollResult{
   policyCode:string;
 }
 
-export function lateDeductionFor(dailyWageSatang:number,actualLateMinutes:number):number{
-  if(actualLateMinutes<=LATE_GRACE_MIN)return 0;
+export function lateDeductionFor(dailyWageSatang:number,actualLateMinutes:number,graceMin=LATE_GRACE_MIN):number{
+  if(actualLateMinutes<=Math.max(0,Math.round(graceMin)))return 0;
   if(actualLateMinutes<=29)return 5_000;
   if(actualLateMinutes<=89)return 10_000;
   return Math.round(Math.max(0,dailyWageSatang)/2);
@@ -55,7 +55,8 @@ export function calculatePayroll(input:PayrollInput):PayrollResult{
   const lateMinutes=inMin==null?0:Math.max(0,inMin-minutesOf(employee.scheduledIn));
   const earlyOutMinutes=outMin==null?0:Math.max(0,minutesOf(employee.scheduledOut)-outMin);
   const baseWageSatang=Math.max(0,Math.round(employee.dailyWageSatang));
-  const lateDeductionSatang=lateDeductionFor(baseWageSatang,lateMinutes);
+  const lateDeductionEnabled=Math.max(0,Math.round(employee.lateDeductionSatang))>0;
+  const lateDeductionSatang=lateDeductionEnabled?lateDeductionFor(baseWageSatang,lateMinutes,employee.graceMin):0;
   const missing=missingPunchType(timeIn,timeOut);
   const missingPunchDeductionSatang=missing==="NONE"?0:missing==="BOTH"?baseWageSatang:Math.round(baseWageSatang/2);
   const appliedLateDeductionSatang=lateDeductionSatang>missingPunchDeductionSatang?lateDeductionSatang:0;

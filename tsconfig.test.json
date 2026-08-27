@@ -22,6 +22,7 @@
     "src/admin/shift-import.ts",
     "src/admin/shift-schedule.ts",
     "src/admin/correction-validation.ts",
+    "src/admin/attendance-correction.ts",
     "src/admin/reconcile-sheets.ts",
     "src/admin/failed-job-reconciliation.ts",
     "src/admin/readiness.ts",

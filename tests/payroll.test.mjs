@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {calculatePayroll,lateDeductionFor} from '../dist/domain/payroll.js';
-const employee={employeeId:'EMP001',staffName:'Win',lineUserId:'U2759c683f61e504af0dd7f08a432b6e2',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:55000,graceMin:5,lateDeductionSatang:0,earlyDeductionSatang:500,canSubmitExpense:false,status:'ACTIVE'};
+import {resolveWageSnapshot} from '../dist/payroll/repository.js';
+const employee={employeeId:'EMP001',staffName:'Win',lineUserId:'U2759c683f61e504af0dd7f08a432b6e2',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:55000,graceMin:5,lateDeductionSatang:5000,earlyDeductionSatang:500,canSubmitExpense:false,status:'ACTIVE'};
 test('late policy boundaries are exact',()=>{
   assert.equal(lateDeductionFor(55000,5),0);
   assert.equal(lateDeductionFor(55000,6),5000);
@@ -12,6 +13,8 @@ test('late policy boundaries are exact',()=>{
 });
 test('complete day inside five-minute grace is ready',()=>{const r=calculatePayroll({employee,timeIn:'04:05',timeOut:'16:00',review:false});assert.equal(r.confirmedWageSatang,55000);assert.equal(r.payStatus,'READY');});
 test('six minutes late deducts fifty baht',()=>{const r=calculatePayroll({employee,timeIn:'04:06',timeOut:'16:00',review:false});assert.equal(r.lateMinutes,6);assert.equal(r.lateDeductionSatang,5000);assert.equal(r.appliedLateDeductionSatang,5000);assert.equal(r.appliedMissingPunchDeductionSatang,0);assert.equal(r.confirmedWageSatang,50000);});
+test('late deduction opt-out keeps full wage even when late',()=>{const r=calculatePayroll({employee:{...employee,lateDeductionSatang:0},timeIn:'04:40',timeOut:'16:00',review:false});assert.equal(r.lateMinutes,40);assert.equal(r.lateDeductionSatang,0);assert.equal(r.confirmedWageSatang,55000);});
+test('employee grace setting is respected',()=>{const r=calculatePayroll({employee:{...employee,graceMin:10},timeIn:'04:07',timeOut:'16:00',review:false});assert.equal(r.lateMinutes,7);assert.equal(r.lateDeductionSatang,0);assert.equal(r.confirmedWageSatang,55000);});
 test('ninety minutes late deducts half of this employee wage',()=>{const r=calculatePayroll({employee,timeIn:'05:30',timeOut:'16:00',review:false});assert.equal(r.lateDeductionSatang,27500);assert.equal(r.appliedLateDeductionSatang,27500);assert.equal(r.confirmedWageSatang,27500);});
 test('half-day amount changes with each employee wage',()=>{const r=calculatePayroll({employee:{...employee,dailyWageSatang:62000},timeIn:'05:30',timeOut:'16:00',review:false});assert.equal(r.lateDeductionSatang,31000);assert.equal(r.confirmedWageSatang,31000);});
 test('one missing punch is half wage pending until day finalization',()=>{const pending=calculatePayroll({employee,timeIn:'04:00',timeOut:null,review:false});assert.equal(pending.missingPunchType,'MISSING_OUT');assert.equal(pending.missingPunchDeductionSatang,27500);assert.equal(pending.appliedMissingPunchDeductionSatang,27500);assert.equal(pending.pendingWageSatang,27500);assert.equal(pending.payStatus,'REVIEW');const final=calculatePayroll({employee,timeIn:'04:00',timeOut:null,review:false,finalizeMissingPunch:true});assert.equal(final.confirmedWageSatang,27500);assert.equal(final.payStatus,'READY');});
@@ -21,3 +24,10 @@ test('approved fixed OT is added to net pay',()=>{const r=calculatePayroll({empl
 test('early deduction remains separate for a complete day',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'15:30',review:false});assert.equal(r.earlyOutMinutes,30);assert.equal(r.earlyDeductionSatang,500);assert.equal(r.confirmedWageSatang,54500);});
 test('review moves calculated net wage to pending',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'16:00',review:true});assert.equal(r.confirmedWageSatang,0);assert.equal(r.pendingWageSatang,55000);assert.equal(r.payStatus,'REVIEW');});
 test('zero wage is NO_AMOUNT',()=>{const r=calculatePayroll({employee:{...employee,dailyWageSatang:0},timeIn:'04:00',timeOut:'16:00',review:false});assert.equal(r.payStatus,'NO_AMOUNT');});
+test('work before the first wage effective date resolves to zero',async()=>{
+  const statements=[];
+  const env={DB:{prepare(sql){const statement={sql,args:[],bind(...args){this.args=args;return this;},async first(){return sql.includes('ORDER BY effective_from ASC')?{effective_from:'2026-08-27'}:null;}};statements.push(statement);return statement;}}};
+  const result=await resolveWageSnapshot(env,employee,'2026-08-25');
+  assert.deepEqual(result,{wageSourceId:'PRE_EFFECTIVE_DATE',dailyWageSatang:0,effectiveFrom:'2026-08-27',effectiveTo:null});
+  assert.equal(statements.length,2);
+});

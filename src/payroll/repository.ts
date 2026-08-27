@@ -16,6 +16,8 @@ export async function getEmployeeById(env:Env,employeeId:string):Promise<Employe
 export async function resolveWageSnapshot(env:Env,employee:Employee,workDate:string):Promise<WageSnapshot>{
   const row=await env.DB.prepare(`SELECT wage_id,daily_wage_satang,effective_from,effective_to FROM employee_wage_history WHERE employee_id=? AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY effective_from DESC LIMIT 1`).bind(employee.employeeId,workDate,workDate).first<Record<string,unknown>>();
   if(row)return{wageSourceId:String(row.wage_id),dailyWageSatang:Number(row.daily_wage_satang),effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to==null?null:String(row.effective_to)};
+  const first=await env.DB.prepare(`SELECT effective_from FROM employee_wage_history WHERE employee_id=? ORDER BY effective_from ASC LIMIT 1`).bind(employee.employeeId).first<{effective_from:string}>();
+  if(first&&String(first.effective_from)>workDate)return{wageSourceId:"PRE_EFFECTIVE_DATE",dailyWageSatang:0,effectiveFrom:String(first.effective_from),effectiveTo:null};
   return{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
 }
 

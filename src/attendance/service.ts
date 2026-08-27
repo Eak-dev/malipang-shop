@@ -13,6 +13,10 @@ export function weeklyPayrollSyncEntityKey(employeeId:string,workDate:string):st
   return `${employeeId}|${payrollPeriodFor(workDate).weekStart}`;
 }
 
+export function weeklyPayrollSyncVersion(result:Pick<AttendanceCommitResult,"version"|"weeklyVersion">):number{
+  return result.weeklyVersion??result.version;
+}
+
 export async function handleAttendance(env:Env,event:LineEvent,employee:Employee,reading:VisionResult,original:ArrayBuffer,traceId:string):Promise<boolean>{
   const messageId=event.message?.id||"",webhookEventId=event.webhookEventId||`message:${messageId}`,receivedAtIso=new Date(event.timestamp).toISOString();
   const validated=validateAttendancePhoto(reading,receivedAtIso,{storeLat:numberEnv(env.ATTENDANCE_STORE_LAT,NaN),storeLng:numberEnv(env.ATTENDANCE_STORE_LNG,NaN),allowedRadiusM:numberEnv(env.ATTENDANCE_ALLOWED_RADIUS_M,120),maxPhotoAgeMin:numberEnv(env.ATTENDANCE_MAX_PHOTO_AGE_MIN,3),overlayMinConfidence:numberEnv(env.ATTENDANCE_OVERLAY_MIN_CONFIDENCE,0.9),clockMinConfidence:numberEnv(env.ATTENDANCE_CLOCK_MIN_CONFIDENCE,0.7)});
@@ -31,7 +35,7 @@ export async function handleAttendance(env:Env,event:LineEvent,employee:Employee
   const jobs=[
     {kind:"SHEETS_SYNC" as const,entityType:"ATTENDANCE_EVENT" as const,entityKey:result.eventId,entityVersion:result.version,traceId},
     {kind:"SHEETS_SYNC" as const,entityType:"DAILY_PAYROLL" as const,entityKey:`${employee.employeeId}|${result.workDate}`,entityVersion:result.version,traceId},
-    {kind:"SHEETS_SYNC" as const,entityType:"WEEKLY_PAYROLL" as const,entityKey:weeklyPayrollSyncEntityKey(employee.employeeId,result.workDate),entityVersion:result.version,traceId}
+    {kind:"SHEETS_SYNC" as const,entityType:"WEEKLY_PAYROLL" as const,entityKey:weeklyPayrollSyncEntityKey(employee.employeeId,result.workDate),entityVersion:weeklyPayrollSyncVersion(result),traceId}
   ];
   for(const job of jobs)await enqueueSheetSync(env,job);
   await respondTextToLineEvent(env,event,buildAttendanceReply(employee,result),notification);

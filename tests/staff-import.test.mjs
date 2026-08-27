@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {importEmployees,parseStaffRows} from '../dist/admin/staff-import.js';
+import {importEmployees,parseStaffRows,scopeStaffRows} from '../dist/admin/staff-import.js';
 test('real HR_STAFF_CONFIG mapping remains canonical',()=>{
   const rows=[
     ['Employee_ID','Staff_Name','LINE_User_ID','Scheduled_In','Scheduled_Out','Status','Daily_Wage','Grace_Min','Pay_Mode','Deduct_Late','Deduct_Early','OT_Enabled','OT_Rate_Multiplier','Late_Deduction_Baht'],
@@ -61,6 +61,13 @@ test('staff config rejects invalid status and an Owner branch scope',()=>{
     ['OWN002','Nea','04:00','16:00','Active',0,10,'OWNER','B001']
   ];
   assert.throws(()=>parseStaffRows(ownerBranch),/OWNER must use organization scope/);
+});
+test('configured staff import is restricted to exact validated employee IDs',()=>{
+  const inputs=[{employeeId:'EMP003'},{employeeId:'EMP004'},{employeeId:'EMP005'}];
+  assert.deepEqual(scopeStaffRows(inputs,{employeeIds:['EMP004','EMP003']}).map(row=>row.employeeId),['EMP003','EMP004']);
+  assert.throws(()=>scopeStaffRows(inputs,{employeeIds:['EMP003','EMP003']}),/unique valid IDs/);
+  assert.throws(()=>scopeStaffRows(inputs,{employeeIds:['EMP999']}),/not found/);
+  assert.throws(()=>scopeStaffRows(inputs,{employeeIds:[]}),/1-200 IDs/);
 });
 test('a retired Staff ID cannot be re-imported as a new operational identity',async()=>{
   const env={DB:{prepare(sql){return{bind(){return this;},async first(){return sql.includes('staff_identity_aliases')?{canonical_employee_id:'OWN001'}:null;}};}}};

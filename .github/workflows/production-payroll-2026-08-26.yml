@@ -6,12 +6,12 @@ permissions: {contents: read}
 concurrency: {group: malipang-production, cancel-in-progress: false}
 jobs:
   release-and-repair:
-    if: github.event.before == '6dccf503b33f464c52f3dbd6ca8c44705bdf464f'
+    if: github.event.before == '5d544a1cd80fcafda2f88279f67fc231469ce457'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production
     env:
-      BASE_SHA: 6dccf503b33f464c52f3dbd6ca8c44705bdf464f
+      BASE_SHA: 5d544a1cd80fcafda2f88279f67fc231469ce457
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
@@ -66,7 +66,7 @@ jobs:
           import sqlite3,sys
           c=sqlite3.connect(sys.argv[2]); c.executescript(open(sys.argv[1],encoding='utf8').read())
           assert c.execute('pragma integrity_check').fetchone()[0]=='ok'; assert c.execute('pragma foreign_key_check').fetchall()==[]
-          repair="""UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '2026-08-20' AND '2026-08-26'; UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26';"""
+          repair="""UPDATE staff_roles SET status='INACTIVE',effective_to=COALESCE(effective_to,datetime('now')),updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status='ACTIVE'; UPDATE employees SET status='INACTIVE',updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status<>'INACTIVE'; UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '2026-08-20' AND '2026-08-26'; UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26';"""
           c.executescript(repair); c.executescript(repair)
           assert c.execute('pragma integrity_check').fetchone()[0]=='ok'; assert c.execute('pragma foreign_key_check').fetchall()==[]
           PY
@@ -82,10 +82,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          base="${MALIPANG_WORKER_URL%/}"
-          jq -n '{employeeIds:["EMP003","EMP004"]}' > "$RUNNER_TEMP/staff.json"
-          for n in $(seq 1 12); do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/staff.json" "$base/admin/sync-staff-statuses-from-sheet-scoped" -o "$RUNNER_TEMP/staff-import.json" && break; [[ $n == 12 ]] && exit 1; sleep 5; done
-          jq -e '.ok and .count==2 and ([.employees[].employeeId]|sort)==["EMP003","EMP004"]' "$RUNNER_TEMP/staff-import.json" >/dev/null
+          cat > "$RUNNER_TEMP/status.sql" <<SQL
+          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'STAFF_STATUS_SCOPED_SYNC',employee_id,'Owner-approved scoped payroll repair',json_object('status',status),json_object('status','INACTIVE','sha','$GITHUB_SHA'),datetime('now') FROM employees WHERE employee_id IN ('EMP003','EMP004') AND status<>'INACTIVE';
+          INSERT INTO access_audit_log(audit_id,actor_type,actor_id,action,target_employee_id,branch_id,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'SYSTEM','PAYROLL_REPAIR','STAFF_ROLE_DEACTIVATED',employee_id,branch_id,'Owner-approved scoped payroll repair',json_object('role_assignment_id',role_assignment_id,'role',role,'scope',scope,'branch_id',branch_id,'status',status),json_object('status','INACTIVE','sha','$GITHUB_SHA'),datetime('now') FROM staff_roles WHERE employee_id IN ('EMP003','EMP004') AND status='ACTIVE';
+          UPDATE staff_roles SET status='INACTIVE',effective_to=COALESCE(effective_to,datetime('now')),updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status='ACTIVE';
+          UPDATE employees SET status='INACTIVE',updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status<>'INACTIVE';
+          SQL
+          npx wrangler d1 execute malipang-v5-2 --remote --yes --file "$RUNNER_TEMP/status.sql" > release-artifacts/status-sync.txt
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) inactive FROM employees WHERE employee_id IN ('EMP003','EMP004') AND status='INACTIVE'" > "$RUNNER_TEMP/inactive-after.json"
           jq -e '.[0].success and .[0].results[0].inactive==2' "$RUNNER_TEMP/inactive-after.json" >/dev/null
       - name: Scoped shift import and zero snapshot audit

@@ -33,6 +33,17 @@ export async function importEmployeesFromConfiguredSheet(env:Env,options:StaffIm
   const inputs=scopeStaffRows(parseStaffRows(values),options);
   await importEmployees(env,inputs);return{count:inputs.length,employees:inputs.map(({employeeId,staffName,lineUserId})=>({employeeId,staffName,lineStatus:lineUserId?"PRESENT":"NOT_REQUIRED"}))};
 }
+export async function syncStaffStatusesFromConfiguredSheet(env:Env,options:StaffImportScope):Promise<{count:number;employees:Array<{employeeId:string;status:"ACTIVE"|"INACTIVE"}>}>{
+  const values=await getSheetValues(env,`'${env.SHEET_STAFF_CONFIG}'!A1:Z500`);if(!values.length)throw new Error(`Sheet ${env.SHEET_STAFF_CONFIG} is empty`);
+  const inputs=scopeStaffRows(parseStaffRows(values),options),now=new Date().toISOString();
+  const existing=new Map<string,{status:string}>();
+  for(const input of inputs){const row=await env.DB.prepare(`SELECT status FROM employees WHERE employee_id=? LIMIT 1`).bind(input.employeeId).first<{status:string}>();if(!row)throw new Error(`Employee not found: ${input.employeeId}`);existing.set(input.employeeId,row);}
+  const statements:D1PreparedStatement[]=[];
+  for(const input of inputs){const before=existing.get(input.employeeId)!;if(before.status===input.status)continue;statements.push(env.DB.prepare(`INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),"STAFF_STATUS_SCOPED_SYNC",input.employeeId,"Owner-approved scoped payroll repair",JSON.stringify({status:before.status}),JSON.stringify({status:input.status}),now));statements.push(env.DB.prepare(`UPDATE employees SET status=?,updated_at=? WHERE employee_id=? AND status=?`).bind(input.status,now,input.employeeId,before.status));}
+  if(statements.length)await env.DB.batch(statements);
+  for(const input of inputs)await ensureImportedStaffRole(env,{employeeId:input.employeeId,...(input.role?{role:input.role}:{}),...(input.branchId?{branchId:input.branchId}:{}),status:input.status});
+  return{count:inputs.length,employees:inputs.map(({employeeId,status})=>({employeeId,status}))};
+}
 export function parseStaffRows(values:unknown[][]):EmployeeImportInput[]{
   const headers=(values[0]||[]).map(v=>String(v??"").trim()),index=new Map(headers.map((h,i)=>[h,i]));for(const name of required)if(!index.has(name))throw new Error(`Missing staff column: ${name}`);
   const at=(row:unknown[],name:string)=>row[index.get(name)!];

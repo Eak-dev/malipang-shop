@@ -49,6 +49,17 @@ test('optional-role Staff Config reactivation restores the latest historical Own
   assert.ok(inserted.values.includes('ORGANIZATION'));
 });
 
+test('repeated inactive Staff Config sync does not append role or audit history',async()=>{
+  let batches=0;
+  const database={prepare(sql){return{bind(){return this;},async first(){
+    if(sql.startsWith('SELECT role_assignment_id,role,scope'))return{role_assignment_id:'inactive_employee',role:'EMPLOYEE',scope:'BRANCH',branch_id:'B001',status:'INACTIVE'};
+    return null;
+  }};},async batch(){batches++;return[];}};
+  await ensureImportedStaffRole({DB:database},{employeeId:'EMP004',status:'INACTIVE'});
+  await ensureImportedStaffRole({DB:database},{employeeId:'EMP004',status:'INACTIVE'});
+  assert.equal(batches,0);
+});
+
 test('verified active binding retains ACTIVE status for both actor and employee image gates',async()=>{
   const actorRow={employee_id:'EMP001',staff_name:'Win',line_user_id:'U-existing',scheduled_in:'04:00',scheduled_out:'16:00',daily_wage_satang:50000,grace_min:10,late_deduction_satang:0,early_deduction_satang:0,can_submit_expense:1,status:'ACTIVE',employee_status:'ACTIVE',role:'EMPLOYEE',scope:'BRANCH',branch_id:'B001',role_status:'ACTIVE',branch_name:'Yingcharoen'};
   const actor=await getStaffActorByLineId({DB:db({sql:[],actorRow})},'U-existing');

@@ -17,9 +17,20 @@ function optionalBoolean(value:unknown,name:string,strict=true):boolean|undefine
   if(strict)throw new Error(`Invalid ${name}`);return undefined;
 }
 function optionalDate(value:unknown,name:string):string|undefined{const text=String(value??"").trim();if(!text)return undefined;if(!isIsoDate(text))throw new Error(`Invalid ${name}; expected YYYY-MM-DD`);return text;}
-export async function importEmployeesFromConfiguredSheet(env:Env):Promise<{count:number;employees:Array<{employeeId:string;staffName:string;lineStatus:"PRESENT"|"NOT_REQUIRED"}>}>{
+export type StaffImportScope={employeeIds?:string[]};
+export function scopeStaffRows(inputs:EmployeeImportInput[],options:StaffImportScope={}):EmployeeImportInput[]{
+  if(options.employeeIds===undefined)return inputs;
+  if(!Array.isArray(options.employeeIds)||options.employeeIds.length<1||options.employeeIds.length>200)throw new Error("employeeIds must contain 1-200 IDs");
+  const ids=new Set(options.employeeIds.map(id=>String(id).trim()));
+  if(ids.size!==options.employeeIds.length||[...ids].some(id=>!/^[A-Za-z0-9_-]{1,40}$/.test(id)))throw new Error("employeeIds must contain unique valid IDs");
+  const scoped=inputs.filter(input=>ids.has(input.employeeId)),found=new Set(scoped.map(input=>input.employeeId));
+  const missing=[...ids].filter(id=>!found.has(id));
+  if(missing.length)throw new Error(`Staff IDs not found in configured sheet: ${missing.join(",")}`);
+  return scoped;
+}
+export async function importEmployeesFromConfiguredSheet(env:Env,options:StaffImportScope={}):Promise<{count:number;employees:Array<{employeeId:string;staffName:string;lineStatus:"PRESENT"|"NOT_REQUIRED"}>}>{
   const values=await getSheetValues(env,`'${env.SHEET_STAFF_CONFIG}'!A1:Z500`);if(!values.length)throw new Error(`Sheet ${env.SHEET_STAFF_CONFIG} is empty`);
-  const inputs=parseStaffRows(values);
+  const inputs=scopeStaffRows(parseStaffRows(values),options);
   await importEmployees(env,inputs);return{count:inputs.length,employees:inputs.map(({employeeId,staffName,lineUserId})=>({employeeId,staffName,lineStatus:lineUserId?"PRESENT":"NOT_REQUIRED"}))};
 }
 export function parseStaffRows(values:unknown[][]):EmployeeImportInput[]{

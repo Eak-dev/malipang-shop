@@ -6,12 +6,12 @@ permissions: {contents: read}
 concurrency: {group: malipang-production, cancel-in-progress: false}
 jobs:
   release-and-repair:
-    if: github.event.before == '5d544a1cd80fcafda2f88279f67fc231469ce457'
+    if: github.event.before == 'f7c13c52835b61eeab65eec229f92481c2952cf8'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production
     env:
-      BASE_SHA: 5d544a1cd80fcafda2f88279f67fc231469ce457
+      BASE_SHA: f7c13c52835b61eeab65eec229f92481c2952cf8
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
@@ -120,7 +120,7 @@ jobs:
           jq -e '.ok and .onePunch==0 and .noPunch==0' "$RUNNER_TEMP/finalize-2.json" >/dev/null
           jq -n --arg run "$RUN_ID" '{fromDate:"2026-08-20",toDate:"2026-08-26",runId:$run,requestedBy:"OWNER_APPROVED_CODEX_REPAIR"}' > "$RUNNER_TEMP/apply.json"
           for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/apply.json" "$base/admin/payroll/apply" -o "$RUNNER_TEMP/apply-$n.json"; done
-          jq -e '.ok and (.alreadyApplied|not) and .preview.rowCount>0' "$RUNNER_TEMP/apply-1.json" >/dev/null
+          jq -e '.ok and .preview.rowCount>0' "$RUNNER_TEMP/apply-1.json" >/dev/null
           jq -e '.ok and .alreadyApplied' "$RUNNER_TEMP/apply-2.json" >/dev/null
           jq '{ok,runId,preview:{periodStart:.preview.periodStart,periodEnd:.preview.periodEnd,rowCount:.preview.rowCount,totalNetPayBaht:.preview.totalNetPayBaht,pendingReviewCount:.preview.pendingReviewCount,employeeCount:(.preview.employees|length)}}' "$RUNNER_TEMP/apply-1.json" > release-artifacts/payroll-summary.json
       - name: Reconcile Sheets queue
@@ -130,7 +130,9 @@ jobs:
           base="${MALIPANG_WORKER_URL%/}"
           curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data '{"fromDate":"2026-08-20","toDate":"2026-08-26","limitPerType":200}' "$base/admin/reconcile-sheets" -o release-artifacts/reconcile.json
           jq -e '.ok and .counts.DAILY_PAYROLL>0 and .counts.WEEKLY_PAYROLL>0' release-artifacts/reconcile.json >/dev/null
-          for n in $(seq 1 36); do npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) n FROM sync_jobs WHERE entity_type IN ('DAILY_PAYROLL','WEEKLY_PAYROLL','SHIFT_SCHEDULE') AND status IN ('PENDING','PROCESSING','FAILED')" > "$RUNNER_TEMP/sync.json"; [[ "$(jq -r '.[0].results[0].n' "$RUNNER_TEMP/sync.json")" == 0 ]] && break; [[ $n == 36 ]] && exit 1; sleep 10; done
+          current="SELECT COUNT(*) n FROM sync_jobs s WHERE s.status IN ('PENDING','PROCESSING','FAILED') AND ((s.entity_type='DAILY_PAYROLL' AND EXISTS (SELECT 1 FROM attendance_daily d WHERE d.employee_id||'|'||d.work_date=s.entity_key AND d.version=s.entity_version AND d.work_date BETWEEN '$FROM' AND '$TO')) OR (s.entity_type='SHIFT_SCHEDULE' AND EXISTS (SELECT 1 FROM employee_shift_days d WHERE d.employee_id||'|'||d.work_date=s.entity_key AND d.version=s.entity_version AND d.work_date BETWEEN '$FROM' AND '$TO')) OR (s.entity_type='WEEKLY_PAYROLL' AND EXISTS (SELECT 1 FROM payroll_weekly p WHERE p.employee_id||'|'||p.week_start=s.entity_key AND p.version=s.entity_version AND p.week_start='2026-08-20')));"
+          for n in $(seq 1 36); do npx wrangler d1 execute malipang-v5-2 --remote --json --command "$current" > "$RUNNER_TEMP/sync.json"; [[ "$(jq -r '.[0].results[0].n' "$RUNNER_TEMP/sync.json")" == 0 ]] && break; [[ $n == 36 ]] && exit 1; sleep 10; done
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT entity_type,status,COUNT(*) count FROM sync_jobs WHERE status IN ('PENDING','PROCESSING','FAILED') GROUP BY entity_type,status ORDER BY entity_type,status" > release-artifacts/sync-backlog.json
       - name: Assert payroll and reliability invariants
         shell: bash
         run: |

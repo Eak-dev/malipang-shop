@@ -7,7 +7,7 @@ import type { EmployeeImportInput,Env } from "../types";
 import { correctAttendance } from "./attendance-correction";
 import { evaluateExpenseText } from "./expense-evaluate";
 import { createFixedOtRequest,finalizeFixedOt,setEmployeeWage } from "./payroll-admin";
-import { importEmployees,importEmployeesFromConfiguredSheet } from "./staff-import";
+import { importEmployees,importEmployeesFromConfiguredSheet,syncStaffStatusesFromConfiguredSheet } from "./staff-import";
 import { importShiftScheduleFromSheet } from "./shift-import";
 import { generateDefaultSchedule,overrideShiftSchedule } from "./shift-schedule";
 import { checkReadiness } from "./readiness";
@@ -30,6 +30,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
+    if(request.method==="POST"&&url.pathname==="/admin/sync-staff-statuses-from-sheet-scoped")return Response.json({ok:true,...await syncStaffStatusesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/import-shifts-from-sheet")return Response.json({ok:true,...await importShiftScheduleFromSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/shifts/generate-defaults"){const body=await request.json() as Record<string,unknown>;return Response.json({ok:true,...await generateDefaultSchedule(env,{...body,changedBy:request.headers.get("x-malipang-actor")})});}
     if(request.method==="POST"&&url.pathname==="/admin/shifts/override"){const body=await request.json() as Record<string,unknown>;return Response.json({ok:true,...await overrideShiftSchedule(env,{...body,changedBy:request.headers.get("x-malipang-actor")})});}

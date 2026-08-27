@@ -6,12 +6,12 @@ permissions: {contents: read}
 concurrency: {group: malipang-production, cancel-in-progress: false}
 jobs:
   release-and-repair:
-    if: github.event.before == 'f7c13c52835b61eeab65eec229f92481c2952cf8'
+    if: github.event.before == '459487d960f4d6dbe3c5ad04f21a3e225b581023'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: production
     env:
-      BASE_SHA: f7c13c52835b61eeab65eec229f92481c2952cf8
+      BASE_SHA: 459487d960f4d6dbe3c5ad04f21a3e225b581023
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
@@ -78,51 +78,24 @@ jobs:
           [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
           npx wrangler deploy | tee release-artifacts/deploy.txt
           npx wrangler versions list --json > release-artifacts/versions-after.json
-      - name: Scoped inactive staff sync and assertion
+      - name: Read back scoped inactive staff state
         shell: bash
         run: |
           set -euo pipefail
-          cat > "$RUNNER_TEMP/status.sql" <<SQL
-          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'STAFF_STATUS_SCOPED_SYNC',employee_id,'Owner-approved scoped payroll repair',json_object('status',status),json_object('status','INACTIVE','sha','$GITHUB_SHA'),datetime('now') FROM employees WHERE employee_id IN ('EMP003','EMP004') AND status<>'INACTIVE';
-          INSERT INTO access_audit_log(audit_id,actor_type,actor_id,action,target_employee_id,branch_id,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'SYSTEM','PAYROLL_REPAIR','STAFF_ROLE_DEACTIVATED',employee_id,branch_id,'Owner-approved scoped payroll repair',json_object('role_assignment_id',role_assignment_id,'role',role,'scope',scope,'branch_id',branch_id,'status',status),json_object('status','INACTIVE','sha','$GITHUB_SHA'),datetime('now') FROM staff_roles WHERE employee_id IN ('EMP003','EMP004') AND status='ACTIVE';
-          UPDATE staff_roles SET status='INACTIVE',effective_to=COALESCE(effective_to,datetime('now')),updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status='ACTIVE';
-          UPDATE employees SET status='INACTIVE',updated_at=datetime('now') WHERE employee_id IN ('EMP003','EMP004') AND status<>'INACTIVE';
-          SQL
-          npx wrangler d1 execute malipang-v5-2 --remote --yes --file "$RUNNER_TEMP/status.sql" > release-artifacts/status-sync.txt
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) inactive FROM employees WHERE employee_id IN ('EMP003','EMP004') AND status='INACTIVE'" > "$RUNNER_TEMP/inactive-after.json"
           jq -e '.[0].success and .[0].results[0].inactive==2' "$RUNNER_TEMP/inactive-after.json" >/dev/null
-      - name: Scoped shift import and zero snapshot audit
+      - name: Read back scoped shifts and zero snapshots
         shell: bash
         run: |
           set -euo pipefail
-          base="${MALIPANG_WORKER_URL%/}"
-          for n in $(seq 1 12); do curl -fsS "$base/health" -o release-artifacts/health-after.json && break; [[ $n == 12 ]] && exit 1; sleep 5; done
-          jq -n '{employeeIds:["EMP005","EMP006"],fromDate:"2026-08-20",toDate:"2026-08-26"}' > "$RUNNER_TEMP/shifts.json"
-          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/shifts.json" "$base/admin/import-shifts-from-sheet" -o "$RUNNER_TEMP/shifts-$n.json"; done
-          jq -e '.ok and (.count+.existing)==9' "$RUNNER_TEMP/shifts-1.json" >/dev/null
-          jq -e '.ok and .count==0 and .existing==9' "$RUNNER_TEMP/shifts-2.json" >/dev/null
-          cat > "$RUNNER_TEMP/normalize.sql" <<SQL
-          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'PAYROLL_PERIOD_REPAIR',employee_id||'|'||work_date,'Owner confirmed zero wage',json_object('wage',daily_wage_satang,'snapshot',daily_wage_snapshot_satang,'source',wage_source_id,'version',version),json_object('wage',0,'snapshot',0,'source','OWNER_ZERO_20260826','sha','$GITHUB_SHA'),datetime('now') FROM attendance_daily WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '$FROM' AND '$TO' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'OWNER_ZERO_20260826');
-          UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0,wage_source_id='OWNER_ZERO_20260826',version=version+1,updated_at=datetime('now') WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '$FROM' AND '$TO' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'OWNER_ZERO_20260826');
-          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'PAYROLL_PERIOD_REPAIR',employee_id||'|'||work_date,'Payroll begins 2026-08-27',json_object('wage',daily_wage_satang,'snapshot',daily_wage_snapshot_satang,'source',wage_source_id,'version',version),json_object('wage',0,'snapshot',0,'source','START_20260827','sha','$GITHUB_SHA'),datetime('now') FROM attendance_daily WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'START_20260827');
-          UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0,wage_source_id='START_20260827',version=version+1,updated_at=datetime('now') WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'START_20260827');
-          UPDATE employee_shift_days SET daily_wage_snapshot_satang=0,wage_source_id='START_20260827',status='CANCELLED',version=version+1,updated_at=datetime('now') WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR status<>'CANCELLED');
-          SQL
-          npx wrangler d1 execute malipang-v5-2 --remote --yes --file "$RUNNER_TEMP/normalize.sql" > release-artifacts/normalization.txt
-      - name: Scoped finalize and idempotent apply
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM employee_shift_days WHERE employee_id='EMP005' AND work_date BETWEEN '$FROM' AND '$TO' AND status='EXPECTED') expected,(SELECT COUNT(*) FROM employee_shift_days WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND status='CANCELLED' AND daily_wage_snapshot_satang=0) cancelled" > "$RUNNER_TEMP/shifts-after.json"
+          jq -e '.[0].success and .[0].results[0].expected==7 and .[0].results[0].cancelled==2' "$RUNNER_TEMP/shifts-after.json" >/dev/null
+      - name: Read back completed payroll run
         shell: bash
         run: |
           set -euo pipefail
-          base="${MALIPANG_WORKER_URL%/}"
-          jq -n '{employeeIds:["EMP005"],fromDate:"2026-08-20",toDate:"2026-08-26"}' > "$RUNNER_TEMP/finalize.json"
-          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/finalize.json" "$base/admin/payroll/finalize-missing" -o "$RUNNER_TEMP/finalize-$n.json"; done
-          jq -e '.ok and .onePunch>=0 and .onePunch<=2 and .noPunch>=0 and .noPunch<=7' "$RUNNER_TEMP/finalize-1.json" >/dev/null
-          jq -e '.ok and .onePunch==0 and .noPunch==0' "$RUNNER_TEMP/finalize-2.json" >/dev/null
-          jq -n --arg run "$RUN_ID" '{fromDate:"2026-08-20",toDate:"2026-08-26",runId:$run,requestedBy:"OWNER_APPROVED_CODEX_REPAIR"}' > "$RUNNER_TEMP/apply.json"
-          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/apply.json" "$base/admin/payroll/apply" -o "$RUNNER_TEMP/apply-$n.json"; done
-          jq -e '.ok and .preview.rowCount>0' "$RUNNER_TEMP/apply-1.json" >/dev/null
-          jq -e '.ok and .alreadyApplied' "$RUNNER_TEMP/apply-2.json" >/dev/null
-          jq '{ok,runId,preview:{periodStart:.preview.periodStart,periodEnd:.preview.periodEnd,rowCount:.preview.rowCount,totalNetPayBaht:.preview.totalNetPayBaht,pendingReviewCount:.preview.pendingReviewCount,employeeCount:(.preview.employees|length)}}' "$RUNNER_TEMP/apply-1.json" > release-artifacts/payroll-summary.json
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT run_id,period_start,period_end,row_count,total_net_pay_satang,status FROM payroll_runs WHERE run_id='$RUN_ID'" > release-artifacts/payroll-summary.json
+          jq -e '.[0].success and .[0].results[0].status=="COMPLETED" and .[0].results[0].row_count>0' release-artifacts/payroll-summary.json >/dev/null
       - name: Reconcile Sheets queue
         shell: bash
         run: |

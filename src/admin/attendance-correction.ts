@@ -1,6 +1,6 @@
 import { enqueueSheetSync } from "../db/repositories";
 import { calculatePayroll } from "../domain/payroll";
-import { approvedOtSatangForDay,getEmployeeById,resolveWageSnapshot,weeklyPayrollStatement } from "../payroll/repository";
+import { approvedOtSatangForDay,getEmployeeById,preservedWageSnapshot,resolveWageSnapshot,weeklyPayrollStatement } from "../payroll/repository";
 import { randomId } from "../shared/ids";
 import { payrollPeriodFor,weeklyPayrollEntityKey } from "../shared/time";
 import type { Env } from "../types";
@@ -9,8 +9,8 @@ export function correctionWeeklySyncVersion(row:{version:number}|null,dailyVersi
 export async function correctAttendance(env:Env,rawInput:unknown):Promise<{eventId:string;version:number}>{
   const input=validateCorrection(rawInput),employee=await getEmployeeById(env,input.employeeId);if(!employee)throw new Error("Employee not found");
   const before=await env.DB.prepare(`SELECT * FROM attendance_daily WHERE employee_id=? AND work_date=?`).bind(input.employeeId,input.workDate).first<Record<string,unknown>>(),version=Number(before?.version||0)+1;
-  const previousWage=Number(before?.daily_wage_snapshot_satang||before?.daily_wage_satang||0),resolved=previousWage>0?{wageSourceId:String(before?.wage_source_id||"LEGACY_SNAPSHOT"),dailyWageSatang:previousWage}:await resolveWageSnapshot(env,employee,input.workDate),otApprovedSatang=await approvedOtSatangForDay(env,input.employeeId,input.workDate);
-  const payroll=calculatePayroll({employee:{...employee,dailyWageSatang:resolved.dailyWageSatang},timeIn:input.timeIn,timeOut:input.timeOut,review:false,finalizeMissingPunch:true,otApprovedSatang}),eventId=randomId("admin_att"),messageId=randomId("admin_msg"),now=new Date().toISOString();
+  const resolved=preservedWageSnapshot(before)||await resolveWageSnapshot(env,employee,input.workDate),otApprovedSatang=await approvedOtSatangForDay(env,input.employeeId,input.workDate);
+  const payroll=calculatePayroll({employee:{...employee,dailyWageSatang:resolved.dailyWageSatang},timeIn:input.timeIn,timeOut:input.timeOut,review:false,finalizeMissingPunch:true,otApprovedSatang,otherAdjustmentSatang:Number(before?.other_adjustment_satang||0)}),eventId=randomId("admin_att"),messageId=randomId("admin_msg"),now=new Date().toISOString();
   await env.DB.batch([
     env.DB.prepare(`INSERT INTO attendance_events(event_id,webhook_event_id,message_id,employee_id,work_date,punch_type,official_time,status,confidence,line_time,line_diff_minutes,image_key,note,validation_code,trace_id,created_at,version) VALUES(?,?,?,?,?,'REVIEW',?,'NORMAL',1,'',0,'',?,'ADMIN_CORRECTION',?,?,?)`).bind(eventId,messageId,messageId,input.employeeId,input.workDate,input.timeOut,input.reason.trim(),eventId,now,version),
     env.DB.prepare(`INSERT INTO attendance_daily(

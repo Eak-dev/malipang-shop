@@ -62,10 +62,10 @@ function makeEnv({inactive=[]}={}){
 }
 const generateInput=(employeeIds=["EMP001"])=>({employeeIds,fromDate:"2026-07-30",toDate:"2026-07-30",scheduledIn:"04:00",scheduledOut:"16:00",changedBy:"OWNER",reason:"Initial default schedule"});
 
-test("a shift before the first wage effective date snapshots zero pay",()=>{
+test("a wage-history baseline is not treated as an employment start date",()=>{
   const staff={employeeId:"EMP004",staffName:"Lily",lineUserId:"PENDING_EMP004",scheduledIn:"04:00",scheduledOut:"16:00",dailyWageSatang:50000,graceMin:10,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:false,status:"ACTIVE"};
   const wages=new Map([["EMP004",[{employee_id:"EMP004",wage_id:"wage_EMP004_20260827",daily_wage_satang:50000,effective_from:"2026-08-27",effective_to:null}]]]);
-  assert.deepEqual(wageFor(staff,"2026-08-25",wages),{wageSourceId:"PRE_EFFECTIVE_DATE",dailyWageSatang:0,effectiveFrom:"2026-08-27",effectiveTo:null});
+  assert.deepEqual(wageFor(staff,"2026-08-25",wages),{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:50000,effectiveFrom:"2026-08-25",effectiveTo:null});
 });
 
 test("default generation inserts a missing EXPECTED row and rerun is insert-only",async()=>{

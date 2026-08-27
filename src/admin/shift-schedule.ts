@@ -92,8 +92,6 @@ async function loadWages(env:Env,employeeIds:string[],_fromDate:string,_toDate:s
 export function wageFor(employee:Employee,workDate:string,wages:Map<string,WageRow[]>):WageSnapshot{
   const employeeWages=wages.get(employee.employeeId)||[],row=employeeWages.find(item=>String(item.effective_from)<=workDate&&(item.effective_to==null||String(item.effective_to)>=workDate));
   if(row)return{wageSourceId:String(row.wage_id),dailyWageSatang:Number(row.daily_wage_satang),effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to==null?null:String(row.effective_to)};
-  const first=employeeWages.slice().sort((a,b)=>String(a.effective_from).localeCompare(String(b.effective_from)))[0];
-  if(first&&String(first.effective_from)>workDate)return{wageSourceId:"PRE_EFFECTIVE_DATE",dailyWageSatang:0,effectiveFrom:String(first.effective_from),effectiveTo:null};
   return{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
 }
 function uniqueRows(rows:ShiftInsertInput[]):void{

@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {calculatePayroll,lateDeductionFor} from '../dist/domain/payroll.js';
-import {resolveWageSnapshot} from '../dist/payroll/repository.js';
+import {preservedWageSnapshot,resolveWageSnapshot} from '../dist/payroll/repository.js';
 const employee={employeeId:'EMP001',staffName:'Win',lineUserId:'U2759c683f61e504af0dd7f08a432b6e2',scheduledIn:'04:00',scheduledOut:'16:00',dailyWageSatang:55000,graceMin:5,lateDeductionSatang:5000,earlyDeductionSatang:500,canSubmitExpense:false,status:'ACTIVE'};
 test('late policy boundaries are exact',()=>{
   assert.equal(lateDeductionFor(55000,5),0);
@@ -24,10 +24,16 @@ test('approved fixed OT is added to net pay',()=>{const r=calculatePayroll({empl
 test('early deduction remains separate for a complete day',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'15:30',review:false});assert.equal(r.earlyOutMinutes,30);assert.equal(r.earlyDeductionSatang,500);assert.equal(r.confirmedWageSatang,54500);});
 test('review moves calculated net wage to pending',()=>{const r=calculatePayroll({employee,timeIn:'04:00',timeOut:'16:00',review:true});assert.equal(r.confirmedWageSatang,0);assert.equal(r.pendingWageSatang,55000);assert.equal(r.payStatus,'REVIEW');});
 test('zero wage is NO_AMOUNT',()=>{const r=calculatePayroll({employee:{...employee,dailyWageSatang:0},timeIn:'04:00',timeOut:'16:00',review:false});assert.equal(r.payStatus,'NO_AMOUNT');});
-test('work before the first wage effective date resolves to zero',async()=>{
+test('inactive employee with no punches creates no synthetic wage or review',()=>{const r=calculatePayroll({employee:{...employee,status:'INACTIVE'},timeIn:null,timeOut:null,review:true,finalizeMissingPunch:true});assert.equal(r.baseWageSatang,0);assert.equal(r.netPaySatang,0);assert.equal(r.payStatus,'NO_AMOUNT');});
+test('inactive no-punch cleanup preserves approved adjustments',()=>{const r=calculatePayroll({employee:{...employee,status:'INACTIVE'},timeIn:null,timeOut:null,review:true,finalizeMissingPunch:true,otApprovedSatang:10000,otherAdjustmentSatang:5000});assert.equal(r.baseWageSatang,0);assert.equal(r.otApprovedSatang,10000);assert.equal(r.otherAdjustmentSatang,5000);assert.equal(r.confirmedWageSatang,15000);assert.equal(r.payStatus,'READY');});
+test('first wage history date is not inferred to be employment start',async()=>{
   const statements=[];
   const env={DB:{prepare(sql){const statement={sql,args:[],bind(...args){this.args=args;return this;},async first(){return sql.includes('ORDER BY effective_from ASC')?{effective_from:'2026-08-27'}:null;}};statements.push(statement);return statement;}}};
   const result=await resolveWageSnapshot(env,employee,'2026-08-25');
-  assert.deepEqual(result,{wageSourceId:'PRE_EFFECTIVE_DATE',dailyWageSatang:0,effectiveFrom:'2026-08-27',effectiveTo:null});
-  assert.equal(statements.length,2);
+  assert.deepEqual(result,{wageSourceId:'EMPLOYEE_CURRENT_FALLBACK',dailyWageSatang:55000,effectiveFrom:'2026-08-25',effectiveTo:null});
+  assert.equal(statements.length,1);
+});
+test('existing zero snapshot is preserved as an intentional value',()=>{
+  assert.deepEqual(preservedWageSnapshot({work_date:'2026-08-25',wage_source_id:'OWNER_ZERO',daily_wage_snapshot_satang:0,daily_wage_satang:50000}),{wageSourceId:'OWNER_ZERO',dailyWageSatang:0,effectiveFrom:'2026-08-25',effectiveTo:null});
+  assert.equal(preservedWageSnapshot({daily_wage_snapshot_satang:null,daily_wage_satang:null}),null);
 });

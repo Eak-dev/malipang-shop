@@ -19,6 +19,13 @@ export async function resolveWageSnapshot(env:Env,employee:Employee,workDate:str
   return{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
 }
 
+export function preservedWageSnapshot(row:Record<string,unknown>|null|undefined):WageSnapshot|null{
+  if(!row)return null;
+  const value=row.daily_wage_snapshot_satang??row.daily_wage_satang;
+  if(value===null||value===undefined)return null;
+  return{wageSourceId:String(row.wage_source_id||"LEGACY_SNAPSHOT"),dailyWageSatang:Number(value),effectiveFrom:String(row.work_date||""),effectiveTo:null};
+}
+
 export async function refreshCurrentEmployeeWages(env:Env,workDate=isoDateInBangkok()):Promise<number>{
   const now=new Date().toISOString(),result=await env.DB.prepare(`UPDATE employees SET
     daily_wage_satang=(SELECT w.daily_wage_satang FROM employee_wage_history w WHERE w.employee_id=employees.employee_id AND w.effective_from<=? AND (w.effective_to IS NULL OR w.effective_to>=?) ORDER BY w.effective_from DESC LIMIT 1),

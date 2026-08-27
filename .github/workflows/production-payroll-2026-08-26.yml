@@ -1,0 +1,147 @@
+name: One-shot Payroll 20-26 Aug 2026 Repair
+on:
+  push:
+    branches: [main]
+permissions: {contents: read}
+concurrency: {group: malipang-production, cancel-in-progress: false}
+jobs:
+  release-and-repair:
+    if: github.event.before == '571866e8cb71fba710e6e25efc814c7d4d88f4c0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: production
+    env:
+      BASE_SHA: 571866e8cb71fba710e6e25efc814c7d4d88f4c0
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      FROM: '2026-08-20'
+      TO: '2026-08-26'
+      RUN_ID: payroll_fix_20260826_v2
+    steps:
+      - uses: actions/checkout@v4
+        with: {fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - name: Gate and validate exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == refs/heads/main && "${{ github.event.before }}" == "$BASE_SHA" ]]
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          git merge-base --is-ancestor "$BASE_SHA" "$GITHUB_SHA"
+          test -n "$CLOUDFLARE_ACCOUNT_ID"; test -n "$CLOUDFLARE_API_TOKEN"; test -n "$MALIPANG_ADMIN_TOKEN"; test -n "$MALIPANG_WORKER_URL"
+          npm ci
+          npm run check
+          npx wrangler deploy --dry-run
+          git diff --check
+          mkdir -p release-artifacts
+      - name: Assert exact Production scope
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM employees WHERE employee_id IN ('OWN001','OWN002') AND status='ACTIVE' AND daily_wage_satang=0) owners,(SELECT COUNT(*) FROM employees WHERE employee_id IN ('EMP005','EMP006') AND status='ACTIVE' AND late_deduction_satang=0) new_staff,(SELECT COUNT(*) FROM employees WHERE employee_id IN ('EMP003','EMP004') AND status='INACTIVE') inactive,(SELECT COUNT(*) FROM employees WHERE employee_id IN ('OWN001','OWN002','EMP001','EMP002','EMP003','EMP004','EMP005','EMP006')) mapped,(SELECT COUNT(*) FROM attendance_daily WHERE work_date BETWEEN '$FROM' AND '$TO') daily_rows,(SELECT COUNT(*) FROM attendance_daily WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26') lily_rows" > release-artifacts/scope.json
+          jq -e '.[0].success and .[0].results[0].owners==2 and .[0].results[0].new_staff==2 and .[0].results[0].inactive==2 and .[0].results[0].mapped==8 and .[0].results[0].daily_rows>=1 and .[0].results[0].daily_rows<=80 and .[0].results[0].lily_rows==2' release-artifacts/scope.json >/dev/null
+          npx wrangler d1 migrations list malipang-v5-2 --remote | tee release-artifacts/migrations.txt
+          ! grep -Eq '[0-9]{4}_[A-Za-z0-9_-]+\.sql' release-artifacts/migrations.txt
+      - name: Health, versions, and private backup restore test
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MALIPANG_WORKER_URL%/}"
+          npx wrangler versions list --json > release-artifacts/versions-before.json
+          curl -fsS "$base/health" -o release-artifacts/health-before.json
+          curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base/admin/readiness" -o "$RUNNER_TEMP/readiness.json"
+          jq -e '.ok and .mode=="production"' release-artifacts/health-before.json >/dev/null
+          jq -e '.ok' "$RUNNER_TEMP/readiness.json" >/dev/null
+          sql="$RUNNER_TEMP/backup.sql"; gz="$sql.gz"; verify="$RUNNER_TEMP/verify.gz"; db="$RUNNER_TEMP/restore.sqlite"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -9 "$sql"; sha="$(sha256sum "$gz"|awk '{print $1}')"; key="d1/$(date -u +%Y/%m/%d)/payroll-${GITHUB_SHA}.sql.gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$verify" --remote
+          [[ "$sha" == "$(sha256sum "$verify"|awk '{print $1}')" ]]; gzip -t "$verify"
+          gzip -dc "$verify" > "$RUNNER_TEMP/restore.sql"
+          python3 - "$RUNNER_TEMP/restore.sql" "$db" <<'PY'
+          import sqlite3,sys
+          c=sqlite3.connect(sys.argv[2]); c.executescript(open(sys.argv[1],encoding='utf8').read())
+          assert c.execute('pragma integrity_check').fetchone()[0]=='ok'; assert c.execute('pragma foreign_key_check').fetchall()==[]
+          repair="""UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '2026-08-20' AND '2026-08-26'; UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0 WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26';"""
+          c.executescript(repair); c.executescript(repair)
+          assert c.execute('pragma integrity_check').fetchone()[0]=='ok'; assert c.execute('pragma foreign_key_check').fetchall()==[]
+          PY
+          jq -n --arg key "$key" --arg sha "$sha" '{privateObject:$key,sha256:$sha,download:"PASS",restore:"PASS",foreignKeys:"PASS",repairRerun:"PASS"}' > release-artifacts/backup.json
+      - name: Fingerprint immutable raw attendance
+        run: npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) rows,COALESCE(SUM(length(COALESCE(message_id,''))+length(COALESCE(image_key,''))+length(COALESCE(official_time,''))),0) fingerprint FROM attendance_events WHERE work_date BETWEEN '$FROM' AND '$TO'" > "$RUNNER_TEMP/raw-before.json"
+      - name: Deploy exact SHA
+        run: |
+          [[ "$(git rev-parse HEAD)" == "$GITHUB_SHA" ]]
+          npx wrangler deploy | tee release-artifacts/deploy.txt
+          npx wrangler versions list --json > release-artifacts/versions-after.json
+      - name: Scoped shift import and zero snapshot audit
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MALIPANG_WORKER_URL%/}"
+          for n in $(seq 1 12); do curl -fsS "$base/health" -o release-artifacts/health-after.json && break; [[ $n == 12 ]] && exit 1; sleep 5; done
+          jq -n '{employeeIds:["EMP005","EMP006"],fromDate:"2026-08-20",toDate:"2026-08-26"}' > "$RUNNER_TEMP/shifts.json"
+          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/shifts.json" "$base/admin/import-shifts-from-sheet" -o "$RUNNER_TEMP/shifts-$n.json"; done
+          jq -e '.ok and (.count+.existing)==9' "$RUNNER_TEMP/shifts-1.json" >/dev/null
+          jq -e '.ok and .count==0 and .existing==9' "$RUNNER_TEMP/shifts-2.json" >/dev/null
+          cat > "$RUNNER_TEMP/normalize.sql" <<SQL
+          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'PAYROLL_PERIOD_REPAIR',employee_id||'|'||work_date,'Owner confirmed zero wage',json_object('wage',daily_wage_satang,'snapshot',daily_wage_snapshot_satang,'source',wage_source_id,'version',version),json_object('wage',0,'snapshot',0,'source','OWNER_ZERO_20260826','sha','$GITHUB_SHA'),datetime('now') FROM attendance_daily WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '$FROM' AND '$TO' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'OWNER_ZERO_20260826');
+          UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0,wage_source_id='OWNER_ZERO_20260826',version=version+1,updated_at=datetime('now') WHERE employee_id IN ('OWN001','OWN002') AND work_date BETWEEN '$FROM' AND '$TO' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'OWNER_ZERO_20260826');
+          INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) SELECT lower(hex(randomblob(16))),'PAYROLL_PERIOD_REPAIR',employee_id||'|'||work_date,'Payroll begins 2026-08-27',json_object('wage',daily_wage_satang,'snapshot',daily_wage_snapshot_satang,'source',wage_source_id,'version',version),json_object('wage',0,'snapshot',0,'source','START_20260827','sha','$GITHUB_SHA'),datetime('now') FROM attendance_daily WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'START_20260827');
+          UPDATE attendance_daily SET daily_wage_satang=0,daily_wage_snapshot_satang=0,wage_source_id='START_20260827',version=version+1,updated_at=datetime('now') WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR wage_source_id<>'START_20260827');
+          UPDATE employee_shift_days SET daily_wage_snapshot_satang=0,wage_source_id='START_20260827',status='CANCELLED',version=version+1,updated_at=datetime('now') WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (daily_wage_snapshot_satang<>0 OR status<>'CANCELLED');
+          SQL
+          npx wrangler d1 execute malipang-v5-2 --remote --yes --file "$RUNNER_TEMP/normalize.sql" > release-artifacts/normalization.txt
+      - name: Scoped finalize and idempotent apply
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MALIPANG_WORKER_URL%/}"
+          jq -n '{employeeIds:["EMP005"],fromDate:"2026-08-20",toDate:"2026-08-26"}' > "$RUNNER_TEMP/finalize.json"
+          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/finalize.json" "$base/admin/payroll/finalize-missing" -o "$RUNNER_TEMP/finalize-$n.json"; done
+          jq -e '.ok and .onePunch>=0 and .onePunch<=2 and .noPunch>=0 and .noPunch<=7' "$RUNNER_TEMP/finalize-1.json" >/dev/null
+          jq -e '.ok and .onePunch==0 and .noPunch==0' "$RUNNER_TEMP/finalize-2.json" >/dev/null
+          jq -n --arg run "$RUN_ID" '{fromDate:"2026-08-20",toDate:"2026-08-26",runId:$run,requestedBy:"OWNER_APPROVED_CODEX_REPAIR"}' > "$RUNNER_TEMP/apply.json"
+          for n in 1 2; do curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data-binary @"$RUNNER_TEMP/apply.json" "$base/admin/payroll/apply" -o "$RUNNER_TEMP/apply-$n.json"; done
+          jq -e '.ok and (.alreadyApplied|not) and .preview.rowCount>0' "$RUNNER_TEMP/apply-1.json" >/dev/null
+          jq -e '.ok and .alreadyApplied' "$RUNNER_TEMP/apply-2.json" >/dev/null
+          jq '{ok,runId,preview:{periodStart:.preview.periodStart,periodEnd:.preview.periodEnd,rowCount:.preview.rowCount,totalNetPayBaht:.preview.totalNetPayBaht,pendingReviewCount:.preview.pendingReviewCount,employeeCount:(.preview.employees|length)}}' "$RUNNER_TEMP/apply-1.json" > release-artifacts/payroll-summary.json
+      - name: Reconcile Sheets queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="${MALIPANG_WORKER_URL%/}"
+          curl -fsS -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" -H 'Content-Type: application/json' --data '{"fromDate":"2026-08-20","toDate":"2026-08-26","limitPerType":200}' "$base/admin/reconcile-sheets" -o release-artifacts/reconcile.json
+          jq -e '.ok and .counts.DAILY_PAYROLL>0 and .counts.WEEKLY_PAYROLL>0' release-artifacts/reconcile.json >/dev/null
+          for n in $(seq 1 36); do npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) n FROM sync_jobs WHERE entity_type IN ('DAILY_PAYROLL','WEEKLY_PAYROLL','SHIFT_SCHEDULE') AND status IN ('PENDING','PROCESSING','FAILED')" > "$RUNNER_TEMP/sync.json"; [[ "$(jq -r '.[0].results[0].n' "$RUNNER_TEMP/sync.json")" == 0 ]] && break; [[ $n == 36 ]] && exit 1; sleep 10; done
+      - name: Assert payroll and reliability invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT COUNT(*) FROM attendance_daily d JOIN employees e ON e.employee_id=d.employee_id WHERE d.work_date BETWEEN '$FROM' AND '$TO' AND e.late_deduction_satang=0 AND d.late_deduction_applied_satang<>0) late,(SELECT COUNT(*) FROM attendance_daily WHERE employee_id='EMP006' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND daily_wage_snapshot_satang<>0) lily,(SELECT COUNT(*) FROM attendance_daily d JOIN employees e ON e.employee_id=d.employee_id WHERE d.work_date BETWEEN '$FROM' AND '$TO' AND e.status='INACTIVE' AND d.time_in IS NULL AND d.time_out IS NULL AND d.pay_status='REVIEW') inactive_review,(SELECT COUNT(*) FROM attendance_daily WHERE employee_id='EMP005' AND work_date BETWEEN '$FROM' AND '2026-08-24' AND pay_status<>'REVIEW') soe_review,(SELECT COUNT(*) FROM attendance_daily WHERE employee_id='EMP005' AND work_date BETWEEN '2026-08-25' AND '2026-08-26' AND (confirmed_wage_satang<>25000 OR pay_status<>'READY')) soe_half,(SELECT COUNT(*) FROM attendance_daily WHERE employee_id='EMP001' AND work_date='2026-08-24' AND (confirmed_wage_satang<>25000 OR pay_status<>'READY')) win,(SELECT COUNT(*) FROM (SELECT message_id FROM attendance_events WHERE work_date BETWEEN '$FROM' AND '$TO' GROUP BY message_id HAVING COUNT(*)>1)) duplicates,(SELECT COUNT(*) FROM failed_jobs WHERE status='OPEN' AND created_at>datetime('now','-2 hours')) new_failed,(SELECT COUNT(*) FROM payroll_runs WHERE run_id='$RUN_ID' AND status='COMPLETED') run_ok" > release-artifacts/invariants.json
+          jq -e '.[0].success and (.[0].results[0]|.late==0 and .lily==0 and .inactive_review==0 and .soe_review==0 and .soe_half==0 and .win==0 and .duplicates==0 and .new_failed==0 and .run_ok==1)' release-artifacts/invariants.json >/dev/null
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT COUNT(*) rows,COALESCE(SUM(length(COALESCE(message_id,''))+length(COALESCE(image_key,''))+length(COALESCE(official_time,''))),0) fingerprint FROM attendance_events WHERE work_date BETWEEN '$FROM' AND '$TO'" > "$RUNNER_TEMP/raw-after.json"
+          diff -u <(jq '.[0].results[0]' "$RUNNER_TEMP/raw-before.json") <(jq '.[0].results[0]' "$RUNNER_TEMP/raw-after.json")
+          jq '.[0].results[0]' "$RUNNER_TEMP/raw-after.json" > release-artifacts/raw-preserved.json
+          curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "${MALIPANG_WORKER_URL%/}/admin/readiness" -o "$RUNNER_TEMP/ready-after.json"
+          jq -e '.ok' "$RUNNER_TEMP/ready-after.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/ready-after.json" > release-artifacts/readiness-after.json
+      - name: Assertion-based summary
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          for f in backup scope payroll-summary invariants raw-preserved readiness-after; do test -s "release-artifacts/$f.json"; done
+          test -s release-artifacts/deploy.txt
+          echo "## Payroll repair $FROM–$TO" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Exact release SHA: \`$GITHUB_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo '- Backup/restore/FK/rehearsal, retry safety, D1 invariants, raw preservation, queue drain: PASS' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Google Sheets connector readback remains a required post-workflow gate' >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload sanitized evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with: {name: 'payroll-repair-${{ github.run_id }}', path: release-artifacts, if-no-files-found: warn, retention-days: 30}

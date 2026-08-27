@@ -83,15 +83,16 @@ async function loadActiveEmployees(env:Env,employeeIds:string[]):Promise<Map<str
   }
   return employees;
 }
-async function loadWages(env:Env,employeeIds:string[],fromDate:string,toDate:string):Promise<Map<string,WageRow[]>>{
-  const result=await env.DB.prepare(`SELECT employee_id,wage_id,daily_wage_satang,effective_from,effective_to FROM employee_wage_history WHERE employee_id IN (${placeholders(employeeIds.length)}) AND effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY employee_id,effective_from DESC`).bind(...employeeIds,toDate,fromDate).all<WageRow>();
+async function loadWages(env:Env,employeeIds:string[],_fromDate:string,_toDate:string):Promise<Map<string,WageRow[]>>{
+  const result=await env.DB.prepare(`SELECT employee_id,wage_id,daily_wage_satang,effective_from,effective_to FROM employee_wage_history WHERE employee_id IN (${placeholders(employeeIds.length)}) ORDER BY employee_id,effective_from DESC`).bind(...employeeIds).all<WageRow>();
   const wages=new Map<string,WageRow[]>();
   for(const row of result.results||[]){const key=String(row.employee_id),items=wages.get(key)||[];items.push(row);wages.set(key,items);}
   return wages;
 }
-function wageFor(employee:Employee,workDate:string,wages:Map<string,WageRow[]>):WageSnapshot{
-  const row=(wages.get(employee.employeeId)||[]).find(item=>String(item.effective_from)<=workDate&&(item.effective_to==null||String(item.effective_to)>=workDate));
-  return row?{wageSourceId:String(row.wage_id),dailyWageSatang:Number(row.daily_wage_satang),effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to==null?null:String(row.effective_to)}:{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
+export function wageFor(employee:Employee,workDate:string,wages:Map<string,WageRow[]>):WageSnapshot{
+  const employeeWages=wages.get(employee.employeeId)||[],row=employeeWages.find(item=>String(item.effective_from)<=workDate&&(item.effective_to==null||String(item.effective_to)>=workDate));
+  if(row)return{wageSourceId:String(row.wage_id),dailyWageSatang:Number(row.daily_wage_satang),effectiveFrom:String(row.effective_from),effectiveTo:row.effective_to==null?null:String(row.effective_to)};
+  return{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:employee.dailyWageSatang,effectiveFrom:workDate,effectiveTo:null};
 }
 function uniqueRows(rows:ShiftInsertInput[]):void{
   const keys=new Set<string>();

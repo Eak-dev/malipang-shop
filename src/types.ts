@@ -280,4 +280,6 @@ export interface AttendanceCommitResult {
   pendingWageSatang: number;
   validationCode: string;
   version: number;
+  /** Monotonic version of the employee's weekly payroll aggregate. */
+  weeklyVersion?: number;
 }

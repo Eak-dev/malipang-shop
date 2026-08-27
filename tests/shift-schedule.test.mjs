@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {generateDefaultSchedule,insertMissingScheduleRows,overrideShiftSchedule,parseShiftStatus} from "../dist/admin/shift-schedule.js";
+import {generateDefaultSchedule,insertMissingScheduleRows,overrideShiftSchedule,parseShiftStatus,wageFor} from "../dist/admin/shift-schedule.js";
 import {shiftStatusCreatesMissingPunch} from "../dist/payroll/finalize.js";
 
 function employee(employeeId,status="ACTIVE"){
@@ -18,7 +18,7 @@ function makeEnv({inactive=[]}={}){
   };
   const statement=(sql)=>({sql,args:[],bind(...args){this.args=args;return this;},async all(){
     if(sql.includes("FROM employees WHERE employee_id IN"))return{results:this.args.map(id=>state.employees.get(String(id))).filter(Boolean),meta:{}};
-    if(sql.includes("FROM employee_wage_history")){const ids=this.args.slice(0,-2).map(String);return{results:ids.flatMap(id=>state.wages.get(id)||[]),meta:{}};}
+    if(sql.includes("FROM employee_wage_history")){const ids=this.args.map(String);return{results:ids.flatMap(id=>state.wages.get(id)||[]),meta:{}};}
     return{results:[],meta:{}};
   },async first(){
     if(sql.includes("FROM employee_shift_days WHERE employee_id=? AND work_date=?"))return state.shifts.get(`${this.args[0]}|${this.args[1]}`)||null;
@@ -61,6 +61,12 @@ function makeEnv({inactive=[]}={}){
   return{state,env:{DB:db,SHEETS_SYNC_ENABLED:"true",JOB_QUEUE:{async sendBatch(messages){state.queuedMessages.push(...messages);state.queued.push(...messages.map(message=>message.body));}}}};
 }
 const generateInput=(employeeIds=["EMP001"])=>({employeeIds,fromDate:"2026-07-30",toDate:"2026-07-30",scheduledIn:"04:00",scheduledOut:"16:00",changedBy:"OWNER",reason:"Initial default schedule"});
+
+test("a wage-history baseline is not treated as an employment start date",()=>{
+  const staff={employeeId:"EMP004",staffName:"Lily",lineUserId:"PENDING_EMP004",scheduledIn:"04:00",scheduledOut:"16:00",dailyWageSatang:50000,graceMin:10,lateDeductionSatang:0,earlyDeductionSatang:0,canSubmitExpense:false,status:"ACTIVE"};
+  const wages=new Map([["EMP004",[{employee_id:"EMP004",wage_id:"wage_EMP004_20260827",daily_wage_satang:50000,effective_from:"2026-08-27",effective_to:null}]]]);
+  assert.deepEqual(wageFor(staff,"2026-08-25",wages),{wageSourceId:"EMPLOYEE_CURRENT_FALLBACK",dailyWageSatang:50000,effectiveFrom:"2026-08-25",effectiveTo:null});
+});
 
 test("default generation inserts a missing EXPECTED row and rerun is insert-only",async()=>{
   const{env,state}=makeEnv(),first=await generateDefaultSchedule(env,generateInput()),key="EMP001|2026-07-30";
@@ -137,6 +143,7 @@ test("strict status validation rejects blank and unknown values",()=>{
 
 test("only EXPECTED shifts participate in Missing Punch payroll",()=>{
   assert.equal(shiftStatusCreatesMissingPunch("EXPECTED"),true);
+  assert.equal(shiftStatusCreatesMissingPunch("EXPECTED","INACTIVE"),false);
   assert.equal(shiftStatusCreatesMissingPunch("DAY_OFF"),false);
   assert.equal(shiftStatusCreatesMissingPunch("CANCELLED"),false);
 });

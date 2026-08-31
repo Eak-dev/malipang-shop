@@ -25,6 +25,32 @@ test('cron recovery does not enqueue a job whose queue delay is still active',as
   assert.equal(sent[0].body.entityKey,'ready');
 });
 
+test('cron recovery does not re-enqueue a sync job with an open terminal DLQ record',async()=>{
+  const old=new Date(Date.now()-600_000).toISOString(),sent=[];
+  const rows=[
+    {entity_type:'EXPENSE',entity_key:'terminal',entity_version:1,trace_id:'postback_exp_terminal',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:1},
+    {entity_type:'EXPENSE',entity_key:'recoverable',entity_version:1,trace_id:'postback_exp_recoverable',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:0}
+  ];
+  const queries=[];
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){queries.push(sql);return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  assert.equal(await recoverPendingSheetJobs(env,300),1);
+  assert.equal(sent.length,1);
+  assert.equal(sent[0].body.entityKey,'recoverable');
+  assert.ok(queries.some(sql=>sql.includes("terminal_dlq_open")&&sql.includes("DEAD_LETTER_MAX_RETRIES")));
+  assert.ok(queries.some(sql=>sql.startsWith('UPDATE sync_jobs')&&sql.includes('NOT EXISTS')&&sql.includes('DEAD_LETTER_MAX_RETRIES')));
+  const select=queries.find(sql=>sql.startsWith('SELECT s.entity_type'));
+  assert.ok(select.indexOf("AND (?=1 OR NOT EXISTS")<select.indexOf('ORDER BY s.updated_at LIMIT 200'));
+});
+
+test('manual recovery can explicitly retry a terminal Sheets DLQ job',async()=>{
+  const old=new Date(Date.now()-600_000).toISOString(),sent=[];
+  const rows=[{entity_type:'EXPENSE',entity_key:'terminal',entity_version:1,trace_id:'postback_exp_terminal',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:1}];
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(){return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  assert.equal(await recoverPendingSheetJobs(env,300,true),1);
+  assert.equal(sent.length,1);
+  assert.equal(sent[0].body.entityKey,'terminal');
+});
+
 test('only one concurrent worker can claim the same sync job lease',async()=>{
   let state={status:'PENDING',nextAttemptAt:'2026-07-23T11:00:00.000Z',leaseUntil:null,leaseToken:null};
   const env={DB:{prepare(sql){

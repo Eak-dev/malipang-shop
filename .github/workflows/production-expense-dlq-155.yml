@@ -1,0 +1,173 @@
+name: One-shot Expense DLQ #155 Production Release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/production-expense-dlq-155.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: deploy exact #155 runtime
+    if: github.event.before == 'ca10e1fbd006abec78fcf42e3c76f5bc77173344'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      TARGET_SHA: ca10e1fbd006abec78fcf42e3c76f5bc77173344
+      PREVIOUS_MAIN_SHA: ca10e1fbd006abec78fcf42e3c76f5bc77173344
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+
+    steps:
+      - name: Checkout release-control commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce one-shot exact-source guard
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF" == "refs/heads/main" ]]
+          [[ "${{ github.event.before }}" == "$PREVIOUS_MAIN_SHA" ]]
+          git cat-file -e "$TARGET_SHA^{commit}"
+          git merge-base --is-ancestor "$TARGET_SHA" "$GITHUB_SHA"
+          changed="$(git diff --name-only "$TARGET_SHA" "$GITHUB_SHA")"
+          [[ "$changed" == ".github/workflows/production-expense-dlq-155.yml" ]]
+
+      - name: Checkout exact approved runtime
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: release-source
+          fetch-depth: 1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+
+      - name: Validate credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$MALIPANG_ADMIN_TOKEN"
+          test -n "$MALIPANG_WORKER_URL"
+
+      - name: Validate exact approved runtime
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npm ci
+          npm run check
+          npx wrangler deploy --dry-run
+          git diff --check
+
+      - name: Prepare redacted evidence directory
+        run: mkdir -p release-artifacts
+
+      - name: Record pre-release Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-before.json
+
+      - name: Verify production before release
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-before.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-before.raw.json"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o "$RUNNER_TEMP/status-before.raw.json"
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-before.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-before.raw.json" >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/status-before.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-before.raw.json" > release-artifacts/readiness-before.json
+          jq '{ok,mode,openFailedJobs,inbound,sync,now}' "$RUNNER_TEMP/status-before.raw.json" > release-artifacts/status-before.json
+
+      - name: Verify no remote migration is pending
+        working-directory: release-source
+        run: npx wrangler d1 migrations list malipang-v5-2 --remote | tee ../release-artifacts/migrations-before.txt
+
+      - name: Export and verify a fresh private D1 backup
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          stamp="$(TZ=Asia/Bangkok date +%Y%m%d-%H%M%S)"
+          sql="$RUNNER_TEMP/malipang-v5-2-before-${stamp}.sql"
+          gz="${sql}.gz"
+          verify="$RUNNER_TEMP/verify-${stamp}.sql.gz"
+          object_key="d1/$(TZ=Asia/Bangkok date +%Y/%m/%d)/$(basename "$gz")"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -9 "$sql"
+          sha="$(sha256sum "$gz" | awk '{print $1}')"
+          gzip -t "$gz"
+          npx wrangler r2 object put "malipang-private-backups/${object_key}" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/${object_key}" --file="$verify" --remote
+          [[ "$sha" == "$(sha256sum "$verify" | awk '{print $1}')" ]]
+          gzip -t "$verify"
+          jq -n --arg release_sha "$TARGET_SHA" --arg object_key "$object_key" --arg sha256 "$sha" --arg created_at "$(date -u +%FT%TZ)" '{release_sha:$release_sha,private_backup:true,object_key:$object_key,sha256:$sha256,download_verification:"PASS",gzip_integrity:"PASS",created_at:$created_at}' > ../release-artifacts/backup-metadata.json
+
+      - name: Deploy exact approved runtime without migration
+        working-directory: release-source
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npx wrangler deploy | tee ../release-artifacts/deploy.txt
+
+      - name: Record post-release Worker versions
+        working-directory: release-source
+        run: npx wrangler versions list --json > ../release-artifacts/worker-versions-after.json
+
+      - name: Verify production after release
+        shell: bash
+        run: |
+          set -euo pipefail
+          base_url="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body "$base_url/health" -o release-artifacts/health-after.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/readiness" -o "$RUNNER_TEMP/readiness-after.raw.json"
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base_url/admin/status" -o "$RUNNER_TEMP/status-after.raw.json"
+          jq -e '.ok == true and .mode == "production"' release-artifacts/health-after.json >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/readiness-after.raw.json" >/dev/null
+          jq -e '.ok == true' "$RUNNER_TEMP/status-after.raw.json" >/dev/null
+          jq '{ok,checkedAt,checks:(.checks|with_entries(.value={ok:.value.ok}))}' "$RUNNER_TEMP/readiness-after.raw.json" > release-artifacts/readiness-after.json
+          jq '{ok,mode,openFailedJobs,inbound,sync,now}' "$RUNNER_TEMP/status-after.raw.json" > release-artifacts/status-after.json
+
+      - name: Write release summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Expense DLQ #155 Production Release"
+            echo "- Exact runtime SHA: \`$TARGET_SHA\`"
+            [[ -f release-artifacts/backup-metadata.json ]] && echo "- Private D1 backup: PASS"
+            [[ -f release-artifacts/deploy.txt ]] && echo "- Deploy command: PASS"
+            [[ -f release-artifacts/health-after.json ]] && echo "- Health after deploy: PASS"
+            [[ -f release-artifacts/readiness-after.json ]] && echo "- Readiness after deploy: PASS"
+            echo "- Expense historical-data mutation: NO"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload sanitized release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: expense-dlq-155-release-${{ github.run_id }}
+          path: release-artifacts
+          if-no-files-found: warn
+          retention-days: 14

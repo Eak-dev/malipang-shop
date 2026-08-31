@@ -63,7 +63,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       });
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
-    if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300)});}
+    if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});}
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
       const purpose=typeof body.purpose==="string"?body.purpose:undefined;

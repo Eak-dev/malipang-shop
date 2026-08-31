@@ -10,11 +10,13 @@
 
 ## Sheets ไม่อัปเดต
 
-ข้อมูล D1 ยังเป็นข้อมูลจริง แก้สิทธิ์ Service Account แล้วเรียก:
+ข้อมูล D1 ยังเป็นข้อมูลจริง แก้สาเหตุก่อน (เช่น สิทธิ์ Service Account หรือ quota) แล้วเรียก:
 
 ```bash
 curl -X POST 'https://<worker>/admin/retry-sync' -H 'Authorization: Bearer <ADMIN_TOKEN>'
 ```
+
+คำสั่งนี้เป็น **manual recovery** และสามารถ retry งาน Sheets ที่เข้า DLQ แล้วได้หนึ่งรอบ; Cron ปกติจะไม่หยิบงาน DLQ เดิมกลับมาวนหรือส่งแจ้งเตือนซ้ำทุก 5 นาที. ถ้ายังล้ม ให้ตรวจ `failed_jobs.error` ก่อนเรียกซ้ำ.
 
 หาก D1 มีข้อมูลแต่แถวใน Sheets หายหรือ Sync Job เดิมขึ้น COMPLETED ให้สั่ง Backfill ช่วงวันที่:
 

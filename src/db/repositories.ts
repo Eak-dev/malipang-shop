@@ -49,7 +49,7 @@ export async function enqueueSheetSync(env:Env,job:SheetsSyncJob):Promise<void>{
   await enqueueSheetSyncBatch(env,[job]);
 }
 interface ScheduledSheetJob{body:SheetsSyncJob;delaySeconds:number;nextAttemptAt:string}
-interface RecoverableSheetJobRow{entity_type:unknown;entity_key:unknown;entity_version:unknown;trace_id:unknown;status:unknown;updated_at:unknown;next_attempt_at:unknown;lease_until:unknown}
+interface RecoverableSheetJobRow{entity_type:unknown;entity_key:unknown;entity_version:unknown;trace_id:unknown;status:unknown;updated_at:unknown;next_attempt_at:unknown;lease_until:unknown;terminal_dlq_open?:unknown}
 const SHEETS_SAFE_WRITES_PER_MINUTE=40;
 export function sheetJobDelaySeconds(index:number,rateLimited:boolean):number{return rateLimited?Math.floor(index/SHEETS_SAFE_WRITES_PER_MINUTE)*60:0;}
 function scheduleSheetJobs(jobs:SheetsSyncJob[],rateLimited:boolean,nowMs=Date.now()):ScheduledSheetJob[]{
@@ -83,11 +83,11 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
 export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString();
-  const rows=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id,status,updated_at,next_attempt_at,lease_until FROM sync_jobs WHERE status IN ('PENDING','FAILED','PROCESSING') ORDER BY updated_at LIMIT 200`).all<RecoverableSheetJobRow>();
-  const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>isRecoverableSheetJob(row,now,stale)).slice(0,50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
+  const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED','PROCESSING') ORDER BY s.updated_at LIMIT 200`).all<RecoverableSheetJobRow>();
+  const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>Number(row.terminal_dlq_open||0)!==1&&isRecoverableSheetJob(row,now,stale)).slice(0,50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
   const scheduled=scheduleSheetJobs(jobs,true,nowMs),claimed:ScheduledSheetJob[]=[];
   for(const item of scheduled){
-    const job=item.body,result=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',trace_id=?,last_error=NULL,updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND updated_at<? AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`).bind(job.traceId,now,item.nextAttemptAt,job.entityType,job.entityKey,job.entityVersion,stale,now,now).run();
+    const job=item.body,result=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',trace_id=?,last_error=NULL,updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':' || sync_jobs.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AND (((status='PENDING' OR status='FAILED') AND updated_at<? AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`).bind(job.traceId,now,item.nextAttemptAt,job.entityType,job.entityKey,job.entityVersion,stale,now,now).run();
     if(Number(result.meta.changes||0)===1)claimed.push(item);
   }
   if(claimed.length)await sendScheduledSheetJobs(env,claimed);

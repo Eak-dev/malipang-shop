@@ -1,4 +1,4 @@
-import { isoDateInBangkok } from "../shared/time";
+import { isIsoDate,isoDateInBangkok } from "../shared/time";
 
 export type PersonalTransactionType="PERSONAL_USE"|"PERSONAL_RETURN";
 export interface ParsedPersonalUseText{
@@ -15,7 +15,6 @@ const shopBankAliases=new Set(["kbank ร้าน","บัญชีร้าน
 const cashAliases=new Set(["เงินสดหน้าร้าน","cash drawer","เงินสดร้าน"]);
 
 function normalize(value:string):string{return value.trim().toLowerCase().replace(/\s+/g," ");}
-function validDate(value:string):boolean{return /^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(`${value}T12:00:00+07:00`));}
 
 /**
  * Strict pipe-delimited grammar deliberately prevents a withdrawal being
@@ -37,6 +36,6 @@ export function parsePersonalUseText(text:string,now=new Date()):ParsedPersonalU
   const description=String(parts[3]||"").replace(/\s+/g," ").trim();
   if(!description||description.length>200)return null;
   const transactionDate=parts.length===5?String(parts[4]||"").trim():isoDateInBangkok(now);
-  if(!validDate(transactionDate))return null;
+  if(!isIsoDate(transactionDate))return null;
   return{transactionType,amountSatang,sourceWallet,description,transactionDate};
 }

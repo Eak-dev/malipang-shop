@@ -33,3 +33,5 @@ CREATE TABLE IF NOT EXISTS owner_personal_transaction_audit(
 );
 CREATE INDEX IF NOT EXISTS idx_owner_personal_audit_event
   ON owner_personal_transaction_audit(personal_use_id,created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_owner_personal_audit_action
+  ON owner_personal_transaction_audit(personal_use_id,action);

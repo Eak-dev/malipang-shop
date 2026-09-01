@@ -30,6 +30,7 @@ test('strict personal-use text requires type, amount, source wallet and descript
   assert.deepEqual(parsed,{transactionType:'PERSONAL_USE',amountSatang:4000000,sourceWallet:'SHOP_BANK',description:'จ่ายบัตรเครดิต',transactionDate:'2026-09-01'});
   assert.equal(parsePersonalUseText('ส่วนตัว 40000'),null);
   assert.equal(parsePersonalUseText('ส่วนตัว | 40000 | บัญชีส่วนตัว | ค่าใช้ส่วนตัว'),null);
+  assert.equal(parsePersonalUseText('ส่วนตัว | 40000 | KBank ร้าน | ค่าใช้ส่วนตัว | 2026-02-30'),null);
 });
 
 test('owner confirmation writes a separate personal-use ledger and enqueues only PERSONAL_USE sync',async()=>{

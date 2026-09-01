@@ -9,6 +9,9 @@ const SHEET_SYNC_LEASE_MS=15*60*1000;
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
   return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
 }
+export function buildPersonalUseRawSheetValues(item:Record<string,unknown>):unknown[]{
+  return[item.personal_use_id,item.transaction_type,item.transaction_date,item.description,baht(item.amount_satang),item.source_wallet,item.status,item.message_id,item.trace_id,item.submitted_by_employee_id,item.branch_id,item.approved_at,item.created_at,item.updated_at,item.version];
+}
 export interface LoadedExpenseDailyPosting{expense:Record<string,unknown>;summaryDocument:Record<string,unknown>|null;document:PurchaseDetailDocument|null;items:DailyExpenseDocumentItem[];record:PurchaseDetailRecord}
 export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<LoadedExpenseDailyPosting>{
   const expense=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=?`).bind(expenseId).first<Record<string,unknown>>();if(!expense)throw new Error(`Expense not found: ${expenseId}`);
@@ -59,6 +62,10 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       const r=await env.DB.prepare(`SELECT o.*,e.staff_name FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=?`).bind(job.entityKey).first<Record<string,unknown>>();if(!r)throw new Error(`OT request not found: ${job.entityKey}`);sheet=env.SHEET_OT_REQUESTS;values=[r.ot_id,r.work_date,r.employee_id,r.staff_name,r.reason,r.planned_start,r.planned_end,baht(r.fixed_amount_satang),r.requested_by,r.owner_preapproved_at,r.employee_confirm_status,r.employee_confirmed_at,r.owner_final_status,baht(r.owner_final_amount_satang),r.owner_final_at,r.actual_ot_minutes,r.status,r.note,r.version,r.updated_at];
     }else if(job.entityType==="EXPENSE"){
       const loaded=await loadExpenseDailyPosting(env,job.entityKey);expense=loaded.expense;expenseDocument=loaded.document;expenseItems=loaded.items;expenseRecord=loaded.record;sheet=env.SHEET_EXPENSE_RAW;values=buildExpenseRawSheetValues(expense,loaded.summaryDocument);
+    }else if(job.entityType==="PERSONAL_USE"){
+      const item=await env.DB.prepare(`SELECT * FROM owner_personal_transactions WHERE personal_use_id=?`).bind(job.entityKey).first<Record<string,unknown>>();
+      if(!item)throw new Error(`Personal-use transaction not found: ${job.entityKey}`);
+      sheet=env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW";values=buildPersonalUseRawSheetValues(item);
     }else throw new Error(`Unsupported sheet entity type: ${job.entityType}`);
     const row=await allocateRow(env,sheet,job.entityKey),end=columnName(values.length),started=Date.now();try{
       await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}]);

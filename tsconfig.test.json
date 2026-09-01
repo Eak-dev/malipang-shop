@@ -15,6 +15,7 @@
     "src/expense/flex.ts",
     "src/expense/repository.ts",
     "src/expense/service.ts",
+    "src/personal-use/**/*.ts",
     "src/evidence/retention.ts",
     "src/line/signature.ts",
     "src/line/attendance-notification.ts",

@@ -2,7 +2,7 @@ export type RuntimeMode = "shadow" | "production";
 export type ImageKind = "CLOCK" | "RECEIPT" | "BANK_SLIP" | "ONLINE_ORDER" | "DELIVERY_ORDER" | "UNKNOWN";
 export type PunchType = "IN" | "OUT" | "DUPLICATE" | "COMPLETE" | "REVIEW";
 export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
-export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "SYSTEM_LOG";
+export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "PERSONAL_USE" | "SYSTEM_LOG";
 
 export interface Env {
   DB: D1Database;
@@ -46,6 +46,8 @@ export interface Env {
   SHEET_SHIFT_SCHEDULE: string;
   SHEET_OT_REQUESTS: string;
   SHEET_EXPENSE_RAW: string;
+  /** Private, append-only reporting mirror for owner withdrawals and returns. */
+  SHEET_PERSONAL_USE_RAW?: string;
   SHEET_EXPENSE_DAILY: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;

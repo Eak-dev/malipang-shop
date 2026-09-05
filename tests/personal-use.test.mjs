@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {parsePersonalUseText} from '../dist/personal-use/text-parser.js';
 import {handlePersonalUsePostback,handlePersonalUseText} from '../dist/personal-use/service.js';
 import {buildPersonalUseRawSheetValues} from '../dist/sheets/sync.js';
-import {OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS,planOwnerMonthClosePersonalUseWrites} from '../dist/sheets/owner-month-close.js';
+import {legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites} from '../dist/sheets/owner-month-close.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:'B001',employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{canSubmitExpense:true}};
 function harness(){
@@ -80,12 +80,25 @@ test('non-owner cannot create a personal-use ledger entry',async()=>{
 });
 
 test('owner month close formulas are confirmed-only, idempotent and conflict-safe',()=>{
-  const blank=OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS.map(()=>[]),writes=planOwnerMonthClosePersonalUseWrites(blank);
-  assert.deepEqual(writes,OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS);
-  assert.equal(planOwnerMonthClosePersonalUseWrites(OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS.map(cell=>[cell.value])).length,0);
-  for(const cell of OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS.filter(cell=>cell.range.startsWith('L')&&cell.value.includes('V52_PERSONAL_USE_RAW'))){
+  const cells=ownerMonthClosePersonalUseCells('V52_PERSONAL_USE_RAW'),blank=cells.map(()=>[]),writes=planOwnerMonthClosePersonalUseWrites(blank,cells);
+  assert.deepEqual(writes,cells);
+  assert.equal(planOwnerMonthClosePersonalUseWrites(cells.map(cell=>[cell.value]),cells).length,0);
+  for(const cell of cells.filter(cell=>cell.range.startsWith('L')&&cell.value.includes('V52_PERSONAL_USE_RAW'))){
     assert.match(cell.value,/"CONFIRMED"/);assert.doesNotMatch(cell.value,/V52_EXPENSE_RAW/);
   }
-  const conflict=OWNER_MONTH_CLOSE_PERSONAL_USE_CELLS.map(cell=>[cell.value]);conflict[1]=['=MANUAL_FORMULA()'];
-  assert.throws(()=>planOwnerMonthClosePersonalUseWrites(conflict),/LAYOUT_CONFLICT:L6/);
+  const conflict=cells.map(cell=>[cell.value]);conflict[1]=['=MANUAL_FORMULA()'];
+  assert.throws(()=>planOwnerMonthClosePersonalUseWrites(conflict,cells),/LAYOUT_CONFLICT:L6/);
+});
+
+test('owner month close coerces raw dates, honors configured sheet names and has no row cutoff',()=>{
+  const cells=ownerMonthClosePersonalUseCells("Owner's Personal Raw"),formulas=cells.filter(cell=>cell.value.includes('FILTER(')).map(cell=>cell.value);
+  assert.equal(formulas.length,4);
+  for(const formula of formulas){
+    assert.match(formula,/ARRAYFORMULA\(IFERROR\(IF\(ISNUMBER\(/);
+    assert.match(formula,/DATEVALUE\('Owner''s Personal Raw'!\$C\$2:\$C\)/);
+    assert.match(formula,/'Owner''s Personal Raw'!\$E\$2:\$E/);
+    assert.doesNotMatch(formula,/\$1000/);
+  }
+  const legacy=legacyOwnerMonthClosePersonalUseCells(),upgrade=planOwnerMonthClosePersonalUseWrites(legacy.map(cell=>[cell.value]),cells,legacy);
+  assert.deepEqual(upgrade.map(cell=>cell.range),['L6','L7','L15','L16']);
 });

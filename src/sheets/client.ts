@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
+import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -12,11 +13,16 @@ export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):numbe
 }
 async function sheetsFetch(env:Env,path:string,init:RequestInit):Promise<Response>{const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");const res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);if(!res.ok)throw new SheetsHttpError(res.status,`Sheets HTTP ${res.status}: ${await res.text()}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));return res;}
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})});}
+export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})});}
 export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})});}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});}
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+}
+export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+  if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"FORMULA",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
@@ -46,5 +52,9 @@ export async function bootstrapSheets(env:Env):Promise<void>{
   // complete header row at creation time.
   const newDefinitions=definitions.filter(([name])=>!existing.has(name));
   await batchWriteValues(env,newDefinitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
+  if(existing.has("04_OWNER_MONTH_CLOSE")){
+    const cells=ownerMonthClosePersonalUseCells(env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW"),qualified=cells.map(cell=>`'04_OWNER_MONTH_CLOSE'!${cell.range}`),current=await batchGetSheetFormulaValues(env,qualified),writes=planOwnerMonthClosePersonalUseWrites(current,cells,legacyOwnerMonthClosePersonalUseCells());
+    await batchWriteUserEnteredValues(env,writes.map(cell=>({range:`'04_OWNER_MONTH_CLOSE'!${cell.range}`,values:[[cell.value]]})));
+  }
 }
 function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

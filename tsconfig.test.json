@@ -29,6 +29,7 @@
     "src/admin/readiness.ts",
     "src/access/**/*.ts",
     "src/sheets/client.ts",
+    "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",
     "src/sheets/sync.ts",

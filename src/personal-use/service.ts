@@ -5,7 +5,7 @@ import { respondFlexToLineEvent,respondTextToLineEvent } from "../line/event-res
 import { randomId } from "../shared/ids";
 import type { Env,LineEvent } from "../types";
 import { buildPersonalUseConfirmFlex,buildPersonalUseSavedFlex,type PersonalUseFlexRecord } from "./flex";
-import { parsePersonalUseText } from "./text-parser";
+import { hasPersonalUseCommandPrefix,parsePersonalUseText } from "./text-parser";
 
 export type PersonalUseOutcome="NOT_HANDLED"|"CONFIRMED"|"WAITING_CONFIRM"|"REJECTED";
 type Row=Record<string,unknown>;
@@ -20,7 +20,12 @@ function syncOutbox(env:Env,id:string,version:number,traceId:string){const now=n
 async function show(env:Env,event:LineEvent,item:PersonalUseFlexRecord,traceId:string):Promise<void>{if(item.status==="WAITING_CONFIRM")await respondFlexToLineEvent(env,event,buildPersonalUseConfirmFlex(item),{traceId,purpose:"OWNER_RESPONSE"});else if(item.status==="CONFIRMED")await respondFlexToLineEvent(env,event,buildPersonalUseSavedFlex(item),{traceId,purpose:"OWNER_RESPONSE"});else await respondTextToLineEvent(env,event,"รายการถอนใช้ส่วนตัวนี้ถูกยกเลิกแล้ว",{traceId,purpose:"OWNER_RESPONSE"});}
 
 export async function handlePersonalUseText(env:Env,event:LineEvent,traceId:string,actor:StaffActor|null):Promise<PersonalUseOutcome>{
-  const parsed=parsePersonalUseText(event.message?.text||"");if(!parsed)return"NOT_HANDLED";
+  const text=event.message?.text||"",parsed=parsePersonalUseText(text);
+  if(!parsed){
+    if(!hasPersonalUseCommandPrefix(text))return"NOT_HANDLED";
+    await respondTextToLineEvent(env,event,["รูปแบบรายการส่วนตัวไม่ถูกต้อง","กรุณาใช้: ส่วนตัว | จำนวน | บัญชีร้าน/เงินสดหน้าร้าน | รายละเอียด","หรือ: คืนเงินส่วนตัว | จำนวน | บัญชีร้าน/เงินสดหน้าร้าน | รายละเอียด","เพิ่มวันที่ท้ายข้อความได้เป็น YYYY-MM-DD"].join("\n"),{traceId,purpose:"OWNER_RESPONSE"});
+    return"REJECTED";
+  }
   if(!isOwner(actor)){await respondTextToLineEvent(env,event,"คำสั่งถอนใช้ส่วนตัวใช้ได้เฉพาะบัญชี Owner ที่ยืนยันแล้ว",{traceId,purpose:"OWNER_RESPONSE"});return"REJECTED";}
   const lineUserId=event.source.userId||"",messageId=event.message?.id||"",id=randomId("personal"),now=new Date().toISOString(),ownership=actorValues(actor);
   const [inserted]=await env.DB.batch([env.DB.prepare(`INSERT INTO owner_personal_transactions(personal_use_id,message_id,line_user_id,transaction_type,description,amount_satang,source_wallet,transaction_date,status,trace_id,submitted_by_employee_id,branch_id,created_at,updated_at,version) VALUES(?,?,?,?,?,?,?,?, 'WAITING_CONFIRM',?,?,?,?,?,1) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,lineUserId,parsed.transactionType,parsed.description,parsed.amountSatang,parsed.sourceWallet,parsed.transactionDate,traceId,ownership.employeeId,ownership.branchId,now,now),createAudit(env,actor,id,parsed.transactionType)]);

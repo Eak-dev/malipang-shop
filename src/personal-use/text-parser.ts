@@ -11,10 +11,22 @@ export interface ParsedPersonalUseText{
 
 const useCommands=new Set(["ส่วนตัว","personal use","personal ยู","personal u"]);
 const returnCommands=new Set(["คืนเงินส่วนตัว","personal return","คืนเงิน personal"]);
+const reservedCommands=[...useCommands,...returnCommands];
 const shopBankAliases=new Set(["kbank ร้าน","บัญชีร้าน","shop bank","kbank shop","scb ร้าน","scb shop"]);
 const cashAliases=new Set(["เงินสดหน้าร้าน","cash drawer","เงินสดร้าน"]);
 
 function normalize(value:string):string{return value.trim().toLowerCase().replace(/\s+/g," ");}
+
+/**
+ * Personal-use command prefixes are reserved even when their pipe-delimited
+ * payload is invalid.  The boundary check avoids reserving ordinary words such
+ * as `personal utilities` or `ส่วนตัวเอง` while still accepting spacing and
+ * NBSP variants before validation.
+ */
+export function hasPersonalUseCommandPrefix(text:string):boolean{
+  const normalized=normalize(text);
+  return reservedCommands.some(command=>normalized===command||normalized.startsWith(`${command}|`)||normalized.startsWith(`${command} `));
+}
 
 /**
  * Strict pipe-delimited grammar deliberately prevents a withdrawal being

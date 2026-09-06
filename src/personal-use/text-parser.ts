@@ -19,13 +19,17 @@ function normalize(value:string):string{return value.trim().toLowerCase().replac
 
 /**
  * Personal-use command prefixes are reserved even when their pipe-delimited
- * payload is invalid.  The boundary check avoids reserving ordinary words such
- * as `personal utilities` or `ส่วนตัวเอง` while still accepting spacing and
- * NBSP variants before validation.
+ * payload is invalid.  A boundary is any character that cannot continue a
+ * Unicode word, so whitespace, pipes and punctuation are reserved while words
+ * such as `personal utilities` or `ส่วนตัวเอง` remain ordinary Expense text.
  */
 export function hasPersonalUseCommandPrefix(text:string):boolean{
   const normalized=normalize(text);
-  return reservedCommands.some(command=>normalized===command||normalized.startsWith(`${command}|`)||normalized.startsWith(`${command} `));
+  return reservedCommands.some(command=>{
+    if(!normalized.startsWith(command))return false;
+    const suffix=normalized.slice(command.length);
+    return !suffix||!/^[\p{L}\p{M}\p{N}]/u.test(suffix);
+  });
 }
 
 /**

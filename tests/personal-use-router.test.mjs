@@ -45,6 +45,8 @@ test('router reserves every malformed PERSONAL_USE prefix before Expense routing
   t.mock.method(globalThis,'fetch',async(_url,init)=>{replies.push(JSON.parse(String(init.body)));return new Response('{}',{status:200});});
   const malformed=[
     'ส่วนตัว ทอน 100',
+    'ส่วนตัว: ไข่ ทอน 100',
+    'ส่วนตัว, ไข่ โอน 100',
     'PeRsOnAl\u00a0UsE โอน 100',
     'personal ยู | 100 | KBank ร้าน',
     'personal   u | 100 | KBank ร้าน | note | 2026-09-06 | extra',
@@ -105,4 +107,10 @@ test('router preserves ordinary Expense behavior outside reserved prefix boundar
   assert.equal(review.state.syncJobs.length,0);
   assert.equal(review.state.queue.length,0);
   assert.deepEqual(review.state.completions.at(-1),{route:'EXPENSE_TEXT',status:'COMPLETED'});
+
+  const thaiContinuation=harness();
+  await routeText(thaiContinuation,'ส่วนตัวเอง ทอน 100','expense_thai_continuation');
+  assert.deepEqual(thaiContinuation.state.expenseRows.map(row=>row.status),['CONFIRMED']);
+  assert.equal(thaiContinuation.state.personalRows.length,0);
+  assert.deepEqual(thaiContinuation.state.completions.at(-1),{route:'EXPENSE_TEXT',status:'COMPLETED'});
 });

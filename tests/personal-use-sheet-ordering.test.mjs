@@ -48,7 +48,7 @@ function harness(){
   sqlite.prepare(`INSERT INTO owner_personal_transactions(personal_use_id,message_id,line_user_id,transaction_type,description,amount_satang,source_wallet,transaction_date,status,trace_id,submitted_by_employee_id,branch_id,reviewed_by_employee_id,approved_at,created_at,updated_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,'message_ordering_fixture','line_owner','PERSONAL_USE','sanitized ordering fixture',100,'SHOP_BANK','2026-09-06','CONFIRMED','trace_ordering','OWN001','B001','OWN001',now,now,now,2);
   sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`).run('sync_ordering_v2','PERSONAL_USE',id,2,'trace_ordering_v2',now,now);
   const DB=new SqliteD1(sqlite),queued=[];
-  const env={DB,SHEETS_SYNC_ENABLED:'true',SHEET_PERSONAL_USE_RAW:'V52_PERSONAL_USE_RAW',JOB_QUEUE:{async sendBatch(messages){queued.push(...messages);}}};
+  const env={DB,SHEETS_SYNC_ENABLED:'true',SHEET_PERSONAL_USE_RAW:'V52_PERSONAL_USE_RAW',JOB_QUEUE:{async send(body,options={}){queued.push({body,...options});},async sendBatch(messages){queued.push(...messages);}}};
   return{sqlite,DB,env,queued,id,close(){sqlite.close();}};
 }
 
@@ -136,18 +136,40 @@ test('active older PERSONAL_USE lease makes the latest version retry without ste
   }finally{h.close();}
 });
 
-test('queue retries a busy PERSONAL_USE version without ack or failed-job mutation',async()=>{
+test('queue replaces a busy PERSONAL_USE delivery without exhausting retry or DLQ budget',async()=>{
   const h=harness(),calls={acks:0,retries:[]};
   try{
     assert.equal(typeof await claimSheetSyncJob(h.env,job(h.id,2)),'string');
     cancelAtVersionThree(h);
-    const message={body:job(h.id,3),attempts:1,ack(){calls.acks+=1;},retry(options){calls.retries.push(options);}};
+    const message={body:job(h.id,3),attempts:5,ack(){calls.acks+=1;},retry(options){calls.retries.push(options);}};
     await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
-    assert.equal(calls.acks,0);
-    assert.deepEqual(calls.retries,[{delaySeconds:30}]);
+    assert.equal(calls.acks,1);
+    assert.deepEqual(calls.retries,[]);
+    assert.equal(h.queued.length,1);
+    assert.equal(h.queued[0].delaySeconds,30);
+    assert.deepEqual(h.queued[0].body,job(h.id,3));
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs`).get().count,0);
     assert.deepEqual(syncRows(h),[
       {entity_version:2,status:'PROCESSING',attempt_count:1},
+      {entity_version:3,status:'PENDING',attempt_count:0}
+    ]);
+  }finally{h.close();}
+});
+
+test('current version remains retryable when its blocking writer finishes during claim resolution',async()=>{
+  const h=harness();
+  try{
+    assert.equal(typeof await claimSheetSyncJob(h.env,job(h.id,2)),'string');
+    cancelAtVersionThree(h);
+    h.DB.afterFirst=async sql=>{
+      if(sql.startsWith('SELECT * FROM owner_personal_transactions')){
+        h.DB.afterFirst=null;
+        h.sqlite.prepare(`UPDATE sync_jobs SET status='COMPLETED',lease_until=NULL,lease_token=NULL WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).run(h.id);
+      }
+    };
+    assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY');
+    assert.deepEqual(syncRows(h),[
+      {entity_version:2,status:'COMPLETED',attempt_count:1},
       {entity_version:3,status:'PENDING',attempt_count:0}
     ]);
   }finally{h.close();}

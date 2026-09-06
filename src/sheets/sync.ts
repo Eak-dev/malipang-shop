@@ -63,8 +63,14 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
   const current=await loadPersonalUseProjection(env,job.entityKey),currentVersion=Number(current.version);
   if(currentVersion>job.entityVersion){await completeUnclaimedSupersededPersonalUseJob(env,job);return"IGNORED";}
   if(currentVersion<job.entityVersion)throw new Error(`Personal-use sync version ${job.entityVersion} is ahead of D1 version ${currentVersion}`);
-  const active=await env.DB.prepare(`SELECT entity_version FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version<>? AND status='PROCESSING' AND lease_until>? ORDER BY entity_version DESC LIMIT 1`).bind(job.entityKey,job.entityVersion,nowIso).first<{entity_version:number}>();
-  return active?"BUSY":"IGNORED";
+  const state=await env.DB.prepare(`SELECT status,next_attempt_at,lease_until,
+    EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?) AS active_other_version
+    FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityVersion,nowIso,job.entityKey,job.entityVersion).first<{status:string;next_attempt_at:string|null;lease_until:string|null;active_other_version:number}>();
+  if(!state)return"BUSY";
+  if(Number(state.active_other_version||0)===1)return"BUSY";
+  if((state.status==="PENDING"||state.status==="FAILED")&&(!state.next_attempt_at||state.next_attempt_at<=nowIso))return"BUSY";
+  if(state.status==="PROCESSING"&&Boolean(state.lease_until)&&String(state.lease_until)<=nowIso)return"BUSY";
+  return"IGNORED";
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();

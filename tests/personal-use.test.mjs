@@ -14,10 +14,10 @@ function harness(){
     return null;
   },async run(){
     if(sql.includes('INSERT INTO owner_personal_transactions')){const [id,messageId,lineUserId,type,description,amount,sourceWallet,date,trace,submitted,branch,created,updated]=this.args;if([...state.items.values()].some(row=>row.message_id===messageId))return{meta:{changes:0}};state.items.set(id,{personal_use_id:id,message_id:messageId,line_user_id:lineUserId,transaction_type:type,description,amount_satang:amount,source_wallet:sourceWallet,transaction_date:date,status:'WAITING_CONFIRM',trace_id:trace,submitted_by_employee_id:submitted,branch_id:branch,created_at:created,updated_at:updated,version:1});return{meta:{changes:1}};}
-    if(sql.includes("SET status='CONFIRMED'")){const row=state.items.get(this.args[3]);if(!row||row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};row.status='CONFIRMED';return{meta:{changes:1}};}
-    if(sql.includes("SET status='CANCELLED'")&&sql.includes("status='WAITING_CONFIRM'")){const row=state.items.get(this.args[1]);if(!row||row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};row.status='CANCELLED';return{meta:{changes:1}};}
-    if(sql.includes("SET status='CANCELLED'")&&sql.includes("status='CONFIRMED'")){const row=state.items.get(this.args[1]);if(!row||row.status!=='CONFIRMED')return{meta:{changes:0}};row.status='CANCELLED';row.version+=1;return{meta:{changes:1}};}
-    if(sql.includes('owner_personal_transaction_audit')&&sql.includes('SELECT')){if(!state.items.has(this.args.at(-1)))return{meta:{changes:0}};state.audits.push(this.args);return{meta:{changes:1}};}
+    if(sql.includes('UPDATE owner_personal_transactions')&&sql.includes('reviewed_by_employee_id')){const [to,_actor,_approved,_updated,nextVersion,id,_lineUserId,from,expectedVersion,auditId]=this.args,row=state.items.get(id);if(!row||row.status!==from||row.version!==expectedVersion||!state.audits.some(args=>args[0]===auditId))return{meta:{changes:0}};row.status=to;row.version=nextVersion;return{meta:{changes:1}};}
+    if(sql.includes('UPDATE owner_personal_transactions')){const [to,_updated,nextVersion,id,_lineUserId,from,expectedVersion,auditId]=this.args,row=state.items.get(id);if(!row||row.status!==from||row.version!==expectedVersion||!state.audits.some(args=>args[0]===auditId))return{meta:{changes:0}};row.status=to;row.version=nextVersion;return{meta:{changes:1}};}
+    if(sql.includes('owner_personal_transaction_audit')&&sql.includes("'CREATE_DRAFT'")){if(!state.items.has(this.args.at(-1)))return{meta:{changes:0}};state.audits.push(this.args);return{meta:{changes:1}};}
+    if(sql.includes('owner_personal_transaction_audit')&&sql.includes('SELECT')){const [_auditId,_actor,_action,_before,_after,_now,id,lineUserId,from,expectedVersion]=this.args,row=state.items.get(id);if(!row||row.line_user_id!==lineUserId||row.status!==from||row.version!==expectedVersion)return{meta:{changes:0}};state.audits.push(this.args);return{meta:{changes:1}};}
     if(sql.includes('owner_personal_transaction_audit'))state.audits.push(this.args);
     return{meta:{changes:1}};
   }};},async batch(statements){state.batches.push(statements.map(statement=>statement.sql));const results=[];for(const statement of statements)results.push(await statement.run());return results;}};
@@ -44,10 +44,10 @@ test('owner confirmation writes a separate personal-use ledger and enqueues only
   await handlePersonalUsePostback(h.env,h.postback(`a=personal_use_confirm&id=${id}`),owner);
   assert.equal(h.state.items.get(id).status,'CONFIRMED');
   assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityType,'PERSONAL_USE');
-  assert.equal(h.state.queue[0].body.entityVersion,1);
+  assert.equal(h.state.queue[0].body.entityVersion,2);
 });
 
-test('repeated confirmation is idempotent and owner undo creates the version-2 sheet update',async()=>{
+test('repeated confirmation is idempotent and owner undo creates the next-version sheet update',async()=>{
   const h=harness();
   await handlePersonalUseText(h.env,h.text('msg_personal_undo','ส่วนตัว | 750 | KBank ร้าน | ใช้ส่วนตัว'),'trace_undo',owner);
   const id=[...h.state.items.keys()][0],confirm=h.postback(`a=personal_use_confirm&id=${id}`);
@@ -56,9 +56,9 @@ test('repeated confirmation is idempotent and owner undo creates the version-2 s
   assert.equal(h.state.queue.length,1);
   await handlePersonalUsePostback(h.env,h.postback(`a=personal_use_undo&id=${id}`),owner);
   assert.equal(h.state.items.get(id).status,'CANCELLED');
-  assert.equal(h.state.items.get(id).version,2);
+  assert.equal(h.state.items.get(id).version,3);
   assert.equal(h.state.queue.length,2);
-  assert.equal(h.state.queue[1].body.entityVersion,2);
+  assert.equal(h.state.queue[1].body.entityVersion,3);
 });
 
 test('repeated LINE message keeps one draft and one create audit',async()=>{

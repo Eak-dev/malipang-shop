@@ -470,6 +470,8 @@ prefix คำสั่งส่วนตัวที่รองรับทั�
 
 ระบบต้องให้ Owner กดยืนยันใน Flex ก่อนบันทึกจริง เก็บใน ledger และ audit แยก (`owner_personal_transactions`) แล้ว sync ไป `V52_PERSONAL_USE_RAW` เท่านั้น รายการนี้ **ไม่ใช่ Expense และไม่กระทบ P&L** แต่ `04_OWNER_MONTH_CLOSE` ใช้เป็นส่วนประกอบของการกระทบยอดเงินคงเหลือร้านได้
 
+การ sync `PERSONAL_USE` ใช้ lease แยกต่อธุรกรรมและตรวจ version ล่าสุดจาก D1 อีกครั้งก่อนเขียน Google Sheets; งาน version เก่าจะจบแบบ no-op และ version ปัจจุบันจะ retry เมื่อมี writer ของธุรกรรมเดียวกันอยู่ โดยไม่ลด concurrency ของธุรกรรมอื่น
+
 `POST /admin/bootstrap-sheets` ตรวจสูตร PERSONAL_USE ใน `04_OWNER_MONTH_CLOSE` แบบ idempotent: เติมเฉพาะเซลล์ที่ว่าง และหยุดด้วย layout conflict หากพบข้อความหรือสูตรอื่นอยู่แล้ว เพื่อไม่เขียนทับสูตรที่ Owner ดูแลเอง
 
 ### Bank Slip

@@ -8,6 +8,7 @@
     "types": []
   },
   "include": [
+    "src/index.ts",
     "src/domain/**/*.ts",
     "src/payroll/**/*.ts",
     "src/expense/text-parser.ts",

@@ -83,6 +83,12 @@ async function completeOwnedSheetSyncJob(env:Env,job:SheetsSyncJob,leaseToken:st
   const result=await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
   return Number(result.meta.changes||0)===1;
 }
+async function completeOwnedUndispatchedSupersededPersonalUseJob(env:Env,job:SheetsSyncJob,leaseToken:string):Promise<boolean>{
+  const result=await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL
+    WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?
+      AND EXISTS(SELECT 1 FROM owner_personal_transactions p WHERE p.personal_use_id=? AND p.version>?)`).bind(new Date().toISOString(),job.entityKey,job.entityVersion,leaseToken,job.entityKey,job.entityVersion).run();
+  return Number(result.meta.changes||0)===1;
+}
 async function completeUnclaimedSupersededPersonalUseJob(env:Env,job:SheetsSyncJob):Promise<void>{
   await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED')`).bind(new Date().toISOString(),job.entityKey,job.entityVersion).run();
 }
@@ -167,7 +173,15 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
           await markCancelledExpensePurchaseDetails(env,String(expense.expense_id));
         }
       }
-    }catch(error){if(error instanceof PersonalUseWriteFenceUnavailableError)return"BUSY";throw error;
+    }catch(error){
+      if(error instanceof PersonalUseWriteFenceUnavailableError){
+        // No Sheets request was dispatched. Release only this exact token when
+        // D1 atomically proves the job is superseded; never touch a reclaimed
+        // lease owned by another worker.
+        if(await completeOwnedUndispatchedSupersededPersonalUseJob(env,job,leaseToken))return"IGNORED";
+        return"BUSY";
+      }
+      throw error;
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
     const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
     return"PROCESSED";

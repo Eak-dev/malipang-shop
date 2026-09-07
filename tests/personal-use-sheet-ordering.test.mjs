@@ -331,25 +331,48 @@ test('lease expiry during cold OAuth prevents mutation dispatch after ownership 
       expireLease(h,2);
       releaseAuth.resolve();
       assert.equal(await syncing,'BUSY');
+      assert.equal(sheetDispatches,0,'the expired writer must not reach fetch');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'PROCESSED','a fresh owner can retry immediately after the expired lease');
     },async()=>{authStarted.resolve();await releaseAuth.promise;return'test-token';});
-    assert.equal(sheetDispatches,0,'a writer that lost its lease while authenticating must fail closed before fetch');
+    assert.equal(sheetDispatches,1);
   }finally{releaseAuth.resolve();h.close();}
 });
 
-test('version advance during cold OAuth prevents the stale mutation dispatch',async()=>{
+test('version advance during cold OAuth releases the undispatched stale lease for N+1',async()=>{
   const h=harness(),authStarted=deferred(),releaseAuth=deferred();h.env.GOOGLE_SPREADSHEET_ID='fixture';
-  let sheetDispatches=0;
+  const dispatchedVersions=[];
   try{
-    await withSheetsTransport(async()=>{sheetDispatches+=1;return new Response('{}',{status:200});},async()=>{
+    await withSheetsTransport(async(_url,init)=>{dispatchedVersions.push(Number(JSON.parse(String(init.body)).data[0].values[0][14]));return new Response('{}',{status:200});},async()=>{
       const syncing=syncJob(h.env,job(h.id,2));
       await authStarted.promise;
       cancelAtVersionThree(h);
       releaseAuth.resolve();
-      assert.equal(await syncing,'BUSY');
+      assert.equal(await syncing,'IGNORED');
+      const superseded=plain(h.sqlite.prepare(`SELECT status,lease_until,lease_token FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
+      assert.deepEqual(superseded,{status:'COMPLETED',lease_until:null,lease_token:null});
+      assert.deepEqual(dispatchedVersions,[],'the superseded pre-auth snapshot must never reach fetch');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED','N+1 must write without waiting for the old 15-minute lease');
     },async()=>{authStarted.resolve();await releaseAuth.promise;return'test-token';});
-    assert.equal(sheetDispatches,0,'a writer made stale while authenticating must fail closed before fetch');
+    assert.deepEqual(dispatchedVersions,[3]);
     assert.equal(h.sqlite.prepare(`SELECT version FROM owner_personal_transactions WHERE personal_use_id=?`).get(h.id).version,3);
   }finally{releaseAuth.resolve();h.close();}
+});
+
+test('superseded cleanup never clears a lease reclaimed after the final CAS rejection',async()=>{
+  const h=harness(),original=sheetsClient.batchWriteValues,reclaimedToken='reclaimed-by-another-worker';
+  try{
+    sheetsClient.batchWriteValues=async(_env,_data,beforeMutationDispatch)=>{
+      cancelAtVersionThree(h);
+      try{await beforeMutationDispatch();assert.fail('the stale final CAS must reject');}
+      catch(error){
+        h.sqlite.prepare(`UPDATE sync_jobs SET status='PROCESSING',lease_token=?,lease_until='2999-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).run(reclaimedToken,h.id);
+        throw error;
+      }
+    };
+    assert.equal(await syncJob(h.env,job(h.id,2)),'BUSY');
+    const reclaimed=plain(h.sqlite.prepare(`SELECT status,lease_token,lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
+    assert.deepEqual(reclaimed,{status:'PROCESSING',lease_token:reclaimedToken,lease_until:'2999-01-01T00:00:00.000Z'});
+  }finally{sheetsClient.batchWriteValues=original;h.close();}
 });
 
 test('definitive Sheet rejection uses normal failed-job retry instead of ambiguity quarantine',async()=>{

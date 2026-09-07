@@ -14,6 +14,9 @@ const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
 export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY";
 interface PersonalUseProjectionRow extends Record<string,unknown>{version:unknown;sync_lease_owned?:unknown}
+class PersonalUseWriteFenceUnavailableError extends Error{
+  constructor(){super("PERSONAL_USE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="PersonalUseWriteFenceUnavailableError";}
+}
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
   return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
 }
@@ -144,12 +147,16 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(currentVersion>job.entityVersion){if(!await completeOwnedSheetSyncJob(env,job,leaseToken))return"BUSY";return"IGNORED";}
       if(currentVersion<job.entityVersion)throw new Error(`Personal-use sync version ${job.entityVersion} is ahead of D1 version ${currentVersion}`);
       values=buildPersonalUseRawSheetValues(fenced);
-      personalUseAmbiguityLeaseUntil=await renewPersonalUseWriteFence(env,job,leaseToken);
-      if(!personalUseAmbiguityLeaseUntil)return"BUSY";
     }
     const end=columnName(values.length),started=Date.now();try{
-      if(personalUse)personalUseWriteOutcomeUncertain=true;
-      await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}]);
+      await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}],personalUse?async()=>{
+        // batchWriteValues invokes this only after OAuth succeeds and immediately
+        // before dispatch. If auth outlives the original lease, this CAS fails
+        // closed and the stale request is never sent.
+        personalUseAmbiguityLeaseUntil=await renewPersonalUseWriteFence(env,job,leaseToken);
+        if(!personalUseAmbiguityLeaseUntil)throw new PersonalUseWriteFenceUnavailableError();
+        personalUseWriteOutcomeUncertain=true;
+      }:undefined);
       personalUseWriteOutcomeUncertain=false;
       if(expense){
         if(String(expense.status)==="CONFIRMED"&&expenseRecord){
@@ -160,6 +167,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
           await markCancelledExpensePurchaseDetails(env,String(expense.expense_id));
         }
       }
+    }catch(error){if(error instanceof PersonalUseWriteFenceUnavailableError)return"BUSY";throw error;
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
     const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
     return"PROCESSED";

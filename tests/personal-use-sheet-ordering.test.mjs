@@ -63,8 +63,8 @@ function cancelAtVersionThree(h,{enqueue=true}={}){
 }
 function syncRows(h){return plain(h.sqlite.prepare(`SELECT entity_version,status,attempt_count FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(h.id));}
 function expireLease(h,version){h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).run(h.id,version);}
-async function withSheetWriter(write,run){const original=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=write;try{return await run();}finally{sheetsClient.batchWriteValues=original;}}
-async function withSheetsTransport(fetchImpl,run){const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;googleAuth.getGoogleAccessToken=async()=>"test-token";globalThis.fetch=fetchImpl;try{return await run();}finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}}
+async function withSheetWriter(write,run){const original=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=async(env,data,beforeMutationDispatch)=>{if(beforeMutationDispatch)await beforeMutationDispatch();return write(env,data);};try{return await run();}finally{sheetsClient.batchWriteValues=original;}}
+async function withSheetsTransport(fetchImpl,run,authImpl=async()=>"test-token"){const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;googleAuth.getGoogleAccessToken=authImpl;globalThis.fetch=fetchImpl;try{return await run();}finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}}
 async function withConsoleErrorMuted(run){const original=console.error;console.error=()=>{};try{return await run();}finally{console.error=original;}}
 
 test('PERSONAL_USE inversion cannot leave an older projection after the latest D1 version',async()=>{
@@ -296,6 +296,60 @@ test('ambiguity fence includes a configured client timeout before the provider b
     const lease=String(h.sqlite.prepare(`SELECT lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id).lease_until);
     assert.ok(Date.parse(lease)-started>=clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS);
   }finally{h.close();}
+});
+
+test('cold OAuth completes before the final CAS renews the mutation fence',async()=>{
+  const h=harness(),authStarted=deferred(),releaseAuth=deferred(),order=[];
+  const clientTimeoutMs=20*60*1000,requiredFenceMs=clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS;
+  h.env.GOOGLE_SPREADSHEET_ID='fixture';h.env.EXTERNAL_API_TIMEOUT_MS=String(clientTimeoutMs);
+  let dispatchLeaseUntil='';
+  try{
+    await withSheetsTransport(async()=>{
+      order.push('sheet-dispatch');
+      dispatchLeaseUntil=String(h.sqlite.prepare(`SELECT lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id).lease_until);
+      return new Response('{}',{status:200});
+    },async()=>{
+      const syncing=syncJob(h.env,job(h.id,2));
+      await authStarted.promise;
+      const preAuthLeaseUntil=String(h.sqlite.prepare(`SELECT lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id).lease_until);
+      assert.ok(Date.parse(preAuthLeaseUntil)-Date.now()<requiredFenceMs,'the long mutation fence must not start before cold OAuth finishes');
+      releaseAuth.resolve();
+      assert.equal(await syncing,'PROCESSED');
+    },async()=>{order.push('oauth-start');authStarted.resolve();await releaseAuth.promise;order.push('oauth-complete');return'test-token';});
+    assert.deepEqual(order,['oauth-start','oauth-complete','sheet-dispatch']);
+    assert.ok(Date.parse(dispatchLeaseUntil)-Date.now()>=requiredFenceMs-2000,'the post-auth lease must cover the full mutation timeout and provider bound');
+  }finally{releaseAuth.resolve();h.close();}
+});
+
+test('lease expiry during cold OAuth prevents mutation dispatch after ownership is lost',async()=>{
+  const h=harness(),authStarted=deferred(),releaseAuth=deferred();h.env.GOOGLE_SPREADSHEET_ID='fixture';
+  let sheetDispatches=0;
+  try{
+    await withSheetsTransport(async()=>{sheetDispatches+=1;return new Response('{}',{status:200});},async()=>{
+      const syncing=syncJob(h.env,job(h.id,2));
+      await authStarted.promise;
+      expireLease(h,2);
+      releaseAuth.resolve();
+      assert.equal(await syncing,'BUSY');
+    },async()=>{authStarted.resolve();await releaseAuth.promise;return'test-token';});
+    assert.equal(sheetDispatches,0,'a writer that lost its lease while authenticating must fail closed before fetch');
+  }finally{releaseAuth.resolve();h.close();}
+});
+
+test('version advance during cold OAuth prevents the stale mutation dispatch',async()=>{
+  const h=harness(),authStarted=deferred(),releaseAuth=deferred();h.env.GOOGLE_SPREADSHEET_ID='fixture';
+  let sheetDispatches=0;
+  try{
+    await withSheetsTransport(async()=>{sheetDispatches+=1;return new Response('{}',{status:200});},async()=>{
+      const syncing=syncJob(h.env,job(h.id,2));
+      await authStarted.promise;
+      cancelAtVersionThree(h);
+      releaseAuth.resolve();
+      assert.equal(await syncing,'BUSY');
+    },async()=>{authStarted.resolve();await releaseAuth.promise;return'test-token';});
+    assert.equal(sheetDispatches,0,'a writer made stale while authenticating must fail closed before fetch');
+    assert.equal(h.sqlite.prepare(`SELECT version FROM owner_personal_transactions WHERE personal_use_id=?`).get(h.id).version,3);
+  }finally{releaseAuth.resolve();h.close();}
 });
 
 test('definitive Sheet rejection uses normal failed-job retry instead of ambiguity quarantine',async()=>{

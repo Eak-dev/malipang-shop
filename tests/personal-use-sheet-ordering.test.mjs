@@ -6,8 +6,12 @@ import {readdirSync,readFileSync} from 'node:fs';
 
 const require=createRequire(import.meta.url);
 const sheetsClient=require('../dist/sheets/client.js');
-const {claimSheetSyncJob,syncJob}=require('../dist/sheets/sync.js');
+const {SheetsHttpError,SheetsMutationOutcomeUnknownError,isAmbiguousSheetsMutationStatus}=sheetsClient;
+const {GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS,PERSONAL_USE_AMBIGUITY_MARGIN_MS,claimSheetSyncJob,syncJob}=require('../dist/sheets/sync.js');
 const {reconcileSheets}=require('../dist/admin/reconcile-sheets.js');
+const {recoverPendingSheetJobs}=require('../dist/db/repositories.js');
+const {OperationTimeoutError}=require('../dist/shared/async.js');
+const googleAuth=require('../dist/sheets/google-auth.js');
 const worker=require('../dist/index.js').default;
 const migration=name=>readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
 const migrationNames=readdirSync(new URL('../migrations/',import.meta.url)).filter(name=>/^\d+.*\.sql$/.test(name)).sort();
@@ -58,7 +62,10 @@ function cancelAtVersionThree(h,{enqueue=true}={}){
   if(enqueue)h.sqlite.prepare(`INSERT OR IGNORE INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`).run('sync_ordering_v3','PERSONAL_USE',h.id,3,'trace_ordering_v3','2026-09-06T00:01:00.000Z','2026-09-06T00:01:00.000Z');
 }
 function syncRows(h){return plain(h.sqlite.prepare(`SELECT entity_version,status,attempt_count FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(h.id));}
+function expireLease(h,version){h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).run(h.id,version);}
 async function withSheetWriter(write,run){const original=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=write;try{return await run();}finally{sheetsClient.batchWriteValues=original;}}
+async function withSheetsTransport(fetchImpl,run){const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;googleAuth.getGoogleAccessToken=async()=>"test-token";globalThis.fetch=fetchImpl;try{return await run();}finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}}
+async function withConsoleErrorMuted(run){const original=console.error;console.error=()=>{};try{return await run();}finally{console.error=original;}}
 
 test('PERSONAL_USE inversion cannot leave an older projection after the latest D1 version',async()=>{
   const h=harness(),olderWriteStarted=deferred(),releaseOlderWrite=deferred();
@@ -156,6 +163,28 @@ test('queue replaces a busy PERSONAL_USE delivery without exhausting retry or DL
   }finally{h.close();}
 });
 
+test('an ambiguous same-version redelivery is replaced without spending the remaining DLQ budget',async()=>{
+  const h=harness(),firstCalls={acks:0,retries:[]},redeliveryCalls={acks:0,retries:[]};
+  try{
+    const firstMessage={body:job(h.id,2),attempts:1,ack(){firstCalls.acks+=1;},retry(options){firstCalls.retries.push(options);}};
+    await withSheetWriter(async()=>{throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets mutation',15000));},async()=>{
+      await withConsoleErrorMuted(()=>worker.queue({queue:'malipang-jobs',messages:[firstMessage]},h.env,{}));
+    });
+    assert.equal(firstCalls.acks,0);
+    assert.equal(firstCalls.retries.length,1);
+    assert.ok(firstCalls.retries[0].delaySeconds>=30&&firstCalls.retries[0].delaySeconds<=37,'the first ambiguous failure uses bounded transient jitter');
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
+    const message={body:job(h.id,2),attempts:5,ack(){redeliveryCalls.acks+=1;},retry(options){redeliveryCalls.retries.push(options);}};
+    await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
+    assert.equal(redeliveryCalls.acks,1);
+    assert.deepEqual(redeliveryCalls.retries,[]);
+    assert.equal(h.queued.length,1);
+    assert.equal(h.queued[0].delaySeconds,30);
+    assert.deepEqual(h.queued[0].body,job(h.id,2));
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
+  }finally{h.close();}
+});
+
 test('current version remains retryable when its blocking writer finishes during claim resolution',async()=>{
   const h=harness();
   try{
@@ -195,6 +224,127 @@ test('latest-version fence immediately before the external write rejects a newly
   }finally{h.close();}
 });
 
+test('client timeout before a late remote write keeps the newer projection fenced',async()=>{
+  const h=harness(),oldRequestStarted=deferred(),releaseOldRemoteWrite=deferred(),oldRemoteWriteApplied=deferred();
+  const sheet={row:null,writes:[]};
+  try{
+    await withSheetWriter(async(_env,data)=>{
+      const values=[...data[0].values[0]],version=Number(values[14]);
+      if(version===2){
+        oldRequestStarted.resolve();
+        void releaseOldRemoteWrite.promise.then(()=>{
+          sheet.row=values;sheet.writes.push(version);oldRemoteWriteApplied.resolve();
+        });
+        throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets mutation',15000));
+      }
+      sheet.row=values;sheet.writes.push(version);
+    },async()=>{
+      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after 15000ms/);
+      await oldRequestStarted.promise;
+      const ambiguous=plain(h.sqlite.prepare(`SELECT status,lease_until,lease_token,next_attempt_at,last_error FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
+      assert.equal(ambiguous.status,'PROCESSING');
+      assert.equal(typeof ambiguous.lease_token,'string');
+      assert.equal(ambiguous.next_attempt_at,ambiguous.lease_until);
+      assert.match(ambiguous.last_error,/^SHEETS_MUTATION_OUTCOME_UNKNOWN:/);
+      assert.ok(Date.parse(ambiguous.lease_until)-Date.now()>GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS,'the renewed lease must outlive the provider processing bound');
+      cancelAtVersionThree(h);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY','the newer writer must remain fenced while the old remote mutation can still apply');
+      releaseOldRemoteWrite.resolve();
+      await oldRemoteWriteApplied.promise;
+      assert.deepEqual(sheet.writes,[2]);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY','remote application alone does not prove that the ambiguous request can no longer write');
+      expireLease(h,2);
+      assert.ok(await recoverPendingSheetJobs(h.env,0)>=1);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'IGNORED');
+      assert.deepEqual(sheet.writes,[2,3]);
+      assert.deepEqual(sheet.row?.slice(6,7).concat(sheet.row?.slice(14)),['CANCELLED',3]);
+    });
+  }finally{releaseOldRemoteWrite.resolve();h.close();}
+});
+
+test('network disconnect after remote acceptance retains the same per-entity fence',async()=>{
+  const h=harness(),releaseRemoteWrite=deferred(),remoteWriteApplied=deferred(),sheet={row:null,writes:[]};
+  try{
+    await withSheetWriter(async(_env,data)=>{
+      const values=[...data[0].values[0]],version=Number(values[14]);
+      if(version===2){
+        void releaseRemoteWrite.promise.then(()=>{sheet.row=values;sheet.writes.push(version);remoteWriteApplied.resolve();});
+        throw new SheetsMutationOutcomeUnknownError(new TypeError('network connection lost after request acceptance'));
+      }
+      sheet.row=values;sheet.writes.push(version);
+    },async()=>{
+      await assert.rejects(syncJob(h.env,job(h.id,2)),/outcome unknown.*network connection lost/);
+      cancelAtVersionThree(h);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY');
+      releaseRemoteWrite.resolve();await remoteWriteApplied.promise;
+      assert.deepEqual(sheet.writes,[2]);
+      expireLease(h,2);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
+      assert.deepEqual(sheet.writes,[2,3]);
+      assert.equal(sheet.row[14],3);
+    });
+  }finally{releaseRemoteWrite.resolve();h.close();}
+});
+
+test('ambiguity fence includes a configured client timeout before the provider bound',async()=>{
+  const h=harness(),clientTimeoutMs=20*60*1000,started=Date.now();h.env.EXTERNAL_API_TIMEOUT_MS=String(clientTimeoutMs);
+  try{
+    await withSheetWriter(async()=>{throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets mutation',clientTimeoutMs));},async()=>{
+      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out/);
+    });
+    const lease=String(h.sqlite.prepare(`SELECT lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id).lease_until);
+    assert.ok(Date.parse(lease)-started>=clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS);
+  }finally{h.close();}
+});
+
+test('definitive Sheet rejection uses normal failed-job retry instead of ambiguity quarantine',async()=>{
+  const h=harness(),writes=[];
+  try{
+    await withSheetWriter(async(_env,data)=>{
+      const version=Number(data[0].values[0][14]);
+      if(version===2)throw new SheetsHttpError(400,'Sheets HTTP 400: invalid range');
+      writes.push(version);
+    },async()=>{
+      await assert.rejects(syncJob(h.env,job(h.id,2)),/HTTP 400/);
+      const failed=plain(h.sqlite.prepare(`SELECT status,lease_until,lease_token,last_error FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
+      assert.equal(failed.status,'FAILED');
+      assert.equal(failed.lease_until,null);
+      assert.equal(failed.lease_token,null);
+      assert.doesNotMatch(failed.last_error,/^SHEETS_MUTATION_OUTCOME_UNKNOWN:/);
+      cancelAtVersionThree(h);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
+    });
+    assert.deepEqual(writes,[3]);
+  }finally{h.close();}
+});
+
+test('only no-response, timeout-class and server-side errors are ambiguous Sheet mutations',()=>{
+  assert.equal(isAmbiguousSheetsMutationStatus(408),true);
+  assert.equal(isAmbiguousSheetsMutationStatus(500),true);
+  assert.equal(isAmbiguousSheetsMutationStatus(503),true);
+  assert.equal(isAmbiguousSheetsMutationStatus(400),false);
+  assert.equal(isAmbiguousSheetsMutationStatus(403),false);
+  assert.equal(isAmbiguousSheetsMutationStatus(429),false);
+  assert.equal(isAmbiguousSheetsMutationStatus(600),false);
+});
+
+test('Sheets mutation transport wraps timeout, disconnect and 5xx but leaves definitive 4xx classified',async()=>{
+  const env={GOOGLE_SPREADSHEET_ID:'fixture',EXTERNAL_API_TIMEOUT_MS:'5'},data=[{range:"'fixture'!A2:A2",values:[[1]]}];
+  await withSheetsTransport((_url,init)=>new Promise((_,reject)=>init.signal.addEventListener('abort',()=>reject(init.signal.reason),{once:true})),async()=>{
+    await assert.rejects(sheetsClient.batchWriteValues(env,data),error=>error instanceof SheetsMutationOutcomeUnknownError&&error.cause instanceof OperationTimeoutError);
+  });
+  await withSheetsTransport(async()=>{throw new TypeError('connection reset');},async()=>{
+    await assert.rejects(sheetsClient.batchWriteValues(env,data),error=>error instanceof SheetsMutationOutcomeUnknownError&&error.cause instanceof TypeError);
+  });
+  await withSheetsTransport(async()=>new Response('temporary failure',{status:503}),async()=>{
+    await assert.rejects(sheetsClient.batchWriteValues(env,data),error=>error instanceof SheetsMutationOutcomeUnknownError&&error.cause instanceof SheetsHttpError);
+  });
+  await withSheetsTransport(async()=>new Response('invalid range',{status:400}),async()=>{
+    await assert.rejects(sheetsClient.batchWriteValues(env,data),error=>error instanceof SheetsHttpError&&!(error instanceof SheetsMutationOutcomeUnknownError));
+  });
+});
+
 test('timeout after an applied Sheet write retries idempotently into the same mapped row',async()=>{
   const h=harness(),attemptedRanges=[],sheet={row:null};
   let attempts=0;
@@ -203,15 +353,16 @@ test('timeout after an applied Sheet write retries idempotently into the same ma
       attempts+=1;
       attemptedRanges.push(data[0].range);
       sheet.row=[...data[0].values[0]];
-      if(attempts===1)throw new Error('Google Sheets timed out after write');
+      if(attempts===1)throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets timed out after write',15000));
     },async()=>{
       await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after write/);
-      const failed=plain(h.sqlite.prepare(`SELECT status,attempt_count,next_attempt_at,lease_token FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
-      assert.equal(failed.status,'FAILED');
-      assert.equal(failed.attempt_count,1);
-      assert.ok(failed.next_attempt_at);
-      assert.equal(failed.lease_token,null);
-      h.sqlite.prepare(`UPDATE sync_jobs SET next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).run(h.id);
+      const ambiguous=plain(h.sqlite.prepare(`SELECT status,attempt_count,next_attempt_at,lease_until,lease_token,last_error FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
+      assert.equal(ambiguous.status,'PROCESSING');
+      assert.equal(ambiguous.attempt_count,1);
+      assert.equal(ambiguous.next_attempt_at,ambiguous.lease_until);
+      assert.equal(typeof ambiguous.lease_token,'string');
+      assert.match(ambiguous.last_error,/^SHEETS_MUTATION_OUTCOME_UNKNOWN:/);
+      expireLease(h,2);
       assert.equal(await syncJob(h.env,job(h.id,2),2),'PROCESSED');
     });
     assert.equal(attempts,2);
@@ -230,12 +381,13 @@ test('timeout retry from an older version cannot overwrite a newer committed pro
     await withSheetWriter(async(_env,data)=>{
       const values=data[0].values[0];
       sheet.row=[...values];sheet.writes.push(Number(values[14]));
-      if(first){first=false;throw new Error('Google Sheets timed out after applied write');}
+      if(first){first=false;throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets timed out after applied write',15000));}
     },async()=>{
       await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after applied write/);
       cancelAtVersionThree(h);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY');
+      expireLease(h,2);
       assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
-      h.sqlite.prepare(`UPDATE sync_jobs SET next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).run(h.id);
       assert.equal(await syncJob(h.env,job(h.id,2),2),'IGNORED');
     });
     assert.deepEqual(sheet.writes,[2,3]);

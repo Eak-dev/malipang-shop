@@ -6,16 +6,29 @@ import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,p
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
+export class SheetsMutationOutcomeUnknownError extends Error{
+  readonly retryAfterSeconds?:number;
+  constructor(cause:unknown){
+    const detail=cause instanceof Error?cause.message:String(cause);
+    super(`Google Sheets mutation outcome unknown: ${detail}`,{cause});this.name="SheetsMutationOutcomeUnknownError";
+    if(typeof cause==="object"&&cause!==null&&"retryAfterSeconds" in cause){const value=Number((cause as{retryAfterSeconds?:unknown}).retryAfterSeconds);if(Number.isFinite(value)&&value>=0)this.retryAfterSeconds=Math.ceil(value);}
+  }
+}
+export function isAmbiguousSheetsMutationStatus(status:number):boolean{return status===408||(status>=500&&status<=599);}
 export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):number|undefined{
   if(!value)return undefined;
   const seconds=Number(value);if(Number.isFinite(seconds)&&seconds>=0)return Math.ceil(seconds);
   const dateMs=Date.parse(value);return Number.isFinite(dateMs)?Math.max(0,Math.ceil((dateMs-nowMs)/1000)):undefined;
 }
-async function sheetsFetch(env:Env,path:string,init:RequestInit):Promise<Response>{const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");const res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);if(!res.ok)throw new SheetsHttpError(res.status,`Sheets HTTP ${res.status}: ${await res.text()}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));return res;}
-export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})});}
-export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})});}
-export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})});}
-export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});}
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false):Promise<Response>{
+  const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
+  let res:Response;try{res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
+  if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
+}
+export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true);}
+export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
+export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true);}
+export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true);}
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);

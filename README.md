@@ -472,6 +472,8 @@ prefix คำสั่งส่วนตัวที่รองรับทั�
 
 การ sync `PERSONAL_USE` ใช้ lease แยกต่อธุรกรรมและตรวจ version ล่าสุดจาก D1 อีกครั้งก่อนเขียน Google Sheets; งาน version เก่าจะจบแบบ no-op ส่วน version ปัจจุบันที่ติด writer ของธุรกรรมเดียวกันจะสร้าง delayed replacement message แล้ว ack delivery เดิม เพื่อไม่ใช้ retry/DLQ budget หมดระหว่างรอ โดยไม่ลด concurrency ของธุรกรรมอื่น
 
+ก่อนส่ง mutation ระบบ renew per-entity lease อย่างน้อย 15 นาที ซึ่งยาวกว่า [ขีดจำกัดการประมวลผลหนึ่งคำขอของ Google Sheets ที่ 180 วินาที](https://developers.google.com/workspace/sheets/api/limits); หากกำหนด client timeout ยาวกว่าค่าปกติ lease จะขยายตาม timeout + provider bound + safety margin ด้วย ระบบคง lease/token เดิมไว้เมื่อผลลัพธ์ยังไม่แน่ชัด เช่น client timeout, network disconnect, HTTP 408 หรือ HTTP 5xx และไม่ถือว่า `AbortController` ยืนยันการยกเลิกฝั่ง Google งาน version ใหม่จึงเขียนได้หลัง writer เดิมตอบสำเร็จ หรือหลัง uncertainty lease หมดและ recovery รับช่วงแล้วเท่านั้น ส่วน HTTP rejection ที่ระบุว่าไม่ได้รับ mutation เช่น validation/auth/quota 4xx จะเข้าสู่ retry/DLQ เดิมโดยไม่ถูกกัก 15 นาที
+
 `POST /admin/bootstrap-sheets` ตรวจสูตร PERSONAL_USE ใน `04_OWNER_MONTH_CLOSE` แบบ idempotent: เติมเฉพาะเซลล์ที่ว่าง และหยุดด้วย layout conflict หากพบข้อความหรือสูตรอื่นอยู่แล้ว เพื่อไม่เขียนทับสูตรที่ Owner ดูแลเอง
 
 ### Bank Slip

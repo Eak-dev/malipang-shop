@@ -1,0 +1,106 @@
+name: One-shot PERSONAL_USE #157 Production Release
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/production-personal-use-157.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-production
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.event.before == '053e6787873da9c65efbcde95b34ec4c43375dc0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment: production
+    env:
+      TARGET_SHA: 053e6787873da9c65efbcde95b34ec4c43375dc0
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Enforce one-shot source guard
+        run: |
+          set -euo pipefail
+          [[ "${{ github.event.before }}" == "$TARGET_SHA" ]]
+          git merge-base --is-ancestor "$TARGET_SHA" "$GITHUB_SHA"
+          [[ "$(git diff --name-only "$TARGET_SHA" "$GITHUB_SHA")" == ".github/workflows/production-personal-use-157.yml" ]]
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.TARGET_SHA }}
+          path: release-source
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: release-source/package-lock.json
+      - name: Validate exact release
+        working-directory: release-source
+        run: |
+          set -euo pipefail
+          [[ "$(git rev-parse HEAD)" == "$TARGET_SHA" ]]
+          npm ci
+          npm run check
+          npx wrangler deploy --dry-run
+      - name: Validate release credentials
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID"
+          test -n "$CLOUDFLARE_API_TOKEN"
+          test -n "$MALIPANG_ADMIN_TOKEN"
+          test -n "$MALIPANG_WORKER_URL"
+      - name: Backup D1 and verify private copy
+        working-directory: release-source
+        run: |
+          set -euo pipefail
+          mkdir -p ../release-artifacts
+          stamp="$(TZ=Asia/Bangkok date +%Y%m%d-%H%M%S)"
+          sql="$RUNNER_TEMP/malipang-before-personal-use-$stamp.sql"
+          gz="$sql.gz"
+          verify="$RUNNER_TEMP/verify-personal-use-$stamp.sql.gz"
+          key="d1/$(TZ=Asia/Bangkok date +%Y/%m/%d)/$(basename "$gz")"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -9 "$sql"
+          sha="$(sha256sum "$gz" | awk '{print $1}')"
+          gzip -t "$gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$verify" --remote
+          [[ "$sha" == "$(sha256sum "$verify" | awk '{print $1}')" ]]
+          gzip -t "$verify"
+          jq -n --arg key "$key" --arg sha "$sha" '{backup:true,object_key:$key,sha256:$sha}' > ../release-artifacts/backup.json
+      - name: Apply migration 0018
+        working-directory: release-source
+        run: npx wrangler d1 migrations apply malipang-v5-2 --remote --yes | tee ../release-artifacts/migrations.txt
+      - name: Deploy exact release
+        working-directory: release-source
+        run: npx wrangler deploy | tee ../release-artifacts/deploy.txt
+      - name: Verify health, readiness and PERSONAL_USE schema
+        working-directory: release-source
+        run: |
+          set -euo pipefail
+          base="${MALIPANG_WORKER_URL%/}"
+          curl --silent --show-error --fail-with-body "$base/health" -o ../release-artifacts/health.json
+          curl --silent --show-error --fail-with-body -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base/admin/readiness" -o ../release-artifacts/readiness.json
+          jq -e '.ok == true and .mode == "production"' ../release-artifacts/health.json >/dev/null
+          jq -e '.ok == true' ../release-artifacts/readiness.json >/dev/null
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT name FROM sqlite_master WHERE type='table' AND name='owner_personal_transactions'" > ../release-artifacts/personal-use-schema.json
+          jq -e '.[0].results | length == 1' ../release-artifacts/personal-use-schema.json >/dev/null
+          curl --silent --show-error --fail-with-body -X POST -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$base/admin/bootstrap-sheets" -o ../release-artifacts/sheets-bootstrap.json
+          jq -e '.ok == true' ../release-artifacts/sheets-bootstrap.json >/dev/null
+      - name: Upload sanitized release evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: personal-use-157-release-${{ github.run_id }}
+          path: release-artifacts
+          retention-days: 14

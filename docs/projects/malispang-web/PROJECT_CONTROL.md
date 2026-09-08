@@ -50,4 +50,12 @@ Hard gate: [Owner direction #58](https://github.com/Eak-dev/malipang-shop/issues
 
 ## Session handoff
 
+### Program execution proposal — 2026-09-08 follow-up
+
+Owner ขอให้ออกแบบคำสั่งเดียวที่ให้ Codex รับผิดชอบตรวจซอฟต์แวร์/บัญชี/อุปกรณ์และทำงานถึงเว็บใช้งานจริง. รอบนี้อนุญาตแก้ docs/Issues/PR เพื่อจัดคำสั่ง ไม่ได้เริ่ม runtime หรือขยาย deployment permission. [Master mandate](14_EXECUTION_MANDATE.md) มีผลเป็นการมอบหมายงานเมื่อ Owner ส่งคำสั่งนั้นจริง; repository text ไม่ใช่หลักฐานการอนุมัติตัวเอง
+
+เมื่อมี submitted program mandate ให้บันทึก authority source และ eligible next tasks ใน control: routine L0–L1 tasks ภายใน approved scope ทำต่อได้โดยไม่ขอ dispatch ซ้ำทุก Issue. #58, W02 business decisions, TEST resources/budget, ordered merge และ exact release/retirement gates ยังคงครบ. ถ้าต้องรอ ให้ทำ independent authorized planning ต่อและจัด [Owner Action Packet](15_READINESS_AND_OWNER_ACTIONS.md) แทนการทิ้ง checklist ให้ Owner ตรวจเอง
+
+ใช้ [Execution state](16_EXECUTION_STATE.md) เป็น schema สำหรับ latest checkpoint; ไม่ใช่คำสั่งตั้ง automation หรือหลักฐานว่ามี job ทำงานอยู่เบื้องหลัง
+
 บันทึก task, authority, current phase, base/head, changed paths, AC→evidence, test skips, unknowns, next exact action และ environment. เมื่อเปลี่ยน session อ่าน control + Issue + diff หลัง checkpoint ไม่เริ่มวิเคราะห์ทั้งโครงการใหม่ และไม่เขียนทับงานค้างของผู้อื่น

@@ -1,5 +1,7 @@
 # เริ่มโครงการใน session ใหม่
 
+**คำสั่งหลักรุ่นล่าสุดอยู่ที่ [14_EXECUTION_MANDATE.md](14_EXECUTION_MANDATE.md)** ครอบคลุม readiness→implementation→UAT→release→retirement และ checkpoint. ใช้คำสั่งนั้นหากต้องการมอบหมายงานทั้งโปรแกรม. Prompt W00 ด้านล่างเก็บไว้สำหรับการตรวจสถานะแบบ read-only โดยเฉพาะ ไม่ใช่คำสั่งหลักสำหรับพัฒนาจนจบ
+
 ใช้เอกสารนี้กับ [Epic #175](https://github.com/Eak-dev/malipang-shop/issues/175) และ [Task index](tasks/README.md). เอกสารอยู่บน planning PR จน Owner อนุมัติ merge; อย่าอ้างว่าเป็น approved main policy ก่อน merge. Prompt แรกออกแบบให้ทำงานที่ตรวจได้จนสุด allowed scope โดยไม่ข้าม #58
 
 ## Prompt พร้อมใช้ — planning continuation / W00

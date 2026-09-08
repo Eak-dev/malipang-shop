@@ -2,6 +2,9 @@
 
 | Requirement | Design | Tasks | Evidence required |
 |---|---|---|---|
+| คำสั่งเดียวครอบคลุมงานจนเว็บใช้จริง | 14_EXECUTION_MANDATE, 16_EXECUTION_STATE | all tasks | submitted authority, eligible-task loop, exact checkpoints and full-program DoD |
+| Codex ตรวจ software/hardware/accounts เอง | 15_READINESS_AND_OWNER_ACTIONS | W00/W01/W02/W13/W15 | observed status/evidence/remedy; no assumed purchase or fabricated readiness |
+| Owner ทำเฉพาะสิ่งจำเป็นและไม่ถูกถามซ้ำ | 15_READINESS_AND_OWNER_ACTIONS | all tasks | prepared consent/policy/budget/release packet and approval reuse within exact scope |
 | มือถือเป็นหน้าทำงานหลัก | 04_MOBILE_UX | W03/W04 | T20 + role happy/error paths |
 | รวมสามไฟล์ ครบทุกข้อมูลที่จำเป็น | 02_BASELINE_AND_INVENTORY | W01/W08/W12/W14 | all-source disposition/lineage and reconciled totals |
 | เลิก Sheets ทั้งหน้าจอและตัวคำนวณเมื่อย้ายครบ | 06_DATA_AND_API, 07_MIGRATION_CUTOVER | W12/W16 | actual period close + no unresolved reader/writer |

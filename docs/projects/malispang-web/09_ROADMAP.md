@@ -4,6 +4,8 @@
 
 ## Execution order
 
+ใช้ [Master execution mandate](14_EXECUTION_MANDATE.md) เมื่อต้องการให้ Codex เลือกงานต่อเนื่องตาม dependencies. W00 เพิ่ม readiness register; W01 ตรวจ exact file/LINE access; W02 รวม technical/policy/งบที่ต้องตัดสิน; W13 ตรวจ TEST/toolchain/recovery; W15/W16 ใช้ actual readiness ก่อน release. ดู [Owner Action Packet](15_READINESS_AND_OWNER_ACTIONS.md) และ [checkpoint/integration loop](16_EXECUTION_STATE.md)
+
 | ช่วง | Tasks | Deliverable / gate |
 |---|---|---|
 | Planning | W00→W01→W02 | verified control, complete mapping, accepted design; ไม่มี runtime implementation |

@@ -1,10 +1,12 @@
 # MalisPang Operations Web — แผนเปิดโครงการ
 
-Version 1.0 • 2026-09-08 • [Epic #175](https://github.com/Eak-dev/malipang-shop/issues/175)
+Version 1.1 • 2026-09-08 • [Epic #175](https://github.com/Eak-dev/malipang-shop/issues/175)
 
 เว็บหลังบ้านมะลิปังสำหรับมือถือ รวมงานจาก OWNER_MASTER, STOCK_MASTER, StockCheck_TEAM และ LINE OA หลังบ้าน เพื่อให้พนักงานทำงานง่ายขึ้นและ Owner ตรวจข้อมูลได้จากระบบเดียว ปลายทางไม่ต้องใช้ Sheets เป็นหน้าทำงานหรือตัวคำนวณ แต่เก็บประวัติที่จำเป็นตามนโยบายเดิม
 
 **สถานะ: แผนสำหรับ review และเปิดโครงการ ไม่ใช่ implementation/release approval.** เงื่อนไข #58 ยังต้องผ่านก่อนเริ่ม V2 implementation; การตั้งชื่อโครงการใหม่ไม่ได้ยกเลิกเงื่อนไขนี้
+
+**เริ่มด้วย [คำสั่งหลักจนเว็บใช้งานจริง](14_EXECUTION_MANDATE.md)** ให้ Codex ตรวจ [ซอฟต์แวร์/บัญชี/อุปกรณ์และ Owner actions](15_READINESS_AND_OWNER_ACTIONS.md) เอง และเก็บ [checkpoint](16_EXECUTION_STATE.md) เพื่อทำต่อภายใต้ program mandate โดยไม่ต้องเขียน prompt ใหม่ทุก Issue. รอบนี้อัปเดตคำสั่งและแผนเท่านั้น ยังไม่ dispatch runtime work
 
 ## อ่านตามหน้าที่
 

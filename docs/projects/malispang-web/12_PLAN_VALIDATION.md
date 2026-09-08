@@ -18,6 +18,8 @@ Historical #58 evidence and elapsed observation dates do not establish current L
 
 ## Result record
 
+The table below records original v1.0 publication (33 files). Version 1.1 adds three execution/readiness/checkpoint documents (36 files total) and updates linked briefs/control; current-head verification and CI are recorded in PR #193. Historical v1.0 PASS is not reused as v1.1 evidence
+
 | Check | Result |
 |---|---|
 | Documentation scope | 33 Markdown files; only docs/projects/malispang-web/ |

@@ -1,7 +1,7 @@
 import type { Env,SheetsSyncJob } from "../types";
 import { batchWriteValues,SheetsMutationOutcomeUnknownError } from "./client";
 import { safeRecordMetric } from "../db/repositories";
-import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfirmedExpenseWithDocumentItemsToDaily,type DailyExpenseDocumentItem } from "./daily-expense";
+import { clearCancelledExpenseFromDaily,DailySheetCapacityDeferredError,writeConfirmedExpenseToDaily,writeConfirmedExpenseWithDocumentItemsToDaily,type DailyExpenseDocumentItem } from "./daily-expense";
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
@@ -193,7 +193,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(!retained)throw new Error(`PERSONAL_USE_SHEETS_AMBIGUITY_FENCE_LOST:v${job.entityVersion}`,{cause:retryError});
       throw retryError;
     }
-    const nowMs=Date.now(),delaySeconds=queueRetryDelaySeconds(retryError,attempt,()=>0),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(retryError),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw retryError;
+    const nowMs=Date.now(),delaySeconds=retryError instanceof DailySheetCapacityDeferredError?retryError.delaySeconds:queueRetryDelaySeconds(retryError,attempt,()=>0),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(retryError),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw retryError;
   }
 }
 function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

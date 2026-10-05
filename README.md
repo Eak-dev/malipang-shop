@@ -535,7 +535,7 @@ Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured
 - `รายละเอียดการซื้อ` เป็นแท็บ private ใหม่: หนึ่งแถวต่อ line item ด้วย mapping key `Expense_ID|Item_ID`; เก็บ Vendor, เลขเอกสาร, จำนวน, หน่วย, ราคา และยอดรายการแยกจาก Description ของ Expense
 - ส่วนลด/subsidy/shipping ระดับเอกสารถูกเก็บเป็น adjustment ของเอกสาร (ไม่เดาแจกแจงลงสินค้า) และ `รายวัน` ใช้ยอด final paid เสมอ
 - แถวเก่าจะไม่ถูก mass-rewrite. การแก้ย้อนหลังทำได้เฉพาะ Expense ที่ระบุชัดผ่าน admin reconcile และต้องตรวจยอดก่อน
-- `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม; `รายละเอียดการซื้อ` เป็น append-only ledger ที่ไม่แก้สูตรรายวัน
+- `รายวัน` ขยายแถว detail ก่อน monthly total แบบ formula-safe เมื่อเต็ม; การขยายคัดลอกสูตร/รูปแบบแต่ล้าง input ที่คัดลอกมาภายใน mutation เดียวกัน และตรวจว่ามีแถวว่างจริงก่อนเขียน Expense จึงไม่วนเพิ่มแถวจน Worker หมด subrequest budget. ผลการ insert ที่ยังไม่แน่ชัดจะคง month fence ไว้และกู้จาก marker หลังพ้นช่วงปลอดภัย โดยไม่เผา Queue/DLQ retry budget; `รายละเอียดการซื้อ` เป็น append-only ledger ที่ไม่แก้สูตรรายวัน
 
 ---
 

@@ -61,10 +61,8 @@ test('confirmation persists and enqueues Google Sheets before LINE output',async
   assert.equal(h.state.row.status,'CONFIRMED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,1);
 });
 
-test('undo is audit-safe and enqueues a second Sheets version',async()=>{
-  const h=harness('CONFIRMED');await handleExpensePostback(h.env,h.event('a=expense_undo&id=exp_1'),h.actor);
-  assert.equal(h.state.row.status,'CANCELLED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,2);
-});
+// Undo's transactional audit/outbox contract is exercised against real SQLite
+// in expense-undo-integration.test.mjs, not this permissive statement mock.
 
 test('Save cannot finalize a draft with an unconfirmed payment',async()=>{
   const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});

@@ -8,6 +8,14 @@
 4. ตรวจ `openFailedJobs` และ sync ที่ FAILED
 5. ตรวจ `V52_DAILY_PAYROLL` แถว REVIEW ก่อนจ่ายเงิน
 
+## Runtime audit โดยไม่เปิดเผย secret
+
+- ใช้ workflow `runtime-audit.yml` บน protected `main` พร้อม confirmation `AUDIT-RUNTIME-READONLY`; workflow ใช้ secret เดิมของ environment `production` โดยไม่ต้องนำค่า token ออกมาให้ผู้ตรวจ
+- Artifact เก็บเฉพาะ allowlisted booleans, HTTP status, runtime mode, aggregate job counts และ Worker version ID/เวลา; ไม่เก็บ OA identity, email, spreadsheet ID, raw error หรือ response ดิบ
+- Schema ที่ไม่ตรง, redirect, timeout หรือ endpoint ไม่ผ่านต้อง fail closed; ไม่ถือว่าการมี artifact เท่ากับ PASS
+- เป็น GET-only diagnostic ไม่แก้ business records, Sheets หรือ replay queue แต่ probe อาจบันทึก operational metrics ใน D1
+- Audit นี้ไม่ทดแทนการตรวจ active Worker/traffic/source, backup/restore, queue/DLQ, stale jobs และการเปรียบเทียบ failed jobs ก่อน/หลัง release
+
 ## Sheets ไม่อัปเดต
 
 ข้อมูล D1 ยังเป็นข้อมูลจริง แก้สาเหตุก่อน (เช่น สิทธิ์ Service Account หรือ quota) แล้วเรียก:

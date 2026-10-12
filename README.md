@@ -521,6 +521,8 @@ Undo เปลี่ยนเป็น `CANCELLED`
 
 audit trail ต้องคงอยู่
 
+Expense Undo จอง version ใหม่ให้มากกว่า `expense_events.version` และ version ของ sync job เดิมทุกตัวใน D1 transaction เดียวกับสถานะ, document status, audit และ sync outbox. จึงไม่ชนงาน v2 ที่เคยใช้ปรับข้อมูลและเสร็จแล้ว; ไม่ลบหรือ replay งานเดิม. หาก Worker หยุดหลัง commit หรือ enqueue ล้มเหลว Cron กู้เฉพาะ outbox ใหม่ได้โดยไม่ Undo ซ้ำ. การแก้ row mapping เดิมเป็นงานข้อมูลที่ต้องตรวจและอนุมัติแยก ไม่ทำโดย runtime patch นี้.
+
 ### Expense Document Foundation V1.2
 
 Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured document เดียวกันใน D1: ข้อมูลเอกสาร, vendor, ยอดเงินแบบ satang, line items, seller case, document links และ append-only audit. D1 เป็นข้อมูลจริง; Google Sheets เป็น mirror เท่านั้น.

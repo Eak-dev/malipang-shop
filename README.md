@@ -507,15 +507,46 @@ Source wallet = SHOP_BANK
 
 ในชีท `รายวัน` แสดงเป็น `บัญชีร้าน`
 
+เงินสดที่จ่ายจากเงินบัญชีร้านใช้คู่ `cash` + `SHOP_BANK` ได้ โดยไม่แปลงเป็นเงินโอน:
+เลือก **Shop-bank cash** ใน LINE; RAW คงวิธีจ่ายและแหล่งเงินแยกกัน ส่วน `รายวัน`
+ลงคอลัมน์เงินสดและ W=`บัญชีร้าน`. **Drawer cash** / Quick Save `ทอน` ยังคง
+`cash` + `CASH_DRAWER`; Bank slip ยังคงล็อก `transfer` + `SHOP_BANK`.
+การแก้นี้ไม่เปลี่ยนแถวข้อมูลเก่าหรือยอดย้อนหลังอัตโนมัติ.
+
 ### Duplicate protection
 
 ตรวจทั้ง:
 
 - reference number
 - image hash
+- LINE message ID (ส่ง webhook เดิมซ้ำไม่สร้างธุรกรรมใหม่)
+- ผู้ขาย + เลขเอกสารที่ปรับเฉพาะรูปแบบ Unicode/ตัวพิมพ์/ช่องว่าง ใช้ SHA-256
+  `receipt:v1:` ใน UNIQUE `reference_key` เดิม จึงป้องกันส่งพร้อมกัน แม้ไม่มี
+  legal vendor name หรือใช้ LINE คนละบัญชี; ไม่ใช้ LINE user ID เป็นตัวแทนใบเสร็จ
 - exact trimmed `order_id` สำหรับ `ONLINE_ORDER` โดยใช้ D1 unique identity claim
 
 ภาพหรือ LINE message ใหม่ของ Online Order เดิมต้องกลับไปแสดงรายการเดิมและห้ามสร้าง Expense หรือ primary purchase document ใหม่ แม้เกิดพร้อมกันหลาย event. เอกสารคนละชนิดที่มี order ID เดียวกันยัง link เป็น supporting evidence ได้ตาม relation model เดิม; ข้อมูลเก่า `WAITING_REVIEW` จะไม่ถูกยกระดับอัตโนมัติ.
+
+ก่อนยืนยันทุกเส้นทาง รวมถึงการแก้ field สุดท้าย ระบบตรวจตัวระบุใบเสร็จซ้ำอีกครั้ง
+โดยใช้ข้อมูลเอกสารต้นฉบับ ไม่ใช้วันที่/คำอธิบาย Expense ที่แก้จาก Flex หลบการตรวจ.
+ถ้าเลขเอกสารต่างหนึ่งอักขระ แต่ผู้ขาย วันที่ ยอดจ่าย และชุดจำนวน/ราคาสินค้าตรงกัน
+จะ **พักตรวจ** เท่านั้น (ไม่มี CONFIRM หรือ Sheets job) ไม่รวม/ลบรายการอัตโนมัติ.
+จำนวน line items ซ้ำในใบเดียวกันยังคงครบ; VAT ที่ OCR อ่านต่างกันไม่ทำให้หลบการพักตรวจ.
+ตรวจหลักฐานทุกสถานะรวม cancelled; เอกสารที่ link กับ Expense เดียวกันไม่เป็นคู่ซ้ำ.
+ผลอ่านจำกัด 100 candidates, 200 items ต่อใบ และ 2,000 candidate items รวม;
+ถ้าเกินขอบเขตให้หยุดยืนยัน ไม่ถือว่าปลอดรายการซ้ำ. คำตอบไม่เผยข้อมูลใบอื่น/ผู้ส่งอื่น.
+
+ข้อจำกัด: การถ่ายใบเดิมใหม่โดยเลขหาย, ผู้ขายคลาดเคลื่อน หรือเลขต่างหลายอักขระยังไม่
+รับประกันตรวจพบ; legacy Unicode/ช่องว่างภายในที่ไม่ตรงรูปแบบอาจตรวจได้เฉพาะหน้าต่าง
+วันและยอดเดียวกัน. ใบจริงคนละใบที่เลขเรียงติดกันและรายละเอียดตรงกันอาจถูกพักได้.
+เจ้าของต้องเทียบต้นฉบับทั้งสองใบและอนุมัติการแก้เฉพาะรายการผ่านงานข้อมูลที่มี audit;
+ไม่มีปุ่มข้าม guard, ไม่ให้ยกเลิกหลักฐานเดิมเพื่อหลบ guard และไม่ replay งานเพื่อแก้ hold.
+
+การยืนยันใช้ D1 transaction เดียวสำหรับสถานะ, document, audit และ sync outbox
+พร้อม CAS ข้อมูลที่ผู้ใช้ตรวจแล้ว; enqueue/LINE ล้มเหลวไม่ยืนยันธุรกรรมซ้ำ.
+ใช้ Workers best-practices สำหรับ transaction boundary และตรวจด้วย real SQLite
+fixtures (ไม่ใช่ Production): `node --test tests/expense-{wallet-source,receipt-identity,receipt-guards,confirm-integration,postback}.test.mjs`
+หลัง `npm run build:test`. ไม่มี schema migration ใหม่และไม่มีการ backfill identity เก่า.
 
 Undo เปลี่ยนเป็น `CANCELLED`
 

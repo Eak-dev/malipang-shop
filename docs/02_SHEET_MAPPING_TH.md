@@ -8,6 +8,11 @@ D1 เป็น Source of Truth ส่วน Google Sheets ใช้สำหร
 
 `รายวัน` รับเฉพาะ Expense `CONFIRMED`. จำนวนเงินคือ final cash outflow หลังส่วนลด/subsidy และเขียน **หนึ่งแถวสรุปต่อ Expense** เสมอด้วย key `Expense_ID`.
 
+วิธีจ่ายและแหล่งเงินเป็นคนละ field: `cash` + `SHOP_BANK` ลงคอลัมน์เงินสด
+และ W=`บัญชีร้าน`, ส่วน `cash` + `CASH_DRAWER` ลงเงินสดและ W=`ทอน/หน้าร้าน`.
+`transfer` + `SHOP_BANK` ลงคอลัมน์เงินโอนและ W=`บัญชีร้าน` ตามเดิม.
+RAW ต้องเก็บคู่ค่าทั้งสองตาม D1 ไม่อนุมานว่า cash ทุกกรณีมาจากหน้าร้าน.
+
 `รายละเอียดการซื้อ` เป็น private detail ledger ใหม่ที่เขียนหนึ่งแถวต่อ `expense_document_items` โดยใช้ key `Expense_ID|Item_ID`. มี 20 คอลัมน์: Purchase_Item_ID, Expense_ID, Document_ID, วันที่ซื้อ, บริษัท/ร้านค้า, เลขที่เอกสาร, รายการสินค้า, จำนวน, หน่วย, ราคาต่อหน่วย, ส่วนลดรายการ, จำนวนเงินรายการ, ส่วนลด/ปรับยอดระดับเอกสาร, ยอดจ่ายจริงของ Expense, หมวด, สาขา, สถานะ, Evidence ref (private), Created_At และ Updated_At / Cancelled_At. ห้ามใช้รายละเอียดนี้คำนวณยอดรายวันแทน final paid.
 
 ส่วนลด, voucher, subsidy, shipping และ adjustment ระดับเอกสารจะไม่ถูกเดาแจกลง line item: ระบบบันทึก adjustment aggregate เพียงครั้งเดียวใน detail ledger และ `รายวัน` ใช้ final paid. `V52_EXPENSE_RAW` ยังคงมี summary หนึ่งแถวต่อ Expense เสมอ.

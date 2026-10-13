@@ -1,46 +1,22 @@
-import test from 'node:test';
+import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
 import {handleExpensePostback,handleExpenseText} from '../dist/expense/service.js';
 import {expensePaymentOptions} from '../dist/expense/document.js';
+import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 
 function harness(status='WAITING_CONFIRM',overrides={}){
   const {document,...rowOverrides}=overrides;
-  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status,...rowOverrides};
-  const state={row,batches:[],queue:[],pending:null,document:document||null};
-  const DB={
-    prepare(sql){
-      return{
-        sql,args:[],
-        bind(...args){this.args=args;return this;},
-        async first(){
-          if(sql.includes('expense_pending_edits'))return state.pending;
-          if(sql.includes('FROM expense_documents'))return state.document;
-          return sql.includes('SELECT * FROM expense_events')?{...state.row}:null;
-        },
-        async run(){
-          if(sql.includes("status='CANCELLED'")&&sql.includes("status='WAITING_CONFIRM'")){if(state.row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};state.row.status='CANCELLED';}
-          else if(sql.includes("status='CANCELLED'")&&sql.includes("status='CONFIRMED'")){if(state.row.status!=='CONFIRMED')return{meta:{changes:0}};state.row.status='CANCELLED';}
-          else if(sql.includes("status='CONFIRMED'")){if(state.row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};state.row.status='CONFIRMED';}
-          else if(sql.includes('payment_key=?,source_wallet=?')){state.row.payment_key=this.args[0];state.row.source_wallet=this.args[1];}
-          else if(sql.includes('category=?'))state.row.category=this.args[0];
-          else if(sql.includes('transaction_date=?'))state.row.transaction_date=this.args[0];
-          else if(sql.includes('description=?'))state.row.description=this.args[0];
-          else if(sql.includes('INSERT INTO expense_pending_edits'))state.pending={expense_id:this.args[1],field:'description',expires_at:this.args[3]};
-          else if(sql.includes('DELETE FROM expense_pending_edits'))state.pending=null;
-          else if(sql.includes('UPDATE expense_documents SET normalized_json=')&&state.document)state.document.normalized_json=this.args[0];
-          return{meta:{changes:1}};
-        }
-      };
-    },
-    async batch(statements){
-      state.batches.push(statements);
-      for(const statement of statements){
-        if(statement.sql.includes('DELETE FROM expense_pending_edits'))state.pending=null;
-      }
-      return[];
-    }
+  const h=expenseSqlite();after(()=>h.close());
+  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status,trace_id:'fixture_trace',created_at:'2026-01-01T00:00:00.000Z',...rowOverrides};
+  const insert=(table,value)=>h.sqlite.prepare(`INSERT INTO ${table}(${Object.keys(value).join(',')}) VALUES(${Object.keys(value).map(()=>'?').join(',')})`).run(...Object.values(value));
+  insert('expense_events',row);
+  if(document)insert('expense_documents',{document_id:'doc_1',message_id:'doc_msg',line_user_id:'U_TEST',document_type:'RECEIPT',expense_id:'exp_1',status,created_at:row.created_at,...document});
+  const state={batches:h.DB.batches,queue:h.queue,
+    get row(){return{...h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_1'").get()};},
+    get document(){return h.sqlite.prepare("SELECT * FROM expense_documents WHERE expense_id='exp_1'").get()??null;},
+    get pending(){return h.sqlite.prepare("SELECT * FROM expense_pending_edits WHERE line_user_id='U_TEST'").get()??null;}
   };
-  const env={DB,JOB_QUEUE:{async sendBatch(messages){state.queue.push(...messages);}},SHEETS_SYNC_ENABLED:'true',RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false'};
+  const env=h.env;
   const actor={canSubmitExpense:true};
   const event=(data,params)=>({source:{type:'user',userId:'U_TEST'},postback:{data,params}});
   return{state,env,actor,event};
@@ -49,6 +25,67 @@ function harness(status='WAITING_CONFIRM',overrides={}){
 test('payment selection updates the draft and matching wallet',async()=>{
   const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=firstchoice'),h.actor);
   assert.equal(h.state.row.payment_key,'firstchoice');assert.equal(h.state.row.source_wallet,'CARD_FIRST_CHOICE');assert.equal(h.state.queue.length,0);
+});
+
+test('explicit cash payment from shop bank persists both fields without claiming a transfer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM','another unresolved field must still block confirmation');
+  assert.equal(h.state.row.amount_satang,12000);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('legacy cash payment postback without a source still selects the cash drawer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'CASH_DRAWER');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('invalid transfer from cash drawer is rejected by both payment actions without financial effects',async()=>{
+  for(const action of ['expense_set_payment','expense_resolve_payment']){
+    const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'}),before={...h.state.row},prepared=[];
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);
+    h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(`a=${action}&id=exp_1&payment=transfer&source=CASH_DRAWER`),h.actor);
+    assert.deepEqual(h.state.row,before,action);
+    assert.equal(prepared.some(sql=>/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)),false,action);
+    assert.equal(h.state.batches.length,0,action);
+    assert.equal(h.state.queue.length,0,action);
+  }
+});
+
+test('source selection retains cash when the user chooses shop bank',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'cash',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_source&id=exp_1&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('bank slip payment and source stay locked against cash-source postbacks',async()=>{
+  for(const data of [
+    'a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK',
+    'a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER',
+    'a=expense_set_source&id=exp_1&source=CASH_DRAWER'
+  ]){
+    const document={document_id:'doc_locked',document_type:'BANK_SLIP',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+    const h=harness('WAITING_CONFIRM',{document}),before={...h.state.row},prepared=[];
+    const beforeDocument=h.state.document;
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);
+    h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(data),h.actor);
+    assert.deepEqual(h.state.row,before);
+    assert.deepEqual(h.state.document,beforeDocument);
+    assert.equal(prepared.some(sql=>/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)),false);
+    assert.equal(h.state.batches.length,0);
+    assert.equal(h.state.queue.length,0);
+  }
 });
 
 test('date picker updates the draft date',async()=>{

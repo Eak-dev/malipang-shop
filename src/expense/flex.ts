@@ -1,4 +1,4 @@
-import { expensePaymentOptions,paymentOptionForPayment,paymentOptionForWallet } from "./document";
+import { expensePaymentOptions,paymentOptionForPair,paymentOptionForPayment,paymentOptionForWallet } from "./document";
 
 export interface ExpenseFlexRecord {
   expenseId: string;
@@ -53,8 +53,9 @@ const money=(satang:number)=>(satang/100).toLocaleString("en-US",{minimumFractio
 const displayDate=(iso:string)=>{const [y,m,d]=iso.split("-");return y&&m&&d?`${d}/${m}/${y}`:iso;};
 const referenceSuffix=(value:string)=>value.length<=8?value:value.slice(-8);
 export const paymentWallet=(paymentKey:string):string=>paymentOptionForPayment(paymentKey)?.sourceWallet||"SHOP_BANK";
-export const paymentForWallet=(wallet:string,current="cash"):string=>{
-  return paymentOptionForWallet(wallet)?.paymentKey||current;
+export const paymentForWallet=(wallet:string,current?:string):string=>{
+  if(current&&paymentOptionForPair(current,wallet))return current;
+  return paymentOptionForWallet(wallet)?.paymentKey||current||"cash";
 };
 
 export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
@@ -106,7 +107,10 @@ export function buildExpenseItemFlex(expense:ExpenseFlexRecord):FlexMessage{
 
 export function buildExpensePaymentFlex(expense:ExpenseFlexRecord):FlexMessage{
   const id=encodeURIComponent(expense.expenseId);
-  return menu("Choose payment",expensePaymentOptions.map(option=>action(`${option.paymentKey===expense.paymentKey?"✅ ":""}${option.label}`,`a=expense_set_payment&id=${id}&payment=${option.paymentKey}`,option.paymentKey===expense.paymentKey?"primary":"secondary",option.paymentKey===expense.paymentKey?brownButton:undefined)),id);
+  return menu("Choose payment",expensePaymentOptions.map(option=>{
+    const selected=option.paymentKey===expense.paymentKey&&option.sourceWallet===expense.sourceWallet;
+    return action(`${selected?"✅ ":""}${option.label}`,`a=expense_set_payment&id=${id}&payment=${option.paymentKey}&source=${option.sourceWallet}`,selected?"primary":"secondary",selected?brownButton:undefined);
+  }),id);
 }
 /** Payment-only unresolved flow: a single tap resolves both audited fields. */
 export function buildExpensePaymentConfirmationFlex(expense:ExpenseFlexRecord):FlexMessage{
@@ -122,7 +126,8 @@ export function buildExpensePaymentConfirmationFlex(expense:ExpenseFlexRecord):F
 }
 export function buildExpenseSourceFlex(expense:ExpenseFlexRecord):FlexMessage{
   const id=encodeURIComponent(expense.expenseId);
-  return menu("Choose payment source",expensePaymentOptions.map(option=>action(`${option.sourceWallet===expense.sourceWallet?"✅ ":""}${option.sourceLabel}`,`a=expense_set_source&id=${id}&source=${option.sourceWallet}`,option.sourceWallet===expense.sourceWallet?"primary":"secondary",option.sourceWallet===expense.sourceWallet?brownButton:undefined)),id);
+  const wallets=expensePaymentOptions.filter((option,index,options)=>options.findIndex(candidate=>candidate.sourceWallet===option.sourceWallet)===index);
+  return menu("Choose payment source",wallets.map(option=>action(`${option.sourceWallet===expense.sourceWallet?"✅ ":""}${option.sourceLabel}`,`a=expense_set_source&id=${id}&source=${option.sourceWallet}`,option.sourceWallet===expense.sourceWallet?"primary":"secondary",option.sourceWallet===expense.sourceWallet?brownButton:undefined)),id);
 }
 export function buildExpenseCategoryFlex(expense:ExpenseFlexRecord):FlexMessage{
   const id=encodeURIComponent(expense.expenseId),keys=["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"];

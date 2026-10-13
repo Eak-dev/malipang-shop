@@ -56,6 +56,52 @@ test('date picker updates the draft date',async()=>{
   assert.equal(h.state.row.transaction_date,'2026-07-20');
 });
 
+test('explicit cash payment from shop bank persists both fields without claiming a transfer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');assert.equal(h.state.row.amount_satang,12000);assert.equal(h.state.queue.length,0);
+});
+
+test('legacy cash payment postback without a source still selects the cash drawer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');assert.equal(h.state.row.source_wallet,'CASH_DRAWER');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');assert.equal(h.state.queue.length,0);
+});
+
+test('invalid transfer from cash drawer is rejected by both payment actions without financial effects',async()=>{
+  for(const action of ['expense_set_payment','expense_resolve_payment']){
+    const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'}),before={...h.state.row},prepared=[];
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(`a=${action}&id=exp_1&payment=transfer&source=CASH_DRAWER`),h.actor);
+    assert.deepEqual(h.state.row,before,action);assert.equal(prepared.some(sql=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(sql)),false,action);
+    assert.equal(h.state.batches.length,0);assert.equal(h.state.queue.length,0);
+  }
+});
+
+test('source selection retains cash when the user chooses shop bank',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'cash',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_source&id=exp_1&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');assert.equal(h.state.queue.length,0);
+});
+
+test('bank slip payment and source stay locked against cash-source postbacks',async()=>{
+  for(const data of [
+    'a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK',
+    'a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER',
+    'a=expense_set_source&id=exp_1&source=CASH_DRAWER'
+  ]){
+    const document={document_id:'doc_locked',document_type:'BANK_SLIP',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+    const h=harness('WAITING_CONFIRM',{document}),before={...h.state.row},beforeDocument=structuredClone(h.state.document),prepared=[];
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(data),h.actor);
+    assert.deepEqual(h.state.row,before,data);assert.deepEqual(h.state.document,beforeDocument,data);
+    assert.equal(prepared.some(sql=>/^\s*(?:INSERT|UPDATE|DELETE)\b/i.test(sql)),false,data);assert.equal(h.state.batches.length,0);assert.equal(h.state.queue.length,0);
+  }
+});
+
 test('confirmation persists and enqueues Google Sheets before LINE output',async()=>{
   const h=harness();await handleExpensePostback(h.env,h.event('a=expense_confirm&id=exp_1'),h.actor);
   assert.equal(h.state.row.status,'CONFIRMED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,1);

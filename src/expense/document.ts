@@ -9,8 +9,10 @@ export const expenseCategories=new Set(["ingredients","fillings","packaging","ga
  * the stored fields remain independently auditable.
  */
 export const expensePaymentOptions=[
-  {paymentKey:"cash",sourceWallet:"CASH_DRAWER",label:"💵 Cash",sourceLabel:"💵 Cash drawer"},
+  {paymentKey:"cash",sourceWallet:"CASH_DRAWER",label:"💵 Drawer cash",sourceLabel:"💵 Cash drawer"},
   {paymentKey:"transfer",sourceWallet:"SHOP_BANK",label:"🏦 Transfer / QR",sourceLabel:"🏦 Shop bank"},
+  // Keep the default cash and shop-bank options first for legacy inference.
+  {paymentKey:"cash",sourceWallet:"SHOP_BANK",label:"💵 Shop-bank cash",sourceLabel:"🏦 Shop bank"},
   {paymentKey:"kbank",sourceWallet:"CARD_KBANK",label:"💳 KBank",sourceLabel:"💳 KBank"},
   {paymentKey:"firstchoice",sourceWallet:"CARD_FIRST_CHOICE",label:"💳 First Choice",sourceLabel:"💳 First Choice"},
   {paymentKey:"aeon",sourceWallet:"CARD_AEON",label:"💳 AEON",sourceLabel:"💳 AEON"},
@@ -51,8 +53,12 @@ export function toSatang(value:number|null):number|null{
   return Number.isSafeInteger(result)?result:null;
 }
 
-function inferredPayment(source:string):{paymentKey:string;sourceWallet:string}|null{
-  const option=paymentOptionForWallet(source.trim().toUpperCase());
+function inferredPayment(source:string,paymentMethod:string):{paymentKey:string;sourceWallet:string}|null{
+  const wallet=source.trim().toUpperCase();
+  // An explicit cash payment is not a transfer just because its funding came
+  // from the shop bank. Missing/other method evidence keeps existing defaults.
+  const option=wallet==="SHOP_BANK"&&/^(cash|เงินสด)$/i.test(paymentMethod.trim())
+    ?paymentOptionForPair("cash",wallet):paymentOptionForWallet(wallet);
   return option?{paymentKey:option.paymentKey,sourceWallet:option.sourceWallet}:null;
 }
 
@@ -60,7 +66,7 @@ export function purchaseExpenseDraft(document:PurchaseDocument):PurchaseExpenseD
   const amountSatang=toSatang(document.finalPaidAmountBaht);
   const date=document.documentType==="ONLINE_ORDER"?document.paymentDate:(document.paymentDate||document.documentDate);
   if(document.documentType==="DELIVERY_ORDER"||amountSatang==null||amountSatang<=0||!isIsoDate(date))return null;
-  const payment=inferredPayment(document.sourceWalletCandidate);
+  const payment=inferredPayment(document.sourceWalletCandidate,document.paymentMethod);
   const needsPaymentConfirmation=!payment;
   const category=expenseCategories.has(document.suggestedCategory)?document.suggestedCategory:"general";
   const vendor=document.vendor.trim()||document.legalVendorName.trim();

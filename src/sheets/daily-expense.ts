@@ -1,5 +1,6 @@
 import type { Env } from "../types";
-import { batchClearValues,batchGetSheetValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId } from "./client";
+import { batchClearValues,batchGetSheetValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId,SheetsMutationOutcomeUnknownError } from "./client";
+import { numberEnv } from "../shared/env";
 
 export interface DailyExpenseRecord{
   expenseId:string;transactionDate:string;description:string;amountBaht:number;
@@ -22,6 +23,17 @@ export interface DailyExpenseItemPostingOptions{replaceLegacySummary?:boolean}
 export interface DailyExpensePlacement{entityKey:string;row:number;postingMonth:number;postingDay:number;amountColumn:string;sourceWallet:string}
 interface MonthBlock{month:number;headerRow:number;totalRow:number}
 interface DailyLayout{body:unknown[][];headers:unknown[][];blocks:MonthBlock[]}
+const CAPACITY_UNCERTAINTY_MS=15*60*1000;
+const CAPACITY_BUSY_RETRY_SECONDS=30;
+function capacityUncertaintyMs(env:Env):number{
+  // Google Sheets bounds one request to 180 seconds of server processing.
+  // Start the fence immediately before dispatch and include any configured
+  // client timeout plus a safety margin. See Google's Sheets API limits.
+  return Math.max(CAPACITY_UNCERTAINTY_MS,Math.max(0,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000))+180_000+60_000);
+}
+export class DailySheetCapacityDeferredError extends Error{
+  constructor(message:string,public readonly delaySeconds:number){super(message);this.name="DailySheetCapacityDeferredError";}
+}
 
 const normalize=(value:unknown)=>String(value??"").trim().toLowerCase().replace(/[\s_\-/]+/g,"");
 const sheetRange=(sheet:string,range:string)=>`'${sheet.replace(/'/g,"''")}'!${range}`;
@@ -99,8 +111,18 @@ export function monthCapacityExpansionRequests(sheetId:number,totalRow:number):u
     {copyPaste:{source:{sheetId,startRowIndex:index-1,endRowIndex:index,startColumnIndex:0,endColumnIndex:23},destination:{sheetId,startRowIndex:index,endRowIndex:index+1,startColumnIndex:0,endColumnIndex:23},pasteType:"PASTE_NORMAL",pasteOrientation:"NORMAL"}}
   ];
 }
-function monthCapacityExpansionRequestsWithMarker(sheetId:number,totalRow:number,marker:string):unknown[]{
-  return[...monthCapacityExpansionRequests(sheetId,totalRow),{updateCells:{start:{sheetId,rowIndex:totalRow-1,columnIndex:0},rows:[{values:[{userEnteredValue:{stringValue:marker}}]}],fields:"userEnteredValue"}}];
+export function monthCapacityExpansionRequestsWithMarker(sheetId:number,totalRow:number,marker:string):unknown[]{
+  const index=totalRow-1;
+  // PASTE_NORMAL also copies the previous expense's input values. Clear those
+  // cells in the *same* atomic batch as the insert, before exposing the row to
+  // the allocator. Otherwise candidateRows never sees an empty row and one
+  // queue invocation keeps inserting until it exhausts its subrequest budget.
+  const writableColumns:[[number,number],[number,number],[number,number],[number,number]]=[[1,4],[5,8],[10,17],[21,23]];
+  return[
+    ...monthCapacityExpansionRequests(sheetId,totalRow),
+    ...writableColumns.map(([startColumnIndex,endColumnIndex])=>({repeatCell:{range:{sheetId,startRowIndex:index,endRowIndex:index+1,startColumnIndex,endColumnIndex},cell:{},fields:"userEnteredValue"}})),
+    {updateCells:{start:{sheetId,rowIndex:index,columnIndex:0},rows:[{values:[{userEnteredValue:{stringValue:marker}}]}],fields:"userEnteredValue"}}
+  ];
 }
 
 async function loadLayout(env:Env):Promise<DailyLayout>{
@@ -127,17 +149,45 @@ async function reserveRow(env:Env,expenseId:string,candidates:number[]):Promise<
   throw new Error("Unable to reserve an empty daily expense row");
 }
 async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout):Promise<boolean>{
-  const now=new Date().toISOString(),locked=await env.DB.prepare(`INSERT OR IGNORE INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,block.month,now).run();
+  const uncertaintyMs=capacityUncertaintyMs(env),nowMs=Date.now(),now=new Date(nowMs).toISOString(),expired=new Date(nowMs-uncertaintyMs).toISOString();
+  // An ambiguous Sheets mutation keeps this lock until the provider can no
+  // longer apply it. Reclaim only after that bound; a crashed invocation is
+  // therefore recoverable without allowing a second concurrent insert.
+  await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=? AND locked_at<=?`).bind(env.SHEET_EXPENSE_DAILY,block.month,expired).run();
+  const locked=await env.DB.prepare(`INSERT OR IGNORE INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,block.month,now).run();
   if(Number(locked.meta.changes||0)!==1)return false;
+  let ownedAt=now,retainLock=false;
   try{
     const existing=await env.DB.prepare(`SELECT anchor_total_row,marker,state FROM daily_sheet_capacity_expansions WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).first<{anchor_total_row:number;marker:string;state:string}>();
     // A completed expansion cannot be reused: its old anchor now points to a
     // detail row.  Every new slot is inserted immediately before the current
     // monthly total, while an interrupted expansion resumes from its marker.
     const inFlight=!!existing&&existing.state!=="COMPLETED",anchor=inFlight?Number(existing!.anchor_total_row):block.totalRow,marker=inFlight?existing!.marker:`__MALIPANG_CAPACITY_${block.month}_${block.totalRow}__`,markerRow=layout.body.findIndex(row=>String(row?.[0]??"")===marker)+1;
-    if(existing?.state==="MAPPED"&&markerRow>0){await batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${markerRow}`)]);await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();return true;}
+    if(existing?.state==="MAPPED"){
+      // D1 row mappings have already shifted. A successful marker clear may
+      // have timed out at the client, leaving MAPPED with no visible marker.
+      // Never insert again in that state; require the expected one-row shift.
+      if(block.totalRow!==anchor+1||markerRow>0&&markerRow!==anchor)throw new Error(`Daily sheet capacity mapped layout changed for month ${block.month}; reconcile before retry`);
+      if(markerRow>0)await batchClearValues(env,[...dailyInputRanges(env.SHEET_EXPENSE_DAILY,markerRow),sheetRange(env.SHEET_EXPENSE_DAILY,`A${markerRow}`)]);
+      await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();return true;
+    }
     if(!existing||existing.state==="COMPLETED")await env.DB.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES(?,?,?,?, 'PREPARED',?,?) ON CONFLICT(sheet_name,month) DO UPDATE SET anchor_total_row=excluded.anchor_total_row,marker=excluded.marker,state='PREPARED',updated_at=excluded.updated_at`).bind(env.SHEET_EXPENSE_DAILY,block.month,block.totalRow,marker,now,now).run();
-    if(markerRow===0){const sheetId=await getSheetId(env,env.SHEET_EXPENSE_DAILY);await batchUpdateSpreadsheet(env,monthCapacityExpansionRequestsWithMarker(sheetId,anchor,marker));}
+    if(markerRow===0){
+      if(anchor!==block.totalRow)throw new Error(`Daily sheet capacity layout changed for month ${block.month}; reconcile before retry`);
+      const sheetId=await getSheetId(env,env.SHEET_EXPENSE_DAILY);
+      try{
+        await batchUpdateSpreadsheet(env,monthCapacityExpansionRequestsWithMarker(sheetId,anchor,marker),async()=>{
+          // OAuth may take time. Renew the lock after authentication and just
+          // before dispatch, analogous to the per-entity Sheets write fence.
+          const refreshed=new Date().toISOString(),result=await env.DB.prepare(`UPDATE daily_sheet_capacity_locks SET locked_at=? WHERE sheet_name=? AND month=? AND locked_at=?`).bind(refreshed,env.SHEET_EXPENSE_DAILY,block.month,ownedAt).run();
+          if(Number(result.meta.changes||0)!==1)throw new DailySheetCapacityDeferredError("DAILY_CAPACITY_LOCK_LOST",CAPACITY_BUSY_RETRY_SECONDS);
+          ownedAt=refreshed;
+        });
+      }catch(error){
+        if(error instanceof SheetsMutationOutcomeUnknownError){retainLock=true;throw new DailySheetCapacityDeferredError("DAILY_CAPACITY_MUTATION_UNCERTAIN",Math.ceil(uncertaintyMs/1000));}
+        throw error;
+      }
+    }else await batchClearValues(env,dailyInputRanges(env.SHEET_EXPENSE_DAILY,markerRow));
     // The marker makes a timeout after Sheets mutation observable.  Mapping is
     // advanced exactly once by the PREPARED -> MAPPED state transition.
     const mapped=await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='MAPPED',updated_at=? WHERE sheet_name=? AND month=? AND state='PREPARED'`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();
@@ -145,7 +195,7 @@ async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout):
     const refreshed=await loadLayout(env),refreshedMarkerRow=refreshed.body.findIndex(row=>String(row?.[0]??"")===marker)+1;if(refreshedMarkerRow>0)await batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${refreshedMarkerRow}`)]);
     await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(new Date().toISOString(),env.SHEET_EXPENSE_DAILY,block.month).run();
     return true;
-  }finally{await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).run();}
+  }finally{if(!retainLock)await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=? AND locked_at=?`).bind(env.SHEET_EXPENSE_DAILY,block.month,ownedAt).run();}
 }
 export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{
   // Funding source is independent of payment method: cash can come from the
@@ -166,11 +216,12 @@ async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:D
     const candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
     if(requiredMonthlyCapacityExpansions(candidates.length,entries.length-rows.size)===0)break;
     const block=layout.blocks.find(item=>item.month===payment.postingMonth);if(!block)throw new Error(`Daily sheet month block not found: ${payment.postingMonth}`);
-    const expanded=await expandMonthCapacity(env,block,layout);if(!expanded)throw new Error(`Daily sheet capacity expansion is busy for month ${payment.postingMonth}; retry safely.`);
+    const expanded=await expandMonthCapacity(env,block,layout);if(!expanded)throw new DailySheetCapacityDeferredError(`DAILY_CAPACITY_LOCK_BUSY:${payment.postingMonth}`,CAPACITY_BUSY_RETRY_SECONDS);
     // Existing item mappings after the inserted total row move down one row.
     // Reload them from D1 before writing so a retry never targets the old row.
     layout=await loadLayout(env);payment=resolvePayment(layout.headers,record.paymentKey,year,month,day);rows=new Map<string,number>();
     for(const entry of entries){const existing=await mappedRow(env,entry.rowKey);if(existing)rows.set(entry.rowKey,existing);}
+    if(rows.size<entries.length&&candidateRows(layout.body,layout.blocks,payment.postingMonth).length===0)throw new Error(`Daily sheet capacity expansion produced no writable row for month ${payment.postingMonth}`);
   }
   let candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
   for(const entry of entries)if(!rows.has(entry.rowKey)){const row=await reserveRow(env,entry.rowKey,candidates);rows.set(entry.rowKey,row);candidates=candidates.filter(candidate=>candidate!==row);}

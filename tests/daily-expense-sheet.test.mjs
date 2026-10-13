@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildDailyExpenseEntries,buildDailySheetWritePlan,candidateRows,dailyInputRanges,findMonthBlocks,isDailyExpenseMappingKey,legacySourceWallet,monthCapacityExpansionRequests,requiredMonthlyCapacityExpansions,resolvePayment} from '../dist/sheets/daily-expense.js';
+import {buildDailyExpenseEntries,buildDailySheetWritePlan,candidateRows,dailyInputRanges,findMonthBlocks,isDailyExpenseMappingKey,legacySourceWallet,monthCapacityExpansionRequests,monthCapacityExpansionRequestsWithMarker,requiredMonthlyCapacityExpansions,resolvePayment} from '../dist/sheets/daily-expense.js';
 import {buildExpenseRawSheetValues} from '../dist/sheets/sync.js';
 
 function liveHeaders(){
@@ -66,6 +66,30 @@ test('a full month is detected for formula-safe expansion instead of overwriting
     {insertDimension:{range:{sheetId:123,dimension:'ROWS',startIndex:2,endIndex:3},inheritFromBefore:true}},
     {copyPaste:{source:{sheetId:123,startRowIndex:1,endRowIndex:2,startColumnIndex:0,endColumnIndex:23},destination:{sheetId:123,startRowIndex:2,endRowIndex:3,startColumnIndex:0,endColumnIndex:23},pasteType:'PASTE_NORMAL',pasteOrientation:'NORMAL'}}
   ]);
+});
+
+test('capacity insertion clears copied expense inputs atomically while retaining formula columns',()=>{
+  const requests=monthCapacityExpansionRequestsWithMarker(123,3,'__CAPACITY_MARKER__');
+  const clears=requests.filter(request=>request.repeatCell).map(request=>request.repeatCell);
+  assert.deepEqual(clears.map(request=>[request.range.startColumnIndex,request.range.endColumnIndex]),[[1,4],[5,8],[10,17],[21,23]]);
+  assert.ok(clears.every(request=>request.fields==='userEnteredValue'&&Object.keys(request.cell).length===0));
+  const previous=Array(23).fill('');
+  previous[1]=10;previous[2]=2;previous[3]='previous expense';previous[6]=42;previous[8]='=G2*2';previous[17]='=G2+1';previous[21]='ingredients';
+  const body=[['',10,'','รายรับทั้งหมดในบัญชี'],previous,['รวม',10,'','']];
+  // Model the Sheets batchUpdate request order. Before this fix PASTE_NORMAL
+  // carried D2 into the new row, so candidateRows stayed empty forever.
+  body.splice(2,0,[]);
+  for(const request of requests){
+    if(request.copyPaste)body[2]=[...body[1]];
+    if(request.repeatCell)for(let column=request.repeatCell.range.startColumnIndex;column<request.repeatCell.range.endColumnIndex;column++)body[2][column]='';
+    if(request.updateCells)body[2][0]=request.updateCells.rows[0].values[0].userEnteredValue.stringValue;
+  }
+  assert.equal(body[2][3],'');
+  assert.equal(body[2][6],'');
+  assert.equal(body[2][8],'=G2*2');
+  assert.equal(body[2][17],'=G2+1');
+  body[2][0]='';
+  assert.deepEqual(candidateRows(body,findMonthBlocks(body),10),[3]);
 });
 
 test('confirmed receipt posts exactly one 180 baht summary row in รายวัน',()=>{

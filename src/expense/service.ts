@@ -436,7 +436,9 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   if(action==="expense_date_menu"){if(!confirmationIssues(expense).includes("date")){await showCurrent(env,event,expense,traceId);return;}await respondFlex(env,event,buildExpenseDateFlex(expense),traceId);return;}
   if(action==="expense_set_payment"){
     if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
-    const payment=q.get("payment")||"";if(!allowedPayments.has(payment))throw new Error("Invalid expense payment");expense.paymentKey=payment;expense.sourceWallet=paymentWallet(payment);
+    const payment=q.get("payment")||"",source=q.get("source")??paymentWallet(payment),choice=paymentOptionForPair(payment,source);
+    if(!allowedPayments.has(payment)||!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
+    expense.paymentKey=choice.paymentKey;expense.sourceWallet=choice.sourceWallet;
     const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(expense.paymentKey,expense.sourceWallet,new Date().toISOString(),id,to).run();
     if(Number(changed.meta.changes||0)===1){await confirmStoredReviewField(env,expense,"payment");await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
     const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;

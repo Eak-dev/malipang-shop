@@ -85,6 +85,12 @@ Receipt, Tax Invoice และ Online Order ที่อ่านยอดจ่
 (เงินสดจากบัญชีร้าน) โดยยังเก็บ payment=`cash` ทั้งคู่. การเลือกบัญชีร้านจาก draft
 เงินสดไม่แปลงวิธีจ่ายเป็น transfer; Bank slip ยังแก้คู่นี้ไม่ได้.
 
+ก่อน Save/auto-finalize ตรวจใบเสร็จซ้ำด้วยตัวระบุเอกสารอีกชั้น ไม่ดูเพียงยอดเท่ากัน.
+กรณี OCR เลขคลาดเคลื่อนแต่หลักฐานแวดล้อมตรงกันแสดง **ต้องตรวจใบเสร็จก่อน**
+ไม่มีปุ่ม Save และยังไม่ส่งยอดไป Sheets. ส่ง Online Order เดิมซ้ำยังคง hold เดิม.
+เจ้าของต้องเทียบต้นฉบับและอนุมัติแก้เฉพาะรายการผ่านช่องทาง private; ไม่มี automatic
+merge/delete/override. ข้อมูลเอกสารและรายการสินค้ายังคงอยู่ครบแม้ยกเลิก draft.
+
 - ไม่มี final paid amount, วันที่จ่าย หรือแหล่งบัตรที่ยืนยันได้: เก็บเป็น reviewable document เท่านั้น ไม่เดาและไม่ลงชีท
 - Delivery Order เดี่ยว: ตอบว่ารับ supporting evidence แล้ว และรอ payment evidence จึงไม่สร้าง finalized Expense
 - Receipt/Tax Invoice เก็บ line item ที่เห็นทั้งหมดใน D1 เพื่อใช้ V2 ต่อได้ แต่ไม่เปิด Supplier/Inventory UI ใน V1.2

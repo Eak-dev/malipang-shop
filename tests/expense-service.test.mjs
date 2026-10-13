@@ -11,6 +11,7 @@ function harness(){
         args:[],
         bind(...args){this.args=args;return this;},
         async first(){return null;},
+        async all(){return{results:[]};},
         async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}
       };
     },

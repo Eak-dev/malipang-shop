@@ -519,9 +519,43 @@ Source wallet = SHOP_BANK
 
 - reference number
 - image hash
+- LINE message ID (ส่ง webhook เดิมซ้ำไม่สร้างธุรกรรมใหม่)
+- ผู้ขาย + เลขเอกสารที่ปรับเฉพาะรูปแบบ Unicode/ตัวพิมพ์/ช่องว่าง ใช้ SHA-256
+  `receipt:v1:` ใน UNIQUE `reference_key` เดิม จึงป้องกันส่งพร้อมกัน แม้ไม่มี
+  legal vendor name หรือใช้ LINE คนละบัญชี; ไม่ใช้ LINE user ID เป็นตัวแทนใบเสร็จ
 - exact trimmed `order_id` สำหรับ `ONLINE_ORDER` โดยใช้ D1 unique identity claim
 
 ภาพหรือ LINE message ใหม่ของ Online Order เดิมต้องกลับไปแสดงรายการเดิมและห้ามสร้าง Expense หรือ primary purchase document ใหม่ แม้เกิดพร้อมกันหลาย event. เอกสารคนละชนิดที่มี order ID เดียวกันยัง link เป็น supporting evidence ได้ตาม relation model เดิม; ข้อมูลเก่า `WAITING_REVIEW` จะไม่ถูกยกระดับอัตโนมัติ.
+
+เอกสารต่างชนิดของ exact order ที่มี Expense owner เดียว แม้ issuer/เลขเอกสารตรงกัน
+ต้องเก็บเอกสาร, items, link และ audit ได้ โดยไม่สร้าง Expense หรือยอดใหม่.
+เฉพาะหลักฐาน linked ที่ไม่มี `expense_id` ใช้ `receipt:linked:v1:` ซึ่งผูก order,
+owner, document type และ receipt identity; UNIQUE order/type claim ป้องกัน concurrent
+uploads. Image เดิม, order อื่น และ primary receipt ยังผ่าน duplicate guard เดิม.
+
+ก่อนยืนยันทุกเส้นทาง รวมถึงการแก้ field สุดท้าย ระบบตรวจตัวระบุใบเสร็จซ้ำอีกครั้ง
+โดยใช้ข้อมูลเอกสารต้นฉบับ ไม่ใช้วันที่/คำอธิบาย Expense ที่แก้จาก Flex หลบการตรวจ.
+ถ้าเลขเอกสารต่างหนึ่งอักขระ แต่ผู้ขาย วันที่ ยอดจ่าย และชุดจำนวน/ราคาสินค้าตรงกัน
+จะ **พักตรวจ** เท่านั้น (ไม่มี CONFIRM หรือ Sheets job) ไม่รวม/ลบรายการอัตโนมัติ.
+จำนวน line items ซ้ำในใบเดียวกันยังคงครบ; VAT ที่ OCR อ่านต่างกันไม่ทำให้หลบการพักตรวจ.
+ตรวจหลักฐานทุกสถานะรวม cancelled; เอกสารที่ link กับ Expense เดียวกันไม่เป็นคู่ซ้ำ.
+ผลอ่านจำกัด 100 candidates, 200 items ต่อใบ และ 2,000 candidate items รวม;
+ถ้าเกินขอบเขตให้หยุดยืนยัน ไม่ถือว่าปลอดรายการซ้ำ. คำตอบไม่เผยข้อมูลใบอื่น/ผู้ส่งอื่น.
+
+ข้อจำกัด: การถ่ายใบเดิมใหม่โดยเลขหาย, ผู้ขายคลาดเคลื่อน หรือเลขต่างหลายอักขระยังไม่
+รับประกันตรวจพบ; legacy Unicode/ช่องว่างภายในที่ไม่ตรงรูปแบบอาจตรวจได้เฉพาะหน้าต่าง
+วันและยอดเดียวกัน. ใบจริงคนละใบที่เลขเรียงติดกันและรายละเอียดตรงกันอาจถูกพักได้.
+เจ้าของต้องเทียบต้นฉบับทั้งสองใบและอนุมัติการแก้เฉพาะรายการผ่านงานข้อมูลที่มี audit;
+ไม่มีปุ่มข้าม guard, ไม่ให้ยกเลิกหลักฐานเดิมเพื่อหลบ guard และไม่ replay งานเพื่อแก้ hold.
+
+การยืนยันใช้ D1 transaction เดียวสำหรับสถานะ, document, audit และ sync outbox
+พร้อม CAS ข้อมูลที่ผู้ใช้ตรวจแล้ว; enqueue/LINE ล้มเหลวไม่ยืนยันธุรกรรมซ้ำ.
+ใช้ Workers best-practices สำหรับ transaction boundary และตรวจด้วย real SQLite
+fixtures (ไม่ใช่ Production): `node --test tests/expense-{wallet-source,receipt-identity,receipt-guards,confirm-integration,postback}.test.mjs`
+หลัง `npm run build:test`. มี migration `0019_expense_linked_receipt_identity.sql`
+สำหรับยกเว้น scoped linked evidence จาก legacy invoice index เท่านั้น; ไม่เปลี่ยน
+หลักฐานหรือ backfill identity เก่า. ต้องอนุมัติ remote migration/release แยก และลง
+schema ก่อน runtime ใหม่นี้. ขั้นตอนตรวจและข้อจำกัด rollback อยู่ใน docs/03.
 
 Undo เปลี่ยนเป็น `CANCELLED`
 

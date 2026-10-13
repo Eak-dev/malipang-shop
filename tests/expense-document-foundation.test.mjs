@@ -11,7 +11,7 @@ function document(overrides={}){
 function reading(doc){return{kind:doc.documentType==='ONLINE_ORDER'?'ONLINE_ORDER':doc.documentType==='DELIVERY_ORDER'?'DELIVERY_ORDER':'RECEIPT',hour:null,minute:null,month:null,day:null,weekday:null,confidence:doc.confidence,clockFullyVisible:null,needsNewPhoto:false,note:'',provider:'openai',raw:{},document:doc};}
 function harness(firstResults=[],{enforceForeignKeys=false,batchErrors=[]}={}){
   const state={batches:[],runs:[]};
-  const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){return firstResults.shift()||null;},async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},async batch(items){
+  const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){return firstResults.shift()||null;},async all(){return{results:[]};},async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}};},async batch(items){
     if(enforceForeignKeys){
       const expenseIds=new Set(),documentIds=new Set();
       for(const item of items){
@@ -368,7 +368,7 @@ test('Delivery Order is stored as supporting evidence without creating a payable
 });
 
 test('a Delivery Order with an exact order ID links supporting evidence and never creates a second expense',async()=>{
-  const h=harness([null,{document_id:'doc_purchase',expense_id:'exp_purchase',document_type:'TAX_INVOICE',legal_vendor_name:'Mali Supplier Co',document_number:'INV-1',order_id:'ORDER-1'}]);
+  const h=harness([{document_count:1,online_document_count:0,matching_document_count:0,expense_count:1,one_expense_id:'exp_purchase',claim_state:null},null]);
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'DELIVERY_ORDER',documentNumber:'',orderId:'ORDER-1',finalPaidAmountBaht:null,paymentDate:''})),'expense/do-linked.jpg','trace','hash-do-linked',h.actor);
   assert.equal(h.state.batches[0].some(item=>item.sql.includes('INSERT INTO expense_events')),false);
   const link=h.state.batches[0].find(item=>item.sql.includes('expense_document_links'));

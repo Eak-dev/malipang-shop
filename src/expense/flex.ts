@@ -105,6 +105,14 @@ export function buildExpenseItemFlex(expense:ExpenseFlexRecord):FlexMessage{
   }};
 }
 
+/** A review hold is not evidence that a second purchase is definitely duplicate. */
+export function buildExpenseDuplicateReviewFlex(expenseId:string,kind:"EXACT"|"REVIEW"|"LIMIT"):FlexMessage{
+  const reason=kind==="EXACT"?"พบเอกสารที่ใช้ตัวระบุเดียวกัน จึงยังไม่บันทึกยอดเพิ่ม":kind==="REVIEW"?"ใบเสร็จคล้ายรายการเดิม: ผู้ขาย วันที่ ยอด และรายละเอียดจำนวน/ราคาตรงกัน แต่เลขเอกสารคลาดเคลื่อนเล็กน้อย":"ข้อมูลที่ต้องเทียบเกินขอบเขตตรวจอัตโนมัติ จึงยังยืนยันความไม่ซ้ำไม่ได้";
+  return{type:"flex",altText:"พักใบเสร็จเพื่อตรวจรายการซ้ำ — ยังไม่บันทึกยอด",contents:{type:"bubble",
+    body:{type:"box",layout:"vertical",spacing:"md",contents:[...title("ต้องตรวจใบเสร็จก่อน"),{type:"text",text:reason,wrap:true},{type:"text",text:"ยังไม่สร้างยอดจ่ายหรือส่ง Sheets กรุณาให้เจ้าของเทียบหลักฐานต้นฉบับ หากเป็นคนละการซื้อ ต้องตรวจและอนุมัติแก้เฉพาะรายการก่อน ไม่มีการลบหรือรวมรายการอัตโนมัติ",wrap:true,size:"sm"}]},
+    footer:{type:"box",layout:"vertical",contents:[action("❌ ยกเลิกรายการนี้",`a=expense_cancel&id=${encodeURIComponent(expenseId)}`)]}}};
+}
+
 export function buildExpensePaymentFlex(expense:ExpenseFlexRecord):FlexMessage{
   const id=encodeURIComponent(expense.expenseId);
   return menu("Choose payment",expensePaymentOptions.map(option=>{

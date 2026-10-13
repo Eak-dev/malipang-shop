@@ -5,7 +5,7 @@ import { addDays,isIsoDate,isoDateInBangkok } from "../shared/time";
 import type { Employee,Env,LineEvent,VisionResult } from "../types";
 import {
   buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentConfirmationFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
-  buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
+  buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,buildExpenseDuplicateReviewFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
 import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
@@ -15,8 +15,14 @@ import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyRe
 import type { StaffActor } from "../access/repository";
 import type { BankSlipDocument,PurchaseDocument } from "../types";
 import { undoConfirmedExpense } from "./undo";
+import { confirmExpenseAtomically } from "./confirm";
+import { inspectReceiptCandidates,receiptReferenceKey,storedReceiptFacts } from "./receipt-identity";
 
 type ExpenseRow=Record<string,unknown>;
+type LoadedExpense=ExpenseFlexRecord&{
+  version:number;
+  documentSnapshot?:{documentId:string;normalizedJson:string|null;updatedAt:string|null};
+};
 export type ExpenseTextOutcome="CONFIRMED"|"WAITING_CONFIRM"|"REJECTED";
 const allowedPayments=expensePayments;
 const allowedSources=expenseWallets;
@@ -30,10 +36,11 @@ async function respondFlex(env:Env,event:LineEvent,message:unknown,traceId:strin
   const started=Date.now();try{return await respondFlexToLineEvent(env,event,message,{traceId,purpose:"EXPENSE_RESPONSE"});}finally{if(timing)timing.replyMs+=Date.now()-started;}
 }
 
-function recordFromRow(row:ExpenseRow):ExpenseFlexRecord{return{
+function recordFromRow(row:ExpenseRow):LoadedExpense{return{
   expenseId:String(row.expense_id),description:String(row.description),amountSatang:Number(row.amount_satang),
   paymentKey:String(row.payment_key),sourceWallet:String(row.source_wallet),category:String(row.category),
-  transactionDate:String(row.transaction_date),status:String(row.status),
+  transactionDate:String(row.transaction_date),status:String(row.status),version:Number(row.version??1),
+  ...(row.document_id?{documentSnapshot:{documentId:String(row.document_id),normalizedJson:row.normalized_json==null?null:String(row.normalized_json),updatedAt:row.document_updated_at==null?null:String(row.document_updated_at)}}:{}),
   ...(row.document_type?{documentType:String(row.document_type)}:{}),...(row.channel?{channel:String(row.channel)}:{}),
   ...(row.institution?{institution:String(row.institution)}:{}),...(row.reference_id?{referenceId:String(row.reference_id)}:{}),
   ...(row.document_type?{grossAmountSatang:row.gross_amount_satang==null?null:Number(row.gross_amount_satang),discountAmountSatang:row.discount_amount_satang==null?null:Number(row.discount_amount_satang)}:{}),
@@ -50,19 +57,33 @@ function reviewFieldsFromRow(row:ExpenseRow):{reviewRequiredFields:string[];revi
   const state=stored||fallback;
   return{reviewRequiredFields:state.requiredFields,reviewConfirmedFields:state.confirmedFields};
 }
-async function findExpense(env:Env,id:string,to:string):Promise<ExpenseFlexRecord|null>{
+async function findExpense(env:Env,id:string,to:string):Promise<LoadedExpense|null>{
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE expense_id=? AND line_user_id=? LIMIT 1`).bind(id,to).first<ExpenseRow>();
   if(!row)return null;
-  const document=await env.DB.prepare(`SELECT document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang,review_note,normalized_json,needs_review FROM expense_documents WHERE expense_id=? LIMIT 1`).bind(id).first<ExpenseRow>();
+  const document=await env.DB.prepare(`SELECT document_id,document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang,review_note,normalized_json,needs_review,updated_at AS document_updated_at FROM expense_documents WHERE expense_id=? ORDER BY created_at,document_id LIMIT 1`).bind(id).first<ExpenseRow>();
   return recordFromRow(document?{...row,...document}:row);
 }
 async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<ExpenseFlexRecord|null>{
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE message_id=? AND line_user_id=? LIMIT 1`).bind(messageId,to).first<ExpenseRow>();return row?recordFromRow(row):null;
 }
 async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,traceId:string):Promise<void>{
-  if(expense.status==="WAITING_CONFIRM")await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
+  if(expense.status==="WAITING_CONFIRM"){
+    if(await receiptConfirmationBlocked(env,event,expense.expenseId,traceId))return;
+    await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
+  }
   else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
   else await respondText(env,event,"This item was cancelled.",traceId);
+}
+
+async function receiptConfirmationBlocked(env:Env,event:LineEvent,expenseId:string,traceId:string,timing?:ExpenseResponseTiming):Promise<boolean>{
+  const facts=await storedReceiptFacts(env,expenseId);
+  if(!facts)return false;
+  const result=await inspectReceiptCandidates(env,facts,{excludeExpenseId:expenseId});
+  if(result.kind==="NONE")return false;
+  // Never expose another submitter's receipt ID, user ID or financial details.
+  // A possible match is not an automatic merge, deletion or accounting decision.
+  await respondFlex(env,event,buildExpenseDuplicateReviewFlex(expenseId,result.kind),traceId,timing);
+  return true;
 }
 
 type ConfirmationField=ExpenseReviewField;
@@ -108,17 +129,18 @@ async function showOrFinalizeCurrent(env:Env,event:LineEvent,id:string,to:string
 }
 
 async function confirmExpense(
-  env:Env,event:LineEvent,expense:ExpenseFlexRecord,to:string,traceId:string,actor:ExpenseActor|undefined
+  env:Env,event:LineEvent,expense:LoadedExpense,to:string,traceId:string,actor:ExpenseActor|undefined
 ):Promise<boolean>{
   const issues=confirmationIssues(expense);
   if(issues.length)return false;
-  const reviewer=actorValues(actor),confirmedAt=new Date().toISOString();
-  const changed=await env.DB.prepare(`UPDATE expense_events SET status='CONFIRMED',reviewed_by_employee_id=?,approved_at=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND payment_key=? AND source_wallet=?`).bind(reviewer.employeeId,confirmedAt,confirmedAt,expense.expenseId,to,expense.paymentKey,expense.sourceWallet).run();
-  if(Number(changed.meta.changes||0)!==1)return false;
+  if(await receiptConfirmationBlocked(env,event,expense.expenseId,traceId))return true;
+  const reviewer=actorValues(actor);
+  const version=await confirmExpenseAtomically(env,{expenseId:expense.expenseId,lineUserId:to,traceId,actorEmployeeId:reviewer.employeeId,branchId:reviewer.branchId,
+    snapshot:{description:expense.description,amountSatang:expense.amountSatang,transactionDate:expense.transactionDate,paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet,category:expense.category,version:expense.version},
+    ...(expense.documentSnapshot?{documentSnapshot:expense.documentSnapshot}:{})});
+  if(version===null)return false;
   expense.status="CONFIRMED";
-  await env.DB.prepare(`UPDATE expense_documents SET status='CONFIRMED',updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM'`).bind(new Date().toISOString(),expense.expenseId).run();
-  await expenseAudit(env,{actor,action:"CONFIRM",expenseId:expense.expenseId,before:{status:"WAITING_CONFIRM"},after:{status:"CONFIRMED"}}).run();
-  await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:1,traceId});
+  await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:version,traceId});
   await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
   return true;
 }
@@ -182,24 +204,36 @@ async function findDuplicateDocument(env:Env,referenceKey:string,imageHash:strin
   return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE image_hash=? LIMIT 1`).bind(imageHash).first<ExpenseRow>();
 }
 async function pushDuplicateDocument(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string,timing?:ExpenseResponseTiming):Promise<void>{
-  const existing=duplicate?.document_id?`\nExisting review ID: ${String(duplicate.document_id)}`:"";
-  await respondText(env,event,`Duplicate receipt not saved. ❌\nReason: This receipt reference or image is already in the system.${existing}\nAction: Do not submit the same receipt again.\nCode: BANK_SLIP_DUPLICATE`,traceId,timing);
+  await respondText(env,event,"Duplicate receipt not saved. ❌\nReason: This receipt reference or image is already in the system.\nAction: Do not submit the same receipt again.\nCode: BANK_SLIP_DUPLICATE",traceId,timing);
 }
 async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string,timing?:ExpenseResponseTiming):Promise<boolean>{
   const to=event.source.userId||"";
   if(String(duplicate?.status||"")!=="WAITING_CONFIRM"||!duplicate?.expense_id)return false;
   const expense=await findExpense(env,String(duplicate.expense_id),to);
   if(!expense||expense.status!=="WAITING_CONFIRM")return false;
+  if(await receiptConfirmationBlocked(env,event,expense.expenseId,traceId,timing))return true;
   await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);
   return true;
 }
 
 function isPurchaseDocument(document:VisionResult["document"]):document is PurchaseDocument{return!!document&&document.documentType!=="BANK_SLIP";}
-async function findPurchaseDuplicate(env:Env,document:PurchaseDocument,imageHash:string):Promise<ExpenseRow|null>{
+async function findPurchaseDuplicate(env:Env,document:PurchaseDocument,imageHash:string,linkedExpenseId?:string):Promise<ExpenseRow|null>{
+  // An image repeat is always a duplicate. Different-type evidence for an
+  // already verified exact order may share its owner's printed receipt key.
   const byImage=await findDuplicateDocument(env,"",imageHash);if(byImage)return byImage;
+  const key=await receiptReferenceKey(document),excludeOwner=`AND (? IS NULL OR ((expense_id IS NULL OR expense_id<>?) AND NOT EXISTS(SELECT 1 FROM expense_document_links l WHERE l.document_id=expense_documents.document_id AND l.expense_id=?)))`,owner=linkedExpenseId??null;
+  if(key){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE reference_key=? ${excludeOwner} LIMIT 1`).bind(key,owner,owner,owner).first<ExpenseRow>();if(duplicate)return duplicate;}
   const vendor=(document.legalVendorName||document.vendor).trim(),number=document.documentNumber.trim();
-  if(vendor&&number){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE legal_vendor_name=? AND document_number=? LIMIT 1`).bind(vendor,number).first<ExpenseRow>();if(duplicate)return duplicate;}
+  if(vendor&&number){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE legal_vendor_name=? AND document_number=? ${excludeOwner} LIMIT 1`).bind(vendor,number,owner,owner,owner).first<ExpenseRow>();if(duplicate)return duplicate;}
+  const candidates=await inspectReceiptCandidates(env,document,linkedExpenseId?{excludeExpenseId:linkedExpenseId}:{});
+  if(candidates.kind==="EXACT"){
+    const match=candidates.matches[0]!;
+    return{document_id:match.documentId,expense_id:match.expenseId,status:match.status};
+  }
   return null;
+}
+async function linkedReceiptReferenceKey(orderId:string,expenseId:string,documentType:string,receiptKey:string):Promise<string>{
+  return`receipt:linked:v1:${await sha256Hex(new TextEncoder().encode(JSON.stringify([orderId,expenseId,documentType,receiptKey])).buffer as ArrayBuffer)}`;
 }
 interface OnlineOrderIdentityRow extends ExpenseRow{
   document_count?:unknown;online_document_count?:unknown;matching_document_count?:unknown;expense_count?:unknown;one_expense_id?:unknown;
@@ -269,6 +303,7 @@ async function handleExistingOnlineOrder(env:Env,event:LineEvent,orderId:string,
   if(identity.kind==="EXPENSE_OWNED"){
     const existing=await findExpense(env,identity.expenseId,event.source.userId||"");
     if(existing){
+      if(existing.status==="WAITING_CONFIRM"&&await receiptConfirmationBlocked(env,event,existing.expenseId,traceId,timing))return true;
       if(existing.status==="WAITING_CONFIRM")await respondFlex(env,event,isPaymentOnlyUnresolved(existing)?buildExpensePaymentConfirmationFlex(existing):buildExpenseSummaryFlex(withConfirmationIssues(existing)),traceId,timing);
       else await showCurrent(env,event,existing,traceId);
       return true;
@@ -302,17 +337,19 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
   // without letting supporting/review-only evidence reserve the identity.
   const exactClaimedOrderId=(document.documentType==="ONLINE_ORDER"||draft)?document.orderId.trim():"";
   let crossTypeExpenseId="",crossTypeClaimExists=false;
-  if(exactClaimedOrderId){
-    const identity=await findOnlineOrderIdentity(env,exactClaimedOrderId,document.documentType);
+  if(document.orderId.trim()){
+    const identity=await findOnlineOrderIdentity(env,document.orderId.trim(),document.documentType);
     if(identity.kind==="EXPENSE_OWNED"&&identity.matchingDocumentCount===0){crossTypeExpenseId=identity.expenseId;crossTypeClaimExists=identity.hasClaim;}
-    else if(await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing,identity))return;
+    else if((exactClaimedOrderId||identity.kind==="EXPENSE_OWNED"||identity.kind==="CONFLICT")&&await handleExistingOnlineOrder(env,event,document.orderId.trim(),traceId,timing,identity))return;
   }
-  const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
-  const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),ownership=actorValues(actor);
+  const linkedOrderId=crossTypeExpenseId?document.orderId.trim():exactClaimedOrderId;
+  const duplicate=await findPurchaseDuplicate(env,document,imageHash,crossTypeExpenseId||undefined);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
+  const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),ownership=actorValues(actor),receiptKey=await receiptReferenceKey(document);
   const exactMatch=crossTypeExpenseId?{documentId:"",expenseId:crossTypeExpenseId,documentType:"ORDER_ID_OWNER",legalVendorName:"",documentNumber:"",orderId:exactClaimedOrderId}:await findExactLinkedExpenseDocument(env,document);
   if(exactMatch&&exactMatch.documentType!==document.documentType&&exactMatch.expenseId){
     const reviewReason=`Linked to an existing expense by ${document.orderId.trim()?"exact order ID":"exact vendor and document number"}.`;
     const base=[documentId,messageId,to,document.documentType,imageKey,"WAITING_REVIEW",JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,1,reviewReason,imageHash,null];
+    base[16]=crossTypeExpenseId?await linkedReceiptReferenceKey(linkedOrderId,crossTypeExpenseId,document.documentType,receiptKey):receiptKey||null;
     const linkedStatements=[
       documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,null,actor),
       ...documentItemStatements(documentId,null,document,now,randomId).map(item=>itemInsert(env,item)),
@@ -320,15 +357,16 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ];
-    if(exactClaimedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
-    if(exactClaimedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:exactClaimedOrderId,documentType:document.documentType,documentId,now}));
+    if(linkedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:linkedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
+    if(linkedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:linkedOrderId,documentType:document.documentType,documentId,now}));
     try{await env.DB.batch(linkedStatements);}
-    catch(error){if(String(error).includes("UNIQUE")&&exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;throw error;}
+    catch(error){if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
   const expenseId=draft?randomId("exp"):null;
   const base=[documentId,messageId,to,document.documentType,imageKey,documentStatus,JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,draft?.needsReview||document.needsReview?1:0,reviewReason,imageHash,expenseId];
+  base[16]=receiptKey||null;
   try{
     // D1 batches enforce foreign keys statement-by-statement.  Create the
     // parent Expense before any item, seller case, link or audit references it.
@@ -355,6 +393,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     await env.DB.batch(statements);
   }catch(error){if(String(error).includes("UNIQUE")){if(exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
   if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
+  if(await receiptConfirmationBlocked(env,event,expenseId!,traceId,timing))return;
   const expense={expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason,reviewRequiredFields:reviewState?.requiredFields||[],reviewConfirmedFields:reviewState?.confirmedFields||[]};
   await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);
 }

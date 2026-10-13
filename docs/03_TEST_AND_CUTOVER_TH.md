@@ -8,6 +8,29 @@ npm run check
 npx wrangler deploy --dry-run
 ```
 
+## Receipt identity / linked evidence (local เท่านั้น)
+
+หลัง `npm run build:test` รัน `node --test tests/expense-receipt-guards.test.mjs tests/expense-receipt-identity.test.mjs tests/expense-confirm-integration.test.mjs tests/expense-linked-receipt-migration.test.mjs`.
+ต้องพิสูจน์ exact duplicate, OCR review hold, concurrent confirm/link, batch rollback,
+queue/LINE failure และ cash/source behavior โดยใช้ fixture เท่านั้น.
+
+Migration 0019 สร้าง invoice index ใหม่ก่อนลบ index เดิม ข้อยกเว้นจำกัดเฉพาะ
+`expense_id IS NULL`, exact order ไม่ว่าง และ key `receipt:linked:v1:`; แถว primary,
+review-only แบบเดิม, reference key และ image hash ยังมี unique guards. ห้ามแก้ issuer
+หรือเลขต้นฉบับเพื่อหลบ constraint. รันซ้ำต้องไม่เปลี่ยนข้อมูล พร้อม integrity/FK ผ่าน.
+
+ก่อน release ต้องอนุมัติ remote migration แยก, backup/restore ทดสอบ, ตรวจ schema และ
+ลง 0019 ก่อน runtime ใหม่. ทดสอบ old runtime/new schema ด้วย fixture ด้วย. UAT ที่ได้รับ
+อนุญาตต้องส่ง Online Order แล้วตามด้วย Receipt/Tax Invoice/Delivery Order ที่มี exact
+order และเลขเดียวกัน: Expense 1, เอกสาร 2, link/audit เพิ่ม 1, ไม่มี sync เพิ่มจน confirm;
+ส่งซ้ำหรือพร้อมกันต้องไม่เพิ่มเอกสารชนิดเดียวกัน และ supporting ต้องไม่ถูก CONFIRMED.
+
+Rollback Worker ใช้ schema ใหม่ต่อได้ แต่การกลับ invoice index เดิมทำได้เฉพาะเมื่อ
+query group ตาม `legal_vendor_name,document_number` ภายใต้ predicate เดิมไม่พบซ้ำ.
+หลังรับ linked evidence แล้วอาจสร้าง index เดิมไม่ได้: ต้อง fail closed, คง schema ใหม่
+และ forward-fix; ห้ามลบ/เปลี่ยนหลักฐานเพื่อบังคับ rollback schema. Old Worker จะไม่สร้าง
+ยอดใหม่ให้ exact order เดิม แต่อาจกลับไปปฏิเสธเอกสารชนิดใหม่ จึงต้องแจ้งข้อจำกัดนี้.
+
 ## Regression test รูปนาฬิกาจริง
 
 รูปมาตรฐานและคำตอบที่คาดหวังอยู่ใน `tests/fixtures/clock-photos` โดยใช้ Timestamp และพิกัดจาก Overlay ตัวหนังสือสีขาวเป็นข้อมูลหลัก ส่วนนาฬิกาประจำร้านใช้เป็นหลักฐานสถานที่เท่านั้น ไฟล์ `.jpg` ถูก Git ignore เพราะมีข้อมูลสถานที่จริง แต่ `cases.json` สามารถเก็บใน Git ได้

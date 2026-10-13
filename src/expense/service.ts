@@ -217,16 +217,23 @@ async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:Exp
 }
 
 function isPurchaseDocument(document:VisionResult["document"]):document is PurchaseDocument{return!!document&&document.documentType!=="BANK_SLIP";}
-async function findPurchaseDuplicate(env:Env,document:PurchaseDocument,imageHash:string):Promise<ExpenseRow|null>{
-  const key=await receiptReferenceKey(document),byImage=await findDuplicateDocument(env,key,imageHash);if(byImage)return byImage;
+async function findPurchaseDuplicate(env:Env,document:PurchaseDocument,imageHash:string,linkedExpenseId?:string):Promise<ExpenseRow|null>{
+  // An image repeat is always a duplicate. Different-type evidence for an
+  // already verified exact order may share its owner's printed receipt key.
+  const byImage=await findDuplicateDocument(env,"",imageHash);if(byImage)return byImage;
+  const key=await receiptReferenceKey(document),excludeOwner=`AND (? IS NULL OR ((expense_id IS NULL OR expense_id<>?) AND NOT EXISTS(SELECT 1 FROM expense_document_links l WHERE l.document_id=expense_documents.document_id AND l.expense_id=?)))`,owner=linkedExpenseId??null;
+  if(key){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE reference_key=? ${excludeOwner} LIMIT 1`).bind(key,owner,owner,owner).first<ExpenseRow>();if(duplicate)return duplicate;}
   const vendor=(document.legalVendorName||document.vendor).trim(),number=document.documentNumber.trim();
-  if(vendor&&number){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE legal_vendor_name=? AND document_number=? LIMIT 1`).bind(vendor,number).first<ExpenseRow>();if(duplicate)return duplicate;}
-  const candidates=await inspectReceiptCandidates(env,document);
+  if(vendor&&number){const duplicate=await env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE legal_vendor_name=? AND document_number=? ${excludeOwner} LIMIT 1`).bind(vendor,number,owner,owner,owner).first<ExpenseRow>();if(duplicate)return duplicate;}
+  const candidates=await inspectReceiptCandidates(env,document,linkedExpenseId?{excludeExpenseId:linkedExpenseId}:{});
   if(candidates.kind==="EXACT"){
     const match=candidates.matches[0]!;
     return{document_id:match.documentId,expense_id:match.expenseId,status:match.status};
   }
   return null;
+}
+async function linkedReceiptReferenceKey(orderId:string,expenseId:string,documentType:string,receiptKey:string):Promise<string>{
+  return`receipt:linked:v1:${await sha256Hex(new TextEncoder().encode(JSON.stringify([orderId,expenseId,documentType,receiptKey])).buffer as ArrayBuffer)}`;
 }
 interface OnlineOrderIdentityRow extends ExpenseRow{
   document_count?:unknown;online_document_count?:unknown;matching_document_count?:unknown;expense_count?:unknown;one_expense_id?:unknown;
@@ -330,18 +337,19 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
   // without letting supporting/review-only evidence reserve the identity.
   const exactClaimedOrderId=(document.documentType==="ONLINE_ORDER"||draft)?document.orderId.trim():"";
   let crossTypeExpenseId="",crossTypeClaimExists=false;
-  if(exactClaimedOrderId){
-    const identity=await findOnlineOrderIdentity(env,exactClaimedOrderId,document.documentType);
+  if(document.orderId.trim()){
+    const identity=await findOnlineOrderIdentity(env,document.orderId.trim(),document.documentType);
     if(identity.kind==="EXPENSE_OWNED"&&identity.matchingDocumentCount===0){crossTypeExpenseId=identity.expenseId;crossTypeClaimExists=identity.hasClaim;}
-    else if(await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing,identity))return;
+    else if((exactClaimedOrderId||identity.kind==="EXPENSE_OWNED"||identity.kind==="CONFLICT")&&await handleExistingOnlineOrder(env,event,document.orderId.trim(),traceId,timing,identity))return;
   }
-  const duplicate=await findPurchaseDuplicate(env,document,imageHash);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
+  const linkedOrderId=crossTypeExpenseId?document.orderId.trim():exactClaimedOrderId;
+  const duplicate=await findPurchaseDuplicate(env,document,imageHash,crossTypeExpenseId||undefined);if(duplicate){if(await resumeDuplicateConfirmation(env,event,duplicate,traceId,timing))return;await pushDuplicateDocument(env,event,duplicate,traceId,timing);return;}
   const to=event.source.userId||"",messageId=event.message?.id||"",documentId=randomId("doc"),now=new Date().toISOString(),ownership=actorValues(actor),receiptKey=await receiptReferenceKey(document);
   const exactMatch=crossTypeExpenseId?{documentId:"",expenseId:crossTypeExpenseId,documentType:"ORDER_ID_OWNER",legalVendorName:"",documentNumber:"",orderId:exactClaimedOrderId}:await findExactLinkedExpenseDocument(env,document);
   if(exactMatch&&exactMatch.documentType!==document.documentType&&exactMatch.expenseId){
     const reviewReason=`Linked to an existing expense by ${document.orderId.trim()?"exact order ID":"exact vendor and document number"}.`;
     const base=[documentId,messageId,to,document.documentType,imageKey,"WAITING_REVIEW",JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,1,reviewReason,imageHash,null];
-    base[16]=receiptKey||null;
+    base[16]=crossTypeExpenseId?await linkedReceiptReferenceKey(linkedOrderId,crossTypeExpenseId,document.documentType,receiptKey):receiptKey||null;
     const linkedStatements=[
       documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,null,actor),
       ...documentItemStatements(documentId,null,document,now,randomId).map(item=>itemInsert(env,item)),
@@ -349,10 +357,10 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
       expenseAudit(env,{actor,action:"DOCUMENT_LINK",expenseId:exactMatch.expenseId,documentId,after:{relation:relationForIncomingDocument(document)},reason:reviewReason})
     ];
-    if(exactClaimedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:exactClaimedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
-    if(exactClaimedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:exactClaimedOrderId,documentType:document.documentType,documentId,now}));
+    if(linkedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:linkedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
+    if(linkedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:linkedOrderId,documentType:document.documentType,documentId,now}));
     try{await env.DB.batch(linkedStatements);}
-    catch(error){if(String(error).includes("UNIQUE")&&exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;throw error;}
+    catch(error){if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");

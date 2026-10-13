@@ -368,7 +368,7 @@ test('Delivery Order is stored as supporting evidence without creating a payable
 });
 
 test('a Delivery Order with an exact order ID links supporting evidence and never creates a second expense',async()=>{
-  const h=harness([null,{document_id:'doc_purchase',expense_id:'exp_purchase',document_type:'TAX_INVOICE',legal_vendor_name:'Mali Supplier Co',document_number:'INV-1',order_id:'ORDER-1'}]);
+  const h=harness([{document_count:1,online_document_count:0,matching_document_count:0,expense_count:1,one_expense_id:'exp_purchase',claim_state:null},null]);
   await handleExpenseImage(h.env,h.event,reading(document({documentType:'DELIVERY_ORDER',documentNumber:'',orderId:'ORDER-1',finalPaidAmountBaht:null,paymentDate:''})),'expense/do-linked.jpg','trace','hash-do-linked',h.actor);
   assert.equal(h.state.batches[0].some(item=>item.sql.includes('INSERT INTO expense_events')),false);
   const link=h.state.batches[0].find(item=>item.sql.includes('expense_document_links'));

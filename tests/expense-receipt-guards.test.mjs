@@ -9,6 +9,77 @@ const count=(h,table)=>Number(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`
 const upload=(h,id,doc=receipt(),user='fixture_user',hash=`hash_${id}`)=>handleExpenseImage(h.env,imageEvent(id,user),receiptReading(doc),`fixture/${id}.jpg`,'fixture_trace',hash);
 const confirm=(h,id,user='fixture_user')=>handleExpensePostback(h.env,{source:{type:'user',userId:user},postback:{data:`a=expense_confirm&id=${id}`}},{canSubmitExpense:true});
 
+test('SQLite: same claimed order preserves different-type evidence with the same normalized receipt identity',async()=>{
+  for(const legalVendorName of ['', 'Synthetic Legal Supplier'])for(const documentType of ['RECEIPT','TAX_INVOICE','DELIVERY_ORDER']){
+    const h=expenseSqlite();try{
+      const primary=receipt({documentType:'ONLINE_ORDER',orderId:'ORDER-CROSS-TYPE',legalVendorName});
+      await upload(h,'primary_order',primary);
+      const original=h.sqlite.prepare('SELECT * FROM expense_events').get();
+      const supporting=receipt({...primary,documentType});
+      await upload(h,'supporting_invoice',supporting);
+      assert.equal(count(h,'expense_events'),1,legalVendorName);
+      assert.equal(count(h,'expense_documents'),2,legalVendorName||'fallback issuer');
+      assert.equal(count(h,'expense_document_links'),2);assert.equal(count(h,'expense_document_items'),2);
+      assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE action='DOCUMENT_LINK'").get().n,1);
+      assert.deepEqual(h.sqlite.prepare('SELECT * FROM expense_events').get(),original);
+      const saved=h.sqlite.prepare('SELECT * FROM expense_documents WHERE document_type=?').get(documentType);
+      assert.equal(saved.expense_id,null);assert.equal(saved.status,'WAITING_REVIEW');
+      assert.equal(saved.legal_vendor_name,legalVendorName);assert.equal(saved.document_number,primary.documentNumber);
+      await upload(h,'invoice_again',supporting);
+      assert.equal(count(h,'expense_documents'),2);assert.equal(count(h,'expense_document_links'),2);
+      await confirm(h,original.expense_id);
+      assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CONFIRMED');
+      assert.equal(h.sqlite.prepare('SELECT status FROM expense_documents WHERE document_type=?').get(documentType).status,'WAITING_REVIEW');
+      assert.equal(count(h,'sync_jobs'),1);assert.equal(h.queue.length,1);
+      assert.deepEqual(h.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+      assert.equal(h.sqlite.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+    }finally{h.close();}
+  }
+});
+
+test('SQLite: concurrent same-type supporting uploads preserve one document/link/audit and no new financial effect',async()=>{
+  const h=expenseSqlite();try{
+    const primary=receipt({documentType:'ONLINE_ORDER',orderId:'ORDER-LINK-RACE',legalVendorName:'Synthetic Legal Supplier'});
+    await upload(h,'primary_order',primary);
+    const supporting=receipt({...primary,documentType:'TAX_INVOICE'});
+    await Promise.all([upload(h,'invoice_a',supporting),upload(h,'invoice_b',supporting)]);
+    assert.equal(count(h,'expense_events'),1);assert.equal(count(h,'expense_documents'),2);
+    assert.equal(count(h,'expense_document_links'),2);assert.equal(count(h,'expense_document_items'),2);
+    assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE action='DOCUMENT_LINK'").get().n,1);
+    assert.equal(count(h,'sync_jobs'),0);assert.equal(h.queue.length,0);
+    assert.deepEqual(h.sqlite.prepare('PRAGMA foreign_key_check').all(),[]);
+  }finally{h.close();}
+});
+
+test('SQLite: supporting evidence insert failures roll back all linked metadata and retry can complete',async()=>{
+  for(const failAt of [0,1,2,3,4,5,6]){
+    const h=expenseSqlite();try{
+      const primary=receipt({documentType:'ONLINE_ORDER',orderId:'ORDER-LINK-FAIL',legalVendorName:'Synthetic Legal Supplier'});
+      await upload(h,'primary_order',primary);
+      const tables=['expense_events','expense_documents','expense_document_items','expense_document_cases','expense_document_links','expense_audit_log','expense_order_document_type_claims'];
+      const snapshot=()=>JSON.stringify(tables.map(table=>h.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()));
+      const before=snapshot();h.DB.failAt=failAt;
+      await assert.rejects(upload(h,'supporting_invoice',receipt({...primary,documentType:'TAX_INVOICE'})),/fixture batch failure/);
+      assert.equal(snapshot(),before);assert.equal(count(h,'sync_jobs'),0);
+      h.DB.failAt=null;await upload(h,'supporting_invoice',receipt({...primary,documentType:'TAX_INVOICE'}));
+      assert.equal(count(h,'expense_events'),1);assert.equal(count(h,'expense_documents'),2);
+    }finally{h.close();}
+  }
+});
+
+test('SQLite: another order or repeated image cannot use the supporting exception to create a second purchase',async()=>{
+  for(const scenario of ['other-order','no-order','same-image']){
+    const h=expenseSqlite();try{
+      const primary=receipt({documentType:'ONLINE_ORDER',orderId:'ORDER-ORIGINAL',legalVendorName:'Synthetic Legal Supplier'});
+      await upload(h,'primary_order',primary);
+      const incoming=receipt({...primary,documentType:'TAX_INVOICE',orderId:scenario==='other-order'?'OTHER-ORDER':scenario==='no-order'?'':primary.orderId});
+      await upload(h,'duplicate_invoice',incoming,'fixture_user',scenario==='same-image'?'hash_primary_order':'different_hash');
+      assert.equal(count(h,'expense_events'),1,scenario);assert.equal(count(h,'expense_documents'),1,scenario);
+      assert.equal(count(h,'expense_document_links'),1,scenario);assert.equal(count(h,'sync_jobs'),0);
+    }finally{h.close();}
+  }
+});
+
 test('SQLite: two message IDs with the same vendor/receipt number and no legal name create one draft',async()=>{
   const h=expenseSqlite();try{
     await upload(h,'image_a');await upload(h,'image_b');

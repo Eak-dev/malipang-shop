@@ -527,6 +527,12 @@ Source wallet = SHOP_BANK
 
 ภาพหรือ LINE message ใหม่ของ Online Order เดิมต้องกลับไปแสดงรายการเดิมและห้ามสร้าง Expense หรือ primary purchase document ใหม่ แม้เกิดพร้อมกันหลาย event. เอกสารคนละชนิดที่มี order ID เดียวกันยัง link เป็น supporting evidence ได้ตาม relation model เดิม; ข้อมูลเก่า `WAITING_REVIEW` จะไม่ถูกยกระดับอัตโนมัติ.
 
+เอกสารต่างชนิดของ exact order ที่มี Expense owner เดียว แม้ issuer/เลขเอกสารตรงกัน
+ต้องเก็บเอกสาร, items, link และ audit ได้ โดยไม่สร้าง Expense หรือยอดใหม่.
+เฉพาะหลักฐาน linked ที่ไม่มี `expense_id` ใช้ `receipt:linked:v1:` ซึ่งผูก order,
+owner, document type และ receipt identity; UNIQUE order/type claim ป้องกัน concurrent
+uploads. Image เดิม, order อื่น และ primary receipt ยังผ่าน duplicate guard เดิม.
+
 ก่อนยืนยันทุกเส้นทาง รวมถึงการแก้ field สุดท้าย ระบบตรวจตัวระบุใบเสร็จซ้ำอีกครั้ง
 โดยใช้ข้อมูลเอกสารต้นฉบับ ไม่ใช้วันที่/คำอธิบาย Expense ที่แก้จาก Flex หลบการตรวจ.
 ถ้าเลขเอกสารต่างหนึ่งอักขระ แต่ผู้ขาย วันที่ ยอดจ่าย และชุดจำนวน/ราคาสินค้าตรงกัน
@@ -546,7 +552,10 @@ Source wallet = SHOP_BANK
 พร้อม CAS ข้อมูลที่ผู้ใช้ตรวจแล้ว; enqueue/LINE ล้มเหลวไม่ยืนยันธุรกรรมซ้ำ.
 ใช้ Workers best-practices สำหรับ transaction boundary และตรวจด้วย real SQLite
 fixtures (ไม่ใช่ Production): `node --test tests/expense-{wallet-source,receipt-identity,receipt-guards,confirm-integration,postback}.test.mjs`
-หลัง `npm run build:test`. ไม่มี schema migration ใหม่และไม่มีการ backfill identity เก่า.
+หลัง `npm run build:test`. มี migration `0019_expense_linked_receipt_identity.sql`
+สำหรับยกเว้น scoped linked evidence จาก legacy invoice index เท่านั้น; ไม่เปลี่ยน
+หลักฐานหรือ backfill identity เก่า. ต้องอนุมัติ remote migration/release แยก และลง
+schema ก่อน runtime ใหม่นี้. ขั้นตอนตรวจและข้อจำกัด rollback อยู่ใน docs/03.
 
 Undo เปลี่ยนเป็น `CANCELLED`
 

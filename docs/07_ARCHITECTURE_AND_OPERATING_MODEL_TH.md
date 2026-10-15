@@ -2,6 +2,8 @@
 
 อัปเดต: 23 กรกฎาคม 2026
 
+เพิ่มเติม 15 ตุลาคม 2026: [Owner Master / Website Handoff](21_OWNER_MASTER_WEB_HANDOFF_TH.md) เป็นบริบทใหม่สำหรับเว็บ Owner โดยไม่เปลี่ยน runtime หรือยืนยัน Production status ใหม่ในเอกสารนี้
+
 ## 1. จุดประสงค์ของระบบ
 
 ระบบนี้มีหน้าที่รับข้อมูลจาก LINE OA ของร้านมะลิปัง แล้วประมวลผลข้อมูลที่เกี่ยวข้องกับ:
@@ -190,6 +192,17 @@ Google Sheets ใช้เพื่อ:
 - รองรับรูปแบบบัญชีเดิมของร้าน
 
 ห้ามเขียนทับคอลัมน์สูตรที่เอกสาร mapping ระบุว่าต้องรักษาไว้
+
+### 4.8 Owner website boundary (ข้อกำหนดเตรียมพัฒนา ยังไม่ใช่ระบบที่ deploy แล้ว)
+
+- เริ่มจาก 4 เมนูตาม Owner Master: เงินหน้าร้าน, ปิดเดือน, ต้นทุนสินค้า, รายการต้องตรวจ
+- D1 ยังคงเป็น source of truth ของธุรกรรม V5.2; สูตรยอดขาย/มัดจำ/ต้นทุนที่ยังอยู่เฉพาะ Sheets ต้องมี mapping และ parity gate ก่อนย้าย ไม่สร้างตัวเลขแทนข้อมูลที่ยังไม่มีใน D1
+- Browser ต้องผ่าน backend ที่ตรวจ identity/role/scope; ห้ามใส่ `ADMIN_TOKEN`, Google credentials, SQL หรือ private evidence keys ใน client bundle
+- เริ่ม read-only ตามแผนก่อนเพิ่ม mutation; อ่านแบบ bounded/paginated และแสดง freshness/แหล่งข้อมูล/status ไม่โหลดทั้ง workbook ทุก request
+- ไม่ให้การเปิดหน้าเว็บ trigger bootstrap, reconcile, replay, import, payroll apply หรือ business mutation
+- การซ่อนแท็บและเพิ่ม UI ไม่ใช่สิทธิ์ปิด Sheets sync, ลบแท็บเก่า หรือเลิกใช้ legacy integrations
+
+รายละเอียด field semantics, ข้อจำกัดของข้อมูลปัจจุบัน, UAT และงานที่ต้องอนุมัติแยกอยู่ในเอกสารส่งต่องาน
 
 ## 5. Flow สำคัญ
 

@@ -569,7 +569,7 @@ Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured
 
 - ยอดรายวันคือ `final paid` หลังส่วนลด/voucher/subsidy ไม่ใช่ราคาก่อนลด
 - Online order ใช้วันที่จ่ายเงินจริงเท่านั้น; ถ้าไม่เห็นวันที่หรือบัตร ให้ยืนยันก่อน จึงห้ามเดา card wallet
-- Paid Online Order ที่อ่านยอดไม่ครบหรือขัดกันจะอ่านยอดซ้ำได้หนึ่งครั้งภายใน daily budget โดยไม่หักส่วนลดซ้ำจากยอดรวมที่พิมพ์ไว้; ข้อมูลที่ยังขัดกันคงรอตรวจและไม่สร้างยอด. Hold เดิมต้องตรวจและกู้เฉพาะรายการตาม [ขั้นตอน Online Order recovery](docs/22_ONLINE_ORDER_AMOUNT_RECOVERY_TH.md) โดยไม่ upgrade อัตโนมัติเมื่อส่งรูปซ้ำ
+- Paid Online Order ที่อ่านยอดไม่ครบหรือขัดกันจะอ่านยอดซ้ำได้หนึ่งครั้งภายใน daily budget โดยไม่หักส่วนลดซ้ำจากยอดรวมที่พิมพ์ไว้; ข้อมูลที่ยังขัดกันคงรอตรวจและไม่สร้างยอด. เจ้าของที่ยืนยันตัวตนพิมพ์ `รายการค้าง` ในแชตส่วนตัวเพื่อเติมเฉพาะยอด/สถานะ/วันชำระที่ขาด แล้วทำต่อกับเอกสารเดิม โดยไม่ upgrade อัตโนมัติเมื่อส่งรูปซ้ำ; ดู [Owner Online Order review](docs/23_OWNER_ONLINE_ORDER_REVIEW_TH.md)
 - Delivery Order เดี่ยวเป็น supporting evidence และไม่สร้างยอดจ่าย
 - ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
 - ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม

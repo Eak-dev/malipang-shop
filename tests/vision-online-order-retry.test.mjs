@@ -53,6 +53,12 @@ test('classification retries once with focused prompt and accounts for both call
   assert.equal(r.usage,2);
   assert.match(r.calls[1].input[0].content[0].text,/Recheck this ONLINE_ORDER image/);
   assert.ok(r.metrics.some(x=>x.name==='vision_openai_retry_ms'));
+  assert.equal(r.reading.purchaseEvidenceAttempts.length,2);
+  assert.equal(r.reading.purchaseEvidenceAttempts[0].rawOrderTotalBaht,null);
+  assert.equal(r.reading.purchaseEvidenceAttempts[1].rawOrderTotalBaht,462);
+  assert.equal(r.reading.purchaseEvidenceAttempts[1].normalizedAmountBaht,462);
+  assert.ok(r.reading.purchaseEvidenceAttempts.every(x=>x.model==='gpt-4.1-mini'&&x.promptVersion==='online-order-payment-2026-10-27'));
+  assert.doesNotMatch(JSON.stringify(r.reading.purchaseEvidenceAttempts),/SYNTHETIC-ORDER|Synthetic supplier|TEST-SKU|output_text|synthetic-key/);
 });
 
 test('unreadable retries and exhausted budget keep the original hold without further calls',async()=>{
@@ -74,4 +80,8 @@ test('a failed amount retry preserves the first reading and does not fail the in
   assert.equal(r.calls.length,2);
   assert.equal(r.reading.document.finalPaidAmountBaht,null);
   assert.match(r.reading.document.reviewReasons.join(';'),/Amount evidence conflicts/);
+  assert.equal(r.reading.purchaseEvidenceAttempts.length,1);
+  assert.equal(r.reading.purchaseEvidenceAttempts[0].rawFinalPaidAmountBaht,420);
+  assert.equal(r.reading.purchaseEvidenceAttempts[0].normalizedAmountBaht,null);
+  assert.ok(r.reading.purchaseEvidenceAttempts[0].reasonCodes.includes('AMOUNT_CONFLICT'));
 });

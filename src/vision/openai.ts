@@ -1,11 +1,14 @@
 import { extractJsonObject } from "../shared/json";
-import { acceptedPaymentDateLabel,onlineOrderPaymentStatusReason } from "../expense/document";
+import { acceptedOrderTotalLabel,acceptedPaymentDateLabel,onlineOrderPaymentStatusReason } from "../expense/document";
+import { resolveOrderFacts } from "../expense/online-order-review";
 import type { Env,ExpenseDocumentItem,PurchaseDocument,VisionResult } from "../types";
 import { fetchWithTimeout } from "../shared/async";
 import { arrayBufferToBase64 } from "../shared/base64";
 import { numberEnv } from "../shared/env";
 import type { BankSlipDocument } from "../types";
 import { parseAttendanceOverlay } from "../domain/attendance-overlay";
+
+export const PURCHASE_PROMPT_VERSION="online-order-payment-2026-10-27";
 function outputText(data:unknown):string{const d=data as{output_text?:string;output?:Array<{content?:Array<{text?:string}>}>};return typeof d.output_text==="string"?d.output_text:d.output?.flatMap(o=>o.content||[]).map(c=>c.text||"").join("")||"";}
 export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer,reviewOnlineOrderAmount=false):unknown{
   const bankSlipSchema={type:"object",properties:{
@@ -111,11 +114,7 @@ function normalizePaymentTime(value:unknown):string{
   return hour<=23&&minute<=59?`${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}`:"";
 }
 
-const finalOrderLabels=new Set(["รวมคำสั่งซื้อ","ยอดรวมคำสั่งซื้อ","ยอดชำระ","total order","order total","paid total"]);
-function acceptedFinalOrderLabel(value:unknown):string{
-  const label=String(value??"").trim().replace(/[:：]\s*$/,"").replace(/\s+/g," ");
-  return finalOrderLabels.has(label.toLocaleLowerCase("en-US"))?label:"";
-}
+const acceptedFinalOrderLabel=acceptedOrderTotalLabel;
 function positiveSatang(value:number|null):number|null{
   if(value==null||!Number.isFinite(value)||value<=0)return null;
   const satang=Math.round(value*100);
@@ -160,5 +159,15 @@ export async function readImageWithOpenAI(env:Env,image:ArrayBuffer,reviewOnline
   const payload=buildOpenAIVisionPayload(env.OPENAI_MODEL,image,reviewOnlineOrderAmount);
   const res=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${env.OPENAI_API_KEY}`,"content-type":"application/json"},body:JSON.stringify(payload)},numberEnv(env.VISION_TIMEOUT_MS,45000),"OpenAI vision");if(!res.ok)throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
   const raw=await res.json(),obj=extractJsonObject(outputText(raw))||{};
-  return normalizeOpenAIVisionResult(obj,raw);
+  const result=normalizeOpenAIVisionResult(obj,raw);
+  if(result.document?.documentType==="ONLINE_ORDER"){
+    const original=obj.document&&typeof obj.document==="object"?obj.document as Record<string,unknown>:{};
+    const money=(v:unknown)=>v==null||v===""||!Number.isFinite(Number(v))?null:Number(v);
+    const label=(v:unknown)=>String(v??"").trim().slice(0,100);
+    result.purchaseEvidenceAttempts=[{model:env.OPENAI_MODEL.slice(0,100),promptVersion:PURCHASE_PROMPT_VERSION,
+      rawFinalPaidAmountBaht:money(original.finalPaidAmountBaht),rawOrderTotalBaht:money(original.orderTotalBaht),rawOrderTotalLabel:label(original.orderTotalLabel),
+      rawPaymentStatus:label(original.paymentStatus),rawPaymentDate:label(original.paymentDate),rawPaymentDateLabel:label(original.paymentDateLabel),rawPaymentDatePurpose:label(original.paymentDatePurpose),
+      normalizedAmountBaht:result.document.finalPaidAmountBaht,normalizedPaymentDate:result.document.paymentDate,reasonCodes:resolveOrderFacts(result.document).reasons}];
+  }
+  return result;
 }

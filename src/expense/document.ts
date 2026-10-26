@@ -58,6 +58,11 @@ export function acceptedPaymentDateLabel(value:string):boolean{
   return /^(?:เวลาที่ชำระเงิน|เวลาชำระเงิน|วันที่ชำระเงิน|วันที่ชำระ|วันชำระเงิน|วันที่จ่ายเงิน|วันและเวลาชำระเงิน|วันที่และเวลาชำระเงิน|ชำระเงินเมื่อ|payment(?:date|time|datetime)|paid(?:on|at|date|time)|timepaid)$/.test(label);
 }
 
+export function acceptedOrderTotalLabel(value:unknown):string{
+  const label=String(value??"").trim().replace(/[:：]\s*$/,"").replace(/\s+/g," ");
+  return new Set(["รวมคำสั่งซื้อ","ยอดรวมคำสั่งซื้อ","ยอดชำระ","total order","order total","paid total"]).has(label.toLocaleLowerCase("en-US"))?label:"";
+}
+
 export function onlineOrderPaymentStatusReason(status:PurchaseDocument["paymentStatus"]):string{
   if(status==="UNKNOWN")return"Payment status is unverified";
   if(status==="PENDING")return"Payment is pending";

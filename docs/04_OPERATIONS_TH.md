@@ -39,6 +39,10 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 
 ## Expense document review และ recovery
 
+- เจ้าของพิมพ์ `รายการค้าง` ใน LINE ส่วนตัวเพื่อดู Online Order ที่ค้าง แยกเหตุผลยอด/วันชำระ/สถานะ/ตัวตนคำสั่งซื้อ/อาจซ้ำ พร้อมอายุรายการค้าง ไม่ส่งรูปซ้ำเพื่อหวังให้ระบบยกระดับเอง
+- `GET /admin/expenses/review-summary` ใช้ admin authorization เดิมและคืนเฉพาะจำนวนรวม จำนวนที่เติมข้อมูลได้/ต้องตรวจแยก อายุค้างสูงสุด และจำนวนต่อ reason code รวมสถิติการอ่านซ้ำ/สถานะ AI ต่างกัน ไม่คืนข้อมูลเจ้าของ เลขเอกสาร หรือ R2 key เหตุผลหนึ่งรายการอาจมีหลายข้อ จึงห้ามรวม reason counts เป็นจำนวนเอกสาร
+- เมื่อจำนวนค้างหรืออายุสูงขึ้น ให้ดู reason ที่เพิ่มก่อน: `AMOUNT_*` ตรวจยอดหลังส่วนลด, `PAYMENT_*` ให้เจ้าของยืนยันจากการชำระจริง, `ORDER_*`/`MULTIPLE_SELLERS`/`EVIDENCE_INCOMPLETE` ตรวจเอกสารแยก, `POSSIBLE_DUPLICATE` เทียบ Expense เดิม ห้ามข้ามการป้องกันซ้ำ; ดู [runbook และ rollout](23_OWNER_ONLINE_ORDER_REVIEW_TH.md)
+
 - Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` แสดงเฉพาะ field ที่ยังค้างจริงบน Flex (payment, รายการ, หมวดหมู่, วันที่) และ Worker เป็นผู้บังคับ validation ก่อนบันทึกเสมอ
 - หาก `รายการ` ค้าง ผู้ใช้กดรับข้อความเดิมหรือกดพิมพ์แก้ได้; `expense_pending_edits` เก็บ pending edit ต่อ LINE account เพียงหนึ่งรายการ อายุ 15 นาที และข้อความถัดไปอัปเดตได้เฉพาะ draft ที่ยัง `WAITING_CONFIRM` เท่านั้น
 - Delivery Order เดี่ยวและเอกสารที่ยอด/วันที่จ่ายไม่ครบเป็น `WAITING_REVIEW`; ห้ามสร้างยอดเองจากราคา list หรือ expected delivery

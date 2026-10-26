@@ -1,5 +1,6 @@
 import { randomId } from "../shared/ids";
 import type { Env } from "../types";
+import { activeOwnerSql } from "./online-order-review-repository";
 
 export interface ExpenseConfirmationSnapshot {
   description:string;
@@ -38,13 +39,30 @@ export async function confirmExpenseAtomically(env:Env,input:ConfirmExpenseInput
   const {snapshot,documentSnapshot}=input;
   if(!Number.isSafeInteger(snapshot.version)||snapshot.version<1)return null;
   const now=new Date().toISOString(),auditId=randomId("exp_audit");
+  // Owner review keeps the submitting LINE identity on the evidence. The
+  // exception to same-submitter confirmation must be proven relationally;
+  // a normalized JSON marker alone never grants access to another document.
+  const reviewedOwnerGuard=`d.document_type='ONLINE_ORDER' AND d.message_id=e.message_id
+    AND d.submitted_by_employee_id IS e.submitted_by_employee_id AND d.branch_id IS e.branch_id
+    AND json_extract(d.normalized_json,'$.ownerPaymentReview.source')='OWNER_LINE_REVIEW'
+    AND EXISTS(SELECT 1 FROM expense_document_reviews r
+      JOIN expense_audit_log a ON a.audit_id=json_extract(d.normalized_json,'$.ownerPaymentReview.auditId')
+        AND a.document_id=d.document_id AND a.action='REVIEW_APPROVE' AND a.actor_employee_id=r.updated_by_employee_id
+      JOIN expense_document_links l ON l.document_id=d.document_id AND l.expense_id=e.expense_id
+        AND l.relation_type='PRIMARY_PURCHASE_DOCUMENT' AND l.match_method='MANUAL' AND l.linked_by_employee_id=a.actor_employee_id
+      JOIN expense_online_order_claims c ON c.document_id=d.document_id AND c.order_id=d.order_id AND c.expense_id=e.expense_id AND c.state='EXPENSE_OWNED'
+      WHERE r.document_id=d.document_id AND r.expense_id=e.expense_id AND r.phase='DRAFTED'
+        AND a.actor_employee_id=? AND json_extract(a.after_json,'$.expenseId')=e.expense_id
+        AND json_extract(a.after_json,'$.amountSatang')=e.amount_satang AND json_extract(a.after_json,'$.paymentDate')=e.transaction_date)
+    AND ${activeOwnerSql}`;
   const documentGuard=documentSnapshot
     ? `AND EXISTS(SELECT 1 FROM expense_documents d WHERE d.document_id=? AND d.expense_id=e.expense_id
-        AND d.line_user_id=e.line_user_id AND d.status='WAITING_CONFIRM' AND d.normalized_json IS ? AND d.updated_at IS ?)
+        AND (d.line_user_id=e.line_user_id OR (${reviewedOwnerGuard}))
+        AND d.status='WAITING_CONFIRM' AND d.normalized_json IS ? AND d.updated_at IS ?)
        AND NOT EXISTS(SELECT 1 FROM expense_documents d WHERE d.expense_id=e.expense_id AND d.document_id<>?)`
     : `AND NOT EXISTS(SELECT 1 FROM expense_documents d WHERE d.expense_id=e.expense_id)`;
   const documentBindings=documentSnapshot
-    ? [documentSnapshot.documentId,documentSnapshot.normalizedJson,documentSnapshot.updatedAt,documentSnapshot.documentId]
+    ? [documentSnapshot.documentId,input.actorEmployeeId,input.actorEmployeeId,input.lineUserId,documentSnapshot.normalizedJson,documentSnapshot.updatedAt,documentSnapshot.documentId]
     : [];
   const statements=[
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,document_id,branch_id,reason,before_json,after_json,created_at)

@@ -51,3 +51,33 @@ Plan มี `batch` สำหรับ D1 และ `summary` สำหรับ
 เครื่องมือแผนกู้เป็น offline planner เท่านั้น ต้องเก็บ manifest/plan นอก Git ในที่ private และอนุมัติ document, ยอด, actor และ snapshot แต่ละรายการก่อนใช้ batch กับ D1 หลังใช้ตรวจเอกสาร/item/case/claim/link/audit, Expense หนึ่งรายการและ Sheets sync ศูนย์ แล้วส่งรูปเดิมเพื่อกลับสู่การยืนยันปกติ
 
 Rollback โค้ด: revert commit นี้หรือกลับ Worker version ที่ยืนยันก่อน release. แผนกู้ที่ยังไม่ใช้ไม่มีผลกับ Production; หากใช้แล้วต้องยกเลิก draft ผ่าน flow ที่มี audit ตามปกติ ห้ามลบเอกสาร, claims, items หรือ audit เพื่อย้อนกลับ
+
+## กรณีต่อเนื่อง: อ่านยอดได้ แต่หลักฐานการชำระยังไม่ครบ (#204)
+
+หัวข้อก่อนหน้านี้เป็นบันทึกก่อน release ของ PR #200; ผล release/recovery ที่เสร็จแล้วอยู่ใน Production Change #201. กรณีต่อเนื่องนี้เริ่มจาก canonical main `5b65b1c21ae7e824ef3d4c9fd9ed11d699a533bc` หลัง fetch/fast-forward และสร้าง branch แยกแล้ว ใช้ `DEV_OWNED` ตามสิทธิ์แก้โค้ด/ทดสอบเดิม; AUTO_RELEASE ครั้งก่อนระบุเฉพาะ PR #200 และสองรายการเดิม จึงยังไม่ครอบคลุมการ release หรือกู้รายการใหม่ครั้งนี้
+
+- OBSERVED: Production ที่ยังเป็น Worker `666e079e-3c3d-4ade-921f-17e6664a0250` อ่าน order total 519 บาทและ label ได้ แต่ `paymentStatus=UNKNOWN` จึงได้ final paid ว่าง ไม่มี Expense และถือ claim `REVIEW_ONLY`. ภาพที่เจ้าของส่งมามีเฉพาะบรรทัดเวลาสั่งซื้อ; normalized extraction กลับใช้เวลานั้นเป็น PAYMENT. ข้อความตอบแจ้งว่าหายอดไม่พบ และ `needs_review=0`, `review_note` ว่างทั้งที่เอกสาร `WAITING_REVIEW`
+- EXPECTED: คงยอดรวมที่อ่านได้ แยกสถานะจ่าย/วันจ่ายออกจากยอดที่อ่านไม่ออก บอกหลักฐานที่ยังขาด และไม่ใช้วันสั่งซื้อเป็นวันจ่าย
+- REPRODUCTION: synthetic order มี accepted total 519, status UNKNOWN, final paid ว่างและ extractor review ว่าง → ไม่มี draft/retry แต่ได้เหตุผล Missing final paid amount. การ update metadata เขียนทับเหตุผล/flag ของ workflow ด้วยค่า false/ว่างจาก extraction
+- ROOT_CAUSE: paid gate ทำงานถูกต้อง แต่ helper เหตุผลดูเฉพาะ final paid/date; prompt เดิมสั่งคัด purchase date ไป paymentDate และไม่มี printed date label ให้ตรวจความหมายซ้ำ. Metadata update ไม่รักษา review context ที่คำนวณแล้ว
+- AFFECTED_PATH: purchase schema/prompt/normalizer → draft/hold diagnostics → document metadata และ LINE reply. ไม่เปลี่ยน Sheets, schema, credentials, payroll หรือ attendance
+- DATA_IMPACT: ยังมีเพียงเอกสาร/สินค้า/claim ที่รอตรวจ ไม่พบ finalized Expense ของกรณีใหม่. เจ้าของยืนยันยอด 519 แล้ว แต่การยืนยันยอดอย่างเดียวไม่ให้วันที่ชำระและไม่อนุญาตให้เดาวันจากเวลาสั่งซื้อ
+
+Acceptance และพฤติกรรมหลังแก้:
+
+1. New extraction ต้องมี `paymentDateLabel` และแยก `ORDER_PLACED` ออกจาก `PAYMENT`. Online Order รับ date/time เฉพาะ label วันชำระที่รองรับ เช่น เวลาที่ชำระเงิน, วันที่ชำระเงิน, Payment date/time, Paid on/at; label วันสั่งซื้อ/ส่งของ ว่าง หรือไม่รู้จักทำให้ paymentDate/time ว่างแม้โมเดลระบุ purpose เป็น PAYMENT
+2. Snapshots เดิมที่ไม่มี property `paymentDateLabel` ยังใช้กติกาเดิมได้ และการ normalize ซ้ำไม่เพิ่ม label ว่างที่ทำให้ข้อมูลเก่าใช้ไม่ได้. การเปลี่ยนนี้เป็น optional normalized JSON metadata ไม่ใช่ D1 migration
+3. UNKNOWN/PENDING/UNPAID ไม่สร้าง draft หรือ amount retry แม้มี total. ข้อความภาษาไทยแสดงยอดรวมที่อ่านได้และหลักฐานจ่าย/วันที่ที่ยังขาด โดยไม่อ้างว่าอ่านยอดไม่ออกเมื่อ total มีอยู่
+4. REVIEW_ONLY ที่ส่งซ้ำบอกว่ายังรอตรวจและยังไม่มี Expense จากรายการนั้น ไม่สร้างเอกสาร/ธุรกรรมใหม่หรือ auto-upgrade แม้รูปถัดไปจ่ายครบ. ข้อความไม่เปิดเผย order ID, ข้อมูลผู้ส่ง หรือยอดจากเอกสารของผู้อื่น
+5. Document workflow เป็นผู้คง `needs_review`/`review_note` สำหรับ hold, linked evidence และ draft review; `ai_json`, item facts/IDs, claims และ audit เดิมไม่ถูกเปลี่ยนเพื่อแก้ข้อความ
+6. Generic card ต้องเลือกแหล่งเงินตามเดิม; complete paid evidence ยังเปิด normal confirmation เท่านั้น. LINE failure คิวได้เฉพาะ notification และไม่ replay ธุรกรรม
+
+Risk: Medium สำหรับ extraction/diagnostics, L0–L1 ในงานพัฒนา. Label ที่ไม่รู้จักจะถูก hold แทนการเดา. ไม่ทำ automated recovery, ไม่ infer paid/date จากชื่อบัตร ปุ่มขอคืนเงิน/ติดตาม หรือคำยืนยันราคา และไม่บันทึก finalized Expense
+
+Validation: `tests/online-order-payment-evidence.test.mjs` ใช้ synthetic data และ SQLite จริงสำหรับ date provenance, backward compatibility, known total/unknown status, workflow metadata, failed reply และ repeated paid image. ต้องผ่าน `npm run check` และ `npx wrangler deploy --dry-run` ก่อน release; live UAT/Production recovery ของกรณีใหม่นี้ต้องอยู่ใน approval แยกตาม exact commit
+
+ผล local validation ของ #204: focused suites ผ่าน 66 tests; `npm run check` ผ่าน 457, skipped 3 live suites, failed 0; `npx wrangler deploy --dry-run` และ `git diff --check` ผ่าน. ยังไม่มี live OpenAI UAT, Production deployment หรือแก้เอกสารใหม่ในขั้น DEV_OWNED
+
+Manual UAT หลังได้รับอนุญาต: ทดสอบภาพที่เห็นเพียงเวลาสั่งซื้อ → total คงเดิม แต่ payment date/time ไม่ถูกแต่งและยัง hold; ทดสอบภาพที่เห็น paid status กับ payment-date label จริง → WAITING_CONFIRM และต้องเลือกบัตร. ตรวจข้อความ hold/repeat, metadata review, no duplicate และ no Sheets job ก่อนยืนยัน. การกู้ hold เดิมต้องตรวจหลักฐานวันจ่ายและได้รับอนุมัติแบบระบุรายการ/ยอด/วันจริงก่อน ไม่ใช้เวลาสั่งซื้อที่โมเดลเคยใส่ผิด
+
+Rollback: revert focused change; หลัง release ที่ได้รับอนุญาตให้กลับเวอร์ชันที่บันทึกไว้ก่อน release. ไม่มี schema/data migration หรือการแก้เอกสารเก่าใน PR นี้

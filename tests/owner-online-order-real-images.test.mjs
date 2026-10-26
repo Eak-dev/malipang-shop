@@ -12,7 +12,7 @@ for(const [index,expected] of [62200,46200,51900].entries()){
  test(`approved real image ${index+1}: extraction through final confirmation, repeat and reply recovery`,{skip:!manifest},async()=>{
   const sample=fixtures[index];assert.equal(sample.expectedSatang,expected);assert.equal(sample.imageHashVerified,true);
   const h=ownerOrderFixture();try{
-   const {row}=await h.receive(sample.document,{id:'synthetic_real_'+index,attempts:sample.attempts});
+   const {row}=await h.receive(sample.document,{id:'synthetic_real_'+index,attempts:sample.attempts,...(index===2?{line:'fixture_staff'}:{})});
    const raw=row.ai_json,original=row.normalized_json;
    if(index===2){
     assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,0);

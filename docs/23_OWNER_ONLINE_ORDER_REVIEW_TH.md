@@ -30,6 +30,7 @@
 - ก่อน continue ค่า `normalized_json` ยังเป็น extraction เดิม เมื่ออนุมัติจึงเก็บผลที่ใช้ทำงานพร้อม `ownerPaymentReview` และ `imagePaymentEvidence`; `ai_json`, R2 key/hash และเนื้อหา line items ไม่ถูกเขียนทับ
 - คำยืนยันวันที่ไม่ถูกปลอมเป็น printed payment label และไม่เดาเวลาชำระ เมื่อเจ้าของให้วันชำระเองจะไม่เก็บเวลาเก่าที่ไม่มีหลักฐานรองรับ
 - Promotion ใช้ Workers `DB.batch` transaction เดียว เช็ก snapshot เอกสาร/ผู้ส่ง/รายการสินค้า/case, identity claims, Expense/link เดิม, duplicate candidate และสิทธิ์เจ้าของ ก่อนสร้าง audit/Expense/links/claims พร้อมกัน การ fail กลาง batch ต้อง rollback ทั้งหมด
+- Final confirmation ของหลักฐานจากผู้ส่งคนอื่นตรวจ current owner role/binding ร่วมกับ review row, approval audit, manual primary link และ order claim ที่ผูก Expense เดียวกัน ไม่ใช้ JSON marker เพียงอย่างเดียว และไม่เขียนทับ LINE identity ของผู้ส่งเดิม
 - กดปุ่มเก่าใช้ revision guard กด continue ซ้ำกลับไป draft เดิม LINE Reply ล้มเหลวเข้า notification outbox เดิมและไม่ replay ธุรกรรม
 - Employee/manager/unknown user/group chat ใช้เมนูนี้ไม่ได้ ไม่เพิ่มสิทธิ์ให้ role อื่น
 - ไม่เปิด self-service สำหรับเลขคำสั่งซื้อหาย หลาย seller, case/items ไม่ครบ, identity conflict หรือรายการอาจซ้ำ ต้องตรวจแยกตาม [recovery runbook](22_ONLINE_ORDER_AMOUNT_RECOVERY_TH.md) ไม่มีปุ่ม bypass
@@ -68,4 +69,4 @@ Migration `0020` สร้าง 2 ตารางและ indexes แบบ ad
 
 Release: exact approved PR head/merged SHA → CI/check/dry-run → fresh backup/restore gate → migration ก่อนโค้ด → preserved bindings/settings → health/readiness → reason summary/auth → reconciliation (new unexplained LOST/DUPLICATE/failed jobs = 0) ไม่เปิด migration ระหว่าง ordinary requests ที่ใช้โค้ดใหม่ก่อนตารางพร้อม
 
-Rollback: deploy baseline Worker version ที่บันทึกก่อน release กลับ โดยคงตารางใหม่และ audit ไว้ ไม่ DROP ตาราง ไม่ undo Expense ที่เจ้าของยืนยันแล้ว baseline สามารถอ่าน Expense/documents ที่ถูก promote แล้วผ่าน normal flow ได้ การแก้ข้อมูลหลังมีผู้ใช้งานต้องทำ forward-fix แบบเจาะจงพร้อมอนุมัติ ไม่ restore ทับธุรกรรมใหม่ หากจำเป็นต้องหยุด expense ทั้งระบบให้ขออนุมัติ operational change แยก
+Rollback: deploy baseline Worker version ที่บันทึกก่อน release กลับ โดยคงตารางใหม่และ audit ไว้ ไม่ DROP ตาราง ไม่ undo Expense ที่เจ้าของยืนยันแล้ว baseline อ่าน pending Expense ได้ แต่กรณีเจ้าของตรวจหลักฐานจากผู้ส่งคนอื่นต้องรอ forward-fix จึงยืนยันสุดท้ายได้ ห้ามแก้ LINE identity เพื่อข้ามข้อจำกัดนี้ การแก้ข้อมูลหลังมีผู้ใช้งานต้องทำ forward-fix แบบเจาะจงพร้อมอนุมัติ ไม่ restore ทับธุรกรรมใหม่ หากจำเป็นต้องหยุด expense ทั้งระบบให้ขออนุมัติ operational change แยก

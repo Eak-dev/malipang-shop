@@ -135,7 +135,53 @@ test('owner reviews a staff submission in the owner confirmation flow while reta
   const expense=h.sqlite.prepare('SELECT * FROM expense_events').get();assert.equal(expense.line_user_id,'fixture_owner');assert.equal(expense.submitted_by_employee_id,'TEST_STAFF');
   assert.equal(h.sqlite.prepare('SELECT line_user_id FROM expense_documents').get().line_user_id,'fixture_staff');
   assert.match(lastText(h),/expense_payment_menu/);assert.equal(count(h,'sync_jobs'),0);
+  const actor=await h.actor(),perform=data=>h.capture(()=>handleExpensePostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`${data}&id=${expense.expense_id}`}}),actor.employee,actor));
+  await perform('a=expense_accept_description');await perform('a=expense_set_category&category=equipment');
+  assert.equal(count(h,'sync_jobs'),0);await perform('a=expense_set_payment&payment=kbank&source=CARD_KBANK');
+  assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CONFIRMED');assert.equal(count(h,'sync_jobs'),1);
+  assert.equal(h.sqlite.prepare('SELECT line_user_id FROM expense_documents').get().line_user_id,'fixture_staff');
+  assert.equal(h.sqlite.prepare('SELECT submitted_by_employee_id FROM expense_events').get().submitted_by_employee_id,'TEST_STAFF');
+  await perform('a=expense_confirm');assert.equal(count(h,'sync_jobs'),1);assert.equal(count(h,'expense_events'),1);
  }finally{h.close();}
+});
+
+test('another owner submission can finish under the reviewing owner without rewriting either original identity',async()=>{
+ const h=ownerOrderFixture();try{
+  const {row}=await h.receive({}, {line:'fixture_owner_two'}),original=row.ai_json;
+  const review=await h.ready(row.document_id);await h.post('order_review_continue',row.document_id,Number(review.review_version));
+  const expense=h.sqlite.prepare('SELECT * FROM expense_events').get(),actor=await h.actor();
+  const perform=data=>h.capture(()=>handleExpensePostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`${data}&id=${expense.expense_id}`}}),actor.employee,actor));
+  await perform('a=expense_accept_description');await perform('a=expense_set_category&category=equipment');await perform('a=expense_set_payment&payment=kbank&source=CARD_KBANK');
+  const saved=h.sqlite.prepare('SELECT * FROM expense_events').get(),doc=h.sqlite.prepare('SELECT * FROM expense_documents').get();
+  assert.equal(saved.status,'CONFIRMED');assert.equal(saved.reviewed_by_employee_id,'TEST_OWNER');assert.equal(saved.submitted_by_employee_id,'TEST_OWNER_TWO');
+  assert.equal(doc.line_user_id,'fixture_owner_two');assert.equal(doc.ai_json,original);assert.equal(count(h,'sync_jobs'),1);
+  await perform('a=expense_confirm');assert.equal(count(h,'sync_jobs'),1);
+ }finally{h.close();}
+});
+
+test('cross-submitter finalization requires current owner rights and intact approval, claim, link and review provenance',async()=>{
+ for(const mutation of [
+  "DELETE FROM expense_document_reviews",
+  "DELETE FROM expense_audit_log WHERE action='REVIEW_APPROVE'",
+  "DELETE FROM expense_document_links",
+  "UPDATE expense_online_order_claims SET state='REVIEW_ONLY',expense_id=NULL",
+  "UPDATE expense_document_reviews SET updated_by_employee_id='TEST_OWNER_TWO'",
+  "UPDATE expense_documents SET normalized_json=json_remove(normalized_json,'$.ownerPaymentReview')",
+  "UPDATE expense_documents SET message_id='synthetic_changed_message'",
+  "UPDATE staff_roles SET status='INACTIVE' WHERE employee_id='TEST_OWNER'",
+  "UPDATE line_identity_bindings SET status='REVOKED' WHERE employee_id='TEST_OWNER'"
+ ]){
+  const h=ownerOrderFixture();try{
+   const {row}=await h.receive({}, {line:'fixture_staff'}),review=await h.ready(row.document_id);
+   await h.post('order_review_continue',row.document_id,Number(review.review_version));
+   const expense=h.sqlite.prepare('SELECT * FROM expense_events').get(),actor=await h.actor();
+   const perform=data=>h.capture(()=>handleExpensePostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`${data}&id=${expense.expense_id}`}}),actor.employee,actor));
+   await perform('a=expense_accept_description');await perform('a=expense_set_category&category=equipment');h.sqlite.exec(mutation);
+   await perform('a=expense_set_payment&payment=kbank&source=CARD_KBANK');await perform('a=expense_confirm');
+   assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'WAITING_CONFIRM',mutation);
+   assert.equal(count(h,'sync_jobs'),0,mutation);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE action='CONFIRM'").get().n,0,mutation);
+  }finally{h.close();}
+ }
 });
 
 test('revocation between read and transaction blocks all fact and draft writes',async()=>{

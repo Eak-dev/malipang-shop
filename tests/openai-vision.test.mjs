@@ -26,11 +26,24 @@ test('OpenAI fallback uses photo timestamp and GPS as the attendance source',()=
   assert.match(prompt,/Order total/);
   assert.match(prompt,/paymentStatus=PAID only when the screen visibly proves payment/i);
   assert.match(prompt,/generic credit\/debit-card label/i);
+  assert.match(prompt,/collapsed footer/i);
+  assert.match(prompt,/never subtract those savings again/i);
+  assert.match(prompt,/final paid 462, not 420/);
+  assert.match(prompt,/final paid 622, not 567/);
   assert.match(prompt,/price 40, subsidy 24, paid 16/i);
   const purchaseSchema=payload.text.format.schema.properties.document.anyOf[1];
   for(const field of ['paymentDateFormat','paymentDatePurpose','orderTotalBaht','orderTotalLabel','paymentStatus'])assert.ok(purchaseSchema.required.includes(field));
   assert.match(payload.input[0].content[1].image_url,/^data:image\/jpeg;base64,/);
   assert.equal(payload.input[0].content[1].detail,'high');
+});
+
+test('amount retry focuses on printed totals without changing schema, model or storage policy',()=>{
+  const payload=buildOpenAIVisionPayload('gpt-4.1-mini',new Uint8Array([255,216,255,217]).buffer,true);
+  assert.match(payload.input[0].content[0].text,/Recheck this ONLINE_ORDER image/);
+  assert.match(payload.input[0].content[0].text,/leave it null; do not invent an amount/i);
+  assert.equal(payload.model,'gpt-4.1-mini');
+  assert.equal(payload.store,false);
+  assert.equal(payload.text.format.strict,true);
 });
 
 function onlineOrder(overrides={}){

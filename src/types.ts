@@ -168,6 +168,23 @@ export interface VisionResult {
   provider: string;
   raw: unknown;
   document?: ExpenseDocument | null;
+  /** Private allowlisted payment diagnostics; never the raw provider response. */
+  purchaseEvidenceAttempts?: PurchaseVisionAttempt[];
+}
+
+export interface PurchaseVisionAttempt{
+  model:string;
+  promptVersion:string;
+  rawFinalPaidAmountBaht:number|null;
+  rawOrderTotalBaht:number|null;
+  rawOrderTotalLabel:string;
+  rawPaymentStatus:string;
+  rawPaymentDate:string;
+  rawPaymentDateLabel:string;
+  rawPaymentDatePurpose:string;
+  normalizedAmountBaht:number|null;
+  normalizedPaymentDate:string;
+  reasonCodes:string[];
 }
 
 export interface ExpenseDocumentItem {

@@ -82,7 +82,11 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
     const retryStarted=Date.now();let retryError="";
     try{
       const retry=await readImageWithOpenAI(env,original,retryOrder);
-      return retryOrder?chooseBetterOnlineOrderReading(first,retry):chooseBetterAttendanceReading(first,retry,threshold,clockThreshold);
+      if(retryOrder){
+        const chosen=chooseBetterOnlineOrderReading(first,retry);
+        return{...chosen,purchaseEvidenceAttempts:[...(first.purchaseEvidenceAttempts||[]),...(retry.purchaseEvidenceAttempts||[])]};
+      }
+      return chooseBetterAttendanceReading(first,retry,threshold,clockThreshold);
     }catch(error){
       retryError=String(error instanceof Error?error.message:error).slice(0,240);
       console.error("openai-vision-retry",error);

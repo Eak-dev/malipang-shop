@@ -4,6 +4,7 @@ import { isTrue, numberEnv } from "../shared/env";
 import type { Env, VisionResult } from "../types";
 import { readImageWithOpenAI } from "./openai";
 import { readImageWithWorkersAI } from "./workers-ai";
+import { recoverOnlineOrderAmount, shouldRetryOnlineOrderAmount } from "../domain/online-order";
 
 export interface VisionReadOptions {
   usageMetric?: string;
@@ -52,6 +53,23 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
   const started=Date.now();let fallbackError="";
   try{
     const first=await readImageWithOpenAI(env, original);
+    if(shouldRetryOnlineOrderAmount(first)){
+      const retryStarted=Date.now();let outcome="FAILED";
+      try{
+        const retryCount=await incrementDailyUsage(env,usageMetric);
+        if(options.enforceDailyLimit!==false&&retryCount>dailyLimit){outcome="BUDGET_LIMIT";return first;}
+        const retry=await readImageWithOpenAI(env,original,true);
+        const recovered=recoverOnlineOrderAmount(first,retry);
+        outcome=recovered===first?"UNRESOLVED":"RECOVERED";
+        return recovered;
+      }catch{
+        // Optional reread failures must not discard first-read evidence or
+        // log provider response bodies, credentials or private image facts.
+        return first;
+      }finally{
+        await safeRecordMetric(env,traceId,"vision_online_order_amount_retry_ms",Date.now()-retryStarted,{provider:"openai",outcome});
+      }
+    }
     const clockThreshold=numberEnv(env.ATTENDANCE_CLOCK_MIN_CONFIDENCE,0.7);
     if(!shouldRetryOpenAIAttendance(first,threshold,clockThreshold))return first;
     const retryCount=await incrementDailyUsage(env,usageMetric);

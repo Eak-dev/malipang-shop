@@ -208,6 +208,8 @@ export interface PurchaseDocument {
   orderTotalBaht?: number | null;
   orderTotalLabel?: string;
   paymentStatus?: "PAID" | "PENDING" | "UNPAID" | "UNKNOWN";
+  /** Derived locally, never trusted from model output; absent on legacy documents. */
+  onlineOrderAmountIssue?: "MISSING_TOTAL" | "INVALID_TOTAL" | "CONFLICT" | "PAYMENT_UNCONFIRMED";
   paymentMethod: string;
   sourceWalletCandidate: string;
   suggestedDescription: string;

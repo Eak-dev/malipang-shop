@@ -1,5 +1,6 @@
 import { isIsoDate } from "../shared/time";
 import type { PurchaseDocument } from "../types";
+import { onlineOrderAmountFeedback, onlineOrderAmountReasons } from "../domain/online-order";
 
 export const expenseCategories=new Set(["ingredients","fillings","packaging","gas","utilities","rent","staff","transport","marketing","equipment","cleaning","bank_fee","general"]);
 
@@ -82,7 +83,10 @@ export function purchaseDraftMissingReasons(document:PurchaseDocument):string[]{
   const reasons:string[]=[];
   const amountSatang=toSatang(document.finalPaidAmountBaht);
   const date=document.documentType==="ONLINE_ORDER"?document.paymentDate:(document.paymentDate||document.documentDate);
-  if(amountSatang==null||amountSatang<=0)reasons.push("Missing final paid amount");
+  if(amountSatang==null||amountSatang<=0){
+    const issue=document.onlineOrderAmountIssue || (document.reviewReasons.includes(onlineOrderAmountReasons.CONFLICT)?"CONFLICT":undefined);
+    reasons.push(issue?onlineOrderAmountFeedback[issue]:"Missing final paid amount");
+  }
   if(!isIsoDate(date))reasons.push("Missing or invalid payment date");
   return reasons;
 }

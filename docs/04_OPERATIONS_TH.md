@@ -8,6 +8,14 @@
 4. ตรวจ `openFailedJobs` และ sync ที่ FAILED
 5. ตรวจ `V52_DAILY_PAYROLL` แถว REVIEW ก่อนจ่ายเงิน
 
+## งานตามรอบและ latency diagnostics
+
+- `GET /admin/operations/summary` เป็น read-only หลัง admin auth เดิม แยก failed events 24 ชั่วโมงล่าสุดออกจาก failures เก่า แสดง side-effect outboxes, cron freshness, V2 latency และ held Online Orders โดยไม่คืน payload/ตัวตนหรือส่งข้อความ
+- `ok=true` หมายถึงอ่าน diagnostics ได้ ให้ตรวจ `status` อีกชั้น: ATTENTION ต้องตรวจสาเหตุ, UNKNOWN ยังไม่มี telemetry ครบ, OK ผ่านเงื่อนไขด้าน operations ที่ระบุ ไม่แทน dependency readiness หรือการกระทบยอด
+- หลัง deploy ก่อน cron ใหม่รอบแรก scheduled steps อาจ UNKNOWN; หากเกิน 15 นาทีให้ตรวจ invocation/cron metrics ใช้ last outcome รายขั้น ไม่ใช้เพียงผลขั้นก่อนหน้า Wage refresh กับ payroll finalize ยังพึ่งกัน แต่ failure ของกลุ่มนี้จะไม่ข้ามการกู้ชีท/ข้อความอิสระ
+- `expense_image_queue_wait_ms` เก่าเคยนับรวม download/Vision ใช้เฉพาะ label `INGRESS_TO_START_V2` เมื่อตรวจคิว ส่วน `expense_image_total_ms` คือ processing และ `expense_image_end_to_end_ms` คือเวลาตั้งแต่รับ webhook ถึงจบ อย่าบวก classification/extraction ซ้ำเพราะวัดงาน Vision เดียวกัน
+- ผล audit retention ที่มี error แสดง FAILED รายขั้นแต่ยังเป็น best effort ตามเดิม ไม่มี retention policy/delete เปลี่ยน ดู [ผลวิเคราะห์/ข้อจำกัด/UAT/rollback](24_SYSTEM_RELIABILITY_REVIEW_TH.md)
+
 ## Runtime audit โดยไม่เปิดเผย secret
 
 - ใช้ workflow `runtime-audit.yml` บน protected `main` พร้อม confirmation `AUDIT-RUNTIME-READONLY`; workflow ใช้ secret เดิมของ environment `production` โดยไม่ต้องนำค่า token ออกมาให้ผู้ตรวจ

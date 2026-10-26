@@ -2,7 +2,7 @@ import { handleAttendance } from "../attendance/service";
 import { authorize } from "../access/authorization";
 import { handleHrText,requestOwnAttendanceCorrection } from "../access/hr";
 import { getStaffActorByLineId } from "../access/repository";
-import { claimInboundEvent,completeInboundEvent,InboundBusyError,recordMetric } from "../db/repositories";
+import { claimInboundEvent,completeInboundEvent,InboundBusyError,safeRecordMetric } from "../db/repositories";
 import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../expense/service";
 import { handleOnlineOrderReviewPostback,handleOnlineOrderReviewText } from "../expense/online-order-review-service";
 import { handlePersonalUsePostback,handlePersonalUseText } from "../personal-use/service";
@@ -16,8 +16,10 @@ import { classifyAndRead } from "../vision/service";
 import { describeVisionRejection } from "../vision/failure-reason";
 import { attendanceNotAllowedMessage, unauthorizedImageMessage, unsupportedImageMessage } from "../attendance/messages";
 export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContext):Promise<void>{
-  const t0=Date.now(),event=job.event,webhookId=event.webhookEventId||`message:${event.message?.id||job.traceId}`,claim=await claimInboundEvent(env,event,job.traceId,job.receivedAtIso);let expenseImage=false;if(claim==="TERMINAL")return;if(claim==="BUSY")throw new InboundBusyError();
+  const t0=Date.now(),receivedAt=Date.parse(job.receivedAtIso),queueWaitMs=Number.isFinite(receivedAt)?Math.max(0,t0-receivedAt):null;
+  const event=job.event,webhookId=event.webhookEventId||`message:${event.message?.id||job.traceId}`,claim=await claimInboundEvent(env,event,job.traceId,job.receivedAtIso);let expenseImage=false;if(claim==="TERMINAL")return;if(claim==="BUSY")throw new InboundBusyError();
   try{
+    if(queueWaitMs!=null)await safeRecordMetric(env,job.traceId,"inbound_queue_wait_ms",queueWaitMs,{semantics:"INGRESS_TO_START_V2",clockSkew:String(receivedAt>t0)});
     const to=event.source.type==="user"?event.source.userId||"":"";if(!to){await completeInboundEvent(env,webhookId,"UNSUPPORTED_CHAT","IGNORED");return;}
     const actor=await getStaffActorByLineId(env,to);
     if(event.type==="postback"){
@@ -61,16 +63,23 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
       const recorded=await handleAttendance(env,event,actor.employee,reading,original,job.traceId);await completeInboundEvent(env,webhookId,"ATTENDANCE",recorded?"COMPLETED":"REJECTED",recorded?"":"CLOCK_VALIDATION_FAILED");
     }else if(["RECEIPT","BANK_SLIP","ONLINE_ORDER","DELIVERY_ORDER"].includes(reading.kind)){
       expenseImage=true;
-      await recordMetric(env,job.traceId,"expense_image_queue_wait_ms",Math.max(0,Date.now()-Date.parse(job.receivedAtIso)));
-      await recordMetric(env,job.traceId,"expense_image_download_ms",downloadMs);
+      if(queueWaitMs!=null)await safeRecordMetric(env,job.traceId,"expense_image_queue_wait_ms",queueWaitMs,{semantics:"INGRESS_TO_START_V2",clockSkew:String(receivedAt>t0)});
+      await safeRecordMetric(env,job.traceId,"expense_image_download_ms",downloadMs);
       // The current general vision call classifies and extracts together.  The
       // retained legacy provider metrics break this down further by provider.
-      await recordMetric(env,job.traceId,"expense_image_classification_ms",visionMs,{provider:reading.provider});
-      await recordMetric(env,job.traceId,"expense_image_extraction_ms",visionMs,{provider:reading.provider,combined:"true"});
+      await safeRecordMetric(env,job.traceId,"expense_image_classification_ms",visionMs,{provider:reading.provider});
+      await safeRecordMetric(env,job.traceId,"expense_image_extraction_ms",visionMs,{provider:reading.provider,combined:"true"});
       if(!actor.employee.canSubmitExpense||!authorize(actor,"expense.submit",{employeeId:actor.employeeId})||env.EXPENSE_ENABLED!=="true"){const code="EXPENSE_IMAGE_NOT_ALLOWED";await respondTextToLineEvent(env,event,`The expense image was not recorded. ❌\nReason: This account is not authorized, or the expense system is disabled.\nAction: Please contact the shop administrator.\nCode: ${code}`,{traceId:job.traceId,purpose:"EXPENSE_RESPONSE"});await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","REJECTED",code);return;}
       const hash=await sha256Hex(original),key=`expense/${new Date(event.timestamp).toISOString().slice(0,10)}/${event.message.id}-${hash.slice(0,12)}.jpg`;
-      const r2Started=Date.now();await saveEvidence(env,key,original,{lineUserId:to,messageId:event.message.id,traceId:job.traceId});await recordMetric(env,job.traceId,"expense_image_r2_ms",Date.now()-r2Started);
-      const persistStarted=Date.now(),responseTiming={replyMs:0};await handleExpenseImage(env,event,reading,key,job.traceId,hash,actor,responseTiming);const persistAndReplyMs=Date.now()-persistStarted;await recordMetric(env,job.traceId,"expense_image_d1_ms",Math.max(0,persistAndReplyMs-responseTiming.replyMs));await recordMetric(env,job.traceId,"expense_image_reply_ms",responseTiming.replyMs);await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
+      const r2Started=Date.now();await saveEvidence(env,key,original,{lineUserId:to,messageId:event.message.id,traceId:job.traceId});await safeRecordMetric(env,job.traceId,"expense_image_r2_ms",Date.now()-r2Started);
+      const persistStarted=Date.now(),responseTiming={replyMs:0};await handleExpenseImage(env,event,reading,key,job.traceId,hash,actor,responseTiming);const persistAndReplyMs=Date.now()-persistStarted;await safeRecordMetric(env,job.traceId,"expense_image_d1_ms",Math.max(0,persistAndReplyMs-responseTiming.replyMs));await safeRecordMetric(env,job.traceId,"expense_image_reply_ms",responseTiming.replyMs);await completeInboundEvent(env,webhookId,"EXPENSE_IMAGE","COMPLETED");
     }else{const rejection=describeVisionRejection(reading);await respondTextToLineEvent(env,event,rejection.message,{traceId:job.traceId,purpose:"ATTENDANCE_REJECTION",identitySuffix:"attendance-rejection"});await completeInboundEvent(env,webhookId,"UNKNOWN_IMAGE","REVIEW",rejection.code);}
-  }catch(error){await completeInboundEvent(env,webhookId,"ERROR","FAILED",String(error));throw error;}finally{try{const elapsed=Date.now()-t0;await recordMetric(env,job.traceId,"inbound_total_ms",elapsed);if(expenseImage)await recordMetric(env,job.traceId,"expense_image_total_ms",elapsed);}catch(error){console.error("metric",error);}}
+  }catch(error){await completeInboundEvent(env,webhookId,"ERROR","FAILED",String(error));throw error;}finally{
+    const elapsed=Math.max(0,Date.now()-t0);
+    await safeRecordMetric(env,job.traceId,"inbound_total_ms",elapsed);
+    if(expenseImage){
+      await safeRecordMetric(env,job.traceId,"expense_image_total_ms",elapsed,{semantics:"PROCESSING"});
+      if(queueWaitMs!=null)await safeRecordMetric(env,job.traceId,"expense_image_end_to_end_ms",queueWaitMs+elapsed,{semantics:"INGRESS_TO_COMPLETION_V2",clockSkew:String(receivedAt>t0)});
+    }
+  }
 }

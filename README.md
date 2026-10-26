@@ -972,6 +972,7 @@ npx wrangler secret put <NAME>
 
 - `GET /admin/status`
 - `GET /admin/readiness`
+- `GET /admin/operations/summary` — recent failures, scheduled-step freshness, corrected latency และรายการค้างแบบ aggregate; ดู [reliability review](docs/24_SYSTEM_RELIABILITY_REVIEW_TH.md)
 - `POST /admin/bootstrap-sheets`
 - `POST /admin/retry-sync`
 - `POST /admin/reconcile-sheets`

@@ -8,7 +8,7 @@ import {
   buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,buildExpenseDuplicateReviewFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
-import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
+import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,onlineOrderEvidenceReviewText,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
 import { parseExpenseText } from "./text-parser";
 import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyReviewState,purchaseReviewState,stateFromStoredDocument,type ExpenseReviewField,type ExpenseReviewState,unresolvedReviewFields } from "./review-state";
@@ -309,6 +309,9 @@ async function handleExistingOnlineOrder(env:Env,event:LineEvent,orderId:string,
       return true;
     }
   }
+  if(identity.kind==="REVIEW_ONLY"){
+    await respondText(env,event,"คำสั่งซื้อนี้ยังรอตรวจหลักฐาน ⏳\nยังไม่มีค่าใช้จ่ายที่บันทึกจากรายการนี้\nกรุณาให้เจ้าของตรวจหลักฐานชำระเงินของรายการเดิมก่อนยืนยัน การส่งรูปซ้ำจะไม่สร้างรายการใหม่",traceId,timing);return true;
+  }
   await respondText(env,event,"Duplicate online order was not saved. ✅\nAn existing record already owns this exact order ID.\nNo new Expense or primary purchase document was created.\nCode: ONLINE_ORDER_ALREADY_RECORDED",traceId,timing);return true;
 }
 async function findExactLinkedExpenseDocument(env:Env,document:PurchaseDocument):Promise<ExistingExpenseDocument|null>{
@@ -320,11 +323,11 @@ async function findExactLinkedExpenseDocument(env:Env,document:PurchaseDocument)
   const existing={documentId:String(row.document_id),expenseId:row.expense_id==null?null:String(row.expense_id),documentType:String(row.document_type),legalVendorName:String(row.legal_vendor_name||""),documentNumber:String(row.document_number||""),orderId:String(row.order_id||"")};
   return exactDocumentMatch(document,existing).matched?existing:null;
 }
-function purchaseDocumentUpdate(env:Env,documentId:string,document:PurchaseDocument,expenseId:string|null,actor?:ExpenseActor,reviewState?:ExpenseReviewState){
+function purchaseDocumentUpdate(env:Env,documentId:string,document:PurchaseDocument,expenseId:string|null,actor?:ExpenseActor,reviewState?:ExpenseReviewState,reviewContext?:{needsReview:boolean;note:string}){
   const ownership=actorValues(actor);
   return env.DB.prepare(`UPDATE expense_documents SET vendor_name=?,legal_vendor_name=?,document_number=?,order_id=?,document_date=?,payment_date=?,payment_time=?,currency=?,subtotal_satang=?,shipping_satang=?,discount_amount_satang=?,subsidy_satang=?,vat_satang=?,gross_amount_satang=?,final_paid_satang=?,paid_amount_satang=?,suggested_description=?,suggested_category=?,confidence=?,needs_review=?,review_note=?,normalized_json=?,submitted_by_employee_id=?,branch_id=?,expense_id=?,updated_at=? WHERE document_id=?`).bind(
     document.vendor,document.legalVendorName,document.documentNumber,document.orderId,document.documentDate,document.paymentDate,document.paymentTime,document.currency,
-    toSatang(document.subtotalBaht),toSatang(document.shippingBaht),toSatang(document.discountBaht),toSatang(document.subsidyBaht),toSatang(document.vatBaht),toSatang(document.grossAmountBaht),toSatang(document.finalPaidAmountBaht),toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,document.needsReview?1:0,document.reviewReasons.join("; "),JSON.stringify(reviewState?documentWithReviewState(document as unknown as Record<string,unknown>,reviewState):document),ownership.employeeId,ownership.branchId,expenseId,new Date().toISOString(),documentId
+    toSatang(document.subtotalBaht),toSatang(document.shippingBaht),toSatang(document.discountBaht),toSatang(document.subsidyBaht),toSatang(document.vatBaht),toSatang(document.grossAmountBaht),toSatang(document.finalPaidAmountBaht),toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,(reviewContext?.needsReview??document.needsReview)?1:0,reviewContext?.note??document.reviewReasons.join("; "),JSON.stringify(reviewState?documentWithReviewState(document as unknown as Record<string,unknown>,reviewState):document),ownership.employeeId,ownership.branchId,expenseId,new Date().toISOString(),documentId
   );
 }
 function itemInsert(env:Env,item:ReturnType<typeof documentItemStatements>[number]){return env.DB.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang,vat_satang,confidence,needs_review,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(item.itemId,item.documentId,item.expenseId,item.sellerKey,item.productCode,item.description,item.quantity,item.unit,item.unitPriceSatang,item.discountSatang,item.lineTotalSatang,item.vatSatang,item.confidence,item.needsReview,item.now,item.now);}
@@ -351,7 +354,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     const base=[documentId,messageId,to,document.documentType,imageKey,"WAITING_REVIEW",JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,1,reviewReason,imageHash,null];
     base[16]=crossTypeExpenseId?await linkedReceiptReferenceKey(linkedOrderId,crossTypeExpenseId,document.documentType,receiptKey):receiptKey||null;
     const linkedStatements=[
-      documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,null,actor),
+      documentInsert(env,base),purchaseDocumentUpdate(env,documentId,document,null,actor,undefined,{needsReview:true,note:reviewReason}),
       ...documentItemStatements(documentId,null,document,now,randomId).map(item=>itemInsert(env,item)),
       ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.grossSatang,finalSatang:item.finalPaidSatang,status:"WAITING_REVIEW",expenseId:null,now})),
       env.DB.prepare(`INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,linked_by_employee_id,reason,created_at) VALUES(?,?,?,?,'EXACT_IDENTIFIER',?,?,?)`).bind(randomId("doc_link"),exactMatch.expenseId,documentId,relationForIncomingDocument(document),ownership.employeeId,reviewReason,now),
@@ -365,7 +368,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
   const expenseId=draft?randomId("exp"):null;
-  const base=[documentId,messageId,to,document.documentType,imageKey,documentStatus,JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,draft?.needsReview||document.needsReview?1:0,reviewReason,imageHash,expenseId];
+  const base=[documentId,messageId,to,document.documentType,imageKey,documentStatus,JSON.stringify(document),traceId,now,null,null,null,null,document.paymentDate,document.paymentTime,null,null,null,null,null,null,document.vendor,null,null,toSatang(document.finalPaidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,reviewOnly||draft?.needsReview||document.needsReview?1:0,reviewReason,imageHash,expenseId];
   base[16]=receiptKey||null;
   try{
     // D1 batches enforce foreign keys statement-by-statement.  Create the
@@ -378,7 +381,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     }
     statements.push(
       documentInsert(env,base),
-      purchaseDocumentUpdate(env,documentId,document,expenseId,actor,reviewState||undefined),
+      purchaseDocumentUpdate(env,documentId,document,expenseId,actor,reviewState||undefined,{needsReview:reviewOnly||Boolean(draft?.needsReview),note:reviewReason}),
       ...documentItemStatements(documentId,expenseId,document,now,randomId).map(item=>itemInsert(env,item)),
       ...sellerCases.map(item=>sellerCaseInsert(env,{documentId,sellerKey:item.sellerKey,vendorName:item.vendorName,grossSatang:item.grossSatang,finalSatang:item.finalPaidSatang,status:draft?"WAITING_CONFIRM":"WAITING_REVIEW",expenseId,now}))
     );
@@ -392,7 +395,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     }
     await env.DB.batch(statements);
   }catch(error){if(String(error).includes("UNIQUE")){if(exactClaimedOrderId&&await handleExistingOnlineOrder(env,event,exactClaimedOrderId,traceId,timing))return;const existing=await findPurchaseDuplicate(env,document,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
-  if(!draft){await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
+  if(!draft){await respondText(env,event,document.documentType==="ONLINE_ORDER"&&!multiSeller?onlineOrderEvidenceReviewText(document):`${document.documentType.replaceAll("_"," ")} received. ✅\nThis is supporting or incomplete evidence and has not been posted.\nReason: ${reviewReason}`,traceId,timing);return;}
   if(await receiptConfirmationBlocked(env,event,expenseId!,traceId,timing))return;
   const expense={expenseId:expenseId!,...draft,status:"WAITING_CONFIRM",documentType:document.documentType,grossAmountSatang:toSatang(document.grossAmountBaht),discountAmountSatang:toSatang(document.discountBaht),reviewNote:reviewReason,reviewRequiredFields:reviewState?.requiredFields||[],reviewConfirmedFields:reviewState?.confirmedFields||[]};
   await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId,timing);

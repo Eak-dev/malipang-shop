@@ -194,7 +194,9 @@ export interface PurchaseDocument {
   paymentDate: string;
   /** Extraction evidence used by deterministic purchase-date normalization. */
   paymentDateFormat?: "YMD" | "DMY" | "UNKNOWN";
-  paymentDatePurpose?: "PAYMENT" | "EXPECTED_DELIVERY" | "UNKNOWN";
+  paymentDatePurpose?: "PAYMENT" | "ORDER_PLACED" | "EXPECTED_DELIVERY" | "UNKNOWN";
+  /** Printed date label; absent only on older extracted snapshots. */
+  paymentDateLabel?: string;
   paymentTime: string;
   currency: string;
   subtotalBaht: number | null;

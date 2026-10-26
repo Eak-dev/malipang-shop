@@ -5,8 +5,9 @@ import { arrayBufferToBase64 } from "../shared/base64";
 import { numberEnv } from "../shared/env";
 import type { BankSlipDocument } from "../types";
 import { parseAttendanceOverlay } from "../domain/attendance-overlay";
+import { acceptedFinalOrderLabel, onlineOrderAmountReasons, positiveSatang } from "../domain/online-order";
 function outputText(data:unknown):string{const d=data as{output_text?:string;output?:Array<{content?:Array<{text?:string}>}>};return typeof d.output_text==="string"?d.output_text:d.output?.flatMap(o=>o.content||[]).map(c=>c.text||"").join("")||"";}
-export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown{
+export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer,onlineOrderAmountReview=false):unknown{
   const bankSlipSchema={type:"object",properties:{
     documentType:{type:"string",enum:["BANK_SLIP"]},channel:{type:"string",enum:["BANK","G_WALLET"]},institution:{type:"string"},
     transactionType:{type:"string",enum:["TRANSFER","PAYMENT","WALLET_PAYMENT","TOPUP","UNKNOWN"]},transactionStatus:{type:"string",enum:["SUCCESS","FAILED","PENDING","UNKNOWN"]},
@@ -27,6 +28,7 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "For receipts, tax invoices and online orders, copy only visible facts. This must work for an unseen vendor and any layout: wrapped names, Thai or English units, non-grid rows, and columns that are visually separated. Extract every visible line item up to 40 rows; retain the product description even when it wraps across lines, and never use the vendor name as an item description. Do not truncate a long receipt. finalPaidAmountBaht is the final cash outflow after shipping, discounts, vouchers and subsidies. Do not use expected delivery as paymentDate. DELIVERY_ORDER is supporting evidence and needsReview=true unless visible payment evidence is present.",
     "For ONLINE_ORDER, copy a visible final-order total into orderTotalBaht and copy its exact printed label into orderTotalLabel when the label is รวมคำสั่งซื้อ, ยอดรวมคำสั่งซื้อ, ยอดชำระ, Total order, Order total, or Paid total. Set paymentStatus=PAID only when the screen visibly proves payment through a payment timestamp, paid/completed status, or explicit completed payment details. Set PENDING or UNPAID when shown, otherwise UNKNOWN. A pending, unpaid, or unknown order total is never finalPaidAmountBaht.",
     "For ONLINE_ORDER, finalPaidAmountBaht may use an accepted order total only when paymentStatus=PAID. If both finalPaidAmountBaht and orderTotalBaht are returned, they must represent the same visible amount; never substitute subtotal, gross or an item price. A generic credit/debit-card label describes a payment method but not a specific shop card: keep sourceWalletCandidate empty so the user must select the source.",
+    "For ONLINE_ORDER, copy the displayed accepted order total exactly. VIP savings, voucher savings and discount summaries are informational; never subtract them again from the displayed order total. Do not calculate finalPaidAmountBaht from unit prices, quantities, crossed-out prices, subtotal or savings. If there is no separately printed final-paid amount, leave finalPaidAmountBaht=null; deterministic validation can use the accepted order total with PAID evidence. If two separately printed totals conflict, preserve both visible values and mark needsReview=true; never hide a conflict.",
     "For RECEIPT, TAX_INVOICE and RECEIPT_TAX_INVOICE, the seller is the document issuer or legal vendor. Use that same issuer as sellerKey for every item. Buyer, customer, bill-to, ship-to, receiver, delivery address, product brand and manufacturer are never sellers.",
     "Only for ONLINE_ORDER, sellerKey may identify each marketplace seller or store. Use one consistent visible seller name for every item from the same store; do not use the marketplace, buyer or delivery recipient as a seller when a store name is visible.",
     "For each purchase item, populate description from the printed product/service text. If that text is unclear, leave description empty and set needsReview=true; do not invent it from the vendor, category, totals, or a product code. Copy visible quantity, unit, unit price, discount and line total independently. A document-level discount, subsidy, shipping or tax adjustment is not a line-item allocation.",
@@ -35,7 +37,7 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "Copy the visible purchase date into paymentDate and classify its meaning as PAYMENT, EXPECTED_DELIVERY, or UNKNOWN in paymentDatePurpose. Only a PAYMENT date may become an Online Order payment date. Classify its explicit order as YMD, DMY, or UNKNOWN in paymentDateFormat. Use UNKNOWN when a numeric date is ambiguous and the source gives no day/month order context. Never guess US MM/DD/YYYY. A visible two-digit year 00-79 means 2000-2079 and 80-99 means 1980-1999. Buddhist Era years such as 2569 are allowed. Normalize paymentTime to 24-hour HH:mm.",
     "For Thai-baht receipts always return currency=THB, even when the image prints Baht, บาท, or the baht symbol.",
     "Set transactionStatus=SUCCESS only when the image visibly says completed or successful. Do not infer success from layout alone.",
-    "paidAmountBaht is the actual amount leaving the wallet or account. For subsidy receipts, keep grossAmountBaht and discountAmountBaht separately and set paidAmountBaht to the final amount actually paid. Example: price 40, subsidy 24, paid 16 means paidAmountBaht=16.",
+    "For BANK_SLIP only, paidAmountBaht is the actual amount leaving the wallet or account. For subsidy receipts, keep grossAmountBaht and discountAmountBaht separately and set paidAmountBaht to the final amount actually paid. Example: price 40, subsidy 24, paid 16 means paidAmountBaht=16. This is not an instruction to recompute an ONLINE_ORDER total.",
     "Use channel=G_WALLET for Paotang or G-Wallet receipts; otherwise use BANK.",
     "When the recipient area shows both a shop or business display name and a legal account-holder name, put the shop display name in merchant and the account-holder name in recipient.",
     "For a visible merchant, suggestedDescription should be a short expense label using the merchant name. For a person-to-person transfer, use 'Transfer to <recipient>' and suggestedCategory=general because the purpose is not visible.",
@@ -51,7 +53,8 @@ export function buildOpenAIVisionPayload(model:string,image:ArrayBuffer):unknown
     "For CLOCK return hour, minute, month, day, and weekday as null because wall-clock digits are diagnostic only and are not used for attendance.",
     "A timestamp watermark or phone overlay is not by itself evidence that the physical clock is present; validate overlay and clock evidence independently.",
     "Never infer missing fields from current time, LINE time, metadata, address geocoding, or context. Use null/false and needsNewPhoto=true when required overlay or clock evidence is unclear.",
-    "Set note to an empty string when the image is clear. Use note only for visible uncertainty or a specific problem that requires review."
+    "Set note to an empty string when the image is clear. Use note only for visible uncertainty or a specific problem that requires review.",
+    ...(onlineOrderAmountReview ? ["ONLINE_ORDER amount review: independently inspect the entire original image again, especially the order-total row between product details and after-sales service. Copy the exact printed order ID, seller, total label and amount, and payment date/time. Do not invent a total because this is a retry. Keep missing values null; unpaid, unsupported or conflicting evidence must remain unresolved. Ignore promotional ads and VIP savings when copying the order total."] : [])
   ].join("\n");
   return{model,store:false,max_output_tokens:4200,text:{format:{type:"json_schema",name:"malipang_image_read",strict:true,schema}},input:[{role:"user",content:[{type:"input_text",text:prompt},{type:"input_image",image_url:`data:image/jpeg;base64,${arrayBufferToBase64(image)}`,detail:"high"}]}]};
 }
@@ -107,16 +110,6 @@ function normalizePaymentTime(value:unknown):string{
   return hour<=23&&minute<=59?`${hour.toString().padStart(2,"0")}:${minute.toString().padStart(2,"0")}`:"";
 }
 
-const finalOrderLabels=new Set(["รวมคำสั่งซื้อ","ยอดรวมคำสั่งซื้อ","ยอดชำระ","total order","order total","paid total"]);
-function acceptedFinalOrderLabel(value:unknown):string{
-  const label=String(value??"").trim().replace(/[:：]\s*$/,"").replace(/\s+/g," ");
-  return finalOrderLabels.has(label.toLocaleLowerCase("en-US"))?label:"";
-}
-function positiveSatang(value:number|null):number|null{
-  if(value==null||!Number.isFinite(value)||value<=0)return null;
-  const satang=Math.round(value*100);
-  return Number.isSafeInteger(satang)&&satang>0?satang:null;
-}
 function isGenericCardMethod(value:string):boolean{return/(?:\b(?:credit|debit)(?:\s*(?:[/&]|and)\s*(?:credit|debit))?\s*cards?\b|บัตร(?:เครดิต|เดบิต))/i.test(value);}
 
 function normalizePurchaseDocument(value:unknown):PurchaseDocument|null{
@@ -134,8 +127,14 @@ function normalizePurchaseDocument(value:unknown):PurchaseDocument|null{
   }).filter(item=>item.description):[];
   const reviewReasons=Array.isArray(obj.reviewReasons)?obj.reviewReasons.map(text).filter(Boolean):[];
   if(text(obj.paymentDate)&&!paymentDate)reviewReasons.push("Missing or invalid payment date");
-  if(amountEvidenceConflict)reviewReasons.push("Amount evidence conflicts: final paid amount does not match accepted order total");
-  return{documentType:type as PurchaseDocument["documentType"],vendor:text(obj.vendor),legalVendorName:text(obj.legalVendorName),documentNumber:text(obj.documentNumber),orderId:text(obj.orderId),documentDate,paymentDate,paymentDateFormat,paymentDatePurpose,paymentTime,currency:text(obj.currency).toUpperCase()||"THB",subtotalBaht:money(obj.subtotalBaht),shippingBaht:money(obj.shippingBaht),discountBaht:money(obj.discountBaht),subsidyBaht:money(obj.subsidyBaht),vatBaht:money(obj.vatBaht),grossAmountBaht:money(obj.grossAmountBaht),finalPaidAmountBaht,orderTotalBaht,orderTotalLabel,paymentStatus,paymentMethod,sourceWalletCandidate,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:category,confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),reviewReasons:[...new Set(reviewReasons)],items};
+  let onlineOrderAmountIssue:PurchaseDocument["onlineOrderAmountIssue"];
+  if(type==="ONLINE_ORDER"&&finalPaidAmountBaht==null){
+    const rawTotalPresent=obj.orderTotalBaht!=null&&obj.orderTotalBaht!=="";
+    onlineOrderAmountIssue=amountEvidenceConflict?"CONFLICT":paymentStatus!=="PAID"?"PAYMENT_UNCONFIRMED":
+      rawTotalPresent||rawFinalPresent||Boolean(text(obj.orderTotalLabel)&&!orderTotalLabel)?"INVALID_TOTAL":"MISSING_TOTAL";
+    reviewReasons.push(onlineOrderAmountReasons[onlineOrderAmountIssue]);
+  }
+  return{documentType:type as PurchaseDocument["documentType"],vendor:text(obj.vendor),legalVendorName:text(obj.legalVendorName),documentNumber:text(obj.documentNumber),orderId:text(obj.orderId),documentDate,paymentDate,paymentDateFormat,paymentDatePurpose,paymentTime,currency:text(obj.currency).toUpperCase()||"THB",subtotalBaht:money(obj.subtotalBaht),shippingBaht:money(obj.shippingBaht),discountBaht:money(obj.discountBaht),subsidyBaht:money(obj.subsidyBaht),vatBaht:money(obj.vatBaht),grossAmountBaht:money(obj.grossAmountBaht),finalPaidAmountBaht,orderTotalBaht,orderTotalLabel,paymentStatus,...(onlineOrderAmountIssue?{onlineOrderAmountIssue}:{}),paymentMethod,sourceWalletCandidate,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:category,confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview)||Boolean(onlineOrderAmountIssue),reviewReasons:[...new Set(reviewReasons)],items};
 }
 export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unknown):VisionResult{
   const num=(v:unknown):number|null=>v==null?null:Number.isFinite(Number(v))?Number(v):null;
@@ -149,9 +148,9 @@ export function normalizeOpenAIVisionResult(obj:Record<string,unknown>,raw:unkno
   const overlayRawText=String(obj.overlayRawText||"").trim(),parsedOverlay=parseAttendanceOverlay(overlayRawText),photoDate=nullableText(obj.photoDate)||parsedOverlay.photoDate,photoTime=nullableText(obj.photoTime)||parsedOverlay.photoTime,latitude=num(obj.latitude)??parsedOverlay.latitude,longitude=num(obj.longitude)??parsedOverlay.longitude;
   return{kind,hour:num(obj.hour),minute:num(obj.minute),month:num(obj.month),day:num(obj.day),weekday:nullableText(obj.weekday),confidence:Number(obj.confidence||0),clockFullyVisible:typeof obj.clockFullyVisible==="boolean"?obj.clockFullyVisible:null,clockPresent:typeof obj.clockPresent==="boolean"?obj.clockPresent:null,clockConfidence:Number(obj.clockConfidence||0),overlayPresent:Boolean(obj.overlayPresent),overlayTextWhite:Boolean(obj.overlayTextWhite),photoDate,photoTime,latitude,longitude,locationText:String(obj.locationText||"").trim(),overlayRawText,overlayConfidence:Number(obj.overlayConfidence||0),needsNewPhoto:Boolean(obj.needsNewPhoto),note:String(obj.note||"").trim(),provider:"openai",raw,document};
 }
-export async function readImageWithOpenAI(env:Env,image:ArrayBuffer):Promise<VisionResult>{
+export async function readImageWithOpenAI(env:Env,image:ArrayBuffer,onlineOrderAmountReview=false):Promise<VisionResult>{
   if(!env.OPENAI_API_KEY)throw new Error("OPENAI_API_KEY missing");
-  const payload=buildOpenAIVisionPayload(env.OPENAI_MODEL,image);
+  const payload=buildOpenAIVisionPayload(env.OPENAI_MODEL,image,onlineOrderAmountReview);
   const res=await fetchWithTimeout("https://api.openai.com/v1/responses",{method:"POST",headers:{Authorization:`Bearer ${env.OPENAI_API_KEY}`,"content-type":"application/json"},body:JSON.stringify(payload)},numberEnv(env.VISION_TIMEOUT_MS,45000),"OpenAI vision");if(!res.ok)throw new Error(`OpenAI HTTP ${res.status}: ${await res.text()}`);
   const raw=await res.json(),obj=extractJsonObject(outputText(raw))||{};
   return normalizeOpenAIVisionResult(obj,raw);

@@ -1,6 +1,7 @@
 import { incrementDailyUsage, safeRecordMetric } from "../db/repositories";
 import { withTimeout } from "../shared/async";
 import { isTrue, numberEnv } from "../shared/env";
+import { isIsoDate } from "../shared/time";
 import type { Env, VisionResult } from "../types";
 import { readImageWithOpenAI } from "./openai";
 import { readImageWithWorkersAI } from "./workers-ai";
@@ -32,6 +33,27 @@ export function chooseBetterAttendanceReading(first:VisionResult,retry:VisionRes
   return retryScore>firstScore?retry:first;
 }
 
+export function shouldRetryOpenAIOnlineOrder(result:VisionResult):boolean{
+  const document=result.document;
+  return result.kind==="ONLINE_ORDER"&&document?.documentType==="ONLINE_ORDER"&&
+    Boolean(document.orderId.trim())&&document.paymentStatus==="PAID"&&
+    document.currency==="THB"&&isIsoDate(document.paymentDate)&&document.finalPaidAmountBaht==null;
+}
+
+export function chooseBetterOnlineOrderReading(first:VisionResult,retry:VisionResult):VisionResult{
+  if(!shouldRetryOpenAIOnlineOrder(first))return first;
+  const original=first.document,candidate=retry.document;
+  if(original?.documentType!=="ONLINE_ORDER"||retry.kind!=="ONLINE_ORDER"||candidate?.documentType!=="ONLINE_ORDER")return first;
+  const amount=candidate.finalPaidAmountBaht,orderTotal=candidate.orderTotalBaht;
+  if(candidate.orderId.trim()!==original.orderId.trim()||candidate.paymentDate!==original.paymentDate||
+    candidate.currency!==original.currency||candidate.paymentStatus!=="PAID"||
+    amount==null||!Number.isSafeInteger(Math.round(amount*100))||Math.round(amount*100)<=0||amount!==orderTotal||
+    !candidate.orderTotalLabel?.trim()||
+    candidate.items.length<original.items.length||
+    (original.orderTotalBaht!=null&&original.orderTotalBaht!==orderTotal))return first;
+  return retry;
+}
+
 function failedVision(provider: string, note: string): VisionResult {
   return {kind:"UNKNOWN",hour:null,minute:null,month:null,day:null,weekday:null,confidence:0,clockFullyVisible:null,clockPresent:null,clockConfidence:0,overlayPresent:false,overlayTextWhite:false,photoDate:null,photoTime:null,latitude:null,longitude:null,locationText:"",overlayRawText:"",overlayConfidence:0,needsNewPhoto:true,note,provider,raw:null};
 }
@@ -53,19 +75,20 @@ export async function classifyAndRead(env: Env, preview: ArrayBuffer, original: 
   try{
     const first=await readImageWithOpenAI(env, original);
     const clockThreshold=numberEnv(env.ATTENDANCE_CLOCK_MIN_CONFIDENCE,0.7);
-    if(!shouldRetryOpenAIAttendance(first,threshold,clockThreshold))return first;
+    const retryOrder=shouldRetryOpenAIOnlineOrder(first);
+    if(!retryOrder&&!shouldRetryOpenAIAttendance(first,threshold,clockThreshold))return first;
     const retryCount=await incrementDailyUsage(env,usageMetric);
     if(options.enforceDailyLimit!==false&&retryCount>dailyLimit)return first;
     const retryStarted=Date.now();let retryError="";
     try{
-      const retry=await readImageWithOpenAI(env,original);
-      return chooseBetterAttendanceReading(first,retry,threshold,clockThreshold);
+      const retry=await readImageWithOpenAI(env,original,retryOrder);
+      return retryOrder?chooseBetterOnlineOrderReading(first,retry):chooseBetterAttendanceReading(first,retry,threshold,clockThreshold);
     }catch(error){
       retryError=String(error instanceof Error?error.message:error).slice(0,240);
       console.error("openai-vision-retry",error);
       return first;
     }finally{
-      await safeRecordMetric(env,traceId,"vision_openai_retry_ms",Date.now()-retryStarted,{provider:"openai",success:String(!retryError),error:retryError});
+      await safeRecordMetric(env,traceId,"vision_openai_retry_ms",Date.now()-retryStarted,{provider:"openai",kind:first.kind,success:String(!retryError),error:retryError});
     }
   }
   catch(error){fallbackError=String(error instanceof Error?error.message:error).slice(0,240);console.error("openai-vision",error);return primary||failedVision("openai-error","OpenAI vision request failed");}

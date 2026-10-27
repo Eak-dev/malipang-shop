@@ -36,7 +36,7 @@ Production ยังใช้ Worker85 จาก PR209 ที่ 100% คิว�
 - `window`: 24 ชั่วโมง UTC พร้อม from/to ชัดเจน
 - `inbound`: failure ในช่วงล่าสุด แยก older failures กับ lease ที่ค้าง; ใช้เป็นสัญญาณตรวจ ไม่ใช้แทน lost-transaction audit
 - `sideEffects`: sync ที่รอ, lease หมด, notification ที่ยังเปิด และ Push quota blocked; แสดง Reply/fallback failures ด้วย แม้ fallback ไม่สามารถสร้าง outbox row ได้ terminal DLQ อยู่ในสรุป failed jobs ไม่ถูกกู้อัตโนมัติ
-- `scheduled.steps`: ผลล่าสุด/จำนวนครั้ง/จำนวนครั้งที่ล้มในช่วง 24 ชั่วโมง; tie ใช้ metric ID ใหม่สุด, อายุเกิน 15 นาทีเป็น STALE ตาม cron ทุก 5 นาทีปัจจุบัน ไม่มี sample เป็น UNKNOWN
+- `scheduled.steps`: ผลล่าสุดจาก telemetry ที่ยังเก็บอยู่ แยกจากจำนวนครั้ง/จำนวนครั้งที่ล้มในช่วง 24 ชั่วโมง; tie ใช้ metric ID ใหม่สุด, อายุเกิน 15 นาทีเป็น STALE ตาม cron ทุก 5 นาทีปัจจุบัน แม้หยุดเกิน 24 ชั่วโมงก็ยัง STALE พร้อม ATTENTION/คำแนะนำตรวจต่อ ส่วน UNKNOWN ใช้เมื่อไม่มี sample
 - `latency`: samples/average/max ที่แยกตามขั้น; queue/end-to-end ใช้เฉพาะ V2 และไม่มี clock skew ไม่ตีความ sample ว่างเป็น 0ms
 - `onlineOrders`: สรุปเหตุผล/อายุจาก owner review เดิม; `actions` เป็นรหัสคำแนะนำให้ตรวจต่อ ไม่ใช่คำสั่ง recovery
 - `status`: ATTENTION เมื่อพบ failure/overdue ที่ต้องตรวจ, UNKNOWN เมื่อ telemetry รายขั้นยังไม่ครบ, OK เมื่อเงื่อนไขเหล่านี้ผ่าน คำว่า `ok=true` หมายถึง query สำเร็จ ไม่ใช่การรับรองสุขภาพทุก subsystem

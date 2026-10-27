@@ -40,6 +40,20 @@ test('newest scheduled outcome wins ties and preserves failure history without r
   const failed=await operationsSummary(h.env,now);assert.equal(failed.status,'ATTENTION');assert.ok(failed.actions.includes('INSPECT_SCHEDULED_STEPS'));
  }finally{h.close();}
 });
+test('a cron outage remains STALE beyond 24 hours while counts stay inside the reporting window',async()=>{
+ const h=ownerOrderFixture();try{
+  healthy(h,-25*3600000);metric(h,'scheduled_maintenance_step_ms',30,{step:'payroll',outcome:'FAILED'},-26*3600000);
+  healthy(h,60000);
+  const stale=await operationsSummary(h.env,now);
+  assert.equal(stale.status,'ATTENTION');assert.ok(stale.actions.includes('INSPECT_SCHEDULED_STEPS'));
+  assert.ok(stale.scheduled.steps.every(s=>s.status==='STALE'&&s.lastAttemptAt===new Date(now-25*3600000).toISOString()&&s.attempts===0&&s.failures===0));
+  assert.equal(stale.scheduled.steps.find(s=>s.step==='payroll').lastDurationMs,10);
+  metric(h,'scheduled_maintenance_step_ms',20,{step:'payroll',outcome:'FAILED'},-1000);
+  const recent=await operationsSummary(h.env,now),payroll=recent.scheduled.steps.find(s=>s.step==='payroll');
+  assert.equal(payroll.status,'FAILED');assert.equal(payroll.attempts,1);assert.equal(payroll.failures,1);
+  assert.ok(recent.scheduled.steps.filter(s=>s.step!=='payroll').every(s=>s.status==='STALE'&&s.attempts===0));
+ }finally{h.close();}
+});
 test('stale cron steps, recent inbound failures and blocked notifications have distinct inspection actions',async()=>{
  const h=ownerOrderFixture();try{
   healthy(h,-16*60000);inbound(h,'synthetic_recent',-1000);inbound(h,'synthetic_future',60000);

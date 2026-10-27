@@ -28,14 +28,14 @@ export async function operationsSummary(env:Env,now=Date.now()){
       (SELECT COUNT(*) FROM metrics WHERE name='line_response_fallback_failure' AND created_at>=? AND created_at<=?) response_fallback_failures`).bind(at,since,at,since,at).first<Row>(),
     env.DB.prepare(`WITH samples AS (
       SELECT id,created_at,value_ms,json_extract(${jsonLabels},'$.step') step,json_extract(${jsonLabels},'$.outcome') outcome
-      FROM metrics WHERE created_at>=? AND created_at<=? AND name='scheduled_maintenance_step_ms'
+      FROM metrics WHERE created_at<=? AND name='scheduled_maintenance_step_ms'
     ), ranked AS (
       SELECT step,outcome,created_at,value_ms,
         ROW_NUMBER() OVER(PARTITION BY step ORDER BY created_at DESC,id DESC) rank,
-        COUNT(*) OVER(PARTITION BY step) attempts,
-        SUM(CASE WHEN outcome='FAILED' THEN 1 ELSE 0 END) OVER(PARTITION BY step) failures
+        SUM(CASE WHEN created_at>=? THEN 1 ELSE 0 END) OVER(PARTITION BY step) attempts,
+        SUM(CASE WHEN created_at>=? AND outcome='FAILED' THEN 1 ELSE 0 END) OVER(PARTITION BY step) failures
       FROM samples WHERE step IN (${maintenanceSteps.map(()=>"?").join(",")}) AND outcome IN ('SUCCESS','FAILED')
-    ) SELECT step,outcome,created_at,value_ms,attempts,failures FROM ranked WHERE rank=1`).bind(since,at,...maintenanceSteps).all<Row>(),
+    ) SELECT step,outcome,created_at,value_ms,attempts,failures FROM ranked WHERE rank=1`).bind(at,since,since,...maintenanceSteps).all<Row>(),
     env.DB.prepare(`SELECT name,COUNT(*) samples,ROUND(AVG(value_ms)) average_ms,MAX(value_ms) maximum_ms
       FROM metrics WHERE created_at>=? AND created_at<=? AND value_ms>=0 AND name IN (${latencyNames.map(()=>"?").join(",")})
       AND (name NOT IN ('inbound_queue_wait_ms','expense_image_queue_wait_ms') OR (json_extract(${jsonLabels},'$.semantics')='INGRESS_TO_START_V2' AND json_extract(${jsonLabels},'$.clockSkew')='false'))

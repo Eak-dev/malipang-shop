@@ -1,15 +1,13 @@
 import { AttendanceCoordinator } from "./durable/attendance-coordinator";
 import { handleAdmin } from "./admin/handler";
-import { createFailedJob,InboundBusyError,recoverPendingSheetJobs,resolveFailedJobs } from "./db/repositories";
-import { auditEvidenceRetention } from "./evidence/retention";
-import { finalizeMissingPunchPayrolls } from "./payroll/finalize";
-import { refreshCurrentEmployeeWages } from "./payroll/repository";
+import { createFailedJob,InboundBusyError,resolveFailedJobs } from "./db/repositories";
+import { runScheduledMaintenance } from "./operations/maintenance";
 import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
 import { SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
-import { processStaffConfigSyncJob,recoverPendingStaffConfigSyncs,type StaffConfigSyncJob } from "./sheets/staff-config";
+import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
-import { processLineNotificationMessage,recoverPendingLineNotifications } from "./line/attendance-notification";
+import { processLineNotificationMessage } from "./line/attendance-notification";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -35,6 +33,6 @@ export default{
     await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC")await processStaffConfigSyncJob(env,job);else{const outcome=await syncJob(env,job,attempt);if(outcome==="BUSY"){await env.JOB_QUEUE.send(job,{delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
-    const stale=new Date(Date.now()-15*60*1000).toISOString();ctx.waitUntil((async()=>{await env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(stale).run();await refreshCurrentEmployeeWages(env);await finalizeMissingPunchPayrolls(env);await recoverPendingSheetJobs(env);await recoverPendingStaffConfigSyncs(env);await recoverPendingLineNotifications(env);try{await auditEvidenceRetention(env);}catch(error){console.error("evidence-retention-scheduled",error);}})());
+    ctx.waitUntil(runScheduledMaintenance(env));
   }
 } satisfies ExportedHandler<Env,QueueJob>;

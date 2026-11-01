@@ -1,10 +1,23 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {buildMetadataColumnWriteRequest,buildMetadataRowPatchRequest,metadataPatchResponseComplete} from '../dist/sheets/client.js';
+import {createRequire} from 'node:module';
+import {buildMetadataColumnWriteRequest,buildMetadataRowPatchRequest,getSheetRowMetadataById,metadataPatchResponseComplete} from '../dist/sheets/client.js';
+const require=createRequire(import.meta.url),googleAuth=require('../dist/sheets/google-auth.js');
 
 test('row metadata writes only the requested category cell and skips all other cells',()=>{
   const data=buildMetadataColumnWriteRequest([{metadataId:123,columnIndex:6,value:'transport'}]);
   assert.deepEqual(data,{valueInputOption:'RAW',data:[{dataFilter:{developerMetadataLookup:{metadataId:123}},majorDimension:'ROWS',values:[[null,null,null,null,null,null,'transport']]}]});
+});
+test('metadata lookup distinguishes a verified missing ID from API failure or malformed identity',async()=>{
+  const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;
+  try{
+    googleAuth.getGoogleAccessToken=async()=> 'synthetic';const env={GOOGLE_SPREADSHEET_ID:'synthetic',EXTERNAL_API_TIMEOUT_MS:'1000'};
+    globalThis.fetch=async()=>new Response('',{status:404});assert.equal(await getSheetRowMetadataById(env,42),null);
+    globalThis.fetch=async()=>new Response('',{status:503});await assert.rejects(getSheetRowMetadataById(env,42));
+    globalThis.fetch=async()=>Response.json({metadataId:42,metadataKey:'key',metadataValue:'value',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:3,endIndex:4}}});
+    assert.deepEqual(await getSheetRowMetadataById(env,42),{metadataId:42,metadataKey:'key',metadataValue:'value',sheetId:7,rowIndex:3});
+    globalThis.fetch=async()=>Response.json({metadataId:43,metadataKey:'key',metadataValue:'value',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:3,endIndex:4}}});await assert.rejects(getSheetRowMetadataById(env,42),/INVALID_ROW_METADATA/);
+  }finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}
 });
 test('a patch response is accepted only for exactly the requested unique row identities',()=>{
   const patches=[{metadataId:12,cells:[{columnIndex:3,value:'x'}]},{metadataId:13,cells:[{columnIndex:3,value:''}]}];

@@ -15,8 +15,9 @@ export function buildOwnerCorrectionRebind(input:{expenseId:string;correctionId:
 /** Identity and both relevant rows must be re-read before acting on this result. */
 export function classifyOwnerCorrectionRebind(input:{expenseId:string;correctionId:string;source:SheetRowMetadata|null;reservation:SheetRowMetadata|null;sourceRowIndex:number;destinationRowIndex:number;sheetId:number}):"BEFORE"|"AFTER"|"CONFLICT"{
   const {expenseId,correctionId,source,reservation,sourceRowIndex,destinationRowIndex,sheetId}=input;
-  if(!expenseId||!correctionId||!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(sourceRowIndex)||!Number.isSafeInteger(destinationRowIndex)||sourceRowIndex<0||destinationRowIndex<0||sourceRowIndex===destinationRowIndex)return "CONFLICT";
+  if(!expenseId||!correctionId||!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(destinationRowIndex)||destinationRowIndex<0)return "CONFLICT";
   if(!source&&reservation&&Number.isSafeInteger(reservation.metadataId)&&reservation.metadataId>0&&reservation.metadataKey==="malipang_expense_daily"&&reservation.metadataValue===expenseId&&reservation.sheetId===sheetId&&reservation.rowIndex===destinationRowIndex)return "AFTER";
+  if(!Number.isSafeInteger(sourceRowIndex)||sourceRowIndex<0||sourceRowIndex===destinationRowIndex)return "CONFLICT";
   if(source&&Number.isSafeInteger(source.metadataId)&&source.metadataId>0&&source.metadataKey==="malipang_expense_daily"&&source.metadataValue===expenseId&&source.sheetId===sheetId&&source.rowIndex===sourceRowIndex&&reservation&&Number.isSafeInteger(reservation.metadataId)&&reservation.metadataId>0&&reservation.metadataKey==="malipang_correction_reservation"&&reservation.metadataValue===correctionId&&reservation.sheetId===sheetId&&reservation.rowIndex===destinationRowIndex&&reservation.metadataId!==source.metadataId)return "BEFORE";
   return "CONFLICT";
 }

@@ -21,7 +21,7 @@ function normalizedAmount(value:unknown):number|null{
   return Number.isSafeInteger(satang)&&Math.abs(value*100-satang)<0.000001?satang:null;
 }
 
-function matches(candidate:OwnerCorrectionIdentity,row:OwnerCorrectionSheetRow):boolean{
+export function matchesOwnerCorrectionIdentity(candidate:OwnerCorrectionIdentity,row:OwnerCorrectionSheetRow):boolean{
   const v=row.values;
   if(!candidate.expenseId||!candidate.description.trim()||!Number.isInteger(candidate.postingYear)||candidate.postingYear<2000||candidate.postingYear!==row.sheetYear||!Number.isInteger(candidate.postingMonth)||candidate.postingMonth<1||candidate.postingMonth>12||!Number.isInteger(candidate.postingDay)||candidate.postingDay<1||candidate.postingDay>31||!Number.isSafeInteger(candidate.amountSatang)||candidate.amountSatang<=0||!amountColumns.includes(candidate.amountColumn))return false;
   if(String(v[0]??"").trim()!==""||Number(v[1])!==candidate.postingMonth||Number(v[2])!==candidate.postingDay||String(v[3]??"").trim()!==candidate.description.trim())return false;
@@ -33,7 +33,7 @@ function matches(candidate:OwnerCorrectionIdentity,row:OwnerCorrectionSheetRow):
  * expense and row sets; partial sets cannot prove uniqueness. Ambiguous or
  * unverified rows stay unlinked. */
 export function findUnambiguousOwnerCorrectionIdentities(candidates:OwnerCorrectionIdentity[],rows:OwnerCorrectionSheetRow[]):OwnerCorrectionIdentityMatch[]{
-  const options=candidates.map(candidate=>({candidate,rows:rows.filter(row=>matches(candidate,row))}));
+  const options=candidates.map(candidate=>({candidate,rows:rows.filter(row=>matchesOwnerCorrectionIdentity(candidate,row))}));
   return options.filter(option=>option.rows.length===1&&options.filter(other=>other.rows.some(row=>row.rowNumber===option.rows[0]!.rowNumber)).length===1)
     .map(option=>({expenseId:option.candidate.expenseId,rowNumber:option.rows[0]!.rowNumber}));
 }

@@ -84,6 +84,15 @@ export async function batchPatchMetadataRows(env:Env,patches:MetadataRowPatch[],
 }
 export interface SheetRowMetadata {metadataId:number;metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
 export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
+/** A deleted metadata ID must be checked directly; key searches cannot prove absence. */
+export async function getSheetRowMetadataById(env:Env,id:number):Promise<SheetRowMetadata|null>{
+  if(!Number.isSafeInteger(id)||id<1)throw new Error("INVALID_METADATA_ID");
+  let response:Response;try{response=await sheetsFetch(env,`/developerMetadata/${id}`,{method:"GET"});}catch(error){if(error instanceof SheetsHttpError&&error.status===404)return null;throw error;}
+  const metadata=await response.json() as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}};
+  const range=metadata.location?.dimensionRange;
+  if(metadata.metadataId!==id||!metadata.metadataKey||!metadata.metadataValue||!range||!Number.isSafeInteger(range.sheetId)||Number(range.sheetId)<0||range.dimension!=="ROWS"||!Number.isSafeInteger(range.startIndex)||Number(range.startIndex)<0||range.endIndex!==Number(range.startIndex)+1)throw new Error("INVALID_ROW_METADATA");
+  return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(range.sheetId),rowIndex:Number(range.startIndex)};
+}
 /** Create associations only after the caller has reverified each row identity. */
 export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[]):Promise<SheetRowMetadata[]>{
   if(!rows.length)return [];

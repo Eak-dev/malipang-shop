@@ -15,6 +15,24 @@ CREATE TABLE IF NOT EXISTS expense_owner_corrections(
 );
 CREATE INDEX IF NOT EXISTS idx_owner_corrections_owner ON expense_owner_corrections(owner_employee_id,status,created_at);
 
+-- Persist the exact verified pre-write values so ambiguous Sheets outcomes can
+-- be inspected and recovered without replaying a financial update blindly.
+CREATE TABLE IF NOT EXISTS expense_owner_correction_sync(
+  correction_id TEXT PRIMARY KEY REFERENCES expense_owner_corrections(correction_id),
+  expense_id TEXT NOT NULL REFERENCES expense_events(expense_id),
+  expense_version INTEGER NOT NULL CHECK(expense_version > 0),
+  phase TEXT NOT NULL CHECK(phase IN ('PREPARED','VALUES_IN_FLIGHT','VALUES_VERIFIED','REBIND_IN_FLIGHT','IDENTITY_VERIFIED','RECONCILED','REVIEW')),
+  plan_json TEXT NOT NULL CHECK(json_valid(plan_json)),
+  dispatch_id TEXT,
+  dispatch_token TEXT,
+  not_before TEXT,
+  reconciliation_id TEXT,
+  reconciliation_json TEXT CHECK(reconciliation_json IS NULL OR json_valid(reconciliation_json)),
+  updated_at TEXT NOT NULL,
+  last_error TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_owner_correction_sync_expense ON expense_owner_correction_sync(expense_id,expense_version);
+
 -- One explicitly selected input per owner; inbound text is never guessed.
 CREATE TABLE IF NOT EXISTS expense_owner_correction_inputs(
   owner_employee_id TEXT PRIMARY KEY REFERENCES employees(employee_id),

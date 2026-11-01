@@ -35,3 +35,11 @@ test('a pending ordinary expense job or stale expense version stops correction d
     assert.equal(await claimOwnerCorrectionLease(h.env,h.job,h.now),null);
   }finally{h.close()}
 });
+test('legacy numeric row mapping cannot write a previously corrected expense',async()=>{
+  const h=setup();try{
+    h.sqlite.prepare("UPDATE sync_jobs SET status='COMPLETED' WHERE job_id='job_correction'").run();
+    const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_lease',entityVersion:3,traceId:'trace_late'};
+    await assert.rejects(syncJob(h.env,job),/CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC/);
+    assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key='exp_lease' AND entity_version=3").get().status,'FAILED');
+  }finally{h.close()}
+});

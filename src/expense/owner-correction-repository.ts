@@ -3,6 +3,7 @@ import {randomId} from "../shared/ids";
 import {activeOwnerSql,type OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionAmount,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionPayment,type OwnerCorrectionSnapshot} from "./owner-correction";
 import {assessOwnerCorrection,type CorrectionGuardEvidence} from "./owner-correction-guard";
+import {serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/owner-correction-sync-plan";
 
 export type OwnerCorrectionInput={mode:"SEARCH"}|{mode:"VALUE";field:"description"|"amountSatang"|"transactionDate";snapshot:OwnerCorrectionSnapshot};
 
@@ -65,21 +66,21 @@ export async function cancelOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdenti
   return Number(result.meta.changes||0)===1;
 }
 
-export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"SYNC_PENDING"|"SYNC_FAILED"|"COMPLETED";
+export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
 /** An approved D1 update is not reported complete until its sync job completes. */
 export async function ownerCorrectionStatus(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<OwnerCorrectionStatus|null>{
   if(!id||!Number.isFinite(nowMs))return null;
-  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,
+  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,(SELECT s.phase FROM expense_owner_correction_sync s WHERE s.correction_id=c.correction_id) AS sync_phase,
     (SELECT j.status FROM expense_audit_log a JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=c.expense_id
        AND j.entity_version=CAST(json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.version') AS INTEGER)
      WHERE a.expense_id=c.expense_id AND a.action='EDIT' AND json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.correctionId')=c.correction_id LIMIT 1) AS sync_status
     FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND ${activeOwnerSql}`)
-    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;expires_at:string;reconciled_at:string|null;sync_status:string|null}>();
+    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;expires_at:string;reconciled_at:string|null;sync_status:string|null;sync_phase:string|null}>();
   if(!row)return null;
   if(row.status==="DRAFT")return row.expires_at<=new Date(nowMs).toISOString()?"EXPIRED":"DRAFT";
   if(row.status==="CANCELLED"||row.status==="STALE")return row.status;
   if(row.status!=="APPLIED")return null;
-  return row.sync_status==="COMPLETED"&&row.reconciled_at?"COMPLETED":row.sync_status==="FAILED"?"SYNC_FAILED":"SYNC_PENDING";
+  return row.sync_phase==="REVIEW"?"SYNC_REVIEW":row.sync_status==="COMPLETED"&&row.sync_phase==="RECONCILED"&&row.reconciled_at?"COMPLETED":row.sync_status==="FAILED"?"SYNC_FAILED":"SYNC_PENDING";
 }
 
 /** Small, deterministic pages only, using bound text and no fuzzy auto-selection. */
@@ -109,12 +110,13 @@ export async function loadOwnerExpense(env:Env,owner:OwnerReviewIdentity,expense
  * must independently verify period status and every projection identity and
  * provide fresh evidence; the actual Sheets worker is not implemented yet.
  */
-export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id:string,evidence:CorrectionGuardEvidence,traceId:string,nowMs=Date.now()):Promise<number|null>{
+export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id:string,evidence:CorrectionGuardEvidence,traceId:string,nowMs=Date.now(),plan?:CorrectionSyncPlan):Promise<number|null>{
   const row=await loadOwnerCorrectionDraft(env,owner,id,nowMs);if(!row)return null;
   let before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot;try{before=JSON.parse(String(row.before_json)) as OwnerCorrectionSnapshot;after=JSON.parse(String(row.after_json)) as OwnerCorrectionSnapshot;}catch{return null;}
   const field=String(row.field) as OwnerCorrectionField;
   const value=field==="payment"?{paymentKey:after.paymentKey,sourceWallet:after.sourceWallet}:field==="amountSatang"?`${Math.floor(after.amountSatang/100)}.${String(after.amountSatang%100).padStart(2,"0")}`:field==="transactionDate"?after.transactionDate:field==="category"?after.category:after.description;
   const rebuilt=buildOwnerCorrectionDraft(before,field,value);if(!rebuilt||JSON.stringify(rebuilt.after)!==JSON.stringify(after)||before.status!=="CONFIRMED"||assessOwnerCorrection(rebuilt,evidence).length)return null;
+  const planJson=plan?serializeCorrectionSyncPlan(plan,before.expenseId,id):null;if(!planJson)return null;
   const auditId=randomId("exp_audit"),jobId=randomId("sync"),now=new Date(nowMs).toISOString(),next=before.version+1;
   if(!Number.isSafeInteger(next))return null;
   const result=await env.DB.batch([
@@ -132,16 +134,20 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
     env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token)
       SELECT ?,'EXPENSE_CORRECTION',?,?,?,'PENDING',0,?,?,NULL,NULL WHERE EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`)
       .bind(jobId,before.expenseId,next,traceId,now,now,auditId),
+    env.DB.prepare(`INSERT INTO expense_owner_correction_sync(correction_id,expense_id,expense_version,phase,plan_json,updated_at)
+      SELECT ?,?,?,'PREPARED',?,? WHERE EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`)
+      .bind(id,before.expenseId,next,planJson,now,auditId),
     // An unexpected zero-row update after audit insertion must abort the
     // whole batch. No-op when the first guarded audit did not run.
     env.DB.prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?) OR (
       EXISTS(SELECT 1 FROM expense_events WHERE expense_id=? AND version=? AND updated_at=?) AND
       EXISTS(SELECT 1 FROM expense_owner_corrections WHERE correction_id=? AND status='APPLIED' AND applied_at=?) AND
-      EXISTS(SELECT 1 FROM sync_jobs WHERE job_id=? AND entity_type='EXPENSE_CORRECTION' AND entity_key=? AND entity_version=? AND status='PENDING')
+      EXISTS(SELECT 1 FROM sync_jobs WHERE job_id=? AND entity_type='EXPENSE_CORRECTION' AND entity_key=? AND entity_version=? AND status='PENDING') AND
+      EXISTS(SELECT 1 FROM expense_owner_correction_sync WHERE correction_id=? AND expense_id=? AND expense_version=? AND phase='PREPARED' AND plan_json=?)
     ) THEN 1 ELSE json('invalid owner correction transaction') END AS verified`)
-      .bind(auditId,before.expenseId,next,now,id,now,jobId,before.expenseId,next)
+      .bind(auditId,before.expenseId,next,now,id,now,jobId,before.expenseId,next,id,before.expenseId,next,planJson)
   ]);
   if(Number(result[0]?.meta.changes||0)!==1)return null;
-  if(result.slice(0,4).some(part=>Number(part.meta.changes||0)!==1))throw new Error("OWNER_CORRECTION_INCOMPLETE_TRANSACTION");
+  if(result.slice(0,5).some(part=>Number(part.meta.changes||0)!==1))throw new Error("OWNER_CORRECTION_INCOMPLETE_TRANSACTION");
   return next;
 }

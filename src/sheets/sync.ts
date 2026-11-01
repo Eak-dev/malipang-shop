@@ -143,6 +143,11 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     }else if(job.entityType==="OT_REQUEST"){
       const r=await env.DB.prepare(`SELECT o.*,e.staff_name FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=?`).bind(job.entityKey).first<Record<string,unknown>>();if(!r)throw new Error(`OT request not found: ${job.entityKey}`);sheet=env.SHEET_OT_REQUESTS;values=[r.ot_id,r.work_date,r.employee_id,r.staff_name,r.reason,r.planned_start,r.planned_end,baht(r.fixed_amount_satang),r.requested_by,r.owner_preapproved_at,r.employee_confirm_status,r.employee_confirmed_at,r.owner_final_status,baht(r.owner_final_amount_satang),r.owner_final_at,r.actual_ot_minutes,r.status,r.note,r.version,r.updated_at];
     }else if(job.entityType==="EXPENSE"){
+      // Existing EXPENSE projection relies on mutable numeric row indexes.
+      // Once an owner correction has used stable metadata, never let this
+      // legacy path overwrite a possibly moved row; a verified path is required.
+      const corrected=await env.DB.prepare(`SELECT 1 present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND entity_key=? AND status='COMPLETED' LIMIT 1`).bind(job.entityKey).first<{present:number}>();
+      if(corrected)throw new Error("CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC");
       const loaded=await loadExpenseDailyPosting(env,job.entityKey);expense=loaded.expense;expenseDocument=loaded.document;expenseItems=loaded.items;expenseRecord=loaded.record;sheet=env.SHEET_EXPENSE_RAW;values=buildExpenseRawSheetValues(expense,loaded.summaryDocument);
     }else if(job.entityType==="PERSONAL_USE"){
       personalUse=await loadPersonalUseProjection(env,job.entityKey);

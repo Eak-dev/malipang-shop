@@ -65,6 +65,23 @@ export function buildMetadataRowPatchRequest(patches:MetadataRowPatch[],allowedC
   });
   return {valueInputOption:"RAW",data};
 }
+export function metadataPatchResponseComplete(patches:MetadataRowPatch[],result:unknown):boolean{
+  if(!result||typeof result!=="object")return false;
+  const responses=(result as {responses?:Array<{dataFilter?:{developerMetadataLookup?:{metadataId?:number}};updatedRows?:number}>}).responses;
+  if(!Array.isArray(responses)||responses.length!==patches.length)return false;
+  const expected=new Set(patches.map(patch=>patch.metadataId)),seen=new Set<number>();
+  if(expected.size!==patches.length)return false;
+  for(const response of responses){const id=response.dataFilter?.developerMetadataLookup?.metadataId;if(!Number.isSafeInteger(id)||!expected.has(Number(id))||seen.has(Number(id))||response.updatedRows!==1)return false;seen.add(Number(id));}
+  return seen.size===expected.size;
+}
+/** Ambiguous responses are not automatically replayed; caller retains its lease. */
+export async function batchPatchMetadataRows(env:Env,patches:MetadataRowPatch[],allowedColumns:number[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{
+  if(!patches.length)return;
+  const body=buildMetadataRowPatchRequest(patches,allowedColumns);
+  const response=await sheetsFetch(env,"/values:batchUpdateByDataFilter",{method:"POST",body:JSON.stringify(body)},true,beforeMutationDispatch);
+  let result:unknown;try{result=await response.json();}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(!metadataPatchResponseComplete(patches,result))throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_ROW_PATCH_RESPONSE_MISMATCH"));
+}
 export interface SheetRowMetadata {metadataId:number;metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
 export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
 /** Create associations only after the caller has reverified each row identity. */

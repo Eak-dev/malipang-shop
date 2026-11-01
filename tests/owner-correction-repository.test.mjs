@@ -65,6 +65,30 @@ test('an unexpected zero-row expense update aborts the entire transaction',async
     assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
   }finally{h.close()}
 });
+test('a snapshot that changes after preview is never committed even if version was not bumped',async()=>{
+  const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},now=Date.parse('2026-10-28T10:00:00Z');try{
+    h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+      VALUES('exp_stale','msg_stale','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+    const before=await loadOwnerExpense(h.env,owner,'exp_stale'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport',now);
+    h.sqlite.prepare("UPDATE expense_events SET description='Changed while open' WHERE expense_id='exp_stale'").run();
+    const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,syncInProgress:false};
+    assert.equal(await commitOwnerCorrection(h.env,owner,id,e,'trace',now),null);assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
+  }finally{h.close()}
+});
+test('an expired draft or revoked owner cannot commit a correction',async()=>{
+  for(const mode of ['expired','revoked']){
+    const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},now=Date.parse('2026-10-28T10:00:00Z');try{
+      h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+        VALUES('exp_expiry','msg_expiry','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+      const before=await loadOwnerExpense(h.env,owner,'exp_expiry'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport',now);
+      if(mode==='revoked')h.sqlite.prepare("UPDATE staff_roles SET status='INACTIVE' WHERE employee_id='TEST_OWNER'").run();
+      const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,syncInProgress:false};
+      assert.equal(await commitOwnerCorrection(h.env,owner,id,e,'trace',mode==='expired'?now+16*60_000:now),null);
+      assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
+    }finally{h.close()}
+  }
+});
 
 test('unknown result after commit never applies the same correction twice',async()=>{
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},now=Date.parse('2026-10-28T10:00:00Z');try{

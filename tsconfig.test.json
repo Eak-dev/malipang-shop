@@ -43,6 +43,7 @@
     "src/sheets/owner-correction-combined-plan.ts",
     "src/sheets/owner-correction-recovery.ts",
     "src/sheets/owner-correction-rebind.ts",
+    "src/sheets/owner-correction-lease.ts",
     "src/sheets/sync.ts",
     "src/attendance/service.ts",
     "src/attendance/messages.ts",

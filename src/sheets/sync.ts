@@ -111,14 +111,22 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
   // same D1 statement. Other entity types retain their existing per-version claims.
-  const serializePersonalUse=job.entityType==="PERSONAL_USE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`;
-  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
+  const serializePersonalUse=job.entityType==="PERSONAL_USE",serializeExpense=job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}${serializeExpense?` AND NOT EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=? AND correction.status<>'COMPLETED')`:""}`;
+  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);if(serializeExpense)claimArgs.push(job.entityKey);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
-  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken)return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";
+  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
+    if(job.entityType==="PERSONAL_USE")return personalUseClaimOutcome(env,job,claimNow);
+    if(job.entityType==="EXPENSE"){
+      const state=await env.DB.prepare(`SELECT status,EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=? AND correction.status<>'COMPLETED') AS blocked
+        FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityKey,job.entityVersion).first<{status:string;blocked:number}>();
+      if(state?.status!=="COMPLETED"&&Number(state?.blocked||0)===1)return "BUSY";
+    }
+    return "IGNORED";
+  }
   let personalUse:PersonalUseProjectionRow|null=null,personalUseWriteOutcomeUncertain=false,personalUseAmbiguityLeaseUntil:string|null=null;
   try{
     let sheet="",values:unknown[]=[],expense:Record<string,unknown>|null=null,expenseDocument:PurchaseDetailDocument|null=null,expenseItems:DailyExpenseDocumentItem[]=[],expenseRecord:PurchaseDetailRecord|null=null;

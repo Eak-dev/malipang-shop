@@ -65,6 +65,23 @@ export async function cancelOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdenti
   return Number(result.meta.changes||0)===1;
 }
 
+export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"SYNC_PENDING"|"SYNC_FAILED"|"COMPLETED";
+/** An approved D1 update is not reported complete until its sync job completes. */
+export async function ownerCorrectionStatus(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<OwnerCorrectionStatus|null>{
+  if(!id||!Number.isFinite(nowMs))return null;
+  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,
+    (SELECT j.status FROM expense_audit_log a JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=c.expense_id
+       AND j.entity_version=CAST(json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.version') AS INTEGER)
+     WHERE a.expense_id=c.expense_id AND a.action='EDIT' AND json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.correctionId')=c.correction_id LIMIT 1) AS sync_status
+    FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND ${activeOwnerSql}`)
+    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;expires_at:string;reconciled_at:string|null;sync_status:string|null}>();
+  if(!row)return null;
+  if(row.status==="DRAFT")return row.expires_at<=new Date(nowMs).toISOString()?"EXPIRED":"DRAFT";
+  if(row.status==="CANCELLED"||row.status==="STALE")return row.status;
+  if(row.status!=="APPLIED")return null;
+  return row.sync_status==="COMPLETED"&&row.reconciled_at?"COMPLETED":row.sync_status==="FAILED"?"SYNC_FAILED":"SYNC_PENDING";
+}
+
 /** Small, deterministic pages only, using bound text and no fuzzy auto-selection. */
 export async function searchOwnerExpenses(env:Env,owner:OwnerReviewIdentity,search:string,beforeCreatedAt="",beforeId=""):Promise<Record<string,unknown>[]> {
   const query=search.trim();if(query.length<2||query.length>100||Boolean(beforeCreatedAt)!==Boolean(beforeId))return [];

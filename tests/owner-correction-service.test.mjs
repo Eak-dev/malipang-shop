@@ -16,6 +16,7 @@ test('owner can search a staff expense and preview a correction; confirm stays f
     await post('a=owner_correction_open&id=exp_service');assert.match(JSON.stringify(h.messages.at(-1)),/แก้หมวด/);
     await post('a=owner_correction_set_category&id=exp_service&v=1&category=transport');
     const draft=h.sqlite.prepare('SELECT correction_id,status FROM expense_owner_corrections').get();assert.equal(draft.status,'DRAFT');
+    await post(`a=owner_correction_status&id=${draft.correction_id}`);assert.match(JSON.stringify(h.messages.at(-1)),/ยังไม่ได้ยืนยัน/);
     await post(`a=owner_correction_confirm&id=${draft.correction_id}&v=1`);
     assert.match(JSON.stringify(h.messages.at(-1)),/ยังบันทึกการแก้ไขไม่ได้/);
     assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');

@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS expense_owner_corrections(
   status TEXT NOT NULL CHECK(status IN ('DRAFT','APPLIED','CANCELLED','STALE')),
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  applied_at TEXT
+  applied_at TEXT,
+  reconciled_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_owner_corrections_owner ON expense_owner_corrections(owner_employee_id,status,created_at);
 

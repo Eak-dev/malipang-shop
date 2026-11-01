@@ -5,7 +5,7 @@ import {isoDateInBangkok} from "../shared/time";
 import type {Env,LineEvent} from "../types";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionSnapshot} from "./owner-correction";
-import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
+import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
 import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionPreview,buildOwnerCorrectionResults} from "./owner-correction-flex";
 
 const reply=(env:Env,event:LineEvent,body:string,traceId:string)=>respondTextToLineEvent(env,event,body,{traceId,purpose:"OWNER_RESPONSE"});
@@ -62,6 +62,10 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
     await results(env,event,owner,query,traceId,q.get("cursor")||"");return true;
   }
   const id=q.get("id")||"";
+  if(action==="owner_correction_status"){
+    const status=await ownerCorrectionStatus(env,owner,id),messages={DRAFT:"ร่างนี้ยังไม่ได้ยืนยัน รายการเดิมยังไม่เปลี่ยน",EXPIRED:"ร่างหมดอายุ กรุณาเปิดรายการใหม่",CANCELLED:"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน",STALE:"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",SYNC_PENDING:"บันทึกแล้ว กำลังซิงก์และตรวจข้อมูลที่เกี่ยวข้อง",SYNC_FAILED:"บันทึกแล้ว แต่การซิงก์ยังไม่สำเร็จ ระบบต้องตรวจและลองต่อ",COMPLETED:"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว"} as const;
+    await reply(env,event,status?messages[status]:"ไม่พบรายการหรือไม่มีสิทธิ์ตรวจสถานะ",traceId);return true;
+  }
   if(action==="owner_correction_cancel"){
     const cancelled=await cancelOwnerCorrectionDraft(env,owner,id);await reply(env,event,cancelled?"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน":"ร่างหมดอายุหรือได้รับการจัดการแล้ว",traceId);return true;
   }

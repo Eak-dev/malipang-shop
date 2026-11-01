@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
-import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,searchOwnerExpenses,startOwnerCorrectionInput} from '../dist/expense/owner-correction-repository.js';
+import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput} from '../dist/expense/owner-correction-repository.js';
 
 test('only the active verified owner can draft a correction for another submitter without changing the expense',async()=>{
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},staff={employeeId:'TEST_STAFF',lineUserId:'fixture_staff'},time=Date.parse('2026-10-28T10:00:00Z');try{
@@ -27,6 +27,7 @@ test('guarded transaction records owner, old and new values and exactly one dura
     h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
       VALUES('exp_apply','msg_apply','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
     const snapshot=await loadOwnerExpense(h.env,owner,'exp_apply'),id=await createOwnerCorrectionDraft(h.env,owner,snapshot,'category','transport',now);
+    assert.equal(await ownerCorrectionStatus(h.env,owner,id,now),'DRAFT');
     const evidence={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,syncInProgress:false};
     assert.equal(await commitOwnerCorrection(h.env,owner,id,{...evidence,sourcePeriod:'UNKNOWN'},'trace',now),null);
     assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
@@ -36,6 +37,11 @@ test('guarded transaction records owner, old and new values and exactly one dura
     const after=h.sqlite.prepare('SELECT category,version FROM expense_events').get();assert.equal(after.category,'transport');assert.equal(after.version,2);
     const audit=h.sqlite.prepare('SELECT actor_employee_id,before_json,after_json FROM expense_audit_log').get();assert.equal(audit.actor_employee_id,'TEST_OWNER');assert.equal(JSON.parse(audit.before_json).category,'general');assert.equal(JSON.parse(audit.after_json).category,'transport');
     assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND status='PENDING'").get().n,1);
+    assert.equal(await ownerCorrectionStatus(h.env,owner,id,now),'SYNC_PENDING');
+    assert.equal(await ownerCorrectionStatus(h.env,{employeeId:'TEST_STAFF',lineUserId:'fixture_staff'},id,now),null);
+    h.sqlite.prepare("UPDATE sync_jobs SET status='FAILED' WHERE entity_type='EXPENSE_CORRECTION'").run();assert.equal(await ownerCorrectionStatus(h.env,owner,id,now),'SYNC_FAILED');
+    h.sqlite.prepare("UPDATE sync_jobs SET status='COMPLETED' WHERE entity_type='EXPENSE_CORRECTION'").run();assert.equal(await ownerCorrectionStatus(h.env,owner,id,now),'SYNC_PENDING');
+    h.sqlite.prepare("UPDATE expense_owner_corrections SET reconciled_at='2026-10-28T10:02:00Z' WHERE correction_id=?").run(id);assert.equal(await ownerCorrectionStatus(h.env,owner,id,now),'COMPLETED');
   }finally{h.close()}
 });
 

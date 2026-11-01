@@ -5,6 +5,7 @@ import { getStaffActorByLineId } from "../access/repository";
 import { claimInboundEvent,completeInboundEvent,InboundBusyError,safeRecordMetric } from "../db/repositories";
 import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../expense/service";
 import { handleOnlineOrderReviewPostback,handleOnlineOrderReviewText } from "../expense/online-order-review-service";
+import { handleDailyCategoryReviewPostback,handleDailyCategoryReviewText } from "../sheets/daily-category-owner";
 import { handlePersonalUsePostback,handlePersonalUseText } from "../personal-use/service";
 import { saveEvidence } from "../evidence/r2";
 import { downloadLineContent } from "../line/api";
@@ -23,6 +24,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     const to=event.source.type==="user"?event.source.userId||"":"";if(!to){await completeInboundEvent(env,webhookId,"UNSUPPORTED_CHAT","IGNORED");return;}
     const actor=await getStaffActorByLineId(env,to);
     if(event.type==="postback"){
+      if(await handleDailyCategoryReviewPostback(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"SHEET_CATEGORY_REVIEW","COMPLETED");return;}
       if(await handleOnlineOrderReviewPostback(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"EXPENSE_OWNER_REVIEW","COMPLETED");return;}
       if(await handlePersonalUsePostback(env,event,actor)) {await completeInboundEvent(env,webhookId,"PERSONAL_USE_POSTBACK","COMPLETED");return;}
       if(!actor||!authorize(actor,"expense.self.read",{employeeId:actor?.employeeId})){await respondTextToLineEvent(env,event,"You are not authorized to use this menu.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
@@ -31,6 +33,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     }
     if(event.type!=="message"||!event.message){await completeInboundEvent(env,webhookId,"IGNORED","COMPLETED");return;}
     if(event.message.type==="text"){
+      if(await handleDailyCategoryReviewText(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"SHEET_CATEGORY_REVIEW","COMPLETED");return;}
       if(await handleHrText(env,event,actor,job.traceId)){await completeInboundEvent(env,webhookId,"HR_REGISTRATION","COMPLETED");return;}
       if(actor&&await requestOwnAttendanceCorrection(env,event,actor,event.message.text||"",job.traceId)){await completeInboundEvent(env,webhookId,"SELF_SERVICE_CORRECTION","COMPLETED");return;}
       if(await handleOwnerPayrollText(env,event,actor)){await completeInboundEvent(env,webhookId,"OWNER_OT_TEXT","COMPLETED");return;}

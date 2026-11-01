@@ -4,9 +4,11 @@ import { recoverPendingLineNotifications } from "../line/attendance-notification
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
 import { refreshCurrentEmployeeWages } from "../payroll/repository";
 import { recoverPendingStaffConfigSyncs } from "../sheets/staff-config";
+import { bootstrapDailyCategoryRows } from "../sheets/daily-category-bootstrap-service";
+import { observeDailyCategoryChanges } from "../sheets/daily-category-observer";
 import type { Env } from "../types";
 
-export const maintenanceSteps=["inbound_leases","payroll","sheets_recovery","staff_config_recovery","line_notification_recovery","evidence_retention"] as const;
+export const maintenanceSteps=["inbound_leases","payroll","sheets_recovery","staff_config_recovery","line_notification_recovery","evidence_retention","category_review"] as const;
 export type MaintenanceStep=typeof maintenanceSteps[number];
 
 /** No automatic retry here: each existing operation owns its retry boundary. */
@@ -19,7 +21,8 @@ export async function runScheduledMaintenance(env:Env):Promise<void>{
     sheets_recovery:()=>recoverPendingSheetJobs(env),
     staff_config_recovery:()=>recoverPendingStaffConfigSyncs(env),
     line_notification_recovery:()=>recoverPendingLineNotifications(env),
-    evidence_retention:async()=>{const result=await auditEvidenceRetention(env);if(result.errors)throw new Error("EVIDENCE_RETENTION_AUDIT_INCOMPLETE");}
+    evidence_retention:async()=>{const result=await auditEvidenceRetention(env);if(result.errors)throw new Error("EVIDENCE_RETENTION_AUDIT_INCOMPLETE");},
+    category_review:async()=>{if(env.DAILY_CATEGORY_REVIEW_ENABLED!=="true")return;await bootstrapDailyCategoryRows(env);await observeDailyCategoryChanges(env);}
   };
   for(const step of maintenanceSteps){
     const started=Date.now();let outcome="SUCCESS";

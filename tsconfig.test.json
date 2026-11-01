@@ -44,6 +44,8 @@
     "src/sheets/owner-correction-recovery.ts",
     "src/sheets/owner-correction-sync-plan.ts",
     "src/sheets/owner-correction-sync-state.ts",
+    "src/sheets/owner-correction-worker.ts",
+    "src/sheets/owner-correction-inspection.ts",
     "src/sheets/owner-correction-recover-state.ts",
     "src/sheets/owner-correction-rebind.ts",
     "src/sheets/owner-correction-lease.ts",

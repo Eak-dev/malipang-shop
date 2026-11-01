@@ -22,7 +22,7 @@ test('actual scheduled handler continues real outbox recovery after wage refresh
   assert.ok(seen.some(s=>s.includes('UPDATE staff_config_sync_outbox')));
   const kinds=h.queue.map(j=>(j.body||j).kind).sort();assert.deepEqual(kinds,['LINE_NOTIFICATION','SHEETS_SYNC']);
   assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM attendance_daily').get().n,0);
-  const metrics=h.sqlite.prepare("SELECT labels_json FROM metrics WHERE name='scheduled_maintenance_step_ms'").all().map(x=>JSON.parse(x.labels_json));assert.equal(metrics.length,6);assert.deepEqual(metrics.filter(x=>x.outcome==='FAILED').map(x=>x.step),['payroll']);
+  const metrics=h.sqlite.prepare("SELECT labels_json FROM metrics WHERE name='scheduled_maintenance_step_ms'").all().map(x=>JSON.parse(x.labels_json));assert.equal(metrics.length,7);assert.deepEqual(metrics.filter(x=>x.outcome==='FAILED').map(x=>x.step),['payroll']);
   await scheduled(h);assert.equal(h.queue.length,2,'immediate cron replay must respect existing recovery cooldowns');
  }finally{h.close();}
 });
@@ -31,7 +31,7 @@ test('a lease-marking failure does not skip payroll or later independent schedul
   const prepare=h.DB.prepare.bind(h.DB),seen=[];h.DB.prepare=sql=>{seen.push(sql);const s=prepare(sql);if(sql.startsWith("UPDATE inbound_events SET status='STALE'"))s.run=async()=>{throw new Error('synthetic lease failure');};return s;};
   const r=await scheduled(h);assert.equal(r[0].status,'rejected');assert.match(r[0].reason.message,/inbound_leases/);
   const wage=seen.findIndex(s=>s.startsWith('UPDATE employees SET')),finalize=seen.findIndex(s=>s.startsWith('SELECT employee_id,work_date FROM attendance_daily'));
-  assert.ok(wage>=0&&finalize>wage);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM metrics WHERE name='scheduled_maintenance_step_ms'").get().n,6);
+  assert.ok(wage>=0&&finalize>wage);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM metrics WHERE name='scheduled_maintenance_step_ms'").get().n,7);
  }finally{h.close();}
 });
 test('partial retention audit errors are observable and remain best effort',async t=>{
@@ -57,7 +57,7 @@ for(const [step,needle,method,expectedKinds] of [
   await withPendingEffects(h);const prepare=h.DB.prepare.bind(h.DB);h.DB.prepare=sql=>{const s=prepare(sql);if(sql.includes(needle))s[method]=async()=>{throw new Error('synthetic maintenance failure');};return s;};
   const r=await scheduled(h);assert.equal(r[0].status,'rejected');assert.equal(r[0].reason.message,'SCHEDULED_MAINTENANCE_FAILED:'+step);
   const metrics=h.sqlite.prepare("SELECT labels_json FROM metrics WHERE name='scheduled_maintenance_step_ms'").all().map(x=>JSON.parse(x.labels_json));
-  assert.equal(metrics.length,6);assert.deepEqual(metrics.filter(x=>x.outcome==='FAILED').map(x=>x.step),[step]);
+  assert.equal(metrics.length,7);assert.deepEqual(metrics.filter(x=>x.outcome==='FAILED').map(x=>x.step),[step]);
   assert.deepEqual(h.queue.map(j=>(j.body||j).kind).sort(),expectedKinds);
  }finally{h.close();}
 });

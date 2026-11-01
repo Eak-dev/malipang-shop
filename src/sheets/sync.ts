@@ -5,6 +5,7 @@ import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfir
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
+import { syncDailyCategoryJob } from "./daily-category-sync";
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -111,14 +112,30 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
   // same D1 statement. Other entity types retain their existing per-version claims.
-  const serializePersonalUse=job.entityType==="PERSONAL_USE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`;
+  const serializePersonalUse=job.entityType==="PERSONAL_USE",serializeExpense=job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}${serializeExpense?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='EXPENSE_CATEGORY' AND active.entity_key=? AND active.status='PROCESSING' AND active.lease_until>?)
+      AND (NOT EXISTS(SELECT 1 FROM daily_category_requests r WHERE r.expense_id=? AND r.status='APPROVED') OR EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=? AND e.version=?))`:""}`;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
+  if(serializeExpense)claimArgs.push(job.entityKey,now,job.entityKey,job.entityKey,job.entityVersion);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
-  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken)return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";
+  if(job.entityType==="EXPENSE_CATEGORY")return syncDailyCategoryJob(env,job,retryAttempt);
+  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));
+  if(!leaseToken){
+    if(job.entityType==="PERSONAL_USE")return personalUseClaimOutcome(env,job,claimNow);
+    if(job.entityType==="EXPENSE"){
+      await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL
+        WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED')
+          AND EXISTS(SELECT 1 FROM daily_category_requests r WHERE r.expense_id=sync_jobs.entity_key AND r.status='APPROVED')
+          AND EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=sync_jobs.entity_key AND e.version>sync_jobs.entity_version)`)
+        .bind(claimNow,job.entityKey,job.entityVersion).run();
+      const busy=await env.DB.prepare(`SELECT 1 busy FROM sync_jobs WHERE entity_type='EXPENSE_CATEGORY' AND entity_key=? AND status='PROCESSING' AND lease_until>? LIMIT 1`).bind(job.entityKey,claimNow).first<{busy:number}>();
+      if(busy)return "BUSY";
+    }
+    return "IGNORED";
+  }
   let personalUse:PersonalUseProjectionRow|null=null,personalUseWriteOutcomeUncertain=false,personalUseAmbiguityLeaseUntil:string|null=null;
   try{
     let sheet="",values:unknown[]=[],expense:Record<string,unknown>|null=null,expenseDocument:PurchaseDetailDocument|null=null,expenseItems:DailyExpenseDocumentItem[]=[],expenseRecord:PurchaseDetailRecord|null=null;

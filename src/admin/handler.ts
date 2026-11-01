@@ -2,7 +2,9 @@ import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
 import { applyPayrollRange,previewPayrollRange } from "../payroll/range";
-import { bootstrapSheets } from "../sheets/client";
+import { batchUpdateSpreadsheet,bootstrapSheets,getSheetId } from "../sheets/client";
+import { bootstrapDailyCategoryRows } from "../sheets/daily-category-bootstrap-service";
+import { dailyCategoryDropdownRequests } from "../sheets/daily-category-dropdown";
 import type { EmployeeImportInput,Env } from "../types";
 import { correctAttendance } from "./attendance-correction";
 import { evaluateExpenseText } from "./expense-evaluate";
@@ -33,6 +35,11 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
+    if(request.method==="POST"&&url.pathname==="/admin/category-review/bootstrap")return Response.json({ok:true,...await bootstrapDailyCategoryRows(env)});
+    if(request.method==="POST"&&url.pathname==="/admin/category-review/dropdown"){
+      if(env.DAILY_CATEGORY_REVIEW_ENABLED!=="true")return Response.json({ok:false,error:"CATEGORY_REVIEW_DISABLED"},{status:409});
+      await batchUpdateSpreadsheet(env,dailyCategoryDropdownRequests(await getSheetId(env,env.SHEET_EXPENSE_DAILY)));return Response.json({ok:true});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});

@@ -10,6 +10,7 @@ const acceptedCases=[
   ['English cash quick save','Egg change 500',{description:'Egg',amountSatang:50000,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-20',quickSave:true}],
   ['Thai transfer quick save','ค่าไฟ โอน 1,200.50',{description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-20',quickSave:true}],
   ['English transfer needs confirmation','ค่าไฟ transfer 1,200.50',{description:'ค่าไฟ',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-20',quickSave:false}],
+  ['English driver transfer','28/10 Driver transfer 2000',{description:'Driver',amountSatang:200000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'transport',transactionDate:'2026-10-28',quickSave:false}],
   ['Original English gas example','Gas transfer 371',{description:'Gas',amountSatang:37100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'gas',transactionDate:'2026-07-20',quickSave:false}],
   ['card needs confirmation','กล่อง kbank 350',{description:'กล่อง',amountSatang:35000,paymentKey:'kbank',sourceWallet:'CARD_KBANK',category:'packaging',transactionDate:'2026-07-20',quickSave:false}],
   ['date without year','19/07 ไข่ ทอน 10',{description:'ไข่',amountSatang:1000,paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',transactionDate:'2026-07-19',quickSave:true}],
@@ -42,7 +43,7 @@ const categoryGroups={
   gas:['แก๊ส','lpg','alumax','gas cylinder','Gas'],
   rent:['ค่าเช่า','ค่าส่วนกลาง','rent','service charge','land tax'],
   staff:['ค่าแรง','เงินเดือน','salary','wage','payroll','labor'],
-  transport:['ขนส่ง','ส่งของ','ค่าน้ำมัน','grab','delivery','shipping','parking','gasoline'],
+  transport:['ขนส่ง','ส่งของ','ค่าน้ำมัน','ค่ารถ','ค่าเดินทาง','ค่าคนขับ','คนขับรถ','ค่าจัดส่ง','แท็กซี่','Driver','drivers','courier','taxi','freight','petrol','diesel','logistics','grab','delivery','shipping','parking','gasoline'],
   marketing:['โฆษณา','ป้าย','ยิงแอด','ads','facebook','poster','signage'],
   equipment:['เครื่อง','อุปกรณ์','ตะกร้อ','salad spinner','ช้อน','ส้อม','machine','equipment','tool'],
   ingredients:['แป้ง','ไข่','น้ำตาล','ยีสต์','นม','เนย','มาการีน','ไส้กรอก','แฮม','ชีส','flour','egg','sugar','yeast','milk','butter','ham','sausage','cheese','margarine'],
@@ -63,6 +64,8 @@ test('category aliases cover the shop master',()=>{
   for(const [category,descriptions] of Object.entries(categoryGroups))for(const description of descriptions)assert.equal(autoCategory(description),category,description);
   assert.equal(autoCategory('coffee beans'),'general','fee must not match inside coffee');
   assert.equal(autoCategory('bread'),'general','ad must not match inside bread');
+  assert.notEqual(autoCategory('screwdriver'),'transport','driver must not match inside screwdriver');
+  for(const oil of ['น้ำมันพืช','น้ำมันคาโนล่า','น้ำมันถั่วเหลือง','cooking oil','canola oil'])assert.equal(autoCategory(oil),'ingredients',oil);
   assert.equal(autoCategory('เบ็ดเตล็ด'),'general');
 });
 

@@ -15,6 +15,10 @@ test('multiple receipt items and in-flight sync block unsafe amount correction',
   assert.deepEqual(assessOwnerCorrection(draft,e),['SYNC_IN_PROGRESS','RECEIPT_ALLOCATION_REVIEW']);
   e.receiptAllocationVerified=true;e.syncInProgress=false;assert.deepEqual(assessOwnerCorrection(draft,e),[]);
 });
+test('a receipt with multiple items also requires review before changing its category',()=>{
+  const category={...draft,field:'category',after:{...snapshot,category:'transport'}};
+  assert.deepEqual(assessOwnerCorrection(category,{...evidence(),itemCount:2}),['RECEIPT_ALLOCATION_REVIEW']);
+});
 test('waiting drafts still require owner and snapshot, but have no posted row or period yet',()=>{
   const waiting={...draft,before:{...snapshot,status:'WAITING_CONFIRM'}};
   const e={...evidence(),ownerVerified:false,snapshotCurrent:false,sourcePeriod:'UNKNOWN',destinationPeriod:'UNKNOWN',rowIdentityVerified:false,projectionTargetsVerified:false};

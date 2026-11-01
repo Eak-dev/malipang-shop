@@ -2,6 +2,7 @@ import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 import {legacySourceWallet,resolvePayment} from "./daily-expense";
 import {isIsoDate} from "../shared/time";
 import {expenseCategories,expensePaymentOptions} from "../expense/document";
+import type {MetadataRowPatch} from "./client";
 
 export interface VerifiedCorrectionSheetRow{rowNumber:number;metadataExpenseId:string;values:unknown[]}
 export interface CorrectionSheetDestination{rowNumber:number;postingYear:number;postingMonth:number;values:unknown[];hasMetadata:boolean}
@@ -24,4 +25,13 @@ export function planOwnerCorrectionSheet(input:{before:OwnerCorrectionSnapshot;a
   const move=old.postingMonth!==next.postingMonth||old.postingYear!==next.postingYear;
   if(move&&(!destination||destination.hasMetadata||destination.rowNumber===source.rowNumber||!Number.isSafeInteger(destination.rowNumber)||destination.rowNumber<1||destination.postingMonth!==next.postingMonth||destination.postingYear!==next.postingYear||!blank(destination.values[0])||inputs.some(col=>!blank(destination.values[col]))))throw new Error("CORRECTION_DESTINATION_UNSAFE");
   return {sourceRow:source.rowNumber,destinationRow:move?destination!.rowNumber:source.rowNumber,destinationMonth:next.postingMonth,destinationYear:next.postingYear,postingDay:next.postingDay,amountColumn:next.amountColumn,description:after.description,amountBaht:after.amountSatang/100,category:after.category,sourceWallet:legacySourceWallet(after.paymentKey,after.sourceWallet),move};
+}
+
+/** Build input-only patches; caller must own a lease and revalidate row identities. */
+export function ownerCorrectionRowPatches(plan:CorrectionSheetPlan,sourceMetadataId:number,destinationMetadataId:number):MetadataRowPatch[]{
+  if(!Number.isSafeInteger(sourceMetadataId)||sourceMetadataId<1||!Number.isSafeInteger(destinationMetadataId)||destinationMetadataId<1||(!plan.move&&sourceMetadataId!==destinationMetadataId)||(plan.move&&sourceMetadataId===destinationMetadataId))throw new Error("CORRECTION_METADATA_INVALID");
+  const amountColumn=columnIndex(plan.amountColumn);if(!amountColumns.includes(amountColumn)||!Number.isFinite(plan.amountBaht)||plan.amountBaht<=0||money(plan.amountBaht)===null||!expenseCategories.has(plan.category)||!plan.description.trim()||plan.description.length>200||!Number.isInteger(plan.destinationMonth)||plan.destinationMonth<1||plan.destinationMonth>12||!Number.isInteger(plan.postingDay)||plan.postingDay<1||plan.postingDay>31||!Number.isInteger(plan.destinationYear)||plan.destinationYear<2000||!Number.isSafeInteger(plan.sourceRow)||!Number.isSafeInteger(plan.destinationRow)||plan.sourceRow<1||plan.destinationRow<1||(plan.move===(plan.sourceRow===plan.destinationRow)))throw new Error("CORRECTION_PATCH_INVALID");
+  const destination=inputs.map(columnIndex=>({columnIndex,value:columnIndex===1?plan.destinationMonth:columnIndex===2?plan.postingDay:columnIndex===3?plan.description:columnIndex===amountColumn?plan.amountBaht:columnIndex===21?plan.category:columnIndex===22?plan.sourceWallet:""}));
+  if(!plan.move)return [{metadataId:sourceMetadataId,cells:destination}];
+  return [{metadataId:destinationMetadataId,cells:destination},{metadataId:sourceMetadataId,cells:inputs.map(columnIndex=>({columnIndex,value:""}))}];
 }

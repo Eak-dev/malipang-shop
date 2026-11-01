@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {handleOwnerCorrectionPostback,handleOwnerCorrectionText} from '../dist/expense/owner-correction-service.js';
+import {processInbound} from '../dist/router/process-event.js';
 
 test('owner can search a staff expense and preview a correction; confirm stays fail-closed until sync is implemented',async()=>{
   const h=ownerOrderFixture();try{
@@ -20,6 +21,18 @@ test('owner can search a staff expense and preview a correction; confirm stays f
     assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
     await post(`a=owner_correction_cancel&id=${draft.correction_id}&v=1`,'fixture_staff');
     assert.equal(h.sqlite.prepare('SELECT status FROM expense_owner_corrections').get().status,'DRAFT');
+  }finally{h.close()}
+});
+
+test('the real inbound router sends an owner command to the correction flow exactly once',async()=>{
+  const h=ownerOrderFixture();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
+    const event=h.event('fixture_owner',{message:{type:'text',id:'synthetic_correction_router',text:'แก้ไขค่าใช้จ่าย'}});
+    const job={kind:'LINE_EVENT',event,receivedAtIso:'2026-10-28T10:00:00.000Z',traceId:'synthetic_owner_correction_router'};
+    await h.capture(()=>processInbound(job,h.env,{}));await h.capture(()=>processInbound(job,h.env,{}));
+    assert.equal(h.messages.length,1);assert.match(JSON.stringify(h.messages[0]),/พิมพ์ชื่อร้าน/);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_inputs').get().n,1);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,0);
   }finally{h.close()}
 });
 test('disabled feature does not intercept messages or postbacks',async()=>{

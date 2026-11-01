@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {planOwnerCorrectionSheet} from '../dist/sheets/owner-correction-plan.js';
+import {ownerCorrectionRowPatches,planOwnerCorrectionSheet} from '../dist/sheets/owner-correction-plan.js';
+import {buildMetadataRowPatchRequest} from '../dist/sheets/client.js';
 
 function fixture(){
   const before={expenseId:'exp_fixture',status:'CONFIRMED',version:1,updatedAt:null,description:'Driver',category:'general',amountSatang:200000,transactionDate:'2026-10-28',paymentKey:'transfer',sourceWallet:'SHOP_BANK'};
@@ -16,6 +17,10 @@ test('changing to a credit card after cutoff needs an empty row in the next mont
   assert.throws(()=>planOwnerCorrectionSheet(x),/DESTINATION_UNSAFE/);
   x.destination={rowNumber:201,postingYear:2026,postingMonth:11,values:Array(23).fill(null),hasMetadata:false};
   const p=planOwnerCorrectionSheet(x);assert.equal(p.move,true);assert.equal(p.destinationRow,201);assert.equal(p.amountColumn,'K');
+  const patches=ownerCorrectionRowPatches(p,101,102),request=buildMetadataRowPatchRequest(patches,[1,2,3,5,6,7,10,11,12,13,14,15,16,21,22]);
+  assert.equal(request.data[0].values[0][10],2000);assert.equal(request.data[0].values[0][8],null);assert.equal(request.data[0].values[0][20],null);
+  assert.equal(request.data[1].values[0][7],'');assert.equal(request.data[1].values[0][8],null);
+  assert.throws(()=>ownerCorrectionRowPatches(p,101,101));
   x.destination.values[7]=5;assert.throws(()=>planOwnerCorrectionSheet(x),/DESTINATION_UNSAFE/);
 });
 test('mismatched source identity, amount or unrelated payment cell stops the correction',()=>{

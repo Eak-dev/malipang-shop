@@ -7,7 +7,8 @@ const button=(label:string,data:string,primary=false)=>({type:"button",height:"s
 const flex=(altText:string,body:unknown[],footer:unknown[]=[])=>({type:"flex",altText,contents:{type:"bubble",body:{type:"box",layout:"vertical",spacing:"md",contents:body},...(footer.length?{footer:{type:"box",layout:"vertical",spacing:"sm",contents:footer}}:{})}});
 const money=(satang:number)=>`${(satang/100).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})} บาท`;
 const encode=(value:string)=>encodeURIComponent(value);
-const valueFor=(s:OwnerCorrectionSnapshot,field:OwnerCorrectionDraft["field"])=>field==="description"?s.description:field==="category"?(labels[s.category]||s.category):field==="amountSatang"?money(s.amountSatang):field==="transactionDate"?s.transactionDate:`${s.paymentKey} • ${s.sourceWallet}`;
+const payment=(s:OwnerCorrectionSnapshot)=>{const option=expensePaymentOptions.find(item=>item.paymentKey===s.paymentKey&&item.sourceWallet===s.sourceWallet);return option?`${option.label} • ${option.sourceLabel}`:`${s.paymentKey} • ${s.sourceWallet}`;};
+const valueFor=(s:OwnerCorrectionSnapshot,field:OwnerCorrectionDraft["field"])=>field==="description"?s.description:field==="category"?(labels[s.category]||s.category):field==="amountSatang"?money(s.amountSatang):field==="transactionDate"?s.transactionDate:payment(s);
 const title:Record<OwnerCorrectionDraft["field"],string>={description:"รายละเอียด",category:"หมวด",amountSatang:"ยอดชำระ",transactionDate:"วันที่ชำระ",payment:"ช่องทาง/แหล่งเงิน"};
 
 /** Render a version-bound confirmation; no action here changes data. */
@@ -29,7 +30,7 @@ export function buildOwnerCorrectionResults(rows:Record<string,unknown>[],query:
 
 export function buildOwnerCorrectionFields(snapshot:OwnerCorrectionSnapshot){
   const q=`id=${encode(snapshot.expenseId)}&v=${snapshot.version}`;
-  return flex("เลือกข้อมูลที่ต้องการแก้",[text("ตรวจรายการก่อนแก้ไข",true),text(snapshot.description),text(`ยอด ${money(snapshot.amountSatang)} • วันที่ ${snapshot.transactionDate}`),text(`หมวด ${labels[snapshot.category]||snapshot.category}`),text(`ช่องทาง ${snapshot.paymentKey} • ${snapshot.sourceWallet}`),text(snapshot.status==="CONFIRMED"?"บันทึกแล้ว":"รอยืนยัน")],[
+  return flex("เลือกข้อมูลที่ต้องการแก้",[text("ตรวจรายการก่อนแก้ไข",true),text(snapshot.description),text(`ยอด ${money(snapshot.amountSatang)} • วันที่ ${snapshot.transactionDate}`),text(`หมวด ${labels[snapshot.category]||snapshot.category}`),text(`ช่องทาง ${payment(snapshot)}`),text(snapshot.status==="CONFIRMED"?"บันทึกแล้ว":"รอยืนยัน")],[
     button("แก้หมวด",`a=owner_correction_category&${q}`),button("แก้รายละเอียด",`a=owner_correction_input&${q}&field=description`),button("แก้ยอด",`a=owner_correction_input&${q}&field=amountSatang`),button("แก้วันที่ชำระ",`a=owner_correction_input&${q}&field=transactionDate`),button("แก้ช่องทางชำระ",`a=owner_correction_payment&${q}`)
   ]);
 }

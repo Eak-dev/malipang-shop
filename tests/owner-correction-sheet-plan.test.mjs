@@ -7,7 +7,7 @@ function fixture(){
   const before={expenseId:'exp_fixture',status:'CONFIRMED',version:1,updatedAt:null,description:'Driver',category:'general',amountSatang:200000,transactionDate:'2026-10-28',paymentKey:'transfer',sourceWallet:'SHOP_BANK'};
   const values=Array(23).fill(null);Object.assign(values,{1:10,2:28,3:'Driver',7:2000,21:'general',22:'บัญชีร้าน'});
   const headers=[[],Array(16).fill(null),Array(16).fill(null)];headers[1][7]='เงินโอน';headers[1][10]=20;headers[2][10]='Kbank';
-  return {before,after:{...before},headers,source:{rowNumber:100,sheetYear:2026,metadataExpenseId:'exp_fixture',values},destination:null};
+  return {before,after:{...before},headers,blocks:[{month:10,headerRow:90,totalRow:150},{month:11,headerRow:190,totalRow:250}],source:{rowNumber:100,sheetYear:2026,metadataExpenseId:'exp_fixture',values},destination:null};
 }
 test('same-month correction retains the verified source and does not touch another row',()=>{
   const x=fixture();x.after.description='Driver fee';const p=planOwnerCorrectionSheet(x);assert.equal(p.move,false);assert.equal(p.destinationRow,100);assert.equal(p.amountColumn,'H');
@@ -22,6 +22,7 @@ test('changing to a credit card after cutoff needs an empty row in the next mont
   assert.equal(request.data[1].values[0][7],'');assert.equal(request.data[1].values[0][8],null);
   assert.throws(()=>ownerCorrectionRowPatches(p,101,101));
   x.destination.values[7]=5;assert.throws(()=>planOwnerCorrectionSheet(x),/DESTINATION_UNSAFE/);
+  x.destination.values[7]=null;x.destination.rowNumber=1000;assert.throws(()=>planOwnerCorrectionSheet(x),/DESTINATION_UNSAFE/);
 });
 test('mismatched source identity, amount or unrelated payment cell stops the correction',()=>{
   for(const change of [x=>x.source.metadataExpenseId='different',x=>x.source.sheetYear=2025,x=>x.source.values[7]=500,x=>x.source.values[6]=1,x=>x.source.values[21]='rent']){
@@ -32,4 +33,7 @@ test('preflight rejects multiple simultaneous edits, invalid totals and changed 
   for(const change of [x=>{x.after.category='transport';x.after.amountSatang=1},x=>{x.after.amountSatang=-1},x=>{x.after.category='transport';x.after.version++},x=>{x.after.transactionDate='2026-02-31'}]){
     const x=fixture();change(x);assert.throws(()=>planOwnerCorrectionSheet(x));
   }
+});
+test('a correction requiring another accounting year is held for review',()=>{
+  const x=fixture();x.after.transactionDate='2027-01-01';assert.throws(()=>planOwnerCorrectionSheet(x),/CROSS_YEAR_REVIEW/);
 });

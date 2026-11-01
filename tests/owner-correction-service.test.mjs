@@ -57,3 +57,18 @@ test('typed amount and date create the right draft and repeated input does not c
     assert.equal(h.sqlite.prepare('SELECT amount_satang FROM expense_events').get().amount_satang,200000);
   }finally{h.close()}
 });
+
+test('description and payment selections preview the intended values without editing the expense',async()=>{
+  const h=ownerOrderFixture();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
+    h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+      VALUES('exp_payment_flow','msg_payment_flow','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+    const post=data=>h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data}}),'trace'));
+    const send=text=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'message_fixture',text}}),'trace'));
+    await post('a=owner_correction_set_payment&id=exp_payment_flow&v=1&payment=kbank&wallet=CARD_KBANK');
+    let row=h.sqlite.prepare("SELECT after_json FROM expense_owner_corrections WHERE field='payment'").get();assert.equal(JSON.parse(row.after_json).paymentKey,'kbank');assert.equal(JSON.parse(row.after_json).sourceWallet,'CARD_KBANK');
+    await post('a=owner_correction_input&id=exp_payment_flow&v=1&field=description');await send('ค่าขนส่ง');
+    row=h.sqlite.prepare("SELECT after_json FROM expense_owner_corrections WHERE field='description'").get();assert.equal(JSON.parse(row.after_json).description,'ค่าขนส่ง');
+    const expense=h.sqlite.prepare('SELECT payment_key,description FROM expense_events').get();assert.equal(expense.payment_key,'transfer');assert.equal(expense.description,'Driver');
+  }finally{h.close()}
+});

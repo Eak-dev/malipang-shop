@@ -39,6 +39,7 @@
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",
     "src/sheets/owner-correction-plan.ts",
+    "src/sheets/owner-correction-projections.ts",
     "src/sheets/sync.ts",
     "src/attendance/service.ts",
     "src/attendance/messages.ts",

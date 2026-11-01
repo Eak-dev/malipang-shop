@@ -15,15 +15,20 @@ function money(value:unknown):number|null{if(typeof value!=="number"||!Number.is
 const blank=(value:unknown)=>value===undefined||value===null||value==="";
 
 /** Pure preflight. Caller must prove metadata uniqueness and fence concurrent writes. */
-export function planOwnerCorrectionSheet(input:{before:OwnerCorrectionSnapshot;after:OwnerCorrectionSnapshot;headers:unknown[][];source:VerifiedCorrectionSheetRow;destination:CorrectionSheetDestination|null}):CorrectionSheetPlan{
-  const {before,after,headers,source,destination}=input;
+export function planOwnerCorrectionSheet(input:{before:OwnerCorrectionSnapshot;after:OwnerCorrectionSnapshot;headers:unknown[][];source:VerifiedCorrectionSheetRow;destination:CorrectionSheetDestination|null;blocks:Array<{month:number;headerRow:number;totalRow:number}>}):CorrectionSheetPlan{
+  const {before,after,headers,source,destination,blocks}=input;
   if(before.expenseId!==after.expenseId||before.status!=="CONFIRMED"||after.status!=="CONFIRMED"||before.version!==after.version||before.updatedAt!==after.updatedAt||source.metadataExpenseId!==before.expenseId||!Number.isSafeInteger(source.rowNumber)||source.rowNumber<1)throw new Error("CORRECTION_SOURCE_UNVERIFIED");
   const changes=Number(before.description!==after.description)+Number(before.category!==after.category)+Number(before.amountSatang!==after.amountSatang)+Number(before.transactionDate!==after.transactionDate)+Number(before.paymentKey!==after.paymentKey||before.sourceWallet!==after.sourceWallet);
   if(changes!==1||!after.description.trim()||after.description.length>200||!expenseCategories.has(after.category)||!Number.isSafeInteger(after.amountSatang)||after.amountSatang<=0||!expensePaymentOptions.some(option=>option.paymentKey===after.paymentKey&&option.sourceWallet===after.sourceWallet))throw new Error("CORRECTION_TARGET_INVALID");
   const old=resolvePayment(headers,before.paymentKey,...parts(before.transactionDate)),next=resolvePayment(headers,after.paymentKey,...parts(after.transactionDate)),oldColumn=columnIndex(old.amountColumn),v=source.values;
+  // The current worksheet has a single accounting year. Never put a
+  // next-year posting in a same-month block of this year's worksheet.
+  if(next.postingYear!==source.sheetYear)throw new Error("CORRECTION_CROSS_YEAR_REVIEW");
+  const oldBlocks=blocks.filter(block=>block.month===old.postingMonth),newBlocks=blocks.filter(block=>block.month===next.postingMonth);
+  if(oldBlocks.length!==1||newBlocks.length!==1||source.rowNumber<=oldBlocks[0]!.headerRow||source.rowNumber>=oldBlocks[0]!.totalRow)throw new Error("CORRECTION_SOURCE_MONTH_BLOCK_INVALID");
   if(source.sheetYear!==old.postingYear||String(v[0]??"").trim()!==""||Number(v[1])!==old.postingMonth||Number(v[2])!==old.postingDay||String(v[3]??"").trim()!==before.description.trim()||money(v[oldColumn])!==before.amountSatang||v[21]!==before.category||v[22]!==legacySourceWallet(before.paymentKey,before.sourceWallet)||amountColumns.some(col=>col!==oldColumn&&!blank(v[col])&&money(v[col])!==0))throw new Error("CORRECTION_SOURCE_CHANGED");
   const move=old.postingMonth!==next.postingMonth||old.postingYear!==next.postingYear;
-  if(move&&(!destination||destination.hasMetadata||destination.rowNumber===source.rowNumber||!Number.isSafeInteger(destination.rowNumber)||destination.rowNumber<1||destination.postingMonth!==next.postingMonth||destination.postingYear!==next.postingYear||!blank(destination.values[0])||inputs.some(col=>!blank(destination.values[col]))))throw new Error("CORRECTION_DESTINATION_UNSAFE");
+  if(move&&(!destination||destination.hasMetadata||destination.rowNumber===source.rowNumber||!Number.isSafeInteger(destination.rowNumber)||destination.rowNumber<=newBlocks[0]!.headerRow||destination.rowNumber>=newBlocks[0]!.totalRow||destination.postingMonth!==next.postingMonth||destination.postingYear!==next.postingYear||!blank(destination.values[0])||inputs.some(col=>!blank(destination.values[col]))))throw new Error("CORRECTION_DESTINATION_UNSAFE");
   return {sourceRow:source.rowNumber,destinationRow:move?destination!.rowNumber:source.rowNumber,destinationMonth:next.postingMonth,destinationYear:next.postingYear,postingDay:next.postingDay,amountColumn:next.amountColumn,description:after.description,amountBaht:after.amountSatang/100,category:after.category,sourceWallet:legacySourceWallet(after.paymentKey,after.sourceWallet),move};
 }
 

@@ -147,7 +147,9 @@ test('owner search finds another submitter by name, exact amount or date without
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},staff={employeeId:'TEST_STAFF',lineUserId:'fixture_staff'};try{
     h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
       VALUES('exp_search','msg_search','fixture_staff','Driver 100%',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
-    for(const query of ['Driver','2000','2026-10-28','28/10/2569','100%'])assert.equal((await searchOwnerExpenses(h.env,owner,query)).length,1);
+    h.sqlite.prepare(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,vendor_name,expense_id)
+      VALUES('doc_search','msg_doc_search','fixture_staff','RECEIPT','CONFIRMED','now','ร้านทดสอบพิเศษ','exp_search')`).run();
+    for(const query of ['Driver','2000','2026-10-28','28/10/2569','100%','ร้านทดสอบพิเศษ'])assert.equal((await searchOwnerExpenses(h.env,owner,query)).length,1);
     assert.equal((await loadOwnerExpense(h.env,owner,'exp_search')).description,'Driver 100%');
     assert.equal(await loadOwnerExpense(h.env,staff,'exp_search'),null);
     assert.equal((await searchOwnerExpenses(h.env,staff,'Driver')).length,0);
@@ -155,5 +157,15 @@ test('owner search finds another submitter by name, exact amount or date without
     assert.equal((await searchOwnerExpenses(h.env,owner,'x')).length,0);
     h.sqlite.prepare("UPDATE staff_roles SET status='INACTIVE' WHERE employee_id='TEST_OWNER'").run();
     assert.equal((await searchOwnerExpenses(h.env,owner,'Driver')).length,0);
+  }finally{h.close()}
+});
+
+test('pagination uses a stable tie breaker without skipping or repeating matching expenses',async()=>{
+  const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'};try{
+    const insert=h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+      VALUES(?,?,'fixture_staff','Shop test',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','same-time',1)`);
+    for(let i=0;i<12;i++)insert.run(`exp_page_${i.toString().padStart(2,'0')}`,`msg_page_${i}`);
+    const first=await searchOwnerExpenses(h.env,owner,'Shop'),last=first[7],second=await searchOwnerExpenses(h.env,owner,'Shop',last.created_at,last.expense_id);
+    assert.equal(first.length,9);assert.equal(second.length,4);assert.equal(new Set([...first.slice(0,8),...second].map(row=>row.expense_id)).size,12);
   }finally{h.close()}
 });

@@ -70,9 +70,12 @@ export async function searchOwnerExpenses(env:Env,owner:OwnerReviewIdentity,sear
   const query=search.trim();if(query.length<2||query.length>100||Boolean(beforeCreatedAt)!==Boolean(beforeId))return [];
   const literal=query.replace(/[\\%_]/g,"\\$&"),results=await env.DB.prepare(`SELECT e.expense_id,e.description,e.amount_satang,e.transaction_date,e.category,e.payment_key,e.source_wallet,e.status,e.created_at
     FROM expense_events e WHERE e.status IN ('CONFIRMED','WAITING_CONFIRM') AND ${activeOwnerSql}
-      AND (e.description LIKE ? ESCAPE '\\' OR e.transaction_date=? OR e.amount_satang=?)
+      AND (e.description LIKE ? ESCAPE '\\' OR e.transaction_date=? OR e.amount_satang=? OR EXISTS(
+        SELECT 1 FROM expense_documents d LEFT JOIN expense_document_links l ON l.document_id=d.document_id AND l.expense_id=e.expense_id
+        WHERE (d.expense_id=e.expense_id OR l.expense_id=e.expense_id)
+          AND (d.vendor_name LIKE ? ESCAPE '\\' OR d.legal_vendor_name LIKE ? ESCAPE '\\')))
       AND (?='' OR (e.created_at,e.expense_id)<(?,?)) ORDER BY e.created_at DESC,e.expense_id DESC LIMIT 9`)
-    .bind(owner.employeeId,owner.lineUserId,`%${literal}%`,parseOwnerCorrectionDate(query)||query,parseOwnerCorrectionAmount(query),beforeCreatedAt,beforeCreatedAt,beforeId).all<Record<string,unknown>>();
+    .bind(owner.employeeId,owner.lineUserId,`%${literal}%`,parseOwnerCorrectionDate(query)||query,parseOwnerCorrectionAmount(query),`%${literal}%`,`%${literal}%`,beforeCreatedAt,beforeCreatedAt,beforeId).all<Record<string,unknown>>();
   return results.results||[];
 }
 

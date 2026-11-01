@@ -22,3 +22,12 @@ export function classifyCorrectionPatchOutcome(patches:MetadataRowPatch[],origin
   }
   return allAfter?"AFTER":allBefore?"BEFORE":"CONFLICT";
 }
+
+export type CorrectionRecoveryAction="WAIT"|"RETRY"|"ADVANCE"|"REVIEW";
+/** A timeout is not proof of failure; no retry or next phase while the lease is live. */
+export function correctionRecoveryAction(input:{outcome:CorrectionPatchOutcome;leaseUntil:string;nowMs:number;currentVersionMatches:boolean}):CorrectionRecoveryAction{
+  if(!input.currentVersionMatches||!Number.isFinite(input.nowMs))return "REVIEW";
+  const lease=Date.parse(input.leaseUntil);if(!Number.isFinite(lease))return "REVIEW";
+  if(input.nowMs<lease)return "WAIT";
+  return input.outcome==="BEFORE"?"RETRY":input.outcome==="AFTER"?"ADVANCE":"REVIEW";
+}

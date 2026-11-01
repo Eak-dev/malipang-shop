@@ -1,4 +1,5 @@
 import type {OwnerCorrectionDraft,OwnerCorrectionSnapshot} from "./owner-correction";
+import {expensePaymentOptions} from "./document";
 
 const labels:Record<string,string>={ingredients:"วัตถุดิบ",fillings:"ไส้ขนม",packaging:"บรรจุภัณฑ์",gas:"แก๊ส",utilities:"ค่าน้ำ/ค่าไฟ",rent:"ค่าเช่า",staff:"ค่าแรง",transport:"ขนส่ง/รถ",marketing:"การตลาด",equipment:"อุปกรณ์",cleaning:"ทำความสะอาด",bank_fee:"ค่าธรรมเนียมธนาคาร",general:"ทั่วไป"};
 const text=(value:string,bold=false)=>({type:"text",text:value,wrap:true,size:"sm",...(bold?{weight:"bold"}:{})});
@@ -24,4 +25,20 @@ export function buildOwnerCorrectionResults(rows:Record<string,unknown>[],query:
   if(rows.length===0)body.push(text("ไม่พบรายการ กรุณาลองค้นด้วยวันที่ ยอด หรือชื่อร้าน"));
   const footer=nextCursor?[button("รายการถัดไป",`a=owner_correction_next&cursor=${encode(nextCursor)}`)]:[];
   return flex("ผลค้นหารายการค่าใช้จ่าย",body,footer);
+}
+
+export function buildOwnerCorrectionFields(snapshot:OwnerCorrectionSnapshot){
+  const q=`id=${encode(snapshot.expenseId)}&v=${snapshot.version}`;
+  return flex("เลือกข้อมูลที่ต้องการแก้",[text("ตรวจรายการก่อนแก้ไข",true),text(snapshot.description),text(`ยอด ${money(snapshot.amountSatang)} • วันที่ ${snapshot.transactionDate}`),text(`หมวด ${labels[snapshot.category]||snapshot.category}`),text(`ช่องทาง ${snapshot.paymentKey} • ${snapshot.sourceWallet}`),text(snapshot.status==="CONFIRMED"?"บันทึกแล้ว":"รอยืนยัน")],[
+    button("แก้หมวด",`a=owner_correction_category&${q}`),button("แก้รายละเอียด",`a=owner_correction_input&${q}&field=description`),button("แก้ยอด",`a=owner_correction_input&${q}&field=amountSatang`),button("แก้วันที่ชำระ",`a=owner_correction_input&${q}&field=transactionDate`),button("แก้ช่องทางชำระ",`a=owner_correction_payment&${q}`)
+  ]);
+}
+
+/** Split long menus into separate bubbles to respect LINE layout limits. */
+export function buildOwnerCorrectionChoices(snapshot:OwnerCorrectionSnapshot,kind:"category"|"payment"){
+  const q=`id=${encode(snapshot.expenseId)}&v=${snapshot.version}`;
+  const choices=kind==="category"?Object.entries(labels).map(([key,label])=>({label,data:`a=owner_correction_set_category&${q}&category=${encode(key)}`})):
+    expensePaymentOptions.map(item=>({label:item.label.replace(/^\S+\s*/,""),data:`a=owner_correction_set_payment&${q}&payment=${encode(item.paymentKey)}&wallet=${encode(item.sourceWallet)}`}));
+  const bubbles=[];for(let i=0;i<choices.length;i+=6){const slice=choices.slice(i,i+6);bubbles.push({type:"bubble",body:{type:"box",layout:"vertical",spacing:"sm",contents:[text(kind==="category"?"เลือกหมวดใหม่":"เลือกช่องทางชำระใหม่",true),...slice.map(choice=>button(choice.label,choice.data))]}});}
+  return {type:"flex",altText:kind==="category"?"เลือกหมวดใหม่":"เลือกช่องทางชำระใหม่",contents:{type:"carousel",contents:bubbles}};
 }

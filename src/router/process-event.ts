@@ -5,6 +5,7 @@ import { getStaffActorByLineId } from "../access/repository";
 import { claimInboundEvent,completeInboundEvent,InboundBusyError,safeRecordMetric } from "../db/repositories";
 import { handleExpenseImage,handleExpensePostback,handleExpenseText } from "../expense/service";
 import { handleOnlineOrderReviewPostback,handleOnlineOrderReviewText } from "../expense/online-order-review-service";
+import { handleOwnerCorrectionPostback,handleOwnerCorrectionText } from "../expense/owner-correction-service";
 import { handlePersonalUsePostback,handlePersonalUseText } from "../personal-use/service";
 import { saveEvidence } from "../evidence/r2";
 import { downloadLineContent } from "../line/api";
@@ -23,6 +24,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
     const to=event.source.type==="user"?event.source.userId||"":"";if(!to){await completeInboundEvent(env,webhookId,"UNSUPPORTED_CHAT","IGNORED");return;}
     const actor=await getStaffActorByLineId(env,to);
     if(event.type==="postback"){
+      if(await handleOwnerCorrectionPostback(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"OWNER_EXPENSE_CORRECTION","COMPLETED");return;}
       if(await handleOnlineOrderReviewPostback(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"EXPENSE_OWNER_REVIEW","COMPLETED");return;}
       if(await handlePersonalUsePostback(env,event,actor)) {await completeInboundEvent(env,webhookId,"PERSONAL_USE_POSTBACK","COMPLETED");return;}
       if(!actor||!authorize(actor,"expense.self.read",{employeeId:actor?.employeeId})){await respondTextToLineEvent(env,event,"You are not authorized to use this menu.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"POSTBACK","REJECTED");return;}
@@ -37,6 +39,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
       const personal=await handlePersonalUseText(env,event,job.traceId,actor);
       if(personal!=="NOT_HANDLED"){await completeInboundEvent(env,webhookId,"PERSONAL_USE_TEXT",personal==="REJECTED"?"REJECTED":"COMPLETED");return;}
       if(await handleOnlineOrderReviewText(env,event,job.traceId,actor)){await completeInboundEvent(env,webhookId,"EXPENSE_OWNER_REVIEW","COMPLETED");return;}
+      if(await handleOwnerCorrectionText(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"OWNER_EXPENSE_CORRECTION","COMPLETED");return;}
       if(env.EXPENSE_ENABLED==="true"&&actor?.employee.canSubmitExpense&&authorize(actor,"expense.submit",{employeeId:actor.employeeId})){const outcome=await handleExpenseText(env,event,job.traceId,actor);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}
       else{await respondTextToLineEvent(env,event,env.EXPENSE_ENABLED==="true"?"You are not authorized to record expenses.":"The expense system is currently disabled.",{traceId:job.traceId,purpose:"EMPLOYEE_RESPONSE"});await completeInboundEvent(env,webhookId,"EXPENSE_TEXT","REJECTED");}return;
     }

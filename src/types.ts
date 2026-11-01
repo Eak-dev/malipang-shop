@@ -15,6 +15,7 @@ export interface Env {
   TIMEZONE: string;
   ATTENDANCE_ENABLED: string;
   EXPENSE_ENABLED: string;
+  OWNER_EXPENSE_CORRECTION_ENABLED?: string;
   SHEETS_SYNC_ENABLED: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;

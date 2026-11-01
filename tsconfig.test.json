@@ -16,6 +16,7 @@
     "src/expense/owner-correction.ts",
     "src/expense/owner-correction-repository.ts",
     "src/expense/owner-correction-flex.ts",
+    "src/expense/owner-correction-guard.ts",
     "src/expense/flex.ts",
     "src/expense/repository.ts",
     "src/expense/service.ts",

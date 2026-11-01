@@ -31,6 +31,86 @@ async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,b
   if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
+export interface MetadataColumnWrite {metadataId:number;columnIndex:number;value:string|number|boolean}
+/** Null entries are intentionally skipped by the Sheets values API. */
+export function buildMetadataColumnWriteRequest(writes:MetadataColumnWrite[]):unknown{
+  const seen=new Set<number>();
+  const data=writes.map(write=>{
+    if(!Number.isSafeInteger(write.metadataId)||write.metadataId<1||!Number.isInteger(write.columnIndex)||write.columnIndex<0||write.columnIndex>25||seen.has(write.metadataId))throw new Error("INVALID_METADATA_COLUMN_WRITE");
+    seen.add(write.metadataId);
+    const cells=Array<null|string|number|boolean>(write.columnIndex).fill(null);cells.push(write.value);
+    return {dataFilter:{developerMetadataLookup:{metadataId:write.metadataId}},majorDimension:"ROWS",values:[cells]};
+  });
+  return {valueInputOption:"RAW",data};
+}
+/** Use unique row metadata rather than a stale A1 row number for category-only writes. */
+export async function batchWriteMetadataColumns(env:Env,writes:MetadataColumnWrite[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{
+  if(!writes.length)return;
+  const body=buildMetadataColumnWriteRequest(writes);
+  const result=await sheetsFetch(env,"/values:batchUpdateByDataFilter",{method:"POST",body:JSON.stringify(body)},true,beforeMutationDispatch).then(r=>r.json()) as {totalUpdatedRows?:number;totalUpdatedCells?:number};
+  if(result.totalUpdatedRows!==writes.length||result.totalUpdatedCells!==writes.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_COLUMN_WRITE_COUNT_MISMATCH"));
+}
+export interface MetadataRowPatch{metadataId:number;cells:Array<{columnIndex:number;value:string|number|boolean}>}
+/** Explicit cells only: null skips a cell, empty string clears it. */
+export function buildMetadataRowPatchRequest(patches:MetadataRowPatch[],allowedColumns:number[]):unknown{
+  const allowed=new Set(allowedColumns),seen=new Set<number>();
+  if(!allowed.size||allowed.size!==allowedColumns.length||allowedColumns.some(index=>!Number.isInteger(index)||index<0||index>25))throw new Error("INVALID_METADATA_ALLOWED_COLUMNS");
+  const data=patches.map(patch=>{
+    if(!Number.isSafeInteger(patch.metadataId)||patch.metadataId<1||seen.has(patch.metadataId)||!patch.cells.length)throw new Error("INVALID_METADATA_ROW_PATCH");
+    seen.add(patch.metadataId);const cols=new Set<number>();
+    for(const cell of patch.cells){if(!allowed.has(cell.columnIndex)||cols.has(cell.columnIndex)||!["string","number","boolean"].includes(typeof cell.value)||(typeof cell.value==="number"&&!Number.isFinite(cell.value)))throw new Error("INVALID_METADATA_PATCH_CELL");cols.add(cell.columnIndex);}
+    const values:Array<null|string|number|boolean>=Array(Math.max(...cols)+1).fill(null);
+    for(const cell of patch.cells)values[cell.columnIndex]=cell.value;
+    return {dataFilter:{developerMetadataLookup:{metadataId:patch.metadataId}},majorDimension:"ROWS",values:[values]};
+  });
+  return {valueInputOption:"RAW",data};
+}
+export interface SheetRowMetadata {metadataId:number;metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
+export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
+/** Create associations only after the caller has reverified each row identity. */
+export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[]):Promise<SheetRowMetadata[]>{
+  if(!rows.length)return [];
+  const identities=new Set<string>(),locations=new Set<string>();
+  const requests=rows.map(row=>{
+    const identity=`${row.metadataKey}\u0000${row.metadataValue}`,location=`${row.sheetId}\u0000${row.rowIndex}\u0000${row.metadataKey}`;
+    if(!row.metadataKey||!row.metadataValue||!Number.isSafeInteger(row.sheetId)||row.sheetId<0||!Number.isSafeInteger(row.rowIndex)||row.rowIndex<0||identities.has(identity)||locations.has(location))throw new Error("INVALID_METADATA_CREATE");
+    identities.add(identity);locations.add(location);
+    return {createDeveloperMetadata:{developerMetadata:{metadataKey:row.metadataKey,metadataValue:row.metadataValue,visibility:"DOCUMENT",location:{dimensionRange:{sheetId:row.sheetId,dimension:"ROWS",startIndex:row.rowIndex,endIndex:row.rowIndex+1}}}}};
+  });
+  const result=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true).then(r=>r.json()) as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}}>};
+  if(result.replies?.length!==rows.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_COUNT_MISMATCH"));
+  return rows.map((row,index)=>{
+    const metadata=result.replies?.[index]?.createDeveloperMetadata?.developerMetadata,range=metadata?.location?.dimensionRange,id=Number(metadata?.metadataId);
+    if(!Number.isSafeInteger(id)||id<1||metadata?.metadataKey!==row.metadataKey||metadata.metadataValue!==row.metadataValue||range?.sheetId!==row.sheetId||range.dimension!=="ROWS"||range.startIndex!==row.rowIndex||range.endIndex!==row.rowIndex+1)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_IDENTITY_MISMATCH"));
+    return {...row,metadataId:id};
+  });
+}
+/** Search document-visible row metadata; malformed or duplicate associations fail closed. */
+export async function searchSheetRowMetadata(env:Env,metadataKey:string):Promise<SheetRowMetadata[]>{
+  if(!metadataKey.trim())throw new Error("INVALID_METADATA_KEY");
+  const result=await sheetsFetch(env,"/developerMetadata:search",{method:"POST",body:JSON.stringify({dataFilters:[{developerMetadataLookup:{metadataKey,visibility:"DOCUMENT"}}]})}).then(r=>r.json()) as {matchedDeveloperMetadata?:Array<{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}>} ;
+  const ids=new Set<number>();
+  return (result.matchedDeveloperMetadata||[]).map(item=>{
+    const m=item.developerMetadata,d=m?.location?.dimensionRange,id=Number(m?.metadataId),sheetId=Number(d?.sheetId),start=Number(d?.startIndex),end=Number(d?.endIndex);
+    if(!Number.isSafeInteger(id)||id<1||ids.has(id)||m?.metadataKey!==metadataKey||!m.metadataValue||!Number.isSafeInteger(sheetId)||sheetId<0||d?.dimension!=="ROWS"||!Number.isSafeInteger(start)||start<0||end!==start+1)throw new Error("INVALID_ROW_METADATA");
+    ids.add(id);return {metadataId:id,metadataKey,metadataValue:m.metadataValue,sheetId,rowIndex:start};
+  });
+}
+/** Read each specific metadata ID exactly once; missing or ambiguous IDs fail closed. */
+export async function readSheetRowsByMetadata(env:Env,metadataIds:number[]):Promise<Map<number,unknown[]>>{
+  if(!metadataIds.length)return new Map();
+  const wanted=new Set(metadataIds);if(wanted.size!==metadataIds.length||metadataIds.some(id=>!Number.isSafeInteger(id)||id<1))throw new Error("INVALID_METADATA_IDS");
+  const dataFilters=metadataIds.map(metadataId=>({developerMetadataLookup:{metadataId}}));
+  const result=await sheetsFetch(env,"/values:batchGetByDataFilter",{method:"POST",body:JSON.stringify({dataFilters,majorDimension:"ROWS",valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"})}).then(r=>r.json()) as {valueRanges?:Array<{valueRange?:{values?:unknown[][]};dataFilters?:Array<{developerMetadataLookup?:{metadataId?:number}}>}>};
+  const rows=new Map<number,unknown[]>();
+  for(const match of result.valueRanges||[]){
+    const ids=(match.dataFilters||[]).map(filter=>filter.developerMetadataLookup?.metadataId);
+    if(ids.length!==1||!Number.isSafeInteger(ids[0])||!wanted.has(Number(ids[0]))||rows.has(Number(ids[0]))||(match.valueRange?.values?.length||0)>1)throw new Error("AMBIGUOUS_METADATA_ROW");
+    rows.set(Number(ids[0]),match.valueRange?.values?.[0]||[]);
+  }
+  if(rows.size!==wanted.size)throw new Error("MISSING_METADATA_ROW");
+  return rows;
+}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true);}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true);}

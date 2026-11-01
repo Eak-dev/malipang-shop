@@ -52,6 +52,7 @@
     "src/sheets/owner-correction-recover-state.ts",
     "src/sheets/owner-correction-rebind.ts",
     "src/sheets/owner-correction-rebind-inspection.ts",
+    "src/sheets/owner-correction-report-dedupe.ts",
     "src/sheets/owner-correction-lease.ts",
     "src/sheets/owner-correction-identity.ts",
     "src/sheets/owner-correction-metadata.ts",

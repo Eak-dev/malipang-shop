@@ -7,6 +7,7 @@ import {loadExpenseDailyPosting,type LoadedExpenseDailyPosting} from "./sync";
 import {planOwnerCorrectionBootstrap} from "./owner-correction-bootstrap";
 import {planCategoryMetadata,type CategoryExistingMetadata,type CategoryMetadataTarget} from "./owner-correction-metadata";
 import type {OwnerCorrectionIdentity} from "./owner-correction-identity";
+import type {CorrectionSyncPlan} from "./owner-correction-sync-plan";
 
 export interface CorrectionBootstrapPorts{
   sheetId:(env:Env,name:string)=>Promise<number>;
@@ -54,4 +55,19 @@ export async function bootstrapOwnerCorrectionTargets(env:Env,expected:OwnerCorr
   const after=await snapshot(env,expected,ports),verified=planCategoryMetadata(after.targets,after.existing);
   if(verified.some(item=>item.kind!=="EXISTING"))throw new Error("CORRECTION_BOOTSTRAP_RECHECK_FAILED");
   return verified.map(item=>{if(item.kind!=="EXISTING")throw new Error("CORRECTION_BOOTSTRAP_RECHECK_FAILED");return {target:item.target,metadataId:item.metadataId};});
+}
+
+/** Fresh, read-only verification of all daily, raw and receipt rows after a correction.
+ * This does not establish that downstream report formulas have recalculated. */
+export async function verifyOwnerCorrectionProjectionRows(env:Env,expected:OwnerCorrectionSnapshot,plan:CorrectionSyncPlan,ports:CorrectionBootstrapPorts=defaults):Promise<boolean>{
+  if(plan.expenseId!==expected.expenseId)return false;
+  const inspected=await snapshot(env,expected,ports),links=planCategoryMetadata(inspected.targets,inspected.existing);
+  if(links.some(link=>link.kind!=="EXISTING"))return false;
+  const daily=links.find(link=>link.target.key==="malipang_expense_daily"),raw=links.find(link=>link.target.key==="malipang_expense_raw");
+  if(daily?.kind!=="EXISTING"||daily.metadataId!==(plan.rebind?.reservationMetadataId??plan.dailyMetadataId)||raw?.kind!=="EXISTING"||raw.metadataId!==plan.rawMetadataId)return false;
+  const linkedIds=new Set(links.map(link=>link.kind==="EXISTING"?link.metadataId:0));
+  if(plan.patches.some(patch=>patch.metadataId!==plan.rebind?.sourceMetadataId&&!linkedIds.has(patch.metadataId)))return false;
+  // Detect a concurrent update while the external snapshots were read.
+  const latest=await ports.expense(env,expected.expenseId);
+  return sameSnapshot(expected,rowSnapshot(latest.expense));
 }

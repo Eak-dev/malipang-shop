@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {loadOwnerExpense} from '../dist/expense/owner-correction-repository.js';
-import {bootstrapOwnerCorrectionTargets} from '../dist/sheets/owner-correction-bootstrap-service.js';
+import {bootstrapOwnerCorrectionTargets,verifyOwnerCorrectionProjectionRows} from '../dist/sheets/owner-correction-bootstrap-service.js';
 
 test('bootstrap creates metadata only after verifying rows and safely repeats',async()=>{
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'};try{
@@ -17,6 +17,13 @@ test('bootstrap creates metadata only after verifying rows and safely repeats',a
       expense:async()=>({expense:h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_bootstrap'").get(),summaryDocument:null,document:null,items:[],record:{}})};
     const one=await bootstrapOwnerCorrectionTargets(h.env,before,ports);assert.equal(one.length,2);assert.equal(creates,1);
     const two=await bootstrapOwnerCorrectionTargets(h.env,before,ports);assert.deepEqual(two,one);assert.equal(creates,1);
+    const plan={expenseId:'exp_bootstrap',dailyMetadataId:10,rawMetadataId:11,rebind:null,patches:[{metadataId:10,cells:[]},{metadataId:11,cells:[]}],originalRows:[]};
+    assert.equal(await verifyOwnerCorrectionProjectionRows(h.env,before,plan,ports),true);
+    assert.equal(await verifyOwnerCorrectionProjectionRows(h.env,before,{...plan,rawMetadataId:99},ports),false);
+    raw.push([...raw[1]]);await assert.rejects(verifyOwnerCorrectionProjectionRows(h.env,before,plan,ports),/RAW_AMBIGUOUS/);raw.pop();
+    const load=ports.expense;let loads=0;ports.expense=async(...args)=>{const result=await load(...args);loads++;return loads===2?{...result,expense:{...result.expense,version:2}}:result};
+    assert.equal(await verifyOwnerCorrectionProjectionRows(h.env,before,plan,ports),false);ports.expense=load;
+    metadata.splice(1,1);assert.equal(await verifyOwnerCorrectionProjectionRows(h.env,before,plan,ports),false);
     daily[99][3]='Changed';await assert.rejects(bootstrapOwnerCorrectionTargets(h.env,before,ports),/DAILY_AMBIGUOUS/);
   }finally{h.close()}
 });

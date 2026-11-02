@@ -2,7 +2,7 @@ import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
-import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites } from "./owner-month-close";
+import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -71,6 +71,9 @@ export async function bootstrapSheets(env:Env):Promise<void>{
   const newDefinitions=definitions.filter(([name])=>!existing.has(name));
   await batchWriteValues(env,newDefinitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
   if(existing.has("04_OWNER_MONTH_CLOSE")){
+    const marker=await batchGetSheetFormulaValues(env,["'04_OWNER_MONTH_CLOSE'!A5","'04_OWNER_MONTH_CLOSE'!A34"]);
+    if(marker.length!==2)throw new Error("OWNER_MONTH_CLOSE_LAYOUT_READBACK_INCOMPLETE");
+    if(shouldSkipLegacyOwnerMonthCloseBootstrap(marker[0]?.[0]?.[0],marker[1]?.[0]?.[0]))return;
     const cells=ownerMonthClosePersonalUseCells(env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW"),qualified=cells.map(cell=>`'04_OWNER_MONTH_CLOSE'!${cell.range}`),current=await batchGetSheetFormulaValues(env,qualified),writes=planOwnerMonthClosePersonalUseWrites(current,cells,legacyOwnerMonthClosePersonalUseCells());
     await batchWriteUserEnteredValues(env,writes.map(cell=>({range:`'04_OWNER_MONTH_CLOSE'!${cell.range}`,values:[[cell.value]]})));
   }

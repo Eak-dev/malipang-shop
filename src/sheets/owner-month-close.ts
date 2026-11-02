@@ -3,6 +3,17 @@ export interface OwnerMonthCloseCell{
   value:string;
 }
 
+/** The redesigned owner dashboard keeps the authoritative section below row 35.
+ * Never write legacy fixed coordinates into the dashboard. Partial markers fail
+ * closed: a human may be in the middle of changing the layout. */
+export function shouldSkipLegacyOwnerMonthCloseBootstrap(markerA5:unknown,markerA34:unknown):boolean{
+  const first=markerA5==="01  ยอดขายและรายรับ",last=markerA34==="รายละเอียดและรายการอ้างอิงด้านล่าง";
+  if(first!==last)throw new Error("OWNER_MONTH_CLOSE_REDESIGN_MARKER_CONFLICT");
+  if(first&&last)return true;
+  if(markerA5==="คำตัดสินปิดเดือน"||((markerA5===undefined||markerA5===null||markerA5==="")&&(markerA34===undefined||markerA34===null||markerA34==="")))return false;
+  throw new Error("OWNER_MONTH_CLOSE_UNKNOWN_LAYOUT");
+}
+
 const monthStart=`LET(ym,IF(ISNUMBER($C$2),DATE(YEAR($C$2),MONTH($C$2),1),DATEVALUE($C$2&"-01"))`;
 const sheetReference=(name:string)=>`'${name.replace(/'/g,"''")}'`;
 const legacyPersonalSum=(type:"PERSONAL_USE"|"PERSONAL_RETURN",wallet?:"SHOP_BANK")=>`=${monthStart},IFERROR(SUM(FILTER(V52_PERSONAL_USE_RAW!$E$2:$E$1000,V52_PERSONAL_USE_RAW!$C$2:$C$1000>=ym,V52_PERSONAL_USE_RAW!$C$2:$C$1000<EDATE(ym,1),V52_PERSONAL_USE_RAW!$B$2:$B$1000="${type}",V52_PERSONAL_USE_RAW!$G$2:$G$1000="CONFIRMED"${wallet?`,V52_PERSONAL_USE_RAW!$F$2:$F$1000="${wallet}"`:""})),0))`;

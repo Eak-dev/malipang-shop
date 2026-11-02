@@ -6,6 +6,9 @@ import {readdirSync,readFileSync} from 'node:fs';
 
 const require=createRequire(import.meta.url);
 const sheetsClient=require('../dist/sheets/client.js');
+const originalFormulaRead=sheetsClient.batchGetSheetFormulaValues;
+test.beforeEach(()=>{sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];});
+test.afterEach(()=>{sheetsClient.batchGetSheetFormulaValues=originalFormulaRead;});
 const {SheetsHttpError,SheetsMutationOutcomeUnknownError,isAmbiguousSheetsMutationStatus}=sheetsClient;
 const {GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS,PERSONAL_USE_AMBIGUITY_MARGIN_MS,claimSheetSyncJob,syncJob}=require('../dist/sheets/sync.js');
 const {reconcileSheets}=require('../dist/admin/reconcile-sheets.js');
@@ -63,6 +66,57 @@ function cancelAtVersionThree(h,{enqueue=true}={}){
 }
 function syncRows(h){return plain(h.sqlite.prepare(`SELECT entity_version,status,attempt_count FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(h.id));}
 function expireLease(h,version){h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).run(h.id,version);}
+
+test('occupied or partial personal-use row fails closed without writing',async()=>{
+  const h=harness(),writes=[];
+  try{
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['other_personal_id']],[['other_personal_id','PERSONAL_USE']]];
+    await withSheetWriter(async(_env,data)=>writes.push(data),async()=>{
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+    });
+    assert.equal(writes.length,0);
+    assert.deepEqual(plain(h.sqlite.prepare('SELECT status,last_error FROM sync_jobs WHERE entity_key=?').get(h.id)),{status:'REVIEW',last_error:'PERSONAL_USE_SHEET_ROW_COLLISION'});
+  }finally{h.close();}
+});
+
+test('collision is visible in failed jobs and forced reconcile cannot reset the review hold',async()=>{
+  const h=harness(),calls={acks:0,retries:0};
+  try{
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['other_personal_id']],[['other_personal_id','PERSONAL_USE']]];
+    await withSheetWriter(async()=>assert.fail('collision must not write'),async()=>{
+      const message={body:job(h.id,2),attempts:1,ack(){calls.acks++},retry(){calls.retries++}};
+      await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
+      assert.equal(calls.acks,1);assert.equal(calls.retries,0);
+      assert.deepEqual(plain(h.sqlite.prepare('SELECT status,error FROM failed_jobs').get()),{status:'OPEN',error:'SHEETS_SYNC_REVIEW_REQUIRED'});
+      const {enqueueSheetSyncBatch}=require('../dist/db/repositories.js');
+      await enqueueSheetSyncBatch(h.env,[job(h.id,2)],true);
+      assert.equal(h.sqlite.prepare('SELECT status FROM sync_jobs WHERE entity_key=?').get(h.id).status,'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+    });
+  }finally{h.close();}
+});
+
+test('personal-use row is safe only for a blank row or the same identity',async()=>{
+  const h=harness();
+  try{
+    const {assertPersonalUseSheetRowSafe}=require('../dist/sheets/sync.js');
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];
+    await assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[h.id]],[[h.id,'PERSONAL_USE']]];
+    await assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[h.id]],[[h.id,'=SUM(1,1)']]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[['','=1+1']]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[],[h.id]],[[]]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/READBACK_INCOMPLETE/);
+    h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('V52_PERSONAL_USE_RAW','other_id',2);
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/D1_ROW_COLLISION/);
+  }finally{h.close();}
+});
 async function withSheetWriter(write,run){const original=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=async(env,data,beforeMutationDispatch)=>{if(beforeMutationDispatch)await beforeMutationDispatch();return write(env,data);};try{return await run();}finally{sheetsClient.batchWriteValues=original;}}
 async function withSheetsTransport(fetchImpl,run,authImpl=async()=>"test-token"){const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;googleAuth.getGoogleAccessToken=authImpl;globalThis.fetch=fetchImpl;try{return await run();}finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}}
 async function withConsoleErrorMuted(run){const original=console.error;console.error=()=>{};try{return await run();}finally{console.error=original;}}

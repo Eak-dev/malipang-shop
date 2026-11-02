@@ -21,7 +21,7 @@ export async function assertSyntheticLedgerUat(env:Env):Promise<void>{
 /** Isolated UAT only. A missing, failed, ambiguous or prior in-flight
  * projection is never retried blindly; the durable outbox is held for review.
  * The caller must provide a pre-existing synthetic expense and outbox. */
-export async function runSyntheticExpenseWorkflow(env:Env,job:SheetsSyncJob,adapters:SyntheticProjectionAdapters):Promise<SyntheticWorkflowResult>{
+export async function runSyntheticExpenseWorkflow(env:Env,job:SheetsSyncJob,adapters:SyntheticProjectionAdapters,options:{beforeDispatch?:()=>Promise<void>}={}):Promise<SyntheticWorkflowResult>{
   if(job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1)throw new Error('SYNTHETIC_WORKFLOW_INVALID');
   assertStableShadowConfig(env,job.entityKey);await assertStableShadowDatabase(env);await assertSyntheticLedgerUat(env);
   const existing=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityVersion).first<{status:string}>();
@@ -39,7 +39,7 @@ export async function runSyntheticExpenseWorkflow(env:Env,job:SheetsSyncJob,adap
     for(const projection of ['DAILY','RAW','DETAIL'] as const){
       const eligible=await classifyStableShadowSource(env,job.entityKey,job.entityVersion);if(eligible.kind==='REVIEW'||!adapters[projection]){await hold();return 'REVIEW';}
       const token=await journal.begin(projection);if(!token){await hold();return 'REVIEW';}
-      const requireDispatchFence=async()=>{assertStableShadowConfig(env,job.entityKey);await assertStableShadowDatabase(env);await assertSyntheticLedgerUat(env);if(!await journal.canDispatch(projection,token,eligible))throw new Error('SYNTHETIC_WORKFLOW_DISPATCH_FENCE_LOST');};
+      const requireDispatchFence=async()=>{assertStableShadowConfig(env,job.entityKey);await assertStableShadowDatabase(env);await assertSyntheticLedgerUat(env);if(options.beforeDispatch)await options.beforeDispatch();if(!await journal.canDispatch(projection,token,eligible))throw new Error('SYNTHETIC_WORKFLOW_DISPATCH_FENCE_LOST');};
       try{await requireDispatchFence();const evidence=await adapters[projection]!(requireDispatchFence);if(evidence==='PARTIAL'||!await journal.verify(projection,token,evidence)){await journal.hold(projection,token);await hold();return 'REVIEW';}}
       catch{await journal.hold(projection,token);await hold();return 'REVIEW';}
     }
@@ -50,7 +50,7 @@ export async function runSyntheticExpenseWorkflow(env:Env,job:SheetsSyncJob,adap
 
 /** Actual daily plus RAW CORE UAT adapters. CORE deliberately remains PARTIAL:
  * it cannot establish the document/submitter columns or the DETAIL projection. */
-export async function runSyntheticDailyAndRawCoreWorkflow(env:Env,job:SheetsSyncJob):Promise<SyntheticWorkflowResult>{
+export async function runSyntheticDailyAndRawCoreWorkflow(env:Env,job:SheetsSyncJob,options:{beforeDispatch?:()=>Promise<void>}={}):Promise<SyntheticWorkflowResult>{
   // Both independent QA bindings must be established before DAILY can write.
   assertStableShadowConfig(env,job.entityKey);await assertStableShadowDatabase(env);await assertSyntheticLedgerUat(env);
   return runSyntheticExpenseWorkflow(env,job,{DAILY:async beforeDispatch=>{
@@ -71,5 +71,5 @@ export async function runSyntheticDailyAndRawCoreWorkflow(env:Env,job:SheetsSync
     const proof:LedgerSourceProof={kind:'EXPENSE',id:job.entityKey,version:job.entityVersion,status:'CONFIRMED',transactionDate:String(e.transaction_date),description:String(e.description),amountSatang:Number(e.amount_satang),paymentKey:String(e.payment_key),sourceWallet:String(e.source_wallet),category:String(e.category),updatedAt:e.updated_at==null?null:String(e.updated_at)};
     const result=await projectExistingLedgerShadow(env,sheet,proof,identity,enrolled.metadata_id,enrolled.projected_version,buildExpenseRawSheetValues(e,loaded.summaryDocument),crypto.randomUUID(),createLedgerGoogleUatProbe(env,sheet,identity,enrolled.metadata_id),{beforeDispatch});
     if(result!=='VERIFIED')throw new Error('SYNTHETIC_RAW_CORE_REVIEW');return 'PARTIAL';
-  }});
+  }},options);
 }

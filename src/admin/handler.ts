@@ -15,6 +15,7 @@ import { reconcileSheets } from "./reconcile-sheets";
 import { loadExpenseDailyPosting,reconcileExpenseItemRows,syncStableShadowFixtureJob } from "../sheets/sync";
 import {assertStableShadowConfig,assertStableShadowDatabase} from '../sheets/daily-stable-row-shadow';
 import {assertSyntheticLedgerUat,runSyntheticDailyAndRawCoreWorkflow} from '../sheets/synthetic-expense-workflow';
+import {scheduleSyntheticProjection,startSyntheticQueueProbe} from '../sheets/synthetic-expense-queue';
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification,recoverQuotaExhaustedLineNotifications } from "../line/attendance-notification";
@@ -27,6 +28,16 @@ function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.leng
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==='POST'&&url.pathname==='/admin/uat/expense-projection-probe'){
+      if(env.RUNTIME_MODE!=='shadow'||env.SYNTHETIC_PROJECTION_UAT_ENABLED!=='true')return new Response('Not found',{status:404});
+      try{return Response.json({ok:true,started:await startSyntheticQueueProbe(env)},{headers:{'cache-control':'no-store'}});}
+      catch{return Response.json({ok:false,result:'REVIEW'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/uat/expense-projection-schedule'){
+      if(env.RUNTIME_MODE!=='shadow'||env.SYNTHETIC_PROJECTION_UAT_ENABLED!=='true')return new Response('Not found',{status:404});
+      try{return Response.json({ok:true,scheduled:await scheduleSyntheticProjection(env)},{headers:{'cache-control':'no-store'}});}
+      catch{return Response.json({ok:false,result:'REVIEW'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
     // Dedicated isolated fixture only. Partial RAW or missing DETAIL causes a
     // durable REVIEW; a daily-only readback cannot complete the whole job.
     if(request.method==='POST'&&url.pathname==='/admin/uat/expense-projection-workflow'){

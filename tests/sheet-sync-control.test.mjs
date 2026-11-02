@@ -5,12 +5,12 @@ import {claimSheetSyncJob} from '../dist/sheets/sync.js';
 
 const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_lease',entityVersion:1,traceId:'lease_test'};
 
-test('recovery ignores delayed jobs until eligible and only recovers expired leases',()=>{
+test('recovery ignores delayed jobs and never re-enqueues processing leases',()=>{
   const now='2026-07-23T12:10:00.000Z',stale='2026-07-23T12:05:00.000Z';
   assert.equal(isRecoverableSheetJob({status:'PENDING',updated_at:'2026-07-23T12:00:00.000Z',next_attempt_at:'2026-07-23T12:11:00.000Z',lease_until:null},now,stale),false);
   assert.equal(isRecoverableSheetJob({status:'FAILED',updated_at:'2026-07-23T12:00:00.000Z',next_attempt_at:'2026-07-23T12:09:00.000Z',lease_until:null},now,stale),true);
   assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T11:00:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:11:00.000Z'},now,stale),false);
-  assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T12:09:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:09:59.000Z'},now,stale),true);
+  assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T12:09:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:09:59.000Z'},now,stale),false);
 });
 
 test('cron recovery does not enqueue a job whose queue delay is still active',async()=>{

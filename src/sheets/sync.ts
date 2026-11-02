@@ -129,8 +129,8 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
   // Mutable projections cannot be reclaimed on a clock timeout: a paused
   // process may still dispatch a request after its lease expires.
-  const guarded=job.entityType==="PERSONAL_USE"||job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?))${guarded?"":` OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?)`})${guarded?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type=? AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`:""}`;
-  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now];if(!guarded)claimArgs.push(now);if(guarded)claimArgs.push(job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey);
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type=? AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`;
+  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey];
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
@@ -139,7 +139,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     const held=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
     if(held?.status==="REVIEW")return"REVIEW";
-    if(job.entityType==="EXPENSE"||job.entityType==="PERSONAL_USE"){
+    {
       // Quarantine any expired owner, including a different version. The
       // existing worker's late completion cannot erase this hold.
       await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE entity_type=? AND entity_key=? AND status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?`).bind(claimNow,job.entityType,job.entityKey,claimNow).run();
@@ -147,7 +147,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(Number(blocked.meta.changes||0)===1)return"REVIEW";
       const current=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
       if(current?.status==="REVIEW")return"REVIEW";
-      if(job.entityType==="EXPENSE"&&current?.status==="PENDING")return"BUSY";
+      if(job.entityType!=="PERSONAL_USE"&&(current?.status==="PENDING"||current?.status==="FAILED"))return"BUSY";
     }
     return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";
   }
@@ -220,7 +220,8 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       }
       throw error;
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
-    const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
+    const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);
+    if(!completed){const state=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();return state?.status==="REVIEW"?"REVIEW":"BUSY";}
     return"PROCESSED";
   }catch(error){
     if(error instanceof CorrectionDailyFenceBusyError&&job.entityType==="EXPENSE"){
@@ -235,9 +236,10 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     }
     const attemptRow=await env.DB.prepare(`SELECT attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=? AND lease_token=?`).bind(job.entityType,job.entityKey,job.entityVersion,leaseToken).first<{attempt_count:number}>(),attempt=Math.max(retryAttempt,Number(attemptRow?.attempt_count||1)),retryError=error instanceof Error?error:new Error(String(error));
     Object.defineProperty(retryError,"retryAttempt",{value:attempt,configurable:true});
-    if(job.entityType==="EXPENSE"&&retryError instanceof SheetsMutationOutcomeUnknownError){
-      const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='EXPENSE_SHEETS_MUTATION_OUTCOME_UNKNOWN' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityKey,job.entityVersion,leaseToken).run();
-      if(Number(held.meta.changes||0)!==1)throw new Error("EXPENSE_SHEETS_AMBIGUITY_FENCE_LOST",{cause:retryError});
+    if(job.entityType!=="PERSONAL_USE"&&retryError instanceof SheetsMutationOutcomeUnknownError){
+      const reason=job.entityType==="EXPENSE"?"EXPENSE_SHEETS_MUTATION_OUTCOME_UNKNOWN":"SHEETS_MUTATION_OUTCOME_UNKNOWN";
+      const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),reason,job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
+      if(Number(held.meta.changes||0)!==1)throw new Error("SHEETS_AMBIGUITY_FENCE_LOST",{cause:retryError});
       return"REVIEW";
     }
     if(personalUse&&personalUseWriteOutcomeUncertain&&personalUseAmbiguityLeaseUntil&&retryError instanceof SheetsMutationOutcomeUnknownError){

@@ -66,6 +66,7 @@ function cancelAtVersionThree(h,{enqueue=true}={}){
 }
 function syncRows(h){return plain(h.sqlite.prepare(`SELECT entity_version,status,attempt_count FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(h.id));}
 function expireLease(h,version){h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).run(h.id,version);}
+const sheetEntityTypes=['PERSONAL_USE','EXPENSE','ATTENDANCE_EVENT','DAILY_PAYROLL','WEEKLY_PAYROLL','WAGE_HISTORY','SHIFT_SCHEDULE','OT_REQUEST','SYSTEM_LOG'];
 
 test('occupied or partial personal-use row fails closed without writing',async()=>{
   const h=harness(),writes=[];
@@ -97,8 +98,8 @@ test('collision is visible in failed jobs and forced reconcile cannot reset the 
   }finally{h.close();}
 });
 
-test('an unresolved review holds later versions of the same expense or personal transaction',async()=>{
-  for(const entityType of ['PERSONAL_USE','EXPENSE']){
+test('an unresolved review holds later versions of each sheet entity type',async()=>{
+  for(const entityType of sheetEntityTypes){
     const h=harness(),writes=[];
     try{
       h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
@@ -117,9 +118,9 @@ test('an unresolved review holds later versions of the same expense or personal 
   }
 });
 
-test('recovery and forced enqueue quarantine expired mutable writers and surface review',async()=>{
+test('recovery and forced enqueue quarantine expired sheet writers and surface review',async()=>{
   const {enqueueSheetSyncBatch}=require('../dist/db/repositories.js');
-  for(const entityType of ['PERSONAL_USE','EXPENSE']){
+  for(const entityType of sheetEntityTypes){
     const h=harness();
     try{
       h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
@@ -131,6 +132,7 @@ test('recovery and forced enqueue quarantine expired mutable writers and surface
       assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type=?`).get(entityType).status,'PROCESSING');
       assert.equal(await claimSheetSyncJob(h.env,old),null);
       assert.equal(await claimSheetSyncJob(h.env,next),null);
+      assert.equal(typeof await claimSheetSyncJob(h.env,{...next,entityKey:'unrelated_fixture'}),'string');
       await recoverPendingSheetJobs(h.env,0);
       const held=plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type=? AND entity_version=2`).get(entityType));
       assert.deepEqual(held,{status:'REVIEW',last_error:'SHEET_SYNC_EXPIRED_OWNER_REVIEW'});
@@ -140,6 +142,44 @@ test('recovery and forced enqueue quarantine expired mutable writers and surface
       assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_version=2`).get(entityType).status,'REVIEW');
     }finally{h.close();}
   }
+});
+
+test('ambiguous wage-history write holds subsequent versions without another write',async()=>{
+  const h=harness(),writes=[];
+  const now='2026-09-06T00:00:00.000Z';
+  try{
+    h.env.SHEET_WAGE_HISTORY='wage_fixture';
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('staff_fixture','Fixture','user_fixture','08:00','17:00','ACTIVE',?)`).run(now);
+    h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','staff_fixture',50000,'2026-09-01',NULL,'TEST','',1,?,?)`).run(now,now);
+    const first={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage_v1'};
+    await withSheetWriter(async(_env,data)=>{writes.push(data);throw new SheetsMutationOutcomeUnknownError(new Error('response lost after apply'));},async()=>{
+      assert.equal(await syncJob(h.env,first),'REVIEW');
+      assert.equal(await syncJob(h.env,{...first,entityVersion:2,traceId:'trace_wage_v2'}),'REVIEW');
+      await recoverPendingSheetJobs(h.env,0);
+      assert.equal(await syncJob(h.env,first),'REVIEW');
+    });
+    assert.equal(writes.length,1);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type='WAGE_HISTORY' AND entity_key='wage_fixture' AND entity_version=1`).get()),{status:'REVIEW',last_error:'SHEETS_MUTATION_OUTCOME_UNKNOWN'});
+  }finally{h.close();}
+});
+
+test('a writer completing after quarantine cannot report success or clear the review hold',async()=>{
+  const h=harness(),started=deferred(),release=deferred(),now='2026-09-06T00:00:00.000Z';
+  try{
+    h.env.SHEET_WAGE_HISTORY='wage_fixture';
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('staff_fixture','Fixture','user_fixture','08:00','17:00','ACTIVE',?)`).run(now);
+    h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','staff_fixture',50000,'2026-09-01',NULL,'TEST','',1,?,?)`).run(now,now);
+    const first={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage_v1'};
+    await withSheetWriter(async()=>{started.resolve();await release.promise;},async()=>{
+      const writing=syncJob(h.env,first);await started.promise;
+      h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='WAGE_HISTORY' AND entity_key='wage_fixture'`).run();
+      await recoverPendingSheetJobs(h.env,0);
+      release.resolve();
+      assert.equal(await writing,'REVIEW');
+      assert.equal(await syncJob(h.env,{...first,entityVersion:2}),'REVIEW');
+      assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type='WAGE_HISTORY' AND entity_version=1`).get().status,'REVIEW');
+    });
+  }finally{release.resolve();h.close();}
 });
 
 test('personal-use row is safe only for a blank row or the same identity',async()=>{

@@ -6,6 +6,7 @@ import {assertSyntheticLedgerUat,runSyntheticDailyAndRawCoreWorkflow} from './sy
 export const SYNTHETIC_QUEUE_NAME='malipang-projection-uat';
 export const SYNTHETIC_DLQ_NAME='malipang-projection-uat-dlq';
 export const SYNTHETIC_PROBE_VALID_MS=15*60_000;
+export const SYNTHETIC_PROBE_DELIVERY_MS=2*60_000;
 export interface SyntheticQueueMessage{kind:'SYNTHETIC_PROJECTION_UAT';version:number}
 export interface SyntheticQueueProbe{kind:'SYNTHETIC_PROJECTION_QUEUE_PROBE';workerVersionId:string;token:string}
 export function hasSyntheticQueueKind(message:unknown):boolean{return !!message&&typeof message==='object'&&!Array.isArray(message)&&['SYNTHETIC_PROJECTION_UAT','SYNTHETIC_PROJECTION_QUEUE_PROBE'].includes(String((message as Record<string,unknown>).kind));}
@@ -35,8 +36,8 @@ export async function startSyntheticQueueProbe(env:Env):Promise<boolean>{
 /** Called only by the dedicated named consumer. Duplicate delivery is safe. */
 export async function acceptSyntheticQueueProbe(env:Env,message:unknown,deadLetter=false):Promise<boolean>{
   await assertSyntheticQueue(env);if(!validProbe(message)||message.workerVersionId!==env.SYNTHETIC_VERSION_METADATA!.id)return false;
-  const now=new Date().toISOString(),state=deadLetter?'REVIEW':'VERIFIED';
-  const result=await env.DB.prepare(`UPDATE synthetic_projection_queue_probes SET state=?,updated_at=? WHERE worker_version_id=? AND probe_token=? AND state='PENDING'`).bind(state,now,message.workerVersionId,message.token).run();
+  const nowMs=Date.now(),now=new Date(nowMs).toISOString(),state=deadLetter?'REVIEW':'VERIFIED';
+  const result=await env.DB.prepare(`UPDATE synthetic_projection_queue_probes SET state=?,updated_at=? WHERE worker_version_id=? AND probe_token=? AND state='PENDING' AND (?=1 OR (updated_at>=? AND updated_at<=?))`).bind(state,now,message.workerVersionId,message.token,deadLetter?1:0,new Date(nowMs-SYNTHETIC_PROBE_DELIVERY_MS).toISOString(),now).run();
   if(Number(result.meta.changes||0)===1)return true;
   const row=await env.DB.prepare(`SELECT state FROM synthetic_projection_queue_probes WHERE worker_version_id=? AND probe_token=?`).bind(message.workerVersionId,message.token).first<{state:string}>();
   return row?.state===state;

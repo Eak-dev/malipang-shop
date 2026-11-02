@@ -26,12 +26,12 @@ test('missing migration does not run an unguarded action',async()=>{
 
 test('daily writers contend on the shared fence before external mutation',async()=>{
  const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
- const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
-  Object.assign(h.env,{SHEET_EXPENSE_DAILY:'daily'});const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[10]=['รวม',10];headers[1][7]='เงินโอน';client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];let clear=0,writes=0,open,entered;const wait=new Promise(resolve=>{open=resolve}),started=new Promise(resolve=>{entered=resolve});
-  client.batchClearValues=async(_env,_ranges,before)=>{assert.equal(typeof before,'function');await before();clear++;if(clear===1){entered();await wait;}};client.batchWriteValues=async(_env,_writes,before)=>{assert.equal(typeof before,'function');await before();writes++;};
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldFormula=client.batchGetSheetFormulaValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
+  Object.assign(h.env,{SHEET_EXPENSE_DAILY:'daily'});const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[10]=['รวม',10];headers[1][7]='เงินโอน';client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(()=>[]);let clear=0,writes=0,open,entered;const wait=new Promise(resolve=>{open=resolve}),started=new Promise(resolve=>{entered=resolve});
+  client.batchClearValues=async()=>{clear++;};client.batchWriteValues=async(_env,_writes,before)=>{assert.equal(typeof before,'function');await before();writes++;if(writes===1){entered();await wait;}};
   for(const id of ['first','second'])h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES(?,?,?,'Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run(id,'msg-'+id,'fixture');
-  const record=id=>({expenseId:id,transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1});const first=writeConfirmedExpenseToDaily(h.env,record('first'));await started;await assert.rejects(writeConfirmedExpenseToDaily(h.env,record('second')),/CORRECTION_DAILY_SHEET_BUSY/);assert.equal(clear,1);assert.equal(writes,0);open();await first;assert.equal(writes,1);
- }finally{client.batchGetSheetValues=oldRead;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
+  const record=id=>({expenseId:id,transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1});const first=writeConfirmedExpenseToDaily(h.env,record('first'));await started;await assert.rejects(writeConfirmedExpenseToDaily(h.env,record('second')),/CORRECTION_DAILY_SHEET_BUSY/);assert.equal(clear,0);assert.equal(writes,1);open();await first;assert.equal(writes,1);
+ }finally{client.batchGetSheetValues=oldRead;client.batchGetSheetFormulaValues=oldFormula;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
 });
 
 test('a loaded confirmed snapshot cannot post after reclassification',async()=>{
@@ -62,6 +62,21 @@ test('confirmed expense holds if an old writer claims its row while the layout i
   const record={expenseId:'racing',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
   await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CONFIRMED_IDENTITY_UNVERIFIED/);assert.equal(touched,false);
  }finally{client.batchGetSheetValues=oldRead;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
+});
+
+test('new daily rows reject occupied input cells, empty-display formulas and incomplete reads without clearing',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const oldRead=client.batchGetSheetValues,oldFormula=client.batchGetSheetFormulaValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;
+ try{for(const mode of ['month','amount','credit','category','empty-formula','incomplete','changed-before-dispatch','blank']){
+  const h=expenseSqlite();try{h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('new','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+   const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[10]=['รวม',10];headers[1][7]='เงินโอน';client.batchGetSheetValues=async()=>[body,headers];
+   let reads=0,clears=0,writes=0;client.batchGetSheetFormulaValues=async(_env,ranges)=>{reads++;assert.equal(ranges.length,4);const values=[[],[],[],[]];if(mode==='month')values[0]=[[10]];if(mode==='amount')values[1]=[[0,5]];if(mode==='credit')values[2]=[[12]];if(mode==='category')values[3]=[['general']];if(mode==='empty-formula')values[2]=[['=""']];if(mode==='incomplete')values.pop();if(mode==='changed-before-dispatch'&&reads>1)values[1]=[[2]];return values;};
+   client.batchClearValues=async()=>{clears++;};client.batchWriteValues=async(_env,_writes,before)=>{await before();writes++;};
+   const record={expenseId:'new',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+   if(mode==='blank'){const result=await writeConfirmedExpenseToDaily(h.env,record);assert.equal(result.row,7);assert.equal(writes,1);assert.equal(reads,2);}else{await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_NEW_ROW_NOT_EMPTY_OR_UNVERIFIED/);assert.equal(writes,0);}
+   assert.equal(clears,0,mode);
+  }finally{h.close();}}
+ }finally{client.batchGetSheetValues=oldRead;client.batchGetSheetFormulaValues=oldFormula;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;}
 });
 
 test('capacity expansion advances state and index together and rolls back on failure',async()=>{

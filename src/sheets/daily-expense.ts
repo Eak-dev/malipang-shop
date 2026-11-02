@@ -232,8 +232,17 @@ async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entrie
   };
   await current();
   const {payment,rows}=await reserveDailyEntryRows(env,record,entries,write,fenceToken),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet),writePlan=buildDailySheetWritePlan(env.SHEET_EXPENSE_DAILY,record,payment,sourceWallet,entries,rows);
-  await write(before=>batchClearValues(env,writePlan.clearRanges,async()=>{await current();if(before)await before();}));
-  await write(before=>batchWriteValues(env,writePlan.writes,async()=>{await current();if(before)await before();}));
+  // A visually blank candidate can still contain an amount, category, or an
+  // input-cell formula outside the columns used by candidateRows(). Do not
+  // clear any input cells: require all of them to be blank before writing.
+  // Formula-mode reads expose formulas that display as the empty string. This
+  // is a fail-closed collision check, not an atomic Sheets compare-and-swap.
+  const blank=async()=>{
+    const values=await batchGetSheetFormulaValues(env,writePlan.clearRanges);
+    if(values.length!==writePlan.clearRanges.length||values.some(range=>!Array.isArray(range)||range.some(row=>!Array.isArray(row)||row.some(value=>value!==null&&value!==undefined&&value!==""))))throw new DailyCancelReviewRequired("DAILY_NEW_ROW_NOT_EMPTY_OR_UNVERIFIED");
+  };
+  await blank();
+  await write(before=>batchWriteValues(env,writePlan.writes,async()=>{await current();await blank();if(before)await before();}));
   return entries.map(entry=>({entityKey:entry.rowKey,row:rows.get(entry.rowKey)!,postingMonth:payment.postingMonth,postingDay:payment.postingDay,amountColumn:payment.amountColumn,sourceWallet}));
 }
 

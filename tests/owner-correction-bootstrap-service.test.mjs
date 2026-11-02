@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {loadOwnerExpense} from '../dist/expense/owner-correction-repository.js';
-import {bootstrapOwnerCorrectionTargets,verifyOwnerCorrectionProjectionRows} from '../dist/sheets/owner-correction-bootstrap-service.js';
+import {bootstrapOwnerCorrectionTargets,inspectOwnerCorrectionExistingTargets,verifyOwnerCorrectionProjectionRows} from '../dist/sheets/owner-correction-bootstrap-service.js';
 
 test('bootstrap creates metadata only after verifying rows and safely repeats',async()=>{
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'};try{
@@ -15,7 +15,9 @@ test('bootstrap creates metadata only after verifying rows and safely repeats',a
     const ports={sheetId:async(_env,name)=>({daily:1,raw:2,detail:3})[name],values:async(_env,range)=>range.startsWith("'daily'")?daily:range.startsWith("'raw'")?raw:[],metadata:async(_env,key)=>metadata.filter(m=>m.metadataKey===key),
       create:async(_env,rows)=>{creates++;return rows.map(row=>{const m={...row,metadataId:next++};metadata.push(m);return m})},
       expense:async()=>({expense:h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_bootstrap'").get(),summaryDocument:null,document:null,items:[],record:{}})};
+    assert.equal(await inspectOwnerCorrectionExistingTargets(h.env,before,ports),null);assert.equal(creates,0);
     const one=await bootstrapOwnerCorrectionTargets(h.env,before,ports);assert.equal(one.length,2);assert.equal(creates,1);
+    assert.deepEqual(await inspectOwnerCorrectionExistingTargets(h.env,before,ports),one);assert.equal(creates,1);
     const two=await bootstrapOwnerCorrectionTargets(h.env,before,ports);assert.deepEqual(two,one);assert.equal(creates,1);
     const plan={expenseId:'exp_bootstrap',dailyMetadataId:10,rawMetadataId:11,rebind:null,patches:[{metadataId:10,cells:[]},{metadataId:11,cells:[]}],originalRows:[]};
     assert.equal(await verifyOwnerCorrectionProjectionRows(h.env,before,plan,ports),true);

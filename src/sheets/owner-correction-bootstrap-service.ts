@@ -43,6 +43,12 @@ async function snapshot(env:Env,expected:OwnerCorrectionSnapshot,ports:Correctio
   return {targets,existing};
 }
 
+/** Read existing verified associations twice; never creates metadata. */
+export async function inspectOwnerCorrectionExistingTargets(env:Env,expected:OwnerCorrectionSnapshot,ports:CorrectionBootstrapPorts=defaults):Promise<Array<{target:CategoryMetadataTarget;metadataId:number}>|null>{
+  const read=async()=>{const current=await snapshot(env,expected,ports),links=planCategoryMetadata(current.targets,current.existing);return links.every(link=>link.kind==="EXISTING")?links.map(link=>{if(link.kind!=="EXISTING")throw new Error("CORRECTION_METADATA_INVALID");return {target:link.target,metadataId:link.metadataId};}):null;};
+  const first=await read(),second=await read();return first&&second&&JSON.stringify(first)===JSON.stringify(second)?first:null;
+}
+
 /**
  * Associates only a uniquely matched, twice-verified expense. An ambiguous
  * create response is never retried blindly: the next call re-reads metadata.

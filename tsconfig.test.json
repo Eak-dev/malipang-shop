@@ -41,6 +41,7 @@
     "src/sheets/owner-correction-plan.ts",
     "src/sheets/owner-correction-projections.ts",
     "src/sheets/owner-correction-combined-plan.ts",
+    "src/sheets/owner-correction-plan-service.ts",
     "src/sheets/owner-correction-recovery.ts",
     "src/sheets/owner-correction-sync-plan.ts",
     "src/sheets/owner-correction-sync-state.ts",

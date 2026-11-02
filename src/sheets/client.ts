@@ -1,8 +1,9 @@
 import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
-import { fetchWithTimeout } from "../shared/async";
+import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
+import type { MetadataValueRange } from './daily-stable-row-writes';
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -21,19 +22,65 @@ export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):numbe
   const dateMs=Date.parse(value);return Number.isFinite(dateMs)?Math.max(0,Math.ceil((dateMs-nowMs)/1000)):undefined;
 }
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<Response>{
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,sanitizeErrorBody=false):Promise<Response>{
   const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet
   // request can be dispatched, so that wait is outside the mutation fence.
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
   let res:Response;try{res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
-  if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
+  if(!res.ok){let body="";if(sanitizeErrorBody){if(res.body)void res.body.cancel().catch(()=>{});}else try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
+/**
+ * Staging-only transport for an already-verified row metadata ID. This is not
+ * a compare-and-swap: identity enrollment, prior contents, old writers, and
+ * human edits require separate proof. It is deliberately not wired into sync.
+ */
+export async function writeDailyByMetadataPrototype(env:Env,range:MetadataValueRange,beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+  assertStablePrototype(env);
+  if(!Number.isSafeInteger(range.dataFilter.developerMetadataLookup.metadataId)||range.dataFilter.developerMetadataLookup.metadataId<1||range.dataFilter.developerMetadataLookup.metadataId>2147483647||range.values.length!==1||range.values[0]?.length!==25)throw new Error('DAILY_STABLE_METADATA_REQUEST_INVALID');
+  const allowed=new Set([1,2,3,5,6,7,10,11,12,13,14,15,16,21,22]);
+  if(range.values[0]!.some((value,index)=>!allowed.has(index)&&value!==null))throw new Error('DAILY_STABLE_METADATA_REQUEST_INVALID');
+  const response=await sheetsFetch(env,'/values:batchUpdateByDataFilter',{method:'POST',body:JSON.stringify({valueInputOption:'RAW',data:[range],includeValuesInResponse:false})},true,beforeMutationDispatch,true);
+  let data:{responses?:Array<{updatedRows?:number}>};
+  try{data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets mutation response') as typeof data;}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(data.responses?.length!==1||data.responses[0]?.updatedRows!==1)throw new SheetsMutationOutcomeUnknownError(new Error('DAILY_STABLE_METADATA_RESPONSE_UNVERIFIED'));
+}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true,beforeMutationDispatch);}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);}
+function assertStablePrototype(env:Env):void{
+  if(env.RUNTIME_MODE!=='shadow'||env.DAILY_STABLE_ID_PROTOTYPE_ENABLED!=='true'||!env.DAILY_STABLE_UAT_SPREADSHEET_ID||!env.DAILY_STABLE_PRODUCTION_SPREADSHEET_ID||env.DAILY_STABLE_UAT_SPREADSHEET_ID===env.DAILY_STABLE_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.DAILY_STABLE_UAT_SPREADSHEET_ID||!env.DAILY_STABLE_UAT_DATABASE_MARKER||env.DAILY_STABLE_UAT_EXCLUSIVE_EDITORS!=='true')throw new Error('DAILY_STABLE_PROTOTYPE_DISABLED');
+}
+export async function batchUpdateStablePrototype(env:Env,requests:unknown[],beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+  assertStablePrototype(env);if(!requests.length)throw new Error('DAILY_STABLE_EMPTY_REQUEST');
+  const response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests})},true,beforeMutationDispatch,true);
+  try{await readBoundedJson(response,262144,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets mutation response');}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+}
+export async function stablePrototypeSnapshot(env:Env,range:string,formulas:boolean):Promise<unknown[][]>{
+  assertStablePrototype(env);const q=new URLSearchParams({ranges:range,valueRenderOption:formulas?'FORMULA':'UNFORMATTED_VALUE',dateTimeRenderOption:'SERIAL_NUMBER'});
+  const response=await sheetsFetch(env,`/values:batchGet?${q}`,{method:'GET'},false,undefined,true);
+  const data=await readBoundedJson(response,4*1024*1024,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets snapshot') as {valueRanges?:Array<{values?:unknown[][]}>};
+  if(data.valueRanges?.length!==1||!Array.isArray(data.valueRanges[0]!.values))throw new Error('DAILY_STABLE_SNAPSHOT_INCOMPLETE');return data.valueRanges[0]!.values!;
+}
+export function parseStablePrototypeSheetInfo(result:{sheets?:Array<{properties?:{sheetId?:number;title?:string;gridProperties?:{rowCount?:number;columnCount?:number}}}>},title:string):{sheetId:number;rowCount:number;columnCount:number}{
+  const matches=(result.sheets??[]).filter(item=>item.properties?.title===title);if(matches.length!==1)throw new Error('DAILY_STABLE_SHEET_NOT_UNIQUE');
+  const p=matches[0]!.properties!,g=p.gridProperties;
+  if(!Number.isSafeInteger(p.sheetId)||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||g!.rowCount!<1||g!.rowCount!>5000||g!.columnCount!<25)throw new Error('DAILY_STABLE_SHEET_GRID_UNSUPPORTED');
+  return {sheetId:p.sheetId!,rowCount:g!.rowCount!,columnCount:g!.columnCount!};
+}
+export async function stablePrototypeSheetInfo(env:Env,title:string):Promise<{sheetId:number;rowCount:number;columnCount:number}>{
+  assertStablePrototype(env);const response=await sheetsFetch(env,'?fields=sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',{method:'GET'},false,undefined,true);
+  const result=await readBoundedJson(response,1048576,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets tab metadata') as Parameters<typeof parseStablePrototypeSheetInfo>[0];
+  return parseStablePrototypeSheetInfo(result,title);
+}
+export async function stablePrototypeSearchMetadata(env:Env,filter:Record<string,unknown>):Promise<Array<{metadataId:number;sheetId:number;row:number}>>{
+  assertStablePrototype(env);const response=await sheetsFetch(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:filter}]})},false,undefined,true);
+  const result=await readBoundedJson(response,262144,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata') as {matchedDeveloperMetadata?:Array<{developerMetadata?:{metadataId?:number;metadataKey?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}>};
+  const matches=result.matchedDeveloperMetadata??[];if(matches.length>2)throw new Error('DAILY_STABLE_METADATA_DUPLICATE');
+  return matches.map(item=>{const m=item.developerMetadata,d=m?.location?.dimensionRange;if(!Number.isSafeInteger(m?.metadataId)||m!.metadataId!<1||m?.metadataKey!=='e'||d?.dimension!=='ROWS'||!Number.isSafeInteger(d.sheetId)||!Number.isSafeInteger(d.startIndex)||d.endIndex!==d.startIndex!+1)throw new Error('DAILY_STABLE_METADATA_INVALID');return{metadataId:m!.metadataId!,sheetId:d.sheetId!,row:d.startIndex!+1};});
+}
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);

@@ -719,3 +719,45 @@ test('PERSONAL_USE serialization is scoped per entity rather than global',async(
     assert.equal(typeof await claimSheetSyncJob(h.env,job(secondId,2)),'string');
   }finally{h.close();}
 });
+
+
+test('expense raw identity guard fails closed for stale, occupied, duplicate and formula rows',async()=>{
+  const h=harness(),sheet='V52_EXPENSE_RAW',id='expense_guard_fixture';
+  try{
+    const {assertExpenseRawSheetRowSafe:check}=require('../dist/sheets/sync.js');
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];
+    await check(h.env,sheet,2,id,true);
+    await assert.rejects(check(h.env,sheet,2,id,false),/MAPPED_ROW_MISSING/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[id,'2026-10-04']]];
+    await check(h.env,sheet,2,id,false);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['different_id']],[[ 'different_id','2026-10-04']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/ROW_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[['','unexpected value']]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/ROW_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[id,'=1+1']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id],[],[id]],[[id,'text']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[],[id]],[[]]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[]]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/INCONSISTENT_READBACK/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/READBACK_INCOMPLETE/);
+    h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,'other_id',2);
+    await assert.rejects(check(h.env,sheet,2,id,false),/D1_ROW_COLLISION/);
+  }finally{h.close();}
+});
+
+test('expense raw collision is held before any sheet write or daily cancellation',async()=>{
+  const h=harness(),id='expense_guard_collision',writes=[],now='2026-10-04T00:00:00.000Z';
+  try{
+    h.env.SHEET_EXPENSE_RAW='V52_EXPENSE_RAW';
+    h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES(?,?,?,'synthetic',100,'cash','CASH_DRAWER','ingredients','2026-10-04','CANCELLED','trace_fixture',?,1)`).run(id,'message_expense_guard','user_expense_guard',now);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['unrelated_id']],[['unrelated_id','2026-10-04']]];
+    const request={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:1,traceId:'trace_expense_guard'};
+    await withSheetWriter(async(_env,data)=>writes.push(data),async()=>assert.equal(await syncJob(h.env,request),'REVIEW'));
+    assert.equal(writes.length,0);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=?`).get(id)),{status:'REVIEW',last_error:'EXPENSE_RAW_ROW_COLLISION'});
+  }finally{h.close();}
+});

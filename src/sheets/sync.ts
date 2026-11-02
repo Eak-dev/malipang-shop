@@ -21,6 +21,9 @@ class PersonalUseWriteFenceUnavailableError extends Error{
 class PersonalUseRowReviewRequired extends Error{
   constructor(reason:string){super(reason);this.name="PersonalUseRowReviewRequired";}
 }
+class ExpenseRawRowReviewRequired extends Error{
+  constructor(reason:string){super(reason);this.name="ExpenseRawRowReviewRequired";}
+}
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
   return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
 }
@@ -47,12 +50,32 @@ export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise
   const detailRowCount=await writeConfirmedExpensePurchaseDetails(env,loaded.record,loaded.document,loaded.items);
   return{mode:"SUMMARY",rowCount:result.placements.length,detailRowCount,replacedLegacySummary:result.replacedLegacySummary};
 }
-async function allocateRow(env:Env,sheet:string,entityKey:string):Promise<number>{
-  const existing=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(existing)return Number(existing.row_number);
+async function allocateRow(env:Env,sheet:string,entityKey:string):Promise<{row:number;newlyAllocated:boolean}>{
+  const existing=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(existing)return{row:Number(existing.row_number),newlyAllocated:false};
   const allocated=await env.DB.prepare(`INSERT INTO sheet_cursors(sheet_name,next_row) VALUES(?,3) ON CONFLICT(sheet_name) DO UPDATE SET next_row=next_row+1 RETURNING next_row-1 AS row_number`).bind(sheet).first<{row_number:number}>(),candidate=Number(allocated?.row_number||2);
-  await env.DB.prepare(`INSERT OR IGNORE INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)`).bind(sheet,entityKey,candidate).run();const finalRow=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(!finalRow)throw new Error("Unable to allocate sheet row");return Number(finalRow.row_number);
+  const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)`).bind(sheet,entityKey,candidate).run();const finalRow=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,entityKey).first<{row_number:number}>();if(!finalRow)throw new Error("Unable to allocate sheet row");return{row:Number(finalRow.row_number),newlyAllocated:Number(inserted.meta.changes||0)===1};
 }
 
+/** Fail closed on a stale raw-expense mapping or an occupied allocation.
+ * The read is not a Sheets compare-and-swap: a concurrent manual or legacy
+ * writer can change the row after inspection. This guard is not a substitute
+ * for excluding other writers and proving any older dispatch is quiescent. */
+export async function assertExpenseRawSheetRowSafe(env:Env,sheet:string,row:number,entityKey:string,newlyAllocated:boolean):Promise<void>{
+  if(!Number.isSafeInteger(row)||row<2||!entityKey)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_INVALID_SHEET_ROW");
+  const other=await env.DB.prepare(`SELECT entity_key FROM sheet_row_index WHERE sheet_name=? AND row_number=? AND entity_key<>? LIMIT 1`).bind(sheet,row,entityKey).first<{entity_key:string}>();
+  if(other)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_D1_ROW_COLLISION");
+  const quoted=`'${sheet.replace(/'/g,"''")}'`;
+  const result=await batchGetSheetFormulaValues(env,[`${quoted}!A2:A`,`${quoted}!A${row}:Q${row}`]);
+  if(result.length!==2)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_ROW_READBACK_INCOMPLETE");
+  const matches=(result[0]||[]).flatMap((value,i)=>String(value[0]??"")===entityKey?[i+2]:[]);
+  if(matches.some(position=>position!==row)||matches.length>1)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_IDENTITY_COLLISION");
+  const values=result[1]?.[0]||[],identity=String(values[0]??"");
+  if(values.some(value=>typeof value==="string"&&value.trimStart().startsWith("=")))throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_FORMULA_CONFLICT");
+  if(identity===entityKey&&matches.length===1)return;
+  if(matches.length>0)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_INCONSISTENT_READBACK");
+  if(values.some(value=>value!==""&&value!==null&&value!==undefined))throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_ROW_COLLISION");
+  if(!newlyAllocated)throw new ExpenseRawRowReviewRequired("EXPENSE_RAW_MAPPED_ROW_MISSING");
+}
 /** A D1 row index is not proof the sheet row is free: it may have been filled
  * manually or by an earlier mirror. Refuse any collision, including formulas
  * and partially populated rows without an identity. This guard intentionally
@@ -179,7 +202,8 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(currentVersion<job.entityVersion)throw new Error(`Personal-use sync version ${job.entityVersion} is ahead of D1 version ${currentVersion}`);
       sheet=env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW";values=buildPersonalUseRawSheetValues(personalUse);
     }else throw new Error(`Unsupported sheet entity type: ${job.entityType}`);
-    const row=await allocateRow(env,sheet,job.entityKey);
+    const allocation=await allocateRow(env,sheet,job.entityKey),row=allocation.row;
+    if(expense)await assertExpenseRawSheetRowSafe(env,sheet,row,job.entityKey,allocation.newlyAllocated);
     if(personalUse){
       await assertPersonalUseSheetRowSafe(env,sheet,row,job.entityKey);
       // Row allocation may yield. Re-read both the authoritative version and lease
@@ -229,7 +253,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(Number(released.meta.changes||0)!==1)throw new Error("SHEET_FENCE_CLAIM_LOST");
       return "BUSY";
     }
-    if(error instanceof DailyCancelReviewRequired||error instanceof PersonalUseRowReviewRequired){
+    if(error instanceof DailyCancelReviewRequired||error instanceof PersonalUseRowReviewRequired||error instanceof ExpenseRawRowReviewRequired){
       const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),error.message,job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
       if(Number(held.meta.changes||0)!==1)throw new Error("SHEET_REVIEW_STATE_LOST");
       return"REVIEW";

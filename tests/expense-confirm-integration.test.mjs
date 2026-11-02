@@ -290,6 +290,11 @@ test('SQLite: text quick-save is atomic with its audit and recoverable outbox',a
   }finally{h.close();}
 });
 
+test('SQLite: quick-save redelivery does not create phantom source revisions',async()=>{
+  const h=harness({syncEnabled:false}),event={source:{type:'user',userId:'line_fixture'},message:{id:'quick_replay',type:'text',text:'ไข่ ทอน 375'}};h.env.RUNTIME_MODE='shadow';h.env.SHADOW_LINE_OUTPUT='false';
+  try{assert.deepEqual(await Promise.all([handleExpenseText(h.env,event,'trace_a'),handleExpenseText(h.env,event,'trace_b')]),['CONFIRMED','CONFIRMED']);const saved=h.sqlite.prepare("SELECT expense_id FROM expense_events WHERE message_id='quick_replay'").get();const before=h.sqlite.prepare('SELECT revision,state FROM expense_projection_source_revisions WHERE expense_id=?').get(saved.expense_id);const count=h.sqlite.prepare('SELECT count(*) n FROM expense_projection_source_revisions').get().n;assert.equal(await handleExpenseText(h.env,event,'trace_c'),'CONFIRMED');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM expense_events WHERE message_id=?').get('quick_replay').n,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM expense_projection_source_revisions').get().n,count);assert.deepEqual(h.sqlite.prepare('SELECT revision,state FROM expense_projection_source_revisions WHERE expense_id=?').get(saved.expense_id),before);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM expense_audit_log WHERE expense_id=?').get(saved.expense_id).n,1);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM sync_jobs WHERE entity_key=?').get(saved.expense_id).n,1);}finally{h.close();}
+});
+
 test('SQLite: quick-save rolls back the expense and audit if outbox creation fails',async()=>{
   const h=harness(),event={source:{type:'user',userId:'line_fixture'},message:{id:'quick_failure',type:'text',text:'ไข่ ทอน 375'}};
   h.env.RUNTIME_MODE='shadow';h.env.SHADOW_LINE_OUTPUT='false';

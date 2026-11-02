@@ -186,7 +186,10 @@ export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,a
   if(!parsed){await respondText(env,event,["Invalid expense format. ❌","","Examples:","• Egg change 375","• Electricity transfer 1200","• Boxes kbank 350","• 28/01 Egg change 375"].join("\n"),traceId);return"REJECTED";}
   const id=randomId("exp"),status=parsed.quickSave?"CONFIRMED":"WAITING_CONFIRM",now=new Date().toISOString();
   const ownership=actorValues(actor);
-  const insert=env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId);
+  // Skip the attempted insert entirely on ordinary message redelivery. The
+  // source-revision collision trigger must still see real REPLACE/conflicts;
+  // repeatedly firing it for a harmless replay would invalidate live sync.
+  const insert=env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM expense_events WHERE message_id=?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId,messageId);
   let inserted:D1Result;
   if(parsed.quickSave){
     // The generated expense ID makes each dependent INSERT conditional on

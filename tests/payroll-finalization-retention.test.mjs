@@ -39,7 +39,7 @@ test('a malformed finalization marker requires review before mutating payroll',a
 test('changed source data prevents the stale recalculation from writing',async()=>{
  const h=fixture(finalized);try{
  const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE attendance_daily SET time_out='19:00',version=version+1 WHERE employee_id='X'`).run();return batch(statements);};
- await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_SNAPSHOT_CHANGED_REVIEW_REQUIRED/);
+ await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);
  const row=h.sqlite.prepare(`SELECT time_out,finalized_at,version FROM attendance_daily WHERE employee_id='X'`).get();
  assert.deepEqual({...row},{time_out:'19:00',finalized_at:finalized,version:2});
  assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM payroll_weekly`).get().n,0);
@@ -50,7 +50,7 @@ test('a newly approved OT amount prevents calculation from an older OT snapshot'
  h.sqlite.prepare(`INSERT INTO ot_requests(ot_id,employee_id,work_date,reason,fixed_amount_satang,requested_by,owner_preapproved_at,created_at,updated_at) VALUES('ot','X',?,'fixture',10000,'fixture',?,?,?)`).run(date,finalized,finalized,finalized);
  const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE ot_requests SET status='APPROVED',owner_final_status='APPROVED',owner_final_amount_satang=10000 WHERE ot_id='ot'`).run();return batch(statements);};
  const before=read(h);
- await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_SNAPSHOT_CHANGED_REVIEW_REQUIRED/);
+ await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);
  assert.deepEqual(read(h),before);
  assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM payroll_weekly`).get().n,0);
  }finally{h.close();}
@@ -73,4 +73,68 @@ test('a lost response after committing payroll leaves both sync outboxes recover
  assert.deepEqual(jobs,[{entity_type:'DAILY_PAYROLL',status:'PENDING'},{entity_type:'WEEKLY_PAYROLL',status:'PENDING'}]);
  assert.equal(h.queue.length,0);
  }finally{h.close();}
+});
+test('changed employee policy is rejected before payroll and outboxes change',async()=>{
+ for(const [field,value] of [['scheduled_in','09:00'],['scheduled_out','18:00'],['daily_wage_satang',90000],['grace_min',4],['late_deduction_satang',500],['early_deduction_satang',500],['status','INACTIVE']]){
+  const h=fixture(finalized);try{
+   const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE employees SET ${field}=? WHERE employee_id='X'`).run(value);return batch(statements);};
+   const before=read(h);await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);
+   assert.deepEqual(read(h),before);assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM sync_jobs`).get().n,0);
+  }finally{h.close();}
+ }
+});
+test('changed stored wage value or source is rejected even when version is unchanged',async()=>{
+ for(const [field,value] of [['daily_wage_satang',90000],['wage_source_id','changed_source']]){
+  const h=fixture(finalized);try{
+   const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE attendance_daily SET ${field}=? WHERE employee_id='X'`).run(value);return batch(statements);};
+   const before=read(h);await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);
+   assert.deepEqual(read(h),before);assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM payroll_weekly`).get().n,0);
+  }finally{h.close();}
+ }
+});
+function allowLegacyNullWage(h){
+ // Production migrations enforce NOT NULL, but old or imported data can be
+ // nullable. A local legacy-shaped table exercises both fallback branches.
+ h.sqlite.exec(`PRAGMA foreign_keys=OFF; CREATE TABLE legacy_daily AS SELECT * FROM attendance_daily; DROP TABLE attendance_daily; ALTER TABLE legacy_daily RENAME TO attendance_daily; PRAGMA foreign_keys=ON;`);
+ h.sqlite.prepare(`UPDATE attendance_daily SET daily_wage_satang=NULL,daily_wage_snapshot_satang=NULL WHERE employee_id='X'`).run();
+}
+test('a changed selected wage history row fails closed for a legacy null wage snapshot',async()=>{
+ const h=fixture(finalized);try{
+ allowLegacyNullWage(h);
+ h.sqlite.prepare(`INSERT INTO employee_wage_history(wage_id,employee_id,daily_wage_satang,effective_from,created_at,updated_at) VALUES('wage','X',60000,'2025-01-01',?,?)`).run(finalized,finalized);
+ const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE employee_wage_history SET daily_wage_satang=70000 WHERE wage_id='wage'`).run();return batch(statements);};
+ const before=read(h);await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);assert.deepEqual(read(h),before);
+ assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM sync_jobs`).get().n,0);
+ }finally{h.close();}
+});
+test('a newly applicable history row invalidates a legacy employee wage fallback',async()=>{
+ const h=fixture(finalized);try{
+ allowLegacyNullWage(h);
+ const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`INSERT INTO employee_wage_history(wage_id,employee_id,daily_wage_satang,effective_from,created_at,updated_at) VALUES('wage','X',70000,'2025-01-01',?,?)`).run(finalized,finalized);return batch(statements);};
+ const before=read(h);await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);assert.deepEqual(read(h),before);
+ assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM sync_jobs`).get().n,0);
+ }finally{h.close();}
+});
+test('same or newer completed or held projections abort and preserve recalculation state',async()=>{
+ for(const type of ['DAILY_PAYROLL','WEEKLY_PAYROLL'])for(const status of ['PENDING','FAILED','PROCESSING','COMPLETED','REVIEW'])for(const v of [2,3]){
+  const h=fixture(finalized);try{
+   const key=type==='DAILY_PAYROLL'?'X|2026-01-01':'X|2026-01-01';
+   h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('old',?,?,?,'old',?,1,?)`).run(type,key,v,status,finalized);
+   const before=read(h),job={...h.sqlite.prepare(`SELECT * FROM sync_jobs WHERE job_id='old'`).get()};
+   await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_RECALCULATION_REVIEW_REQUIRED/);
+   assert.deepEqual(read(h),before);assert.deepEqual({...h.sqlite.prepare(`SELECT * FROM sync_jobs WHERE job_id='old'`).get()},job);
+   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM payroll_weekly').get().n,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM sync_jobs').get().n,1);
+  }finally{h.close();}
+ }
+});
+
+test('unchanged legacy wage history and employee fallback can be recalculated',async()=>{
+ for(const useHistory of [false,true]){
+  const h=fixture(finalized);try{
+   allowLegacyNullWage(h);
+   if(useHistory)h.sqlite.prepare(`INSERT INTO employee_wage_history(wage_id,employee_id,daily_wage_satang,effective_from,created_at,updated_at) VALUES('wage','X',60000,'2025-01-01',?,?)`).run(finalized,finalized);
+   await recalculateDailyPayroll(h.env,'X',date);const row=h.sqlite.prepare(`SELECT daily_wage_satang,wage_source_id FROM attendance_daily WHERE employee_id='X'`).get();
+   assert.deepEqual({...row},useHistory?{daily_wage_satang:60000,wage_source_id:'wage'}:{daily_wage_satang:50000,wage_source_id:'EMPLOYEE_CURRENT_FALLBACK'});
+  }finally{h.close();}
+ }
 });

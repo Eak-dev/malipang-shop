@@ -3,7 +3,7 @@ import {randomId} from "../shared/ids";
 import {activeOwnerSql,type OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionAmount,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionPayment,type OwnerCorrectionSnapshot} from "./owner-correction";
 import {assessOwnerCorrection,type CorrectionGuardEvidence} from "./owner-correction-guard";
-import {serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/owner-correction-sync-plan";
+import {correctionRawPatchMatches,serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/owner-correction-sync-plan";
 
 export type OwnerCorrectionInput={mode:"SEARCH"}|{mode:"VALUE";field:"description"|"amountSatang"|"transactionDate";snapshot:OwnerCorrectionSnapshot};
 
@@ -116,7 +116,7 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
   const field=String(row.field) as OwnerCorrectionField;
   const value=field==="payment"?{paymentKey:after.paymentKey,sourceWallet:after.sourceWallet}:field==="amountSatang"?`${Math.floor(after.amountSatang/100)}.${String(after.amountSatang%100).padStart(2,"0")}`:field==="transactionDate"?after.transactionDate:field==="category"?after.category:after.description;
   const rebuilt=buildOwnerCorrectionDraft(before,field,value);if(!rebuilt||JSON.stringify(rebuilt.after)!==JSON.stringify(after)||before.status!=="CONFIRMED"||assessOwnerCorrection(rebuilt,evidence).length)return null;
-  const planJson=plan?serializeCorrectionSyncPlan(plan,before.expenseId,id):null;if(!planJson)return null;
+  const planJson=plan?serializeCorrectionSyncPlan(plan,before.expenseId,id):null;if(!planJson||!plan||!correctionRawPatchMatches(plan,before,after))return null;
   const auditId=randomId("exp_audit"),jobId=randomId("sync"),now=new Date(nowMs).toISOString(),next=before.version+1;
   if(!Number.isSafeInteger(next))return null;
   const result=await env.DB.batch([

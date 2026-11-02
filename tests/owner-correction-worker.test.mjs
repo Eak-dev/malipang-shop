@@ -14,7 +14,7 @@ async function setup(move=false){
   const patches=[{metadataId:1,cells:[{columnIndex:21,value:move?'':'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows=[{metadataId:1,values:daily},{metadataId:2,values:raw}];
   if(move){patches.push({metadataId:3,cells:[{columnIndex:21,value:'transport'}]});originalRows.push({metadataId:3,values:Array(22).fill(null)});}
   const plan={expenseId:'exp_worker',dailyMetadataId:1,rawMetadataId:2,patches,originalRows,rebind:move?{sourceMetadataId:1,reservationMetadataId:3,sheetId:100,correctionId:id}:null};
-  const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,syncInProgress:false};
+  const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false};
   assert.equal(await commitOwnerCorrection(h.env,owner,id,e,'trace',clock.now,plan),2);
   const rows=new Map(originalRows.map(row=>[row.metadataId,[...row.values]])),stats={patches:0,rebinds:0,failAfterWrite:false,failBeforeWrite:false,failAfterRebind:false,failBeforeRebind:false},meta={moved:false};
   const ports={now:()=>clock.now,inspect:async()=>({identitiesVerified:true,rows:new Map([...rows].map(([key,value])=>[key,[...value]]))}),

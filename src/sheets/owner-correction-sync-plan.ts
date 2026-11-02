@@ -1,10 +1,22 @@
 import {buildMetadataRowPatchRequest,type MetadataRowPatch} from "./client";
+import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 
 export interface CorrectionSyncOriginalRow{metadataId:number;values:unknown[]}
 export interface CorrectionSyncRebind{sourceMetadataId:number;reservationMetadataId:number;sheetId:number;correctionId:string}
 export interface CorrectionSyncPlan{expenseId:string;dailyMetadataId:number;rawMetadataId:number;patches:MetadataRowPatch[];originalRows:CorrectionSyncOriginalRow[];rebind:CorrectionSyncRebind|null}
 const allowed=[1,2,3,4,5,6,7,10,11,12,13,14,15,16,21,22];
 const dailyColumns=new Set([1,2,3,5,6,7,10,11,12,13,14,15,16,21,22]),rawColumns=new Set([1,2,3,4,5,6]),itemColumns=new Set([3,12,13,14]);
+
+/** Ensure the raw-sheet mutation represents exactly the approved business change. */
+export function correctionRawPatchMatches(plan:CorrectionSyncPlan,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot):boolean{
+  if(plan.expenseId!==before.expenseId||before.expenseId!==after.expenseId)return false;
+  const old=[before.transactionDate,before.description,before.amountSatang/100,before.paymentKey,before.sourceWallet,before.category];
+  const next=[after.transactionDate,after.description,after.amountSatang/100,after.paymentKey,after.sourceWallet,after.category];
+  const expected=old.flatMap((value,index)=>value===next[index]?[]:[{columnIndex:index+1,value:next[index]}]);
+  const patch=plan.patches.find(row=>row.metadataId===plan.rawMetadataId),original=plan.originalRows.find(row=>row.metadataId===plan.rawMetadataId);
+  if(!expected.length||!patch||!original||patch.cells.length!==expected.length)return false;
+  return expected.every(cell=>original.values[cell.columnIndex]===old[cell.columnIndex-1]&&patch.cells.filter(actual=>actual.columnIndex===cell.columnIndex&&actual.value===cell.value).length===1);
+}
 
 /** Internal structural checks only; the caller still verifies actual row identity. */
 export function serializeCorrectionSyncPlan(plan:CorrectionSyncPlan,expenseId:string,correctionId:string):string|null{

@@ -94,6 +94,18 @@ test("valid Attendance commits once and successful confirmation is delivered",as
   assert.equal(state.attendanceCommits,1);
 });
 
+test("duplicate retry queues the event and actual current daily and weekly versions",async()=>{
+  const {state,env}=fixture({result:{eventId:'att_1',punchType:'DUPLICATE',sourceEmployeeId:'OWN001',workDate:'2026-07-29',officialTime:'04:13',status:'DUPLICATE',lateMinutes:0,confirmedWageSatang:0,pendingWageSatang:0,validationCode:'DUPLICATE_MESSAGE',version:1,dailyVersion:7,weeklyVersion:9}});
+  await handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,'trace-duplicate');
+  assert.deepEqual(state.sheetBatches.map(message=>[message.body.entityType,message.body.entityVersion]),[['ATTENDANCE_EVENT',1],['DAILY_PAYROLL',7],['WEEKLY_PAYROLL',9]]);
+});
+
+test("duplicate image from another employee never queues that event under the current employee",async()=>{
+  const {state,env}=fixture({result:{eventId:'other_event',punchType:'DUPLICATE',sourceEmployeeId:'OTHER',workDate:'2026-07-29',officialTime:'',status:'DUPLICATE',lateMinutes:0,confirmedWageSatang:0,pendingWageSatang:0,validationCode:'DUPLICATE_IMAGE',version:1}});
+  await handleAttendance(env,event,employee,validReading,new Uint8Array([1]).buffer,'trace-foreign');
+  assert.equal(state.sheetBatches.length,0);
+});
+
 test("valid Attendance uses Reply API and does not require Push capacity",async()=>{
   const {state,env}=fixture(),originalFetch=globalThis.fetch,calls=[];
   globalThis.fetch=async(url,init)=>{

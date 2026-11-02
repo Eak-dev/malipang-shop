@@ -62,9 +62,54 @@ test('a lost response after D1 commit retries as duplicate and the next punch us
     h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT version FROM payroll_weekly')){h.DB.afterFirst=null;throw new Error('injected crash after D1 commit');}};
     await assert.rejects(commit(h,input('first','08:00')),/injected crash after D1 commit/);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events WHERE message_id='first'`).get().n,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs WHERE status='PENDING'`).get().n,3);
     assert.equal((await commit(h,input('first','08:00'))).punchType,'DUPLICATE');
     assert.equal((await commit(h,input('second','17:00'))).punchType,'OUT');
     assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001' AND work_date='2026-01-01'`).get()},{time_in:'08:00',time_out:'17:00',version:2});
+  }finally{h.close();}
+});
+
+test('a duplicate older event reports current daily and weekly versions without repeating outboxes',async()=>{
+  const h=harness();
+  try{
+    await commit(h,input('first','08:00'));await commit(h,input('second','17:00'));
+    const duplicate=await commit(h,input('first','08:00'));
+    assert.equal(duplicate.version,1);assert.equal(duplicate.dailyVersion,2);assert.equal(duplicate.weeklyVersion,2);assert.equal(duplicate.sourceEmployeeId,'FIX001');
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,6);
+  }finally{h.close();}
+});
+
+test('punch source and weekly updates roll back if an outbox insert fails',async()=>{
+  const h=harness();
+  try{
+    h.sqlite.exec(`CREATE TRIGGER reject_attendance_outbox BEFORE INSERT ON sync_jobs WHEN NEW.entity_type='DAILY_PAYROLL' BEGIN SELECT RAISE(ABORT,'fixture attendance outbox failure'); END;`);
+    await assert.rejects(commit(h,input('first','08:00')),/fixture attendance outbox failure/);
+    for(const table of ['attendance_events','attendance_daily','payroll_weekly','sync_jobs'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0,table);
+  }finally{h.close();}
+});
+
+test('a punch fails closed when its next daily or weekly outbox version is occupied',async()=>{
+  for(const entityType of ['DAILY_PAYROLL','WEEKLY_PAYROLL']){
+    const h=harness();
+    try{
+      h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('existing_fixture',?,'FIX001|2026-01-01',1,'fixture','COMPLETED',1,'2026-01-01T00:00:00Z')`).run(entityType);
+      await assert.rejects(commit(h,input('first','08:00')),/ATTENDANCE_DAILY_CHANGED_CONCURRENTLY/);
+      assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events`).get().n,0);
+      assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_daily`).get().n,0);
+      assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM payroll_weekly`).get().n,0);
+      assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,1);
+    }finally{h.close();}
+  }
+});
+
+test('a duplicate image from another employee returns no foreign payroll information',async()=>{
+  const h=harness();
+  try{
+    await commit(h,input('first','08:00'));
+    const other=input('other','08:00');other.employee={...employee,employeeId:'OTHER'};other.imageSha256='sha_first';
+    const duplicate=await commit(h,other);
+    assert.equal(duplicate.punchType,'DUPLICATE');assert.equal(duplicate.sourceEmployeeId,'FIX001');
+    assert.equal(duplicate.officialTime,'');assert.equal(duplicate.confirmedWageSatang,0);assert.equal(duplicate.pendingWageSatang,0);
   }finally{h.close();}
 });
 
@@ -102,7 +147,7 @@ test('admin correction cannot overwrite a punch committed after its read',async(
     assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:00',time_out:'17:00',version:2});
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events WHERE validation_code='ADMIN_CORRECTION'`).get().n,0);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM admin_audit WHERE action='ATTENDANCE_CORRECTION'`).get().n,0);
-    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs WHERE trace_id LIKE 'admin_att_%'`).get().n,0);
   }finally{h.close();}
 });
 
@@ -113,7 +158,7 @@ test('admin correction cannot overwrite a first punch committed after an empty r
     await assert.rejects(correctAttendance(h.env,correction),/ATTENDANCE_CORRECTION_STATE_CHANGED_OR_VERSION_CONFLICT/);
     assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:00',time_out:null,version:1});
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events WHERE validation_code='ADMIN_CORRECTION'`).get().n,0);
-    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs WHERE trace_id LIKE 'admin_att_%'`).get().n,0);
   }finally{h.close();}
 });
 
@@ -145,7 +190,7 @@ test('admin correction after a punch stores the authoritative daily and weekly v
     await commit(h,input('first','08:00'));
     const result=await correctAttendance(h.env,correction);assert.equal(result.version,2);
     assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:02',time_out:'16:55',version:2});
-    assert.deepEqual(h.sqlite.prepare(`SELECT entity_type,entity_version FROM sync_jobs ORDER BY entity_type`).all().map(row=>({...row})),[{entity_type:'ATTENDANCE_EVENT',entity_version:2},{entity_type:'DAILY_PAYROLL',entity_version:2},{entity_type:'WEEKLY_PAYROLL',entity_version:2}]);
+    assert.deepEqual(h.sqlite.prepare(`SELECT entity_type,entity_version FROM sync_jobs WHERE trace_id=? ORDER BY entity_type`).all(result.eventId).map(row=>({...row})),[{entity_type:'ATTENDANCE_EVENT',entity_version:2},{entity_type:'DAILY_PAYROLL',entity_version:2},{entity_type:'WEEKLY_PAYROLL',entity_version:2}]);
   }finally{h.close();}
 });
 

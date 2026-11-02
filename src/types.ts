@@ -301,6 +301,10 @@ export interface AttendanceCommitResult {
   pendingWageSatang: number;
   validationCode: string;
   version: number;
+  /** Current daily projection version; may differ from the event on retries. */
+  dailyVersion?: number;
+  /** Owner of the duplicated event, used to avoid cross-employee sync. */
+  sourceEmployeeId?: string;
   /** Monotonic version of the employee's weekly payroll aggregate. */
   weeklyVersion?: number;
 }

@@ -18,6 +18,8 @@ export interface Env {
   SHEETS_SYNC_ENABLED: string;
   /** Experimental read-only identity inspection. Never permits a Sheets write. */
   SHEETS_LEDGER_IDENTITY_INSPECTION?: string;
+  /** Reserved for isolated UAT only; never enable against production. */
+  SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;

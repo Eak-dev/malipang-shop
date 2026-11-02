@@ -2,6 +2,7 @@ import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
+import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -21,16 +22,33 @@ export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):numbe
   const dateMs=Date.parse(value);return Number.isFinite(dateMs)?Math.max(0,Math.ceil((dateMs-nowMs)/1000)):undefined;
 }
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<Response>{
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,sanitizeErrors=false):Promise<Response>{
   const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet
   // request can be dispatched, so that wait is outside the mutation fence.
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
   let res:Response;try{res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
-  if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
+  if(!res.ok){let body="";if(sanitizeErrors){if(res.body)void res.body.cancel().catch(()=>{});}else try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
+/**
+ * Experimental single-row, metadata-anchored write. NOT called by live sync.
+ * The metadata lookup follows full-row moves; a caller must independently
+ * establish identity and exclusive cutover because Sheets has no value CAS.
+ * Any unparseable/ambiguous result must remain under manual REVIEW.
+ */
+export async function writeValuesByMetadataPrototype(env:Env,request:{identity:LedgerWriteIdentity;witness:LedgerMetadataWitness;identityRows:unknown[][];values:readonly unknown[];guard:LedgerWriteGuard;mode?:'PATCH'|'CANCEL_DETAIL'},beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+  if(env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true')throw new Error('LEDGER_METADATA_WRITER_DISABLED');
+  if(!request||!beforeMutationDispatch)throw new Error('LEDGER_METADATA_REQUEST_INVALID');
+  verifyLedgerMetadataWitness(request.identity,request.witness,request.identityRows);
+  const data=buildLedgerMetadataValueRange(request.identity,request.witness.metadataId,request.values,request.guard,request.mode);
+  const response=await sheetsFetch(env,'/values:batchUpdateByDataFilter',{method:'POST',body:JSON.stringify({valueInputOption:'RAW',data:[data]})},true,beforeMutationDispatch,true);
+  let result:{totalUpdatedRows?:unknown;responses?:unknown};
+  try{result=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata update response') as typeof result;}
+  catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(Number(result?.totalUpdatedRows)!==1 || !Array.isArray(result.responses) || result.responses.length!==1)throw new SheetsMutationOutcomeUnknownError(new Error('LEDGER_METADATA_UPDATE_COUNT_UNKNOWN'));
+}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true,beforeMutationDispatch);}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);}

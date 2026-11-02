@@ -142,7 +142,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     {
       // Quarantine any expired owner, including a different version. The
       // existing worker's late completion cannot erase this hold.
-      await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE entity_type=? AND entity_key=? AND status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?`).bind(claimNow,job.entityType,job.entityKey,claimNow).run();
+      await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE entity_type=? AND entity_key=? AND status='PROCESSING' AND (lease_until IS NULL OR lease_until<=?)`).bind(claimNow,job.entityType,job.entityKey,claimNow).run();
       const blocked=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_ENTITY_REVIEW_HOLD' WHERE entity_type=? AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED') AND EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`).bind(claimNow,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey).run();
       if(Number(blocked.meta.changes||0)===1)return"REVIEW";
       const current=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();

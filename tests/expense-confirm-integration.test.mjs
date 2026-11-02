@@ -254,8 +254,14 @@ test('SQLite: confirmation followed by Undo allocates the next version and prese
   }finally{h.close();}
 });
 
-test('SQLite: disabled sync still atomically records confirmation without queue or outbox writes',async()=>{
+test('SQLite: disabled sync preserves a confirmation outbox for later recovery',async()=>{
   const h=harness({syncEnabled:false});
-  try{assert.equal(await h.confirm(),1);assert.equal(expense(h).status,'CONFIRMED');assert.equal(documents(h)[0].status,'CONFIRMED');assert.equal(audits(h).length,1);assert.equal(jobs(h).length,0);assert.equal(h.messages.length,0);}
+  try{assert.equal(await h.confirm(),1);assert.equal(await h.confirm(),null);assert.equal(expense(h).status,'CONFIRMED');assert.equal(documents(h)[0].status,'CONFIRMED');assert.equal(audits(h).length,1);assert.deepEqual(jobs(h).map(job=>[job.entity_version,job.status]),[[1,'PENDING']]);assert.equal(h.messages.length,0);expireOutbox(h);h.env.SHEETS_SYNC_ENABLED='true';assert.equal(await recoverPendingSheetJobs(h.env,0),1);assert.deepEqual(h.messages.map(message=>message.body.entityVersion),[1]);}
+  finally{h.close();}
+});
+
+test('SQLite: disabled confirmation rolls back when outbox creation fails',async()=>{
+  const h=harness({syncEnabled:false});
+  try{h.sqlite.exec("CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON sync_jobs BEGIN SELECT RAISE(ABORT,'fixture outbox constraint'); END");const before=state(h);await assert.rejects(h.confirm(),/fixture outbox constraint/);assert.equal(state(h),before);}
   finally{h.close();}
 });

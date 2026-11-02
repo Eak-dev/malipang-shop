@@ -71,7 +71,6 @@ async function sendScheduledSheetJobs(env:Env,jobs:ScheduledSheetJob[]):Promise<
 export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{return (await enqueueSheetSyncBatchDetailed(env,jobs,force)).enqueued;}
 export async function enqueueSheetSyncBatchDetailed(env:Env,jobs:SheetsSyncJob[],force=false):Promise<{enqueued:number;held:number;disabled:number}>{
   const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()];
-  if(env.SHEETS_SYNC_ENABLED!=="true")return{enqueued:0,held:0,disabled:unique.length};
   if(!unique.length)return{enqueued:0,held:0,disabled:0};
   const nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs),eligible:ScheduledSheetJob[]=[];let held=0;
   for(let offset=0;offset<scheduled.length;offset+=50){
@@ -92,6 +91,7 @@ export async function enqueueSheetSyncBatchDetailed(env:Env,jobs:SheetsSyncJob[]
       if(Number(row.held)===1)held++;else eligible.push(item);
     }
   }
+  if(env.SHEETS_SYNC_ENABLED!=="true")return{enqueued:0,held,disabled:eligible.length};
   if(eligible.length)await sendScheduledSheetJobs(env,eligible);
   return{enqueued:eligible.length,held,disabled:0};
 }
@@ -100,10 +100,10 @@ export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,incl
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString(),terminalDlqAllowed=includeTerminalDlq?1:0;
   // A crashed or paused sender may still reach Sheets. Quarantine expired
   // projections, and keep the alert recoverable if logging fails.
-  await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?`).bind(now,now).run();
+  await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE status='PROCESSING' AND (lease_until IS NULL OR lease_until<=?)`).bind(now,now).run();
   const held=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id FROM sync_jobs s WHERE s.status='REVIEW' AND s.last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.trace_id=s.trace_id AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN') LIMIT 200`).all<RecoverableSheetJobRow>();
   for(const row of held.results||[]){const job:SheetsSyncJob={kind:'SHEETS_SYNC',entityType:String(row.entity_type) as SheetsSyncJob['entityType'],entityKey:String(row.entity_key),entityVersion:Number(row.entity_version),traceId:String(row.trace_id)};await createFailedJob(env,'malipang-jobs',job.traceId,job,'SHEETS_SYNC_REVIEW_REQUIRED');}
-  const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED','PROCESSING') AND (?=1 OR NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')) ORDER BY s.updated_at LIMIT 200`).bind(terminalDlqAllowed).all<RecoverableSheetJobRow>();
+  const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED') AND s.updated_at<? AND (s.next_attempt_at IS NULL OR s.next_attempt_at<=?) AND (?=1 OR NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')) ORDER BY s.updated_at LIMIT 200`).bind(stale,now,terminalDlqAllowed).all<RecoverableSheetJobRow>();
   const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>(includeTerminalDlq||Number(row.terminal_dlq_open||0)!==1)&&isRecoverableSheetJob(row,now,stale)).slice(0,50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));
   const scheduled=scheduleSheetJobs(jobs,true,nowMs),claimed:ScheduledSheetJob[]=[];
   for(const item of scheduled){

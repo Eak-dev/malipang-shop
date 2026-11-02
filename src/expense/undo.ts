@@ -38,7 +38,7 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
           WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version'))`)
       .bind(now,input.expenseId,auditId)
   ];
-  if(env.SHEETS_SYNC_ENABLED==="true")statements.push(
+  statements.push(
     env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token)
       SELECT ?,'EXPENSE',e.expense_id,e.version,?,'PENDING',0,?,?,NULL,NULL
       FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id

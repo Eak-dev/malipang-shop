@@ -40,7 +40,7 @@ async function transition(env:Env,input:{actor:StaffActor;action:PersonalUseActi
   // D1 executes batch statements in one transaction. The conditional audit ID
   // is the transition token: the CAS update and outbox must see that exact token.
   const statements=[claimTransitionAudit(env,transitionInput),transitionUpdate(env,transitionInput)];
-  if(input.sync&&env.SHEETS_SYNC_ENABLED==="true")statements.push(transitionSyncOutbox(env,transitionInput));
+  if(input.sync)statements.push(transitionSyncOutbox(env,transitionInput));
   const [,updated]=await env.DB.batch(statements);
   return{won:Number(updated?.meta.changes||0)===1,version:nextVersion};
 }

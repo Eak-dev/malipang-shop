@@ -169,9 +169,15 @@ test('SQLite: unauthorized ownership and non-CONFIRMED states do not create Undo
   }
 });
 
-test('SQLite: disabled Sheets sync still atomically preserves the Undo audit without queue writes',async()=>{
+test('SQLite: disabled Sheets sync preserves the Undo outbox for later recovery',async()=>{
   const h=harness({syncEnabled:false});
-  try{await h.undo();assert.equal(row(h).status,'CANCELLED');assert.equal(row(h).version,3);assert.equal(audits(h).length,1);assert.equal(jobs(h).length,2);assert.equal(h.messages.length,0);}
+  try{await h.undo();await h.undo();assert.equal(row(h).status,'CANCELLED');assert.equal(row(h).version,3);assert.equal(audits(h).length,1);assert.deepEqual(jobs(h).at(-1),{entity_version:3,status:'PENDING'});assert.equal(h.messages.length,0);h.sqlite.prepare("UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z' WHERE entity_version=3").run();h.env.SHEETS_SYNC_ENABLED='true';assert.equal(await recoverPendingSheetJobs(h.env,0),1);assert.equal(undoMessages(h)[0].entityVersion,3);}
+  finally{h.close();}
+});
+
+test('SQLite: disabled Undo rolls back when outbox creation fails',async()=>{
+  const h=harness({syncEnabled:false});
+  try{h.sqlite.exec("CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON sync_jobs BEGIN SELECT RAISE(ABORT,'fixture outbox constraint'); END");const before=row(h);await assert.rejects(h.undo(),/fixture outbox constraint/);assert.deepEqual(row(h),before);assert.equal(audits(h).length,0);assert.equal(jobs(h).length,2);}
   finally{h.close();}
 });
 

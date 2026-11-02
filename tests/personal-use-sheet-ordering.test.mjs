@@ -144,6 +144,42 @@ test('recovery and forced enqueue quarantine expired sheet writers and surface r
   }
 });
 
+test('recovery finds eligible work beyond 200 older active, null-lease and delayed jobs',async()=>{
+  const h=harness();
+  try{
+    h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
+    const insert=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,'EXPENSE',?,1,?,?,0,?,?,?,?)`);
+    for(let i=0;i<220;i++){
+      insert.run(`active_${i}`,`active_${i}`,`trace_active_${i}`,'PROCESSING','2000-01-01T00:00:00.000Z',null,'2999-01-01T00:00:00.000Z','fixture');
+      insert.run(`delayed_${i}`,`delayed_${i}`,`trace_delayed_${i}`,'PENDING','2000-01-01T00:00:00.000Z','2999-01-01T00:00:00.000Z',null,null);
+    }
+    insert.run('null_lease','null_lease','trace_null','PROCESSING','2000-01-01T00:00:00.000Z',null,null,'fixture');
+    insert.run('eligible','eligible','trace_eligible','PENDING','2001-01-01T00:00:00.000Z','2001-01-01T00:00:00.000Z',null,null);
+    assert.equal(await recoverPendingSheetJobs(h.env,0),1);
+    assert.deepEqual(h.queued.map(message=>message.body.entityKey),['eligible']);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_key='null_lease'`).get()),{status:'REVIEW',last_error:'SHEET_SYNC_EXPIRED_OWNER_REVIEW'});
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE trace_id='trace_null' AND status='OPEN'`).get().count,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM sync_jobs WHERE entity_key LIKE 'active_%' AND status='PROCESSING'`).get().count,220);
+  }finally{h.close();}
+});
+
+test('disabled generic enqueue persists unique outbox entries and recovers them after re-enable',async()=>{
+  const h=harness(),{enqueueSheetSyncBatchDetailed}=require('../dist/db/repositories.js');
+  try{
+    h.sqlite.prepare(`DELETE FROM sync_jobs`).run();h.env.SHEETS_SYNC_ENABLED='false';
+    const wage={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage'};
+    const daily={kind:'SHEETS_SYNC',entityType:'DAILY_PAYROLL',entityKey:'staff_fixture|2026-09-06',entityVersion:2,traceId:'trace_daily'};
+    const result=await enqueueSheetSyncBatchDetailed(h.env,[wage,daily,wage]);
+    assert.deepEqual(result,{enqueued:0,held:0,disabled:2});
+    await enqueueSheetSyncBatchDetailed(h.env,[wage,daily]);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM sync_jobs`).get().count,2);
+    assert.equal(h.queued.length,0);
+    h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z'`).run();h.env.SHEETS_SYNC_ENABLED='true';
+    assert.equal(await recoverPendingSheetJobs(h.env,0),2);
+    assert.deepEqual(new Set(h.queued.map(message=>message.body.entityType)),new Set(['WAGE_HISTORY','DAILY_PAYROLL']));
+  }finally{h.close();}
+});
+
 test('ambiguous wage-history write holds subsequent versions without another write',async()=>{
   const h=harness(),writes=[];
   const now='2026-09-06T00:00:00.000Z';
@@ -657,8 +693,8 @@ test('reconcile uses actual confirmed expense versions and reports held rows',as
     assert.deepEqual(plain(h.sqlite.prepare(`SELECT entity_key,entity_version,status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key IN ('exp_processing','exp_review') AND entity_version=3 ORDER BY entity_key`).all()),[{entity_key:'exp_processing',entity_version:3,status:'PENDING'},{entity_key:'exp_review',entity_version:3,status:'PENDING'}]);
     h.env.SHEETS_SYNC_ENABLED='false';
     const disabled=await reconcileSheets(h.env,{fromDate:'2026-09-06',toDate:'2026-09-06',limitPerType:100});
-    assert.equal(disabled.enqueued,0);assert.equal(disabled.held,0);
-    assert.equal(disabled.disabled,Object.values(disabled.counts).reduce((a,b)=>a+b,0));
+    assert.equal(disabled.enqueued,0);assert.equal(disabled.held,2);
+    assert.equal(disabled.disabled+disabled.held,Object.values(disabled.counts).reduce((a,b)=>a+b,0));
   }finally{h.close();}
 });
 

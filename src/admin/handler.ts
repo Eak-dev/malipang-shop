@@ -12,8 +12,8 @@ import { importShiftScheduleFromSheet } from "./shift-import";
 import { generateDefaultSchedule,overrideShiftSchedule } from "./shift-schedule";
 import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
-import { loadExpenseDailyPosting,reconcileExpenseItemRows } from "../sheets/sync";
-import {assertStableShadowConfig,assertStableShadowDatabase,writeDailyStableShadow} from '../sheets/daily-stable-row-shadow';
+import { loadExpenseDailyPosting,reconcileExpenseItemRows,syncStableShadowFixtureJob } from "../sheets/sync";
+import {assertStableShadowConfig,assertStableShadowDatabase} from '../sheets/daily-stable-row-shadow';
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification,recoverQuotaExhaustedLineNotifications } from "../line/attendance-notification";
@@ -33,7 +33,9 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{
         const id=env.DAILY_STABLE_UAT_NEW_EXPENSE_ID||'';assertStableShadowConfig(env,id);await assertStableShadowDatabase(env);
         const loaded=await loadExpenseDailyPosting(env,id);if(loaded.expense.status!=='CONFIRMED')throw new Error('UAT_SOURCE_NOT_CONFIRMED');
-        await writeDailyStableShadow(env,loaded.record);return Response.json({ok:true,result:'VERIFIED'},{headers:{'cache-control':'no-store'}});
+        const result=await syncStableShadowFixtureJob(env,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:loaded.record.version,traceId:'synthetic-uat'});
+        if(result!=='PROCESSED')throw new Error('UAT_OUTBOX_REVIEW_REQUIRED');
+        return Response.json({ok:true,result:'VERIFIED'},{headers:{'cache-control':'no-store'}});
       }catch{return Response.json({ok:false,result:'REVIEW'},{status:409,headers:{'cache-control':'no-store'}});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/status"){

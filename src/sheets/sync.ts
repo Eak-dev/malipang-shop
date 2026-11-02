@@ -6,6 +6,7 @@ import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfir
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
+import {assertStableShadowConfig,assertStableShadowDatabase,writeDailyStableShadow} from './daily-stable-row-shadow';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -172,6 +173,46 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey];
   const results=await env.DB.batch([outbox,quarantineTerminalSheetJobs(env,job,now),env.DB.prepare(claimSql).bind(...claimArgs)]);
   return Number(results[2]?.meta.changes||0)===1?leaseToken:null;
+}
+
+/** Synthetic UAT outbox exercise only; never connected to the real queue.
+ * It refuses missing outbox rows, never writes RAW, and retains REVIEW after
+ * any uncertain projection. Production remains on the existing path. */
+export async function syncStableShadowFixtureJob(env:Env,job:SheetsSyncJob):Promise<'PROCESSED'|'REVIEW'|'BUSY'>{
+  if(job.entityType!=='EXPENSE'||job.kind!=='SHEETS_SYNC')throw new Error('DAILY_STABLE_UAT_JOB_INVALID');
+  assertStableShadowConfig(env,job.entityKey);await assertStableShadowDatabase(env);
+  const outbox=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityVersion).first<{status:string}>();
+  if(!outbox)throw new Error('DAILY_STABLE_UAT_OUTBOX_MISSING');
+  if(outbox.status==='COMPLETED'){
+    try{
+      const loaded=await loadExpenseDailyPosting(env,job.entityKey);
+      if(loaded.expense.status!=='CONFIRMED'||loaded.record.version!==job.entityVersion)return 'REVIEW';
+      await writeDailyStableShadow(env,loaded.record,{verifyOnly:true});
+      const current=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityVersion).first<{status:string}>();
+      return current?.status==='COMPLETED'?'PROCESSED':'REVIEW';
+    }catch{return 'REVIEW';}
+  }
+  if(outbox.status==='REVIEW')return 'REVIEW';
+  // Claim only an existing durable outbox row. Unlike the general queue path,
+  // this fixture must never create one as a side effect, even if a concurrent
+  // operator deletes it after the read above.
+  const now=new Date().toISOString(),lease=crypto.randomUUID();
+  const claim=await env.DB.prepare(`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=?
+    WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)
+    AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='EXPENSE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING')
+    AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type='EXPENSE' AND held.entity_key=? AND held.status='REVIEW')
+    AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':'))=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':')`).bind(now,new Date(Date.now()+SHEET_SYNC_LEASE_MS).toISOString(),lease,job.entityKey,job.entityVersion,now,job.entityKey,job.entityVersion,job.entityKey).run();
+  if(Number(claim.meta.changes||0)!==1)return 'BUSY';
+  try{
+    const loaded=await loadExpenseDailyPosting(env,job.entityKey);
+    if(loaded.expense.status!=='CONFIRMED'||loaded.record.version!==job.entityVersion)throw new Error('DAILY_STABLE_UAT_SOURCE_CHANGED');
+    await writeDailyStableShadow(env,loaded.record);
+    if(!await completeOwnedSheetSyncJob(env,job,lease))throw new Error('DAILY_STABLE_UAT_OUTBOX_LEASE_LOST');
+    return 'PROCESSED';
+  }catch{
+    const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='DAILY_STABLE_UAT_REVIEW_REQUIRED' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityKey,job.entityVersion,lease).run();
+    if(Number(held.meta.changes||0)!==1)return 'BUSY';return 'REVIEW';
+  }
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
   if(env.SHEETS_SYNC_ENABLED!=="true"){

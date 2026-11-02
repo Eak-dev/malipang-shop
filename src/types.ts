@@ -9,6 +9,8 @@ export interface Env {
   AI: { run(model: string, input: unknown): Promise<unknown> };
   EVIDENCE: R2Bucket;
   JOB_QUEUE: Queue<QueueJob>;
+  JOB_QUEUE_NAME?: string;
+  JOB_DLQ_NAME?: string;
   ATTENDANCE_COORDINATOR: DurableObjectNamespace;
   APP_ENV: string;
   RUNTIME_MODE: RuntimeMode;

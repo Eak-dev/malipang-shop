@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { batchClearValues,batchGetSheetValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId } from "./client";
 import {withCorrectionDailyWriteFence,type GuardedDailyMutation} from "./owner-correction-daily-write-fence";
+import {dailyIdentityEnforced,clearVerifiedCancelledDailyExpense,DailyIdentityReviewRequired} from "./owner-correction-daily-identity-guard";
 
 export interface DailyExpenseRecord{
   expenseId:string;transactionDate:string;description:string;amountBaht:number;
@@ -248,6 +249,9 @@ async function clearLegacySummaryMapping(env:Env,expenseId:string):Promise<boole
 
 export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[],options:DailyExpenseItemPostingOptions={}):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[];replacedLegacySummary:boolean}>{
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
+  // Numeric positions are no longer safe once identity mode is activated.
+  // New allocations and legacy item reconciliation require a verified path.
+  if(await dailyIdentityEnforced(env,env.SHEET_EXPENSE_DAILY))throw new DailyIdentityReviewRequired();
   const plan=buildDailyExpenseEntries(record,document,items);
   const existing=await mappedRowsForExpense(env,record.expenseId);
   const hasLegacyItemRows=existing.some(item=>item.entityKey!==record.expenseId);
@@ -264,12 +268,14 @@ export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,reco
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
+    if(await dailyIdentityEnforced(env,env.SHEET_EXPENSE_DAILY))throw new DailyIdentityReviewRequired();
     const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write,fenceToken);return result[0]!;
   });
 }
 
 export async function clearCancelledExpenseFromDaily(env:Env,expenseId:string):Promise<number[]>{
-  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async write=>{
+  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
+    if(await dailyIdentityEnforced(env,env.SHEET_EXPENSE_DAILY))return clearVerifiedCancelledDailyExpense(env,expenseId,write,fenceToken);
     const mapped=await mappedRowsForExpense(env,expenseId);if(!mapped.length)return[];
     await write(before=>batchClearValues(env,mapped.flatMap(item=>dailyInputRanges(env.SHEET_EXPENSE_DAILY,item.row)),before));
     await env.DB.prepare(`DELETE FROM sheet_row_index WHERE sheet_name=? AND (entity_key=? OR substr(entity_key,1,length(?)+1)=? || '|')`).bind(env.SHEET_EXPENSE_DAILY,expenseId,expenseId,expenseId).run();return mapped.map(item=>item.row);

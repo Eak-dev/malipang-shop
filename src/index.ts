@@ -9,12 +9,18 @@ import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staf
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
 import { queueRetryDelaySeconds } from "./shared/retry";
-import type { Env,QueueJob } from "./types";
+import {classifyQueue,LOGICAL_JOB_QUEUE_NAME} from "./shared/queue-names";
+import type { Env,QueueJob,SheetsSyncJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
 export{AttendanceCoordinator};
 function queueMessageAttempt(message:Message<QueueJob>):number{
   const attempts=Number((message as Message<QueueJob>&{attempts?:number}).attempts||1);
   return Number.isFinite(attempts)&&attempts>0?Math.floor(attempts):1;
+}
+async function sheetReviewFailureReason(env:Env,job:SheetsSyncJob):Promise<string>{
+  if(job.entityType!=="EXPENSE")return "CORRECTION_REVIEW_REQUIRED";
+  const row=await env.DB.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string;last_error:string|null}>();
+  return row?.status==="REVIEW"&&(row.last_error==="DAILY_IDENTITY_REVIEW_REQUIRED"||row.last_error==="DAILY_IDENTITY_OUTCOME_UNKNOWN")?row.last_error:"EXPENSE_REVIEW_REQUIRED";
 }
 export default{
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>{
@@ -26,11 +32,13 @@ export default{
     return new Response("Not found",{status:404});
   },
   async queue(batch:MessageBatch<QueueJob>,env:Env,ctx:ExecutionContext):Promise<void>{
-    if(batch.queue==="malipang-jobs-dlq"){
-      for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+    const kind=classifyQueue(env,batch.queue);
+    if(!kind){console.error("queue-config-invalid");for(const message of batch.messages)message.retry();return;}
+    if(kind==="DLQ"){
+      for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;try{await createFailedJob(env,LOGICAL_JOB_QUEUE_NAME,job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
       return;
     }
-    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC")await processStaffConfigSyncJob(env,job);else{const outcome=await syncJob(env,job,attempt);if(outcome==="BUSY"){await env.JOB_QUEUE.send(job,{delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});message.ack();return;}if(outcome==="REVIEW"){await createFailedJob(env,batch.queue,job.traceId,job,"CORRECTION_REVIEW_REQUIRED");message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
+    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,LOGICAL_JOB_QUEUE_NAME,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC")await processStaffConfigSyncJob(env,job);else{const outcome=await syncJob(env,job,attempt);if(outcome==="BUSY"){await env.JOB_QUEUE.send(job,{delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});message.ack();return;}if(outcome==="REVIEW"){await createFailedJob(env,LOGICAL_JOB_QUEUE_NAME,job.traceId,job,await sheetReviewFailureReason(env,job));message.ack();return;}}await resolveFailedJobs(env,LOGICAL_JOB_QUEUE_NAME,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,LOGICAL_JOB_QUEUE_NAME,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
     ctx.waitUntil(runScheduledMaintenance(env));

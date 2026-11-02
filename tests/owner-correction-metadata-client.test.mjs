@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {batchGetSheetSerialValues,buildMetadataColumnWriteRequest,buildMetadataRowPatchRequest,createSheetRowMetadata,getSheetProtectedRanges,getSheetRowMetadataById,metadataPatchResponseComplete} from '../dist/sheets/client.js';
+import {batchGetSheetSerialValues,buildMetadataColumnWriteRequest,buildMetadataRowPatchRequest,createSheetRowMetadata,getSheetProtectedRanges,getSheetRowMetadataById,metadataPatchResponseComplete,SheetsMutationOutcomeUnknownError} from '../dist/sheets/client.js';
 const require=createRequire(import.meta.url),googleAuth=require('../dist/sheets/google-auth.js');
 
 test('row metadata writes only the requested category cell and skips all other cells',()=>{
@@ -62,5 +62,18 @@ test('metadata creation uses and verifies caller-supplied unique IDs',async()=>{
     globalThis.fetch=async(_url,init)=>{const request=JSON.parse(init.body).requests[0].createDeveloperMetadata.developerMetadata;request.metadataId=1235;return Response.json({replies:[{createDeveloperMetadata:{developerMetadata:request}}]});};
     await assert.rejects(createSheetRowMetadata(env,[row]),/METADATA_CREATE_IDENTITY_MISMATCH/);
     await assert.rejects(createSheetRowMetadata(env,[row,{...row,metadataKey:'other',metadataValue:'other',rowIndex:4}]),/INVALID_METADATA_CREATE/);
+  }finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}
+});
+test('metadata creation arms the caller fence after authentication and treats an unreadable response as uncertain',async()=>{
+  const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;try{
+    const env={GOOGLE_SPREADSHEET_ID:'synthetic',EXTERNAL_API_TIMEOUT_MS:'1000'},row={metadataId:1234,metadataKey:'key',metadataValue:'value',sheetId:7,rowIndex:3};
+    const order=[];googleAuth.getGoogleAccessToken=async()=>{order.push('auth');return 'synthetic'};
+    globalThis.fetch=async()=>{order.push('dispatch');return new Response('{', {status:200})};
+    await assert.rejects(createSheetRowMetadata(env,[row],async()=>{order.push('fence')}),SheetsMutationOutcomeUnknownError);
+    assert.deepEqual(order,['auth','fence','dispatch']);
+    order.length=0;await assert.rejects(createSheetRowMetadata(env,[row],async()=>{order.push('fence');throw Error('lease lost')}),/lease lost/);
+    assert.deepEqual(order,['auth','fence']);
+    order.length=0;googleAuth.getGoogleAccessToken=async()=>{order.push('auth');throw Error('auth failed')};
+    await assert.rejects(createSheetRowMetadata(env,[row],async()=>{order.push('fence')}),/auth failed/);assert.deepEqual(order,['auth']);
   }finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}
 });

@@ -7,6 +7,7 @@ import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {processOwnerCorrectionRuntime} from "./owner-correction-runtime";
 import {CorrectionDailyFenceBusyError} from "./owner-correction-daily-write-fence";
+import {dailyIdentityEnforced,DailyIdentityReviewRequired} from "./owner-correction-daily-identity-guard";
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -161,8 +162,9 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     if(job.entityType==="PERSONAL_USE")return personalUseClaimOutcome(env,job,claimNow);
     if(job.entityType==="EXPENSE"){
-      const state=await env.DB.prepare(`SELECT status,EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=? AND correction.status<>'COMPLETED') AS blocked
-        FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityKey,job.entityVersion).first<{status:string;blocked:number}>();
+      const state=await env.DB.prepare(`SELECT status,last_error,EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=? AND correction.status<>'COMPLETED') AS blocked
+        FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityKey,job.entityVersion).first<{status:string;last_error:string|null;blocked:number}>();
+      if(state?.status==="REVIEW"&&(state.last_error==="DAILY_IDENTITY_REVIEW_REQUIRED"||state.last_error==="DAILY_IDENTITY_OUTCOME_UNKNOWN"))return "REVIEW";
       if(state?.status!=="COMPLETED"&&Number(state?.blocked||0)===1)return "BUSY";
     }
     return "IGNORED";
@@ -239,6 +241,15 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
     return"PROCESSED";
   }catch(error){
+    if(job.entityType==="EXPENSE"&&(error instanceof DailyIdentityReviewRequired||(error instanceof SheetsMutationOutcomeUnknownError&&await dailyIdentityEnforced(env,env.SHEET_EXPENSE_DAILY)))){
+      // Never retry a numeric write or guess the result of an uncertain
+      // provider response. A verified, explicit recovery is required.
+      const reason=error instanceof DailyIdentityReviewRequired?"DAILY_IDENTITY_REVIEW_REQUIRED":"DAILY_IDENTITY_OUTCOME_UNKNOWN";
+      const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`)
+        .bind(new Date().toISOString(),reason,job.entityKey,job.entityVersion,leaseToken).run();
+      if(Number(held.meta.changes||0)!==1)throw new Error("DAILY_IDENTITY_REVIEW_STATE_LOST");
+      return "REVIEW";
+    }
     if(error instanceof CorrectionDailyFenceBusyError&&job.entityType==="EXPENSE"){
       // Contention is not a failed financial job. The raw mirror is
       // idempotent; release this exact claim and requeue the daily step.

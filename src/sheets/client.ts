@@ -103,7 +103,7 @@ export async function getSheetIdentityMetadataById(env:Env,id:number):Promise<Sh
   return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(metadata.location!.sheetId)};
 }
 /** Create associations only after the caller has reverified each row identity. */
-export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[]):Promise<SheetRowMetadata[]>{
+export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<SheetRowMetadata[]>{
   if(!rows.length)return [];
   const identities=new Set<string>(),locations=new Set<string>(),ids=new Set<number>();
   const requests=rows.map(row=>{
@@ -113,8 +113,12 @@ export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[])
     if(row.metadataId!==undefined)ids.add(row.metadataId);
     return {createDeveloperMetadata:{developerMetadata:{...(row.metadataId===undefined?{}:{metadataId:row.metadataId}),metadataKey:row.metadataKey,metadataValue:row.metadataValue,visibility:"DOCUMENT",location:{dimensionRange:{sheetId:row.sheetId,dimension:"ROWS",startIndex:row.rowIndex,endIndex:row.rowIndex+1}}}}};
   });
-  const result=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true).then(r=>r.json()) as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}}>};
-  if(result.replies?.length!==rows.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_COUNT_MISMATCH"));
+  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);
+  // Once dispatched, a truncated or invalid response cannot prove whether the
+  // metadata was created. The caller must preserve its fence and re-observe.
+  let result:{replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}}>};
+  try{result=await response.json() as typeof result;}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(!result||typeof result!=="object"||result.replies?.length!==rows.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_COUNT_MISMATCH"));
   return rows.map((row,index)=>{
     const metadata=result.replies?.[index]?.createDeveloperMetadata?.developerMetadata,range=metadata?.location?.dimensionRange,id=Number(metadata?.metadataId);
     if(!Number.isSafeInteger(id)||id<1||(row.metadataId!==undefined&&id!==row.metadataId)||metadata?.metadataKey!==row.metadataKey||metadata.metadataValue!==row.metadataValue||range?.sheetId!==row.sheetId||range.dimension!=="ROWS"||range.startIndex!==row.rowIndex||range.endIndex!==row.rowIndex+1)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_IDENTITY_MISMATCH"));

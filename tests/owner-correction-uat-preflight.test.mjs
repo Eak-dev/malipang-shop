@@ -9,7 +9,7 @@ const fixture=()=>{
   const productionConfig={name:'worker-prod',d1_databases:[{binding:'DB',database_id:'prod-id'}],queues:{producers:[{binding:'JOB_QUEUE',queue:'queue-prod'}],consumers:[{queue:'queue-prod',dead_letter_queue:'dlq-prod'}]},r2_buckets:[{binding:'EVIDENCE',bucket_name:'bucket-prod'}]};
   const binding=(name,type,extra)=>({name,type,...extra});
   const productionSettings={bindings:[binding('DB','d1',{database_id:'prod-id'}),binding('JOB_QUEUE','queue',{queue_name:'queue-prod'}),binding('EVIDENCE','r2_bucket',{bucket_name:'bucket-prod'})]};
-  const uatSettings={bindings:[binding('DB','d1',{database_id:'uat-id'}),binding('JOB_QUEUE','queue',{queue_name:'queue-uat'}),binding('EVIDENCE','r2_bucket',{bucket_name:'bucket-uat'}),binding('APP_ENV','plain_text',{text:'uat'}),binding('RUNTIME_MODE','plain_text',{text:'shadow'}),binding('SHADOW_LINE_OUTPUT','plain_text',{text:'true'})]};
+  const uatSettings={bindings:[binding('DB','d1',{database_id:'uat-id'}),binding('JOB_QUEUE','queue',{queue_name:'queue-uat'}),binding('EVIDENCE','r2_bucket',{bucket_name:'bucket-uat'}),binding('APP_ENV','plain_text',{text:'uat'}),binding('RUNTIME_MODE','plain_text',{text:'shadow'}),binding('SHADOW_LINE_OUTPUT','plain_text',{text:'true'}),binding('JOB_QUEUE_NAME','plain_text',{text:'queue-uat'}),binding('JOB_DLQ_NAME','plain_text',{text:'dlq-uat'})]};
   const databases=[{name:'db-prod',uuid:'prod-id'},{name:'db-uat',uuid:'uat-id'}],queues=[{queue_name:'queue-uat',queue_id:'uat-q'},{queue_name:'dlq-uat',queue_id:'uat-dlq'}];
   const consumers={main:[{script:'worker-uat',dead_letter_queue:'dlq-uat'}],dlq:[{script:'worker-uat'}]};
   return {config,productionConfig,productionSettings,uatSettings,databases,queues,consumers};

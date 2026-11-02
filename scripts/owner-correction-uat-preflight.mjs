@@ -27,7 +27,7 @@ export function evaluateIsolation({config,productionConfig,productionSettings,ua
   const prodDbId=prodDb?.database_id||prodDb?.id,testDbId=testDb?.database_id||testDb?.id;
   check('PRODUCTION_BASELINE_MATCHES',!!(productionConfig?.name&&prodDbId&&prodDbId===configuredDb?.database_id&&prodQueue?.queue_name===configuredQueue?.queue&&prodBucket?.bucket_name===configuredBucket?.bucket_name));
   check('WORKER_DISTINCT',!!(validConfig&&productionConfig?.name&&config.uatWorker!==productionConfig.name&&Array.isArray(uatSettings?.bindings)));
-  check('UAT_RUNTIME_CONFIG',value(uatSettings,'APP_ENV')==='uat'&&value(uatSettings,'RUNTIME_MODE')==='shadow'&&value(uatSettings,'SHADOW_LINE_OUTPUT')==='true');
+  check('UAT_RUNTIME_CONFIG',value(uatSettings,'APP_ENV')==='uat'&&value(uatSettings,'RUNTIME_MODE')==='shadow'&&value(uatSettings,'SHADOW_LINE_OUTPUT')==='true'&&value(uatSettings,'JOB_QUEUE_NAME')===config?.uatQueue&&value(uatSettings,'JOB_DLQ_NAME')===config?.uatDeadLetterQueue);
   check('D1_DISTINCT',!!(validConfig&&d1.length===1&&d1[0].uuid&&testDbId===d1[0].uuid&&testDbId!==prodDbId));
   const prodDlq=productionConfig?.queues?.consumers?.find(x=>x.queue===configuredQueue?.queue)?.dead_letter_queue;
   check('QUEUE_DISTINCT',!!(validConfig&&q.length===1&&dlq.length===1&&q[0].queue_id&&dlq[0].queue_id&&q[0].queue_id!==dlq[0].queue_id&&testQueue?.queue_name===config.uatQueue&&![prodQueue?.queue_name,prodDlq].includes(config.uatQueue)&&![prodQueue?.queue_name,prodDlq,config.uatQueue].includes(config.uatDeadLetterQueue)));

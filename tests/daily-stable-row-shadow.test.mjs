@@ -6,6 +6,7 @@ import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js');
 const {writeDailyStableShadow}=require('../dist/sheets/daily-stable-row-shadow.js');
 const {syncStableShadowFixtureJob}=require('../dist/sheets/sync.js');
+const {runSyntheticDailyOnlyWorkflow}=require('../dist/sheets/synthetic-expense-workflow.js');
 const {expectedHelperFormulae}=require('../dist/sheets/daily-stable-row-writes.js');
 const {activateStableShadowCutover}=require('../dist/sheets/daily-stable-cutover.js');
 const migration=readFileSync(new URL('../migrations/0023_daily_stable_row_intents.sql',import.meta.url),'utf8');
@@ -44,6 +45,12 @@ test('real D1 journal and fence route a new UAT row through metadata without sto
     let annotationChecks=0;client.requireStablePrototypeAnnotations=async()=>{if(++annotationChecks===2)h.sqlite.prepare("UPDATE daily_stable_row_intents SET metadata_id=metadata_id+1").run();};
     assert.equal(await syncStableShadowFixtureJob(h.env,job),'REVIEW');assert.equal(batchWrites,0,'a changed reservation cannot dispatch');
     client.requireStablePrototypeAnnotations=async()=>{};h.sqlite.prepare('DELETE FROM daily_stable_row_intents').run();h.sqlite.prepare('DELETE FROM owner_correction_daily_write_fences').run();h.sqlite.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id='fixture'").run();
+    // Execute the actual daily adapter against the in-memory Sheets fixture.
+    // RAW/DETAIL are unavailable, so whole-job completion must remain held.
+    assert.equal(await runSyntheticDailyOnlyWorkflow(h.env,job),'REVIEW');
+    assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='fixture'").get().status,'REVIEW');
+    assert.equal(h.sqlite.prepare("SELECT state FROM synthetic_expense_projection_journal WHERE projection='DAILY'").get().state,'VERIFIED');
+    h.sqlite.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id='fixture'").run(); // reset this synthetic fixture for the separate daily-only replay test
     assert.equal(await syncStableShadowFixtureJob(h.env,job),'PROCESSED');
     assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='fixture'").get().status,'COMPLETED');
     assert.equal(await syncStableShadowFixtureJob(h.env,job),'PROCESSED');

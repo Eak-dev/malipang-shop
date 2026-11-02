@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
-const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{mapDailyCapacityExpansion,writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{mapDailyCapacityExpansion,claimDailyCapacityLock,releaseDailyCapacityLock,writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+const {claimCorrectionDailyWriteFence,releaseCorrectionDailyWriteFence}=require('../dist/sheets/owner-correction-daily-write-fence.js');
 const marker='__MALIPANG_CAPACITY_10_10__',now='2026-11-02T00:00:00.000Z';
 function setup(){const h=ownerOrderFixture();h.env.SHEET_EXPENSE_DAILY='daily';
   h.sqlite.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES('daily',10,10,?,'PREPARED',?,?)`).run(marker,now,now);
@@ -23,6 +24,18 @@ test('unexpected nonpositive mappings stop the operation without changing any ro
   const h=setup();try{h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('daily','exp_invalid',-20);const before=rows(h);
     await assert.rejects(mapDailyCapacityExpansion(h.env,10,10,marker,now));assert.deepEqual(rows(h),before);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');
   }finally{h.close()}
+});
+test('stale capacity locks are reclaimed only with the shared fence and cannot be released by an old token',async()=>{
+  const h=ownerOrderFixture(),at=Date.parse(now);try{
+    h.env.SHEET_EXPENSE_DAILY='daily';h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';const old=await claimDailyCapacityLock(h.env,10,at);assert.ok(old);
+    assert.equal(await claimDailyCapacityLock(h.env,10,at+16*60_000),null);h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
+    assert.equal(await claimDailyCapacityLock(h.env,10,at+16*60_000),null);const fence=await claimCorrectionDailyWriteFence(h.env,'daily',at+16*60_000);assert.ok(fence);
+    const [a,b]=await Promise.all([claimDailyCapacityLock(h.env,10,at+16*60_000,fence),claimDailyCapacityLock(h.env,10,at+16*60_000,fence)]),next=a||b;
+    assert.ok(next);assert.equal(Number(Boolean(a))+Number(Boolean(b)),1);assert.equal(await releaseDailyCapacityLock(h.env,10,old),false);assert.equal(await releaseDailyCapacityLock(h.env,10,next),true);assert.equal(await releaseCorrectionDailyWriteFence(h.env,'daily',fence),true);
+  }finally{h.close()}
+});
+test('feature-off capacity locking works before the shared-fence migration exists',async()=>{
+  const h=ownerOrderFixture();try{h.env.SHEET_EXPENSE_DAILY='daily';h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.sqlite.exec('DROP TABLE owner_correction_daily_write_fences');const token=await claimDailyCapacityLock(h.env,10,Date.parse(now));assert.ok(token);assert.equal(await releaseDailyCapacityLock(h.env,10,token),true)}finally{h.close()}
 });
 test('a mapped expansion with a missing marker never inserts another sheet row',async()=>{
   const h=ownerOrderFixture(),oldRead=client.batchGetSheetValues,oldUpdate=client.batchUpdateSpreadsheet;try{

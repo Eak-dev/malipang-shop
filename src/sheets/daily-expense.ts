@@ -144,9 +144,27 @@ export async function mapDailyCapacityExpansion(env:Env,month:number,anchor:numb
   ]);
   return Number(result[3]?.meta.changes||0)===1;
 }
-async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,write:GuardedDailyMutation):Promise<boolean>{
-  const now=new Date().toISOString(),locked=await env.DB.prepare(`INSERT OR IGNORE INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,block.month,now).run();
-  if(Number(locked.meta.changes||0)!==1)return false;
+/** A stale per-month lock is reclaimed only under the shared write fence. */
+export async function claimDailyCapacityLock(env:Env,month:number,nowMs=Date.now(),fenceToken=""):Promise<string|null>{
+  if(!env.SHEET_EXPENSE_DAILY||!Number.isSafeInteger(month)||month<1||month>12||!Number.isFinite(nowMs))return null;
+  const now=new Date(nowMs),cutoff=new Date(nowMs-15*60_000);if(!Number.isFinite(now.getTime())||!Number.isFinite(cutoff.getTime()))return null;
+  const token=`${now.toISOString()}|${crypto.randomUUID()}`;
+  // Old deployments have no shared-fence table at all.
+  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"){
+    const result=await env.DB.prepare(`INSERT OR IGNORE INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,month,token).run();return Number(result.meta.changes||0)===1?token:null;
+  }
+  const fence=`EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.lease_token=? AND f.state='OWNED' AND f.lease_until>?)`;
+  const result=await env.DB.prepare(`INSERT INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) SELECT ?,?,? WHERE ${fence}
+    ON CONFLICT(sheet_name,month) DO UPDATE SET locked_at=excluded.locked_at WHERE daily_sheet_capacity_locks.locked_at<=? AND ${fence}`)
+    .bind(env.SHEET_EXPENSE_DAILY,month,token,env.SHEET_EXPENSE_DAILY,fenceToken,now.toISOString(),cutoff.toISOString(),env.SHEET_EXPENSE_DAILY,fenceToken,now.toISOString()).run();
+  return Number(result.meta.changes||0)===1?token:null;
+}
+export async function releaseDailyCapacityLock(env:Env,month:number,token:string):Promise<boolean>{
+  if(!env.SHEET_EXPENSE_DAILY||!Number.isSafeInteger(month)||month<1||month>12||!token)return false;
+  const result=await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=? AND locked_at=?`).bind(env.SHEET_EXPENSE_DAILY,month,token).run();return Number(result.meta.changes||0)===1;
+}
+async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,write:GuardedDailyMutation,fenceToken?:string):Promise<boolean>{
+  const now=new Date().toISOString(),lock=await claimDailyCapacityLock(env,block.month,Date.now(),fenceToken);if(!lock)return false;
   try{
     const existing=await env.DB.prepare(`SELECT anchor_total_row,marker,state FROM daily_sheet_capacity_expansions WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).first<{anchor_total_row:number;marker:string;state:string}>();
     // A completed expansion cannot be reused: its old anchor now points to a
@@ -171,7 +189,7 @@ async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,w
     const refreshed=await loadLayout(env),refreshedMarkerRow=refreshed.body.findIndex(row=>String(row?.[0]??"")===marker)+1;if(refreshedMarkerRow>0)await write(before=>batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${refreshedMarkerRow}`)],before));
     await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(new Date().toISOString(),env.SHEET_EXPENSE_DAILY,block.month).run();
     return true;
-  }finally{await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).run();}
+  }finally{await releaseDailyCapacityLock(env,block.month,lock);}
 }
 export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{
   // Funding source is independent of payment method: cash can come from the
@@ -181,7 +199,7 @@ export function legacySourceWallet(paymentKey:string,sourceWallet:string):string
 }
 export function dailyInputRanges(sheet:string,row:number):string[]{return[sheetRange(sheet,`B${row}:D${row}`),sheetRange(sheet,`F${row}:H${row}`),sheetRange(sheet,`K${row}:Q${row}`),sheetRange(sheet,`V${row}:W${row}`)];}
 
-async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation):Promise<{payment:ReturnType<typeof resolvePayment>;rows:Map<string,number>}>{
+async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation,fenceToken?:string):Promise<{payment:ReturnType<typeof resolvePayment>;rows:Map<string,number>}>{
   if(!record.description.trim()||!Number.isFinite(record.amountBaht)||record.amountBaht<=0)throw new Error("Invalid confirmed expense for daily sheet");
   if(!entries.length)throw new Error("No confirmed expense entries for daily sheet");
   const entryKeys=new Set(entries.map(entry=>entry.rowKey));if(entryKeys.size!==entries.length||[...entryKeys].some(key=>!key.trim()))throw new Error("Daily expense entry keys must be stable and unique");
@@ -192,7 +210,7 @@ async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:D
     const candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
     if(requiredMonthlyCapacityExpansions(candidates.length,entries.length-rows.size)===0)break;
     const block=layout.blocks.find(item=>item.month===payment.postingMonth);if(!block)throw new Error(`Daily sheet month block not found: ${payment.postingMonth}`);
-    const expanded=await expandMonthCapacity(env,block,layout,write);if(!expanded)throw new Error(`Daily sheet capacity expansion is busy for month ${payment.postingMonth}; retry safely.`);
+    const expanded=await expandMonthCapacity(env,block,layout,write,fenceToken);if(!expanded)throw new Error(`Daily sheet capacity expansion is busy for month ${payment.postingMonth}; retry safely.`);
     // Existing item mappings after the inserted total row move down one row.
     // Reload them from D1 before writing so a retry never targets the old row.
     layout=await loadLayout(env);payment=resolvePayment(layout.headers,record.paymentKey,year,month,day);rows=new Map<string,number>();
@@ -214,8 +232,8 @@ export function buildDailySheetWritePlan(sheet:string,record:DailyExpenseRecord,
   };
 }
 
-async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation):Promise<DailyExpensePlacement[]>{
-  const {payment,rows}=await reserveDailyEntryRows(env,record,entries,write),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet),writePlan=buildDailySheetWritePlan(env.SHEET_EXPENSE_DAILY,record,payment,sourceWallet,entries,rows);
+async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation,fenceToken?:string):Promise<DailyExpensePlacement[]>{
+  const {payment,rows}=await reserveDailyEntryRows(env,record,entries,write,fenceToken),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet),writePlan=buildDailySheetWritePlan(env.SHEET_EXPENSE_DAILY,record,payment,sourceWallet,entries,rows);
   await write(before=>batchClearValues(env,writePlan.clearRanges,before));
   await write(before=>batchWriteValues(env,writePlan.writes,before));
   return entries.map(entry=>({entityKey:entry.rowKey,row:rows.get(entry.rowKey)!,postingMonth:payment.postingMonth,postingDay:payment.postingDay,amountColumn:payment.amountColumn,sourceWallet}));
@@ -229,7 +247,7 @@ async function clearLegacySummaryMapping(env:Env,expenseId:string):Promise<boole
 }
 
 export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[],options:DailyExpenseItemPostingOptions={}):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[];replacedLegacySummary:boolean}>{
-  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async write=>{
+  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
   const plan=buildDailyExpenseEntries(record,document,items);
   const existing=await mappedRowsForExpense(env,record.expenseId);
   const hasLegacyItemRows=existing.some(item=>item.entityKey!==record.expenseId);
@@ -240,13 +258,13 @@ export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,reco
     await write(before=>batchClearValues(env,existing.flatMap(item=>dailyInputRanges(env.SHEET_EXPENSE_DAILY,item.row)),before));
     await env.DB.prepare(`DELETE FROM sheet_row_index WHERE sheet_name=? AND (entity_key=? OR substr(entity_key,1,length(?)+1)=? || '|')`).bind(env.SHEET_EXPENSE_DAILY,record.expenseId,record.expenseId).run();
   }
-  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries,write),replacedLegacySummary:hasLegacyItemRows};
+  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries,write,fenceToken),replacedLegacySummary:hasLegacyItemRows};
   });
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
-  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async write=>{
-    const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write);return result[0]!;
+  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
+    const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write,fenceToken);return result[0]!;
   });
 }
 

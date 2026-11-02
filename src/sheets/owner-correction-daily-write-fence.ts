@@ -48,7 +48,7 @@ export type GuardedDailyMutation=(dispatch:(beforeDispatch?:()=>Promise<void>)=>
  * the operation must use `write`, and the provider must invoke its callback
  * immediately before dispatch. A lost response leaves the fence in flight.
  */
-export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,action:(write:GuardedDailyMutation)=>Promise<T>,now:()=>number=()=>Date.now()):Promise<T>{
+export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,action:(write:GuardedDailyMutation,fenceToken?:string)=>Promise<T>,now:()=>number=()=>Date.now()):Promise<T>{
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return action(async dispatch=>dispatch());
   const token=await claimCorrectionDailyWriteFence(env,sheet,now());if(!token)throw new CorrectionDailyFenceBusyError();
   try{
@@ -65,6 +65,6 @@ export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,acti
         throw error;
       }
     };
-    return await action(write);
+    return await action(write,token);
   }finally{await releaseCorrectionDailyWriteFence(env,sheet,token);}
 }

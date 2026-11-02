@@ -1,10 +1,11 @@
 import {buildMetadataRowPatchRequest,type MetadataRowPatch} from "./client";
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 import {ownerCorrectionReportMatches,type CorrectionReportSnapshot} from "./owner-correction-report-snapshot";
+import type {CorrectionCellGuard} from "./owner-correction-cell-protection";
 
 export interface CorrectionSyncOriginalRow{metadataId:number;values:unknown[]}
 export interface CorrectionSyncRebind{sourceMetadataId:number;reservationMetadataId:number;sheetId:number;correctionId:string}
-export interface CorrectionSyncPlan{expenseId:string;dailyMetadataId:number;rawMetadataId:number;patches:MetadataRowPatch[];originalRows:CorrectionSyncOriginalRow[];rebind:CorrectionSyncRebind|null;headerDigest?:string;reportBaseline?:CorrectionReportSnapshot}
+export interface CorrectionSyncPlan{expenseId:string;dailyMetadataId:number;rawMetadataId:number;patches:MetadataRowPatch[];originalRows:CorrectionSyncOriginalRow[];rebind:CorrectionSyncRebind|null;headerDigest?:string;reportBaseline?:CorrectionReportSnapshot;cellGuards?:{correctionId:string;guards:CorrectionCellGuard[]}}
 const allowed=[1,2,3,4,5,6,7,10,11,12,13,14,15,16,21,22];
 const dailyColumns=new Set([1,2,3,5,6,7,10,11,12,13,14,15,16,21,22]),rawColumns=new Set([1,2,3,4,5,6]),itemColumns=new Set([3,12,13,14]);
 
@@ -32,6 +33,10 @@ export function serializeCorrectionSyncPlan(plan:CorrectionSyncPlan,expenseId:st
     if(!Number.isSafeInteger(row.metadataId)||row.metadataId<1||!patchIds.has(row.metadataId)||originalIds.has(row.metadataId)||!Array.isArray(row.values)||row.values.length>26)return null;
     originalIds.add(row.metadataId);
     if(row.values.some(value=>value!==null&&value!==undefined&&typeof value!=="string"&&typeof value!=="boolean"&&!(typeof value==="number"&&Number.isFinite(value))))return null;
+  }
+  if(plan.cellGuards){
+    const guards=plan.cellGuards.guards,daily=plan.patches.find(row=>row.metadataId===plan.dailyMetadataId),columns=daily?.cells.map(cell=>cell.columnIndex).filter(col=>col!==21).sort((a,b)=>a-b)||[];
+    if(plan.rebind||plan.cellGuards.correctionId!==correctionId||!Array.isArray(guards)||!columns.length||guards.length!==columns.length||new Set(guards.map(guard=>guard.protectedRangeId)).size!==guards.length||guards.some((guard,index)=>guard.columnIndex!==columns[index]||!Number.isSafeInteger(guard.protectedRangeId)||guard.protectedRangeId<0))return null;
   }
   if(plan.rebind){const r=plan.rebind;if(r.correctionId!==correctionId||!Number.isSafeInteger(r.sheetId)||r.sheetId<0||r.sourceMetadataId!==plan.dailyMetadataId||!patchIds.has(r.reservationMetadataId)||r.sourceMetadataId===r.reservationMetadataId||r.reservationMetadataId===plan.rawMetadataId)return null;}
   try{const serialized=JSON.stringify(plan);return serialized.length<=1_000_000?serialized:null;}catch{return null;}

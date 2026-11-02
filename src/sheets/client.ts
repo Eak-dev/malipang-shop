@@ -156,10 +156,10 @@ export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promis
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
-export interface SheetProtectedRange{range?:{sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number};warningOnly?:boolean;requestingUserCanEdit?:boolean;unprotectedRanges?:unknown[];editors?:{users?:string[];groups?:string[];domainUsersCanEdit?:boolean}}
+export interface SheetProtectedRange{protectedRangeId?:number;description?:string;range?:{sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number};warningOnly?:boolean;requestingUserCanEdit?:boolean;unprotectedRanges?:unknown[];editors?:{users?:string[];groups?:string[];domainUsersCanEdit?:boolean}}
 /** Read-only protection metadata. Missing editor information is not proof of protection. */
 export async function getSheetProtectedRanges(env:Env,title:string):Promise<{sheetId:number;ranges:SheetProtectedRange[]}>{
-  const fields="sheets(properties(sheetId,title),protectedRanges(range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))";
+  const fields="sheets(properties(sheetId,title),protectedRanges(protectedRangeId,description,range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))";
   const data=await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string};protectedRanges?:SheetProtectedRange[]}>};
   const found=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);if(found.length!==1||!Number.isSafeInteger(found[0]?.properties?.sheetId)||Number(found[0]?.properties?.sheetId)<0)throw new Error("CORRECTION_PROTECTION_SHEET_INVALID");
   return {sheetId:Number(found[0]!.properties!.sheetId),ranges:found[0]!.protectedRanges||[]};

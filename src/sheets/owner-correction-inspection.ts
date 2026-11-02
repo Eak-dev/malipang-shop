@@ -1,7 +1,8 @@
 import type {Env} from "../types";
-import {getSheetId,getSheetValues,readSheetRowsByMetadata,searchSheetRowMetadata,type SheetRowMetadata} from "./client";
+import {getSheetId,getSheetProtectedRanges,getSheetValues,readSheetRowsByMetadata,searchSheetRowMetadata,type SheetRowMetadata} from "./client";
 import {correctionPeriodHeaderDigest} from "../expense/owner-correction-period-math";
 import {inspectOwnerCorrectionCategoryProtection} from "./owner-correction-protection";
+import {inspectOwnerCorrectionCellGuards} from "./owner-correction-cell-protection";
 import type {CorrectionSyncPlan} from "./owner-correction-sync-plan";
 import type {CorrectionInspection} from "./owner-correction-worker";
 
@@ -11,8 +12,9 @@ export interface CorrectionInspectionPorts{
   rows:(env:Env,ids:number[])=>Promise<Map<number,unknown[]>>;
   headers?:(env:Env,range:string)=>Promise<unknown[][]>;
   protection?:(env:Env)=>Promise<boolean>;
+  cellRanges?:typeof getSheetProtectedRanges;
 }
-const defaults:CorrectionInspectionPorts={sheetId:getSheetId,metadata:searchSheetRowMetadata,rows:readSheetRowsByMetadata,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection};
+const defaults:CorrectionInspectionPorts={sheetId:getSheetId,metadata:searchSheetRowMetadata,rows:readSheetRowsByMetadata,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection,cellRanges:getSheetProtectedRanges};
 const norm=(value:unknown)=>value===undefined||value===null?"":value;
 
 /** Recheck metadata, target uniqueness, identities and every unchanged source cell. */
@@ -28,6 +30,12 @@ export async function inspectOwnerCorrectionTargets(env:Env,plan:CorrectionSyncP
     if(await correctionPeriodHeaderDigest(headers)!==plan.headerDigest)return {identitiesVerified:false,rows};
   }
   if(new Set([dailyId,rawId,detailId]).size!==3||new Set(ids).size!==ids.length||rows.size!==ids.length||before.size!==ids.length)return {identitiesVerified:false,rows};
+  if(plan.cellGuards){
+    const marker=daily.find(item=>item.metadataId===plan.dailyMetadataId);if(!marker||!ports.cellRanges||!env.GOOGLE_SERVICE_ACCOUNT_EMAIL)return {identitiesVerified:false,rows};
+    const ranges=await ports.cellRanges(env,env.SHEET_EXPENSE_DAILY);if(ranges.sheetId!==dailyId)return {identitiesVerified:false,rows};
+    const inspected=inspectOwnerCorrectionCellGuards({correctionId:plan.cellGuards.correctionId,metadata:marker,columns:plan.cellGuards.guards.map(guard=>guard.columnIndex),ranges:ranges.ranges,serviceAccount:env.GOOGLE_SERVICE_ACCOUNT_EMAIL});
+    if(inspected.kind!=="COMPLETE"||JSON.stringify(inspected.guards)!==JSON.stringify(plan.cellGuards.guards))return {identitiesVerified:false,rows};
+  }
   const positions=new Set<string>();
   for(const patch of plan.patches){
     const found=all.filter(item=>item.metadataId===patch.metadataId),prior=before.get(patch.metadataId),current=rows.get(patch.metadataId);

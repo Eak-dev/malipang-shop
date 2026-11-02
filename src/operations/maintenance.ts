@@ -4,6 +4,7 @@ import { recoverPendingLineNotifications } from "../line/attendance-notification
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
 import { refreshCurrentEmployeeWages } from "../payroll/repository";
 import { recoverPendingStaffConfigSyncs } from "../sheets/staff-config";
+import { cleanupOwnerCorrectionCellGuards } from "../sheets/owner-correction-cell-guard-cleanup";
 import type { Env } from "../types";
 
 export const maintenanceSteps=["inbound_leases","payroll","sheets_recovery","staff_config_recovery","line_notification_recovery","evidence_retention"] as const;
@@ -16,7 +17,7 @@ export async function runScheduledMaintenance(env:Env):Promise<void>{
     inbound_leases:()=>env.DB.prepare(`UPDATE inbound_events SET status='STALE',error='PROCESSING_LEASE_EXPIRED' WHERE status='PROCESSING' AND last_attempt_at<?`).bind(new Date(Date.now()-15*60_000).toISOString()).run(),
     // These two operations remain dependent and in their original order.
     payroll:async()=>{await refreshCurrentEmployeeWages(env);await finalizeMissingPunchPayrolls(env);},
-    sheets_recovery:()=>recoverPendingSheetJobs(env),
+    sheets_recovery:async()=>{await recoverPendingSheetJobs(env);const result=await cleanupOwnerCorrectionCellGuards(env);if(result.review)throw new Error("CORRECTION_GUARD_CLEANUP_REVIEW");},
     staff_config_recovery:()=>recoverPendingStaffConfigSyncs(env),
     line_notification_recovery:()=>recoverPendingLineNotifications(env),
     evidence_retention:async()=>{const result=await auditEvidenceRetention(env);if(result.errors)throw new Error("EVIDENCE_RETENTION_AUDIT_INCOMPLETE");}

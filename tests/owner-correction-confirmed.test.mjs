@@ -20,7 +20,7 @@ async function setup(){
   const before=await loadOwnerExpense(h.env,owner,'exp_confirmed_owner'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport');await grantSyntheticOpenPeriods(h,id);
   const plan={expenseId:before.expenseId,dailyMetadataId:1,rawMetadataId:2,patches:[{metadataId:1,cells:[{columnIndex:21,value:'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows:[{metadataId:1,values:Array(22).fill(null)},{metadataId:2,values:[null,null,null,null,null,null,'general']}],rebind:null,headerDigest:syntheticCorrectionHeaderDigest,reportBaseline:syntheticCorrectionReport(before)};
   const enqueued=[],headerPorts={headers:async()=>syntheticCorrectionHeaders()};
-  const ports={periods:(env,actor,key)=>inspectOwnerCorrectionPeriods(env,actor,key,Date.now(),headerPorts),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true,dedupe:async()=>true,posting:async()=>({items:[]}),bootstrap:async()=>'READY',plan:async()=>plan,commit:commitOwnerCorrection,enqueue:async(_env,job)=>{enqueued.push(job)},status:ownerCorrectionStatus};
+  const ports={periods:(env,actor,key)=>inspectOwnerCorrectionPeriods(env,actor,key,Date.now(),headerPorts),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true,dedupe:async()=>true,posting:async()=>({items:[]}),bootstrap:async()=>'READY',guards:async()=>({kind:'READY',guards:[]}),plan:async()=>plan,commit:commitOwnerCorrection,enqueue:async(_env,job)=>{enqueued.push(job)},status:ownerCorrectionStatus};
   return {...h,before,id,plan,ports,enqueued};
 }
 test('confirmed correction checks gates, atomically saves and queues exactly once',async()=>{

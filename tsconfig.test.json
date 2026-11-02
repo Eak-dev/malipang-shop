@@ -62,6 +62,8 @@
     "src/sheets/owner-correction-reconciliation.ts",
     "src/sheets/owner-correction-runtime.ts",
     "src/sheets/owner-correction-protection.ts",
+    "src/sheets/owner-correction-cell-protection.ts",
+    "src/sheets/owner-correction-cell-guard-service.ts",
     "src/sheets/owner-correction-lease.ts",
     "src/sheets/owner-correction-identity.ts",
     "src/sheets/owner-correction-metadata.ts",

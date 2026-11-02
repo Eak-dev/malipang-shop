@@ -2,10 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
-import {createOwnerCorrectionDraft,loadOwnerExpense,commitOwnerCorrection} from '../dist/expense/owner-correction-repository.js';
+import {createOwnerCorrectionDraft,loadOwnerExpense,commitOwnerCorrection,listOwnerCorrectionHistory} from '../dist/expense/owner-correction-repository.js';
 import {recoverVerifiedOwnerCorrection} from '../dist/admin/owner-correction-recovery.js';
 import {processOwnerCorrectionJob} from '../dist/sheets/owner-correction-worker.js';
 import {handleAdmin} from '../dist/admin/handler.js';
+import {handleOwnerCorrectionText} from '../dist/expense/owner-correction-service.js';
 
 async function setup(){
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},now=Date.now();h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
@@ -77,4 +78,23 @@ test('a failed queue dispatch keeps the audited outbox recoverable',async()=>{
 });
 test('the recovery endpoint requires the existing admin authentication',async()=>{
   const h=await setup();try{h.env.ADMIN_TOKEN='a'.repeat(40);const request=new Request('https://example.invalid/admin/owner-correction/recover',{method:'POST',headers:{authorization:'Bearer incorrect','content-type':'application/json'},body:JSON.stringify({correctionId:h.id,reason:'verified sheet values'})});assert.equal((await handleAdmin(request,h.env,{})).status,401);assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{h.close()}
+});
+test('the authenticated sync review queue exposes only minimal recovery metadata',async()=>{
+  const h=await setup();try{
+    h.env.ADMIN_TOKEN='a'.repeat(40);const queue=token=>new Request('https://example.invalid/admin/owner-correction/review-queue?kind=sync',{headers:{authorization:`Bearer ${token}`}});
+    assert.equal((await handleAdmin(queue('wrong'),h.env,{})).status,401);const response=await handleAdmin(queue(h.env.ADMIN_TOKEN),h.env,{}),body=await response.json();assert.equal(response.status,200);assert.equal(body.items.length,1);assert.equal(body.items[0].correctionId,h.id);assert.equal(body.items[0].reason,'SYNC_REVIEW');assert.doesNotMatch(JSON.stringify(body),/exp_recover|fixture_staff|Synthetic driver/);
+    const bad=new Request('https://example.invalid/admin/owner-correction/review-queue?cursor=invalid',{headers:{authorization:`Bearer ${h.env.ADMIN_TOKEN}`}});assert.equal((await handleAdmin(bad,h.env,{})).status,400);
+  }finally{h.close()}
+});
+test('owner can rediscover review, retry and completion statuses after a lost LINE reply',async()=>{
+  const h=await setup(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},staff={employeeId:'TEST_STAFF',lineUserId:'fixture_staff'};try{
+    const show=line=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event(line,{message:{type:'text',id:`synthetic_${line}`,text:'สถานะการแก้ไข'}}),'trace'));
+    await show('fixture_staff');assert.match(JSON.stringify(h.messages.at(-1)),/สำหรับเจ้าของ/);assert.equal((await listOwnerCorrectionHistory(h.env,staff)).length,0);
+    await show('fixture_owner');assert.match(JSON.stringify(h.messages.at(-1)),/ซิงก์รอตรวจเพิ่มเติม/);
+    h.sqlite.exec("UPDATE expense_owner_correction_sync SET phase='PREPARED'; UPDATE sync_jobs SET status='PENDING' WHERE entity_type='EXPENSE_CORRECTION'");
+    await show('fixture_owner');assert.match(JSON.stringify(h.messages.at(-1)),/กำลังซิงก์/);
+    h.sqlite.exec("UPDATE sync_jobs SET status='FAILED' WHERE entity_type='EXPENSE_CORRECTION'");await show('fixture_owner');assert.match(JSON.stringify(h.messages.at(-1)),/ซิงก์ไม่สำเร็จ/);
+    h.sqlite.exec("UPDATE expense_owner_correction_sync SET phase='RECONCILED'; UPDATE sync_jobs SET status='COMPLETED' WHERE entity_type='EXPENSE_CORRECTION'; UPDATE expense_owner_corrections SET reconciled_at='now'");
+    await show('fixture_owner');assert.match(JSON.stringify(h.messages.at(-1)),/ซิงก์และตรวจแล้ว/);assert.equal((await listOwnerCorrectionHistory(h.env,owner)).length,1);
+  }finally{h.close()}
 });

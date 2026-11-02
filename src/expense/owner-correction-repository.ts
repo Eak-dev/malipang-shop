@@ -78,6 +78,20 @@ export async function cancelOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdenti
 }
 
 export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"MANUAL_REVIEW"|"DRAFT_EDITED"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
+/** Owner-only history remains discoverable even if a previous LINE reply failed. */
+export async function listOwnerCorrectionHistory(env:Env,owner:OwnerReviewIdentity,cursorCreated="",cursorId=""):Promise<Record<string,unknown>[]> {
+  if(Boolean(cursorCreated)!==Boolean(cursorId)||cursorCreated.length>40||cursorId.length>160)return [];
+  const rows=await env.DB.prepare(`SELECT c.correction_id,c.before_json,c.after_json,c.created_at,
+    CASE WHEN json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.status')='WAITING_CONFIRM' THEN 'DRAFT_EDITED'
+      WHEN s.phase='REVIEW' THEN 'SYNC_REVIEW' WHEN j.status='COMPLETED' AND s.phase='RECONCILED' AND c.reconciled_at IS NOT NULL THEN 'COMPLETED'
+      WHEN j.status='FAILED' THEN 'SYNC_FAILED' ELSE 'SYNC_PENDING' END AS correction_status
+    FROM expense_owner_corrections c LEFT JOIN expense_owner_correction_sync s ON s.correction_id=c.correction_id
+    LEFT JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=s.expense_id AND j.entity_version=s.expense_version
+    WHERE c.owner_employee_id=? AND c.status='APPLIED' AND ${activeOwnerSql}
+      AND (?='' OR c.created_at<? OR (c.created_at=? AND c.correction_id<?)) ORDER BY c.created_at DESC,c.correction_id DESC LIMIT 9`)
+    .bind(owner.employeeId,owner.employeeId,owner.lineUserId,cursorCreated,cursorCreated,cursorCreated,cursorId).all<Record<string,unknown>>();
+  return rows.results||[];
+}
 /** An approved D1 update is not reported complete until its sync job completes. */
 export async function ownerCorrectionStatus(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<OwnerCorrectionStatus|null>{
   if(!id||!Number.isFinite(nowMs))return null;

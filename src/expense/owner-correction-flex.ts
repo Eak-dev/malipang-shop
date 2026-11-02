@@ -44,6 +44,17 @@ export function buildOwnerCorrectionManualReviewList(rows:Record<string,unknown>
   return flex("รายการแก้ไขรอตรวจ",body,nextCursor?[button("รายการถัดไป",`a=owner_correction_manual_next&cursor=${encode(nextCursor)}`)]:[]);
 }
 
+export function buildOwnerCorrectionHistory(rows:Record<string,unknown>[],nextCursor:string|null=null){
+  const labels:Record<string,string>={DRAFT_EDITED:"แก้ร่างแล้ว รอยืนยันรายการ",SYNC_PENDING:"กำลังซิงก์",SYNC_FAILED:"ซิงก์ไม่สำเร็จ รอดำเนินการต่อ",SYNC_REVIEW:"ซิงก์รอตรวจเพิ่มเติม",COMPLETED:"ซิงก์และตรวจแล้ว"},body:unknown[]=[text("สถานะการแก้ไขค่าใช้จ่าย",true)];
+  for(const row of rows.slice(0,8)){
+    let after:OwnerCorrectionSnapshot;try{after=JSON.parse(String(row.after_json)) as OwnerCorrectionSnapshot;}catch{continue;}
+    const id=String(row.correction_id||""),status=String(row.correction_status||"");if(!id||!after?.description||!Number.isSafeInteger(after.amountSatang)||!labels[status])continue;
+    body.push({type:"separator"},text(`${after.description} • ${money(after.amountSatang)}`),text(labels[status]!),button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(id)}`));
+  }
+  if(body.length===1)body.push(text("ยังไม่มีรายการที่แก้ไข"));
+  return flex("สถานะการแก้ไข",body,nextCursor?[button("รายการถัดไป",`a=owner_correction_history_next&cursor=${encode(nextCursor)}`)]:[]);
+}
+
 /** The owner attests to periods only for the current, unexpired correction. */
 export function buildOwnerCorrectionPeriods(view:CorrectionPeriodView,correctionId:string){
   const body:unknown[]=[text("ตรวจเดือนบัญชีก่อนแก้ไข",true),text("กรุณาตรวจแต่ละเดือน หากปิดบัญชีแล้วหรือไม่แน่ใจ ให้พักรายการไว้")];

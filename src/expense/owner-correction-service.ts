@@ -7,8 +7,8 @@ import type {OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionSnapshot} from "./owner-correction";
 import {inspectOwnerCorrectionPeriods,recordOwnerCorrectionPeriodDecision} from "./owner-correction-periods";
 import {confirmOwnerCorrection} from "./owner-correction-confirmed";
-import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitPendingOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
-import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionManualReview,buildOwnerCorrectionManualReviewList,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
+import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitPendingOwnerCorrection,createOwnerCorrectionDraft,listOwnerCorrectionHistory,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
+import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionHistory,buildOwnerCorrectionManualReview,buildOwnerCorrectionManualReviewList,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
 import {getOwnerCorrectionManualReview,holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,retryOwnerCorrectionManualReview,type ManualCorrectionReason} from "./owner-correction-manual-review";
 
 interface OwnerCorrectionPostbackPorts{periods:typeof inspectOwnerCorrectionPeriods;decision:typeof recordOwnerCorrectionPeriodDecision;confirmed?:typeof confirmOwnerCorrection}
@@ -36,6 +36,11 @@ async function manualReviews(env:Env,event:LineEvent,owner:OwnerReviewIdentity,t
   const rows=await listOwnerCorrectionManualReviews(env,owner,parts[0]||"",parts[1]||""),shown=rows.slice(0,8),last=shown.at(-1),next=rows.length>8&&last?`${String(last.created_at)}|${String(last.correction_id)}`:null;
   await flex(env,event,buildOwnerCorrectionManualReviewList(shown,next),traceId);
 }
+async function history(env:Env,event:LineEvent,owner:OwnerReviewIdentity,traceId:string,cursor=""):Promise<void>{
+  const parts=cursor?cursor.split("|"):[];if(cursor&&(parts.length!==2||!parts[0]||!parts[1])){await reply(env,event,"หน้ารายการหมดอายุ กรุณาพิมพ์ ‘สถานะการแก้ไข’",traceId);return;}
+  const rows=await listOwnerCorrectionHistory(env,owner,parts[0]||"",parts[1]||""),shown=rows.slice(0,8),last=shown.at(-1),next=rows.length>8&&last?`${String(last.created_at)}|${String(last.correction_id)}`:null;
+  await flex(env,event,buildOwnerCorrectionHistory(shown,next),traceId);
+}
 async function results(env:Env,event:LineEvent,owner:OwnerReviewIdentity,query:string,traceId:string,cursor=""):Promise<void>{
   const parts=cursor?cursor.split("|"):[];if(cursor&&(parts.length!==2||!parts[0]||!parts[1])){await reply(env,event,"หน้าค้นหาหมดอายุ กรุณาเริ่มใหม่",traceId);return;}
   const rows=await searchOwnerExpenses(env,owner,query,parts[0]||"",parts[1]||""),shown=rows.slice(0,8),last=shown.at(-1);
@@ -45,10 +50,10 @@ async function results(env:Env,event:LineEvent,owner:OwnerReviewIdentity,query:s
 export async function handleOwnerCorrectionText(env:Env,event:LineEvent,traceId:string):Promise<boolean>{
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"||event.message?.type!=="text")return false;
   const text=(event.message.text||"").trim(),owner=await identity(env,event);
-  if(text==="รายการแก้ไขรอตรวจ"){
+  if(text==="รายการแก้ไขรอตรวจ"||text==="สถานะการแก้ไข"){
     if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
     const active=await loadOwnerCorrectionInput(env,owner);if(active)await clearOwnerCorrectionInput(env,owner,String(active.input_id));
-    await manualReviews(env,event,owner,traceId);return true;
+    if(text==="รายการแก้ไขรอตรวจ")await manualReviews(env,event,owner,traceId);else await history(env,event,owner,traceId);return true;
   }
   if(text==="แก้ไขค่าใช้จ่าย"){
     if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
@@ -82,6 +87,7 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
     await results(env,event,owner,query,traceId,q.get("cursor")||"");return true;
   }
   if(action==="owner_correction_manual_next"){await manualReviews(env,event,owner,traceId,q.get("cursor")||"");return true;}
+  if(action==="owner_correction_history_next"){await history(env,event,owner,traceId,q.get("cursor")||"");return true;}
   const id=q.get("id")||"";
   if(action==="owner_correction_review_retry"){
     const draft=await retryOwnerCorrectionManualReview(env,owner,id);

@@ -80,6 +80,8 @@ test('admin summary exposes counts only and requires authentication',async()=>{
     await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);h.env.ADMIN_TOKEN='a'.repeat(40);
     const request=token=>new Request('https://example.invalid/admin/owner-correction/review-summary',{headers:{authorization:`Bearer ${token}`}});
     assert.equal((await handleAdmin(request('wrong'),h.env,{})).status,401);const response=await handleAdmin(request(h.env.ADMIN_TOKEN),h.env,{}),body=await response.json();assert.equal(response.status,200);assert.deepEqual(body.reasons,[{reason:'CROSS_MONTH',count:1}]);assert.doesNotMatch(JSON.stringify(body),/exp_manual|fixture_staff/);
+    const queue=token=>new Request('https://example.invalid/admin/owner-correction/review-queue?kind=manual',{headers:{authorization:`Bearer ${token}`}});
+    assert.equal((await handleAdmin(queue('wrong'),h.env,{})).status,401);const list=await (await handleAdmin(queue(h.env.ADMIN_TOKEN),h.env,{})).json();assert.equal(list.items.length,1);assert.equal(list.items[0].correctionId,h.id);assert.equal(list.items[0].reason,'CROSS_MONTH');assert.doesNotMatch(JSON.stringify(list),/exp_manual|fixture_staff|Synthetic supplier/);
   }finally{h.close()}
 });
 test('manual review migration is additive and repeatable',async()=>{

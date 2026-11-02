@@ -24,6 +24,9 @@ export interface DailyRowObservation {marker:Marker;headerDigest:string;sheetYea
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 const isBlank=(x:unknown)=>x===undefined||x===null||x==='';
 const MAX_RESPONSE_BYTES=4*1024*1024;
+/** This module only uses read-only Sheets operations, including metadata
+ * search POST. Never ingest an unbounded upstream error body. */
+const readSheet=(env:Env,path:string,init:RequestInit)=>sheetsFetch(env,path,init,false,undefined,true);
 /** Sheets may return a large metadata collection. Do not buffer unbounded
  * responses in the Worker; an oversized/incomplete read is not evidence. */
 async function boundedJson(res:Response):Promise<unknown>{
@@ -102,17 +105,17 @@ function parseMetadata(value:unknown):Marker|null{
 export async function readDailyEvidence(env:Env,w:DailyExpectation):Promise<DailyEvidence|null>{try{
  if(w.sheetTitle!==env.SHEET_EXPENSE_DAILY||!env.GOOGLE_SERVICE_ACCOUNT_EMAIL||w.serviceAccount.trim().toLowerCase()!==env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase()||!Number.isSafeInteger(w.rowNumber)||w.rowNumber<6||!Number.isSafeInteger(w.metadataId)||w.metadataId<1)return null;
  const fields='sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges(range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))';
- const base=await boundedJson(await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:'GET'})) as Spreadsheet;
+ const base=await boundedJson(await readSheet(env,`?fields=${encodeURIComponent(fields)}`,{method:'GET'})) as Spreadsheet;
  const ss=(base.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle);if(ss.length!==1)return null;const sheet=ss[0]!,count=Number(sheet.properties?.gridProperties?.rowCount);if(!Number.isSafeInteger(count)||count<w.rowNumber||count>10000)return null;
  const q=new URLSearchParams();q.append('ranges',`${quote(w.sheetTitle)}!A${w.rowNumber}:Y${w.rowNumber}`);q.set('fields','sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))');
  const valueQuery=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE',dateTimeRenderOption:'FORMATTED_STRING'});for(const range of [`${quote(w.sheetTitle)}!A1:D${count}`,`${quote(w.sheetTitle)}!A1:W3`])valueQuery.append('ranges',range);
  const [targetData,read,search,byId]=await Promise.all([
-  sheetsFetch(env,`?${q}`,{method:'GET'}).then(boundedJson) as Promise<Spreadsheet>,
-  sheetsFetch(env,`/values:batchGet?${valueQuery}`,{method:'GET'}).then(boundedJson) as Promise<{valueRanges?:Array<{values?:unknown[][]}>}>,
+  readSheet(env,`?${q}`,{method:'GET'}).then(boundedJson) as Promise<Spreadsheet>,
+  readSheet(env,`/values:batchGet?${valueQuery}`,{method:'GET'}).then(boundedJson) as Promise<{valueRanges?:Array<{values?:unknown[][]}>}>,
   // Omitting visibility sees both document-visible metadata and metadata from
   // this Google project. Foreign projects' private metadata remains invisible.
-  sheetsFetch(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:{locationType:'ROW'}}]})}).then(boundedJson) as Promise<{matchedDeveloperMetadata?:Array<{developerMetadata?:unknown}>}>,
-  sheetsFetch(env,`/developerMetadata/${w.metadataId}`,{method:'GET'}).then(boundedJson)
+  readSheet(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:{locationType:'ROW'}}]})}).then(boundedJson) as Promise<{matchedDeveloperMetadata?:Array<{developerMetadata?:unknown}>}>,
+  readSheet(env,`/developerMetadata/${w.metadataId}`,{method:'GET'}).then(boundedJson)
  ]);
  const targets=(targetData.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle),ranges=read.valueRanges;if(targets.length!==1||!Array.isArray(ranges)||ranges.length!==2||!search||!Array.isArray(search.matchedDeveloperMetadata))return null;
  const markers=search.matchedDeveloperMetadata.map(v=>parseMetadata(v.developerMetadata));if(markers.some(m=>!m))return null;

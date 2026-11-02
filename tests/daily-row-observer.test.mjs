@@ -50,6 +50,11 @@ test('oversized Sheets responses are discarded and cannot become positive eviden
  auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>new Response('x'.repeat(4*1024*1024+1));
  try{assert.equal(await readDailyEvidence({GOOGLE_SPREADSHEET_ID:'test',SHEET_EXPENSE_DAILY:'daily',GOOGLE_SERVICE_ACCOUNT_EMAIL:'worker@example.org'},w),null)}finally{auth.getGoogleAccessToken=before;globalThis.fetch=oldFetch}
 });
+test('upstream Sheets error bodies are not consumed by the read-only inspector',async()=>{
+ const {w}=await fixture(),auth=require('../dist/sheets/google-auth.js'),before=auth.getGoogleAccessToken,oldFetch=globalThis.fetch,{readDailyEvidence}=require('../dist/sheets/daily-row-observer.js');let consumed=0;
+ auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>({ok:false,status:500,headers:new Headers(),text:async()=>{consumed++;throw new Error('must not read upstream body')}});
+ try{assert.equal(await readDailyEvidence({GOOGLE_SPREADSHEET_ID:'test',SHEET_EXPENSE_DAILY:'daily',GOOGLE_SERVICE_ACCOUNT_EMAIL:'worker@example.org'},w),null);assert.equal(consumed,0)}finally{auth.getGoogleAccessToken=before;globalThis.fetch=oldFetch}
+});
 
 async function existingFixture(){
  const {e,w}=await fixture(),cols=Array.from({length:25},(_,i)=>i).filter(i=>![8,9,17,18,20].includes(i));

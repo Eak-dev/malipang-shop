@@ -1,7 +1,6 @@
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 import {isIsoDate} from "../shared/time";
 
-const exceptionalExpense="exp_730b2534-981b-4730-885e-a00995ef36ed";
 // Mirrors the verified legacy report's description-based filling override.
 const legacyFilling=/ไส้กรอก|sausage|ปูอัด|crab|หมูหยอง|ไก่หยอง|แฮม|ham|ชีส|cheese|ทูน่า|tuna|สังขยา|เผือก|ถั่วแดง|ฝอยทอง|ลูกเกด|raisin|มายองเนส|mayonnaise|น้ำสลัด|สับปะรด|pineapple|ข้าวโพด|corn|ทรัฟเฟิล|truffle/;
 export function legacyReportCategoryMatches(snapshot:OwnerCorrectionSnapshot):boolean{
@@ -20,7 +19,7 @@ function satang(value:unknown):number|null{
   const n=Math.round(value*100);return Number.isSafeInteger(n)&&Math.abs(value*100-n)<0.000001?n:null;
 }
 function key(id:string,day:string,amount:number,doc:string,order:string):string{
-  const identity=id===exceptionalExpense?`EXP|${id}`:order?`ORD|${order}|${(amount/100).toFixed(2)}`:doc?`DOC|${doc}|${(amount/100).toFixed(2)}`:`EXP|${id}`;
+  const identity=order?`ORD|${order}|${(amount/100).toFixed(2)}`:doc?`DOC|${doc}|${(amount/100).toFixed(2)}`:`EXP|${id}`;
   return `${day.slice(0,7)}|${identity}`;
 }
 

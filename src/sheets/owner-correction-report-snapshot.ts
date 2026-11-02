@@ -6,10 +6,11 @@ import {batchGetSheetFormulaValues,batchGetSheetSerialValues,getSheetId,getSheet
 import {legacySourceWallet,resolvePayment} from "./daily-expense";
 import {matchesOwnerCorrectionIdentity} from "./owner-correction-identity";
 import type {CorrectionReportView} from "./owner-correction-report-view";
+import {normalizeOwnerCorrectionFormula} from "./owner-correction-formula";
 
-// The formulas were read from the private report test copy. Any drift fails closed.
-const formulaDigest="5aa6fbf7b33d26783d2ff0fc58fa385131bc110f5b961416a08d9fe4afb3d203";
-const flowFormulaDigest="7477383cebb25e383af88b6bb10564bbde0c79a1c898baccf8acc83c588b445f";
+// Verified current report formulas; only extending daily range ends may vary.
+const formulaDigest="a0527cc06ec7543c6cdf87beff0fea5ed6d2ceeeaee966036e9ca10b86201f75";
+const flowFormulaDigest="5e49405e4b8d63dc3470610e5c941c5fc105969991b3be85e684bc4e23fe9043";
 const formulaRanges=["'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5","'35_EXPENSE_FLOW_CHECK'!B5:G65","'รายวัน'!A:W"];
 const valueRanges=["'04_OWNER_MONTH_CLOSE'!C2","'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2:H4500","'V52_EXPENSE_RAW'!A2:Q","'รายละเอียดการซื้อ'!A2:Q","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5:G65","'รายวัน'!A:W"];
 const quote=(name:string)=>`'${name.replace(/'/g,"''")}'`;
@@ -35,17 +36,21 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   if(JSON.stringify(first)!==JSON.stringify(second))return null;
   const [formulaValues,values,metadata,dailySheetId]=first;if(formulaValues.length!==(view?11:8)||values.length!==10||!metadata||metadata.metadataId!==dailyMetadataId||metadata.metadataKey!=="malipang_expense_daily"||metadata.metadataValue!==snapshot.expenseId||metadata.sheetId!==dailySheetId)return null;
   const formulas=formulaValues.slice(0,4).flatMap(rows=>rows.map(row=>row[0])),flowFormulas=formulaValues.slice(4,7).flatMap(rows=>rows.flatMap(row=>row)),dailyFormulas=formulaValues[7]||[];
-  if(formulas.length!==15||formulas.some(value=>typeof value!=="string")||formulas.some(value=>(value as string).includes(snapshot.expenseId))||await ports.digest(formulas)!==formulaDigest)return null;
+  if(formulas.length!==15||formulas.some(value=>typeof value!=="string")||formulas.some(value=>(value as string).includes(snapshot.expenseId)))return null;
+  const normalized=formulas.map((formula,index)=>normalizeOwnerCorrectionFormula(formula as string,index===14?3421:3684));
+  if(normalized.some(value=>!value)||!normalized[14]?.endRow||await ports.digest(normalized.map(value=>value!.normalized))!==formulaDigest)return null;
   if(view){const viewFormulas=formulaValues.slice(8,11).flatMap(rows=>rows.map(row=>row[0]));if(JSON.stringify(viewFormulas)!==JSON.stringify(formulas.slice(0,14)))return null;}
-  if(flowFormulas.length!==368||flowFormulas.some(value=>typeof value!=="string")||await ports.digest(flowFormulas)!==flowFormulaDigest)return null;
+  if(flowFormulas.length!==368||flowFormulas.some(value=>typeof value!=="string"))return null;
+  const normalizedFlow=flowFormulas.map(formula=>normalizeOwnerCorrectionFormula(formula as string,3421)),flowEnds=new Set(normalizedFlow.flatMap(value=>value?.endRow?[value.endRow]:[]));
+  if(normalizedFlow.some(value=>!value)||flowEnds.size!==1||await ports.digest(normalizedFlow.map(value=>value!.normalized))!==flowFormulaDigest)return null;
   const legacy=snapshot.transactionDate<"2026-08-01",cleanId=legacy?`LEGACY|${metadata.rowIndex+1}`:snapshot.expenseId;
   const bankValue=values[3]?.[0]?.[0],bankTotal=money(bankValue),bankStatus=legacy&&bankValue==="รอตรวจข้อมูลระบบเดิม"?bankValue:null;
   const selected=day(values[0]?.[0]?.[0]),total=money(values[1]?.[0]?.[0]),categories=(values[2]||[]).map(row=>money(row[0]));
   if(!selected||selected.slice(0,7)!==snapshot.transactionDate.slice(0,7)||total===null||(bankTotal===null&&!bankStatus)||categories.length!==12||categories.some(value=>value===null))return null;
-  // The legacy formula only covers rows 5:3394 and identifies them by their
+  // The legacy formula has a verified bounded range and identifies rows by
   // present row number. Metadata follows insertions; an ambiguous mapping is
   // held by the independent identity and report checks.
-  if(legacy&&(metadata.rowIndex<4||metadata.rowIndex>=3394))return null;
+  if(legacy&&(metadata.rowIndex<4||metadata.rowIndex>=normalized[14]!.endRow!))return null;
   const clean=values[4]||[],raw=values[5]||[],details=values[6]||[],flowValues=values[8]||[],daily=values[9]||[],matchingClean=clean.filter(row=>row[1]===cleanId),matchingRaw=raw.filter(row=>row[0]===snapshot.expenseId),matchingDetails=details.filter(row=>row[1]===snapshot.expenseId);
   if(matchingClean.length!==1||matchingRaw.length!==1||matchingDetails.length>1)return null;
   if(matchingDetails.length===1){const item=matchingDetails[0]!,line=money(item[11]);if(typeof item[0]!=="string"||!item[0]||details.filter(value=>value[0]===item[0]).length!==1||line===null||line<=0||item[13]!==snapshot.amountSatang/100||item[14]!==snapshot.category||item[16]!=="CONFIRMED")return null;}
@@ -53,6 +58,7 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   if(day(c[0])!==snapshot.transactionDate||c[2]!==snapshot.description||c[3]!==snapshot.amountSatang/100||c[4]!== (legacy?legacySourceWallet(snapshot.paymentKey,snapshot.sourceWallet):snapshot.sourceWallet)||c[5]!==snapshot.category||c[6]!== (legacy?"LEGACY":"V52_CONFIRMED")||day(r[1])!==snapshot.transactionDate||r[2]!==snapshot.description||r[3]!==snapshot.amountSatang/100||r[4]!==snapshot.paymentKey||r[5]!==snapshot.sourceWallet||r[6]!==snapshot.category||r[7]!=="CONFIRMED")return null;
   const [year,month,dayOfMonth]=snapshot.transactionDate.split("-").map(Number);let posting:ReturnType<typeof resolvePayment>;try{posting=resolvePayment(daily.slice(0,3),snapshot.paymentKey,year!,month!,dayOfMonth!);}catch{return null;}
   const postingDate=`${String(posting.postingYear).padStart(4,"0")}-${String(posting.postingMonth).padStart(2,"0")}-${String(posting.postingDay).padStart(2,"0")}`;
+  if(postingDate>="2026-11-01"&&postingDate<="2026-12-31"&&metadata.rowIndex>=[...flowEnds][0]!)return null;
   let col=0;for(const char of posting.amountColumn)col=col*26+char.charCodeAt(0)-64;
   const row=daily[metadata.rowIndex],identity={expenseId:snapshot.expenseId,description:snapshot.description,amountSatang:snapshot.amountSatang,postingYear:posting.postingYear,postingMonth:posting.postingMonth,postingDay:posting.postingDay,amountColumn:col-1};
   if(!row||Number(daily[4]?.[0])!==posting.postingYear||!matchesOwnerCorrectionIdentity(identity,{rowNumber:metadata.rowIndex+1,sheetYear:posting.postingYear,values:row})||row[21]!==snapshot.category||row[22]!==legacySourceWallet(snapshot.paymentKey,snapshot.sourceWallet)||day(row[20])!==postingDate||money(row[8])===null||money(row[17])===null||!close(Number(row[8])+Number(row[17]),snapshot.amountSatang/100))return null;

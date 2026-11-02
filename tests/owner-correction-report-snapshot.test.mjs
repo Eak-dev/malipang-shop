@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {captureOwnerCorrectionReport,ownerCorrectionReportMatches} from '../dist/sheets/owner-correction-report-snapshot.js';
 
-const knownFormula='5aa6fbf7b33d26783d2ff0fc58fa385131bc110f5b961416a08d9fe4afb3d203';
-const knownFlow='7477383cebb25e383af88b6bb10564bbde0c79a1c898baccf8acc83c588b445f';
+const knownFormula='a0527cc06ec7543c6cdf87beff0fea5ed6d2ceeeaee966036e9ca10b86201f75';
+const knownFlow='5e49405e4b8d63dc3470610e5c941c5fc105969991b3be85e684bc4e23fe9043';
 const before={expenseId:'exp_synthetic_report',status:'CONFIRMED',transactionDate:'2026-10-28',description:'Driver',amountSatang:200000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general'};
 const serial=iso=>(Date.parse(`${iso}T00:00:00Z`)-Date.UTC(1899,11,30))/86400000;
 function fixture(snapshot=before){
@@ -15,7 +15,7 @@ function fixture(snapshot=before){
   Object.assign(dailyRow,{1:monthNumber,2:dayNumber,3:snapshot.description,[amountColumn]:amount,8:amount,17:0,20:serial(snapshot.transactionDate),21:snapshot.category,22:snapshot.sourceWallet==='SHOP_BANK'?'บัญชีร้าน':'ทอน/หน้าร้าน'});daily[7]=dailyRow;
   const flow=Array.from({length:61},(_,i)=>{const date=new Date(Date.UTC(2026,10,1)+i*86400000).toISOString().slice(0,10),active=date===snapshot.transactionDate,n=active?amount:0,count=active?1:0;return [serial(date),n,n,0,active?'ยอดรวมตรง — ยังต้องตรวจรายการ':'ยังไม่พบรายการ / ยังไม่ยืนยัน',count,count];});
   const values=[[[serial(`${snapshot.transactionDate.slice(0,7)}-01`)]],[[amount]],categories.map(n=>[n]),[[legacy?'รอตรวจข้อมูลระบบเดิม':snapshot.sourceWallet==='SHOP_BANK'?amount:0]],clean,raw,[],[['alert']],flow,daily];
-  const formulas=[[['formula_0']],Array.from({length:12},(_,i)=>[`formula_${i+1}`]),[['formula_13']],[['formula_14']],[['flow_0']],[['flow_1']],Array.from({length:61},(_,i)=>Array.from({length:6},(_,j)=>`flow_${i}_${j}`)),structuredClone(daily)];
+  const formulas=[[['formula_0']],Array.from({length:12},(_,i)=>[`formula_${i+1}`]),[['formula_13']],[["formula_14 'รายวัน'!U5:U3421"]],[["flow_0 'รายวัน'!U5:U3421"]],[['flow_1']],Array.from({length:61},(_,i)=>Array.from({length:6},(_,j)=>`flow_${i}_${j}`)),structuredClone(daily)];
   const ports={formulas:async()=>structuredClone(formulas),values:async()=>structuredClone(values),metadata:async()=>({metadataId:42,metadataKey:'malipang_expense_daily',metadataValue:snapshot.expenseId,sheetId:1,rowIndex:7}),sheetId:async()=>1,digest:async value=>Array.isArray(value)&&typeof value[0]==='string'&&value.length===15?knownFormula:Array.isArray(value)&&value.length===368?knownFlow:createHash('sha256').update(JSON.stringify(value)).digest('hex')};
   return {env:{SHEET_EXPENSE_DAILY:'รายวัน',SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_PURCHASE_DETAILS:'รายละเอียดการซื้อ'},values,formulas,ports};
 }
@@ -25,6 +25,12 @@ test('read-only report snapshot requires the expected formula, current data and 
   f.values[6].push(['item',before.expenseId]);assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports),null);f.values[6].pop();
   f.formulas[0][0][0]=`formula mentions ${before.expenseId}`;assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports),null);f.formulas[0][0][0]='formula_0';
   let calls=0;f.ports.values=async()=>++calls===1?structuredClone(f.values):[];assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports),null);
+});
+test('report snapshot accepts extended ranges and rejects truncated daily coverage',async()=>{
+  const f=fixture();f.formulas[3][0][0]="formula_14 'รายวัน'!U5:U3500";f.formulas[4][0][0]="flow_0 'รายวัน'!U5:U3500";
+  assert.ok(await captureOwnerCorrectionReport(f.env,before,42,f.ports));
+  f.formulas[3][0][0]="formula_14 'รายวัน'!U5:U3420";assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports),null);
+  f.formulas[3][0][0]="formula_14 'รายวัน'!U5:U3500";f.formulas[4][0][0]="flow_0 'รายวัน'!U5:U3420";assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports),null);
 });
 test('report comparison verifies totals, category allocation, wallet and all other rows',async()=>{
   const old=fixture(),changed=fixture({...before,category:'transport'}),a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(changed.env,{...before,category:'transport'},42,changed.ports);

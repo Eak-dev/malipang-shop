@@ -2,10 +2,11 @@ import type {Env} from "../types";
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 import {batchGetSheetFormulaValues,getSheetValues} from "./client";
 import {correctionReportDeduplicationSafe} from "./owner-correction-report-dedupe";
+import {normalizeOwnerCorrectionFormula} from "./owner-correction-formula";
 
-// Observed 97_EXPENSE_CLEAN!A2 in the private, 2026-11-01 report test copy.
-// A formula edit requires a fresh assessment; the hash is not proof of report parity.
-const knownFormulaSha256="9b7f6f3649c74be7f6f1f183ce1243faa753e55bfb60d1b8aeb74f037597d6a4";
+// Fingerprint of the verified current formula, with only extending daily
+// range endpoints normalized. Other edits require a fresh assessment.
+const knownFormulaSha256="afaf2261f5e34ea65ce876ef731e34c1b30555cf9dbd6be97c7ab91863102754";
 interface Ports {
   formula:(env:Env,ranges:string[])=>Promise<unknown[][][]>;
   values:(env:Env,range:string)=>Promise<unknown[][]>;
@@ -25,6 +26,7 @@ export async function inspectOwnerCorrectionReportDeduplication(env:Env,before:O
   const [first,second]=[await read(),await read()];
   const formula=first[0];
   if(formula.length!==1||formula[0]?.length!==1||formula[0]?.[0]?.length!==1||typeof formula[0][0]![0]!=="string")return false;
-  if(JSON.stringify(first)!==JSON.stringify(second)||await ports.digest(formula[0][0]![0] as string)!==knownFormulaSha256)return false;
+  const original=formula[0][0]![0] as string,normalized=normalizeOwnerCorrectionFormula(original,3421);
+  if(!normalized||normalized.endRow===null||original.includes(before.expenseId)||original.includes(after.expenseId)||JSON.stringify(first)!==JSON.stringify(second)||await ports.digest(normalized.normalized)!==knownFormulaSha256)return false;
   return correctionReportDeduplicationSafe(before,after,first[1]);
 }

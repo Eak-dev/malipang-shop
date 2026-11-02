@@ -1,9 +1,11 @@
 import type {Env} from "../types";
 import {randomId} from "../shared/ids";
+import {isoDateInBangkok} from "../shared/time";
 import {activeOwnerSql,type OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionAmount,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionPayment,type OwnerCorrectionSnapshot} from "./owner-correction";
 import {assessOwnerCorrection,type CorrectionGuardEvidence} from "./owner-correction-guard";
 import {correctionRawPatchMatches,serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/owner-correction-sync-plan";
+import {commitPendingOrderCorrection} from "./owner-correction-pending-order";
 
 export type OwnerCorrectionInput={mode:"SEARCH"}|{mode:"VALUE";field:"description"|"amountSatang"|"transactionDate";snapshot:OwnerCorrectionSnapshot};
 
@@ -13,11 +15,15 @@ export async function startOwnerCorrectionInput(env:Env,owner:OwnerReviewIdentit
   const now=new Date(nowMs).toISOString(),expires=new Date(nowMs+15*60_000).toISOString();
   const snapshot=input.mode==="VALUE"?input.snapshot:null;
   if(snapshot&&(!snapshot.expenseId||!["WAITING_CONFIRM","CONFIRMED"].includes(snapshot.status)))return false;
-  const result=await env.DB.prepare(`INSERT INTO expense_owner_correction_inputs(owner_employee_id,input_id,mode,expense_id,field,snapshot_json,created_at,expires_at)
+  const inputId=randomId("correction_input"),result=await env.DB.batch([
+    env.DB.prepare(`INSERT INTO expense_owner_correction_inputs(owner_employee_id,input_id,mode,expense_id,field,snapshot_json,created_at,expires_at)
     SELECT ?,?,?,?,?,?,?,? WHERE ${activeOwnerSql}
     ON CONFLICT(owner_employee_id) DO UPDATE SET input_id=excluded.input_id,mode=excluded.mode,expense_id=excluded.expense_id,field=excluded.field,snapshot_json=excluded.snapshot_json,search_query=NULL,created_at=excluded.created_at,expires_at=excluded.expires_at`)
-    .bind(owner.employeeId,randomId("correction_input"),input.mode,snapshot?.expenseId||null,input.mode==="VALUE"?input.field:null,snapshot?JSON.stringify(snapshot):null,now,expires,owner.employeeId,owner.lineUserId).run();
-  return Number(result.meta.changes||0)===1;
+      .bind(owner.employeeId,inputId,input.mode,snapshot?.expenseId||null,input.mode==="VALUE"?input.field:null,snapshot?JSON.stringify(snapshot):null,now,expires,owner.employeeId,owner.lineUserId),
+    env.DB.prepare(`DELETE FROM expense_document_review_inputs WHERE owner_employee_id=? AND EXISTS(SELECT 1 FROM expense_owner_correction_inputs WHERE owner_employee_id=? AND input_id=?)`).bind(owner.employeeId,owner.employeeId,inputId),
+    env.DB.prepare(`DELETE FROM expense_pending_edits WHERE line_user_id=? AND EXISTS(SELECT 1 FROM expense_owner_correction_inputs WHERE owner_employee_id=? AND input_id=?)`).bind(owner.lineUserId,owner.employeeId,inputId)
+  ]);
+  return Number(result[0]?.meta.changes||0)===1;
 }
 export async function storeOwnerCorrectionQuery(env:Env,owner:OwnerReviewIdentity,inputId:string,query:string,nowMs=Date.now()):Promise<boolean>{
   const value=query.trim();if(value.length<2||value.length>100||!Number.isFinite(nowMs))return false;
@@ -66,21 +72,57 @@ export async function cancelOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdenti
   return Number(result.meta.changes||0)===1;
 }
 
-export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
+export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"DRAFT_EDITED"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
 /** An approved D1 update is not reported complete until its sync job completes. */
 export async function ownerCorrectionStatus(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<OwnerCorrectionStatus|null>{
   if(!id||!Number.isFinite(nowMs))return null;
-  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,(SELECT s.phase FROM expense_owner_correction_sync s WHERE s.correction_id=c.correction_id) AS sync_phase,
+  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.status') AS before_status,(SELECT s.phase FROM expense_owner_correction_sync s WHERE s.correction_id=c.correction_id) AS sync_phase,
     (SELECT j.status FROM expense_audit_log a JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=c.expense_id
        AND j.entity_version=CAST(json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.version') AS INTEGER)
      WHERE a.expense_id=c.expense_id AND a.action='EDIT' AND json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.correctionId')=c.correction_id LIMIT 1) AS sync_status
     FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND ${activeOwnerSql}`)
-    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;expires_at:string;reconciled_at:string|null;sync_status:string|null;sync_phase:string|null}>();
+    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;before_status:string|null;expires_at:string;reconciled_at:string|null;sync_status:string|null;sync_phase:string|null}>();
   if(!row)return null;
   if(row.status==="DRAFT")return row.expires_at<=new Date(nowMs).toISOString()?"EXPIRED":"DRAFT";
   if(row.status==="CANCELLED"||row.status==="STALE")return row.status;
   if(row.status!=="APPLIED")return null;
+  if(row.before_status==="WAITING_CONFIRM")return "DRAFT_EDITED";
   return row.sync_phase==="REVIEW"?"SYNC_REVIEW":row.sync_status==="COMPLETED"&&row.sync_phase==="RECONCILED"&&row.reconciled_at?"COMPLETED":row.sync_status==="FAILED"?"SYNC_FAILED":"SYNC_PENDING";
+}
+
+/** Edit a waiting expense without confirming it, touching evidence, or writing Sheets. */
+export async function commitPendingOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id:string,expectedVersion:number,nowMs=Date.now()):Promise<"APPLIED"|"STALE"|"REVIEW">{
+  if(!Number.isSafeInteger(expectedVersion)||expectedVersion<1||!Number.isFinite(nowMs))return "STALE";
+  const row=await loadOwnerCorrectionDraft(env,owner,id,nowMs);if(!row)return "STALE";
+  let before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot;try{before=JSON.parse(String(row.before_json)) as OwnerCorrectionSnapshot;after=JSON.parse(String(row.after_json)) as OwnerCorrectionSnapshot;}catch{return "STALE";}
+  if(!before||!after||before.status!=="WAITING_CONFIRM"||before.version!==expectedVersion||!Number.isSafeInteger(before.version+1))return "STALE";
+  const field=String(row.field) as OwnerCorrectionField;
+  const value=field==="payment"?{paymentKey:after.paymentKey,sourceWallet:after.sourceWallet}:field==="amountSatang"?`${Math.floor(after.amountSatang/100)}.${String(after.amountSatang%100).padStart(2,"0")}`:field==="transactionDate"?after.transactionDate:field==="category"?after.category:after.description;
+  const rebuilt=buildOwnerCorrectionDraft(before,field,value);if(!rebuilt||JSON.stringify(rebuilt.after)!==JSON.stringify(after)||(field==="transactionDate"&&after.transactionDate>isoDateInBangkok(new Date(nowMs))))return "STALE";
+  // Existing owner-reviewed online orders attest to exact paid facts; update
+  // those facts only together with a new auditable owner attestation.
+  if(field==="amountSatang"||field==="transactionDate"){
+    const order=await env.DB.prepare(`SELECT 1 AS present FROM expense_documents d LEFT JOIN expense_document_links l ON l.document_id=d.document_id AND l.expense_id=? WHERE (d.expense_id=? OR l.expense_id=?) AND d.document_type='ONLINE_ORDER' AND (NOT json_valid(COALESCE(d.normalized_json,'')) OR json_extract(CASE WHEN json_valid(d.normalized_json) THEN d.normalized_json ELSE '{}' END,'$.ownerPaymentReview.source')='OWNER_LINE_REVIEW') LIMIT 1`).bind(before.expenseId,before.expenseId,before.expenseId).first<{present:number}>();
+    if(order)return commitPendingOrderCorrection(env,owner,{id,field,before,after,beforeJson:String(row.before_json),afterJson:String(row.after_json),nowMs});
+  }
+  const auditId=randomId("exp_audit"),now=new Date(nowMs).toISOString(),next=before.version+1;
+  const guard=field==="amountSatang"||field==="transactionDate"?`AND NOT EXISTS(SELECT 1 FROM expense_documents d LEFT JOIN expense_document_links l ON l.document_id=d.document_id AND l.expense_id=e.expense_id WHERE (d.expense_id=e.expense_id OR l.expense_id=e.expense_id) AND d.document_type='ONLINE_ORDER' AND (NOT json_valid(COALESCE(d.normalized_json,'')) OR json_extract(CASE WHEN json_valid(d.normalized_json) THEN d.normalized_json ELSE '{}' END,'$.ownerPaymentReview.source')='OWNER_LINE_REVIEW'))`:"";
+  const results=await env.DB.batch([
+    env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
+      SELECT ?,?,'EDIT',e.expense_id,e.branch_id,?,?,?,? FROM expense_events e JOIN expense_owner_corrections c ON c.expense_id=e.expense_id
+      WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND c.before_json=? AND c.after_json=?
+        AND e.expense_id=? AND e.status='WAITING_CONFIRM' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=? AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
+        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED') ${guard}`)
+      .bind(auditId,owner.employeeId,`OWNER_PENDING_CORRECTION:${field}`,JSON.stringify(before),JSON.stringify({...after,version:next,correctionId:id}),now,id,owner.employeeId,now,String(row.before_json),String(row.after_json),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId),
+    env.DB.prepare(`UPDATE expense_events SET description=?,category=?,amount_satang=?,transaction_date=?,payment_key=?,source_wallet=?,version=?,updated_at=? WHERE expense_id=? AND status='WAITING_CONFIRM' AND version=? AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`)
+      .bind(after.description,after.category,after.amountSatang,after.transactionDate,after.paymentKey,after.sourceWallet,next,now,before.expenseId,before.version,auditId),
+    env.DB.prepare(`UPDATE expense_owner_corrections SET status='APPLIED',applied_at=? WHERE correction_id=? AND status='DRAFT' AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`).bind(now,id,auditId),
+    env.DB.prepare(`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?) OR (EXISTS(SELECT 1 FROM expense_events WHERE expense_id=? AND status='WAITING_CONFIRM' AND version=? AND updated_at=?) AND EXISTS(SELECT 1 FROM expense_owner_corrections WHERE correction_id=? AND status='APPLIED' AND applied_at=?)) THEN 1 ELSE json('invalid pending correction') END AS verified`)
+      .bind(auditId,before.expenseId,next,now,id,now)
+  ]);
+  if(Number(results[0]?.meta.changes||0)!==1)return "STALE";
+  if(Number(results[1]?.meta.changes||0)!==1||Number(results[2]?.meta.changes||0)!==1)throw new Error("OWNER_PENDING_CORRECTION_INCOMPLETE");
+  return "APPLIED";
 }
 
 /** Small, deterministic pages only, using bound text and no fuzzy auto-selection. */

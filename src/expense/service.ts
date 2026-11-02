@@ -19,6 +19,7 @@ import { confirmExpenseAtomically } from "./confirm";
 import { inspectReceiptCandidates,receiptReferenceKey,storedReceiptFacts } from "./receipt-identity";
 import { maybeRespondOwnerOrderReview } from "./online-order-review-service";
 import { clearOwnerReviewInput,onlineOrderReviewInsert } from "./online-order-review-repository";
+import {clearOwnerCorrectionInput,loadOwnerCorrectionInput} from "./owner-correction-repository";
 import type { PurchaseVisionAttempt } from "../types";
 
 type ExpenseRow=Record<string,unknown>;
@@ -440,7 +441,10 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   const q=new URLSearchParams(event.postback?.data||""),action=q.get("a")||"",id=q.get("id")||"",to=event.source.userId||"",traceId=`postback_${id||"unknown"}`;
   if(!actor.canSubmitExpense){await respondText(env,event,"You are not authorized to manage expenses.",traceId);return;}
   const expense=id?await findExpense(env,id,to):null;if(!expense){await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
-  if(accessActor&&"role" in accessActor&&accessActor.role==="OWNER")await clearOwnerReviewInput(env,{employeeId:actor.employeeId,lineUserId:to});
+  if(accessActor&&"role" in accessActor&&accessActor.role==="OWNER"){
+    const owner={employeeId:actor.employeeId,lineUserId:to};await clearOwnerReviewInput(env,owner);
+    if(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true"){const input=await loadOwnerCorrectionInput(env,owner);if(input)await clearOwnerCorrectionInput(env,owner,String(input.input_id));}
+  }
 
   if(action==="expense_confirm"){
     if(expense.status==="CANCELLED"){await showCurrent(env,event,expense,traceId);return;}

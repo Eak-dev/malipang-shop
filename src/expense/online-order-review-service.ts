@@ -8,6 +8,7 @@ import { buildExpenseSavedFlex,buildExpenseSummaryFlex,type ExpenseFlexRecord } 
 import { parseOwnerAmount,parseOwnerDate,parseOwnerFacts,reviewReasonLabels,type OrderReviewView } from "./online-order-review";
 import { buildOnlineOrderEditFlex,buildOnlineOrderQueueFlex,buildOnlineOrderReviewFlex } from "./online-order-review-flex";
 import { activeOwnerSql,clearOwnerReviewInput,findOwnerReviewInput,listOwnerReviews,loadOwnerReview,onlineOrderReviewSummary,promoteOwnerReviewedOrder,saveOwnerOrderFacts,seedOwnerReview,startOwnerReviewInput,viewFromReviewRow,type OwnerReviewIdentity,type ReviewRow } from "./online-order-review-repository";
+import {clearOwnerCorrectionInput,loadOwnerCorrectionInput} from "./owner-correction-repository";
 import { stateFromStoredDocument,unresolvedReviewFields } from "./review-state";
 
 const listCommands=new Set(["รายการค้าง","ตรวจรายการค้าง","ค่าใช้จ่ายค้าง","/expense-review"]);
@@ -103,7 +104,11 @@ export async function handleOnlineOrderReviewText(env:Env,event:LineEvent,traceI
   const value=(event.message?.text||"").trim(),isList=listCommands.has(value.toLowerCase());
   if(!isList&&actor?.role!=="OWNER")return false;
   const owner=await verifiedOwner(env,event);if(!owner){if(isList){await deny(env,event,traceId);return true;}return false;}
-  if(isList){await clearOwnerReviewInput(env,owner);await renderList(env,event,owner,traceId);return true;}
+  if(isList){
+    await clearOwnerReviewInput(env,owner);
+    if(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true"){const input=await loadOwnerCorrectionInput(env,owner);if(input)await clearOwnerCorrectionInput(env,owner,String(input.input_id));}
+    await renderList(env,event,owner,traceId);return true;
+  }
   // Explicit commands retain their existing routers and never become a field
   // value merely because an owner has a pending input.
   if(/^[\/]|[|｜]/.test(value))return false;

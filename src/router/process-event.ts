@@ -38,6 +38,7 @@ export async function processInbound(job:InboundJob,env:Env,_ctx:ExecutionContex
       if(await handleOwnerPayrollText(env,event,actor)){await completeInboundEvent(env,webhookId,"OWNER_OT_TEXT","COMPLETED");return;}
       const personal=await handlePersonalUseText(env,event,job.traceId,actor);
       if(personal!=="NOT_HANDLED"){await completeInboundEvent(env,webhookId,"PERSONAL_USE_TEXT",personal==="REJECTED"?"REJECTED":"COMPLETED");return;}
+      if((event.message.text||"").trim()==="แก้ไขค่าใช้จ่าย"&&await handleOwnerCorrectionText(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"OWNER_EXPENSE_CORRECTION","COMPLETED");return;}
       if(await handleOnlineOrderReviewText(env,event,job.traceId,actor)){await completeInboundEvent(env,webhookId,"EXPENSE_OWNER_REVIEW","COMPLETED");return;}
       if(await handleOwnerCorrectionText(env,event,job.traceId)){await completeInboundEvent(env,webhookId,"OWNER_EXPENSE_CORRECTION","COMPLETED");return;}
       if(env.EXPENSE_ENABLED==="true"&&actor?.employee.canSubmitExpense&&authorize(actor,"expense.submit",{employeeId:actor.employeeId})){const outcome=await handleExpenseText(env,event,job.traceId,actor);await completeInboundEvent(env,webhookId,"EXPENSE_TEXT",outcome==="REJECTED"?"REJECTED":"COMPLETED");}

@@ -106,6 +106,7 @@ export async function startOwnerReviewInput(env:Env,row:ReviewRow,owner:OwnerRev
   const results=await env.DB.batch([
     editAudit(env,row,owner,id,`OWNER_REVIEW_INPUT_REQUESTED:${field}`,{field,expiresAt:expires},now),
     env.DB.prepare(`DELETE FROM expense_pending_edits WHERE line_user_id=? AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`).bind(owner.lineUserId,id),
+    ...(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true"?[env.DB.prepare(`DELETE FROM expense_owner_correction_inputs WHERE owner_employee_id=? AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`).bind(owner.employeeId,id)]:[]),
     env.DB.prepare(`INSERT INTO expense_document_review_inputs(owner_employee_id,document_id,field,review_version,created_at,expires_at)
       SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)
       ON CONFLICT(owner_employee_id) DO UPDATE SET document_id=excluded.document_id,field=excluded.field,review_version=excluded.review_version,created_at=excluded.created_at,expires_at=excluded.expires_at`).bind(owner.employeeId,String(row.document_id),field,Number(row.review_version),now,expires,id)

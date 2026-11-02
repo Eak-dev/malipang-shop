@@ -36,6 +36,31 @@ test('the real inbound router sends an owner command to the correction flow exac
     assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,0);
   }finally{h.close()}
 });
+
+test('the explicit correction command replaces an open order input, and the order input can take control back',async()=>{
+  const h=ownerOrderFixture();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';const held=await h.receive();
+    await h.post('order_review_input',held.row.document_id,0,{field:'date'});
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_document_review_inputs').get().n,1);
+    const event=h.event('fixture_owner',{message:{type:'text',id:'switch_correction',text:'แก้ไขค่าใช้จ่าย'}});
+    await h.capture(()=>processInbound({kind:'LINE_EVENT',event,receivedAtIso:new Date().toISOString(),traceId:'switch_correction'},h.env,{}));
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_document_review_inputs').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_inputs').get().n,1);
+    await h.post('order_review_input',held.row.document_id,0,{field:'date'});
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_inputs').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_document_review_inputs').get().n,1);
+  }finally{h.close()}
+});
+
+test('opening a result closes the search input so later messages are not captured',async()=>{
+  const h=ownerOrderFixture();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+      VALUES('exp_find_owner','msg_find_owner','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','WAITING_CONFIRM','now',1)`).run();
+    await h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'search',text:'แก้ไขค่าใช้จ่าย'}}),'trace'));
+    await h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'query',text:'Driver'}}),'trace'));
+    await h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:'a=owner_correction_open&id=exp_find_owner'}}),'trace'));
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_inputs').get().n,0);
+    assert.equal(await h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'later',text:'ค่าขนส่ง'}}),'trace')),false);
+  }finally{h.close()}
+});
 test('disabled feature does not intercept messages or postbacks',async()=>{
   const h=ownerOrderFixture();try{
     assert.equal(await handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',text:'แก้ไขค่าใช้จ่าย'}}),'trace'),false);

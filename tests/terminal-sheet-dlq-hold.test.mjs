@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
-import {createFailedJob,enqueueSheetSyncBatchDetailed,recoverPendingSheetJobs} from '../dist/db/repositories.js';
+import {createFailedJob,resolveFailedJobs,enqueueSheetSyncBatchDetailed,recoverPendingSheetJobs} from '../dist/db/repositories.js';
 import {syncJob} from '../dist/sheets/sync.js';
 import {handleAdmin} from '../dist/admin/handler.js';
 import {createRequire} from 'node:module';
@@ -23,11 +23,14 @@ test('terminal DLQ holds same and newer expense versions through forced admin re
     assert.deepEqual(result,{enqueued:1,held:2,disabled:0});
     assert.deepEqual(h.queue.map(x=>x.body.entityKey),['expense_b']);
     const rows=h.sqlite.prepare(`SELECT entity_version,status,trace_id,last_error FROM sync_jobs WHERE entity_key='expense_a' ORDER BY entity_version`).all().map(x=>({...x}));
-    assert.deepEqual(rows,[{entity_version:1,status:'FAILED',trace_id:first.traceId,last_error:'old failure'},{entity_version:2,status:'PENDING',trace_id:newer.traceId,last_error:null}]);
+    assert.deepEqual(rows,[{entity_version:1,status:'REVIEW',trace_id:first.traceId,last_error:'SHEET_SYNC_TERMINAL_DLQ_REVIEW_REQUIRED'},{entity_version:2,status:'REVIEW',trace_id:newer.traceId,last_error:'SHEET_SYNC_TERMINAL_DLQ_REVIEW_REQUIRED'}]);
     h.sqlite.prepare(`UPDATE sync_jobs SET status='COMPLETED' WHERE entity_key='expense_b'`).run();
     h.sqlite.prepare(`UPDATE sync_jobs SET updated_at=?,next_attempt_at=? WHERE entity_key='expense_a'`).run(old,old);
     assert.equal(await recoverPendingSheetJobs(h.env,0,true),0,'legacy override cannot revive either version');
     assert.equal(h.queue.length,1);
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0,'resolved DLQ alone cannot release persistent review');
+    assert.equal((await enqueueSheetSyncBatchDetailed(h.env,[newer],true)).held,1);
   }finally{h.close();}
 });
 
@@ -42,6 +45,51 @@ test('already queued same or newer versions cannot claim or clear terminal DLQ e
     const failure=h.sqlite.prepare(`SELECT status,error,attempt_count FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1');
     assert.deepEqual({...failure},{status:'OPEN',error:'DEAD_LETTER_MAX_RETRIES',attempt_count:1});
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs WHERE status='PROCESSING'`).get().n,0);
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
+    assert.equal(await syncJob(h.env,job('expense_a',2)),'TERMINAL_HOLD','review survives DLQ resolution');
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);
+  }finally{h.close();}
+});
+
+test('disabled sync persists terminal quarantine and does not resolve failed-job evidence',async()=>{
+  const h=expenseSqlite();try{
+    const first=await seed(h);h.env.SHEETS_SYNC_ENABLED='false';let acknowledged=0;
+    await worker.queue({queue:'malipang-jobs',messages:[{body:first,attempts:1,ack(){acknowledged++},retry(){assert.fail('disabled message should be acknowledged')}}]},h.env,{});
+    assert.equal(acknowledged,1);
+    assert.deepEqual({...h.sqlite.prepare(`SELECT status,error FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1')},{status:'OPEN',error:'DEAD_LETTER_MAX_RETRIES'});
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a'`).get().status,'REVIEW');
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');h.env.SHEETS_SYNC_ENABLED='true';
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);
+  }finally{h.close();}
+});
+
+test('disabled sync retains ordinary failed outbox and can recover it after transport resumes',async()=>{
+  const h=expenseSqlite();try{
+    const first=await seed(h);h.sqlite.prepare(`UPDATE failed_jobs SET error='temporary' WHERE job_key=?`).run('EXPENSE:expense_a:1');h.env.SHEETS_SYNC_ENABLED='false';let acknowledged=0;
+    await worker.queue({queue:'malipang-jobs',messages:[{body:first,attempts:1,ack(){acknowledged++},retry(){assert.fail('disabled message should be acknowledged')}}]},h.env,{});
+    assert.equal(acknowledged,1);assert.equal(h.sqlite.prepare(`SELECT status FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1').status,'OPEN');
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a'`).get().status,'FAILED');
+    h.env.SHEETS_SYNC_ENABLED='true';assert.equal(await recoverPendingSheetJobs(h.env,0),1);assert.equal(h.queue.length,1);
+  }finally{h.close();}
+});
+
+test('late errors and success cannot overwrite or auto-resolve open terminal Sheet evidence',async()=>{
+  const h=expenseSqlite();try{
+    const first=await seed(h),before=h.sqlite.prepare(`SELECT payload_json FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1').payload_json;
+    await createFailedJob(h.env,'malipang-jobs',first.traceId,{...first,extra:'late'},'late network error');
+    await resolveFailedJobs(h.env,'malipang-jobs',first.traceId,first);
+    const row=h.sqlite.prepare(`SELECT status,error,payload_json,attempt_count FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1');
+    assert.deepEqual({...row},{status:'OPEN',error:'DEAD_LETTER_MAX_RETRIES',payload_json:before,attempt_count:2});
+  }finally{h.close();}
+});
+
+test('non-forced enqueue quarantines new versions before a terminal record is resolved',async()=>{
+  const h=expenseSqlite();try{
+    await seed(h);const newer=job('expense_a',2);
+    await enqueueSheetSyncBatchDetailed(h.env,[newer],false);
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a' AND entity_version=2`).get().status,'REVIEW');
+    assert.equal(await syncJob(h.env,newer),'TERMINAL_HOLD');assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);
   }finally{h.close();}
 });
 

@@ -1,6 +1,6 @@
 import type { Env,SheetsSyncJob } from "../types";
 import { batchWriteValues,batchGetSheetFormulaValues,SheetsMutationOutcomeUnknownError } from "./client";
-import { safeRecordMetric } from "../db/repositories";
+import { safeRecordMetric,quarantineTerminalSheetJobs,SHEET_SYNC_TERMINAL_REVIEW_REASON } from "../db/repositories";
 import { CorrectionDailyFenceBusyError } from "./owner-correction-daily-write-fence";
 import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfirmedExpenseWithDocumentItemsToDaily,DailyCancelReviewRequired,type DailyExpenseDocumentItem } from "./daily-expense";
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
@@ -13,7 +13,7 @@ export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
-export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY"|"REVIEW"|"TERMINAL_HOLD";
+export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY"|"REVIEW"|"TERMINAL_HOLD"|"SYNC_DISABLED";
 interface PersonalUseProjectionRow extends Record<string,unknown>{version:unknown;sync_lease_owned?:unknown}
 class PersonalUseWriteFenceUnavailableError extends Error{
   constructor(){super("PERSONAL_USE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="PersonalUseWriteFenceUnavailableError";}
@@ -165,22 +165,29 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+  const outbox=env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now);
   // Mutable projections cannot be reclaimed on a clock timeout: a paused
   // process may still dispatch a request after its lease expires.
   const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type=? AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW') AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':'))=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':')`;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey];
-  const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
-  return Number(claim.meta.changes||0)===1?leaseToken:null;
+  const results=await env.DB.batch([outbox,quarantineTerminalSheetJobs(env,job,now),env.DB.prepare(claimSql).bind(...claimArgs)]);
+  return Number(results[2]?.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
-  if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
+  if(env.SHEETS_SYNC_ENABLED!=="true"){
+    // Pausing transport must not resolve a prior terminal failure or drop a
+    // queued event. Preserve the outbox and any terminal review hold.
+    const now=new Date().toISOString(),outbox=env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now);
+    await env.DB.batch([outbox,quarantineTerminalSheetJobs(env,job,now)]);
+    return"SYNC_DISABLED";
+  }
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     // A queued copy can arrive after a terminal DLQ. Acknowledge it without
     // mutating or resolving the original failure; explicit repair is needed.
     const terminal=await env.DB.prepare(`SELECT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(? || ':' || ? || ':'))=? || ':' || ? || ':') AS held`).bind(job.entityType,job.entityKey,job.entityType,job.entityKey).first<{held:number}>();
     if(Number(terminal?.held||0)===1)return"TERMINAL_HOLD";
-    const held=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
+    const held=await env.DB.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string;last_error:string|null}>();
+    if(held?.status==="REVIEW"&&held.last_error===SHEET_SYNC_TERMINAL_REVIEW_REASON)return"TERMINAL_HOLD";
     if(held?.status==="REVIEW")return"REVIEW";
     {
       // Quarantine any expired owner, including a different version. The

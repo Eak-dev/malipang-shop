@@ -58,6 +58,7 @@ test('only one concurrent worker can claim the same sync job lease',async()=>{
       bind(...values){args=values;return this;},
       async run(){
         if(sql.startsWith('INSERT INTO sync_jobs'))return{meta:{changes:0}};
+        if(sql.startsWith("UPDATE sync_jobs SET status='REVIEW'"))return{meta:{changes:0}};
         assert.match(sql,/lease_token/);
         assert.doesNotMatch(sql,/status!='COMPLETED'/);
         const now=args[0],eligible=(state.status==='PENDING'||state.status==='FAILED')&&(!state.nextAttemptAt||state.nextAttemptAt<=now)||(state.status==='PROCESSING'&&state.leaseUntil!=null&&state.leaseUntil<=now);
@@ -66,7 +67,7 @@ test('only one concurrent worker can claim the same sync job lease',async()=>{
         return{meta:{changes:1}};
       }
     };
-  }}};
+  },async batch(statements){const results=[];for(const statement of statements)results.push(await statement.run());return results;}}};
   const now=Date.parse('2026-07-23T12:00:00.000Z');
   const claims=await Promise.all([claimSheetSyncJob(env,job,now),claimSheetSyncJob(env,job,now)]);
   assert.equal(claims.filter(Boolean).length,1);

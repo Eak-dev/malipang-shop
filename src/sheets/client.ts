@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
-import { fetchWithTimeout } from "../shared/async";
+import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
@@ -44,13 +44,25 @@ export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promis
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+/** Bounded/sanitized read for the disabled-by-default inspection prototype. */
+async function identityInspectionGet(env:Env,path:string):Promise<unknown>{
+  const token=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
+  const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{method:'GET',headers:{Authorization:`Bearer ${token}`}},timeout,'Sheets identity inspection');
+  if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw new Error('LEDGER_INSPECTION_HTTP_ERROR');}
+  return readBoundedJson(response,4*1024*1024,timeout,'Sheets identity response');
+}
 /** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
 export async function getSheetRowCount(env:Env,title:string):Promise<number>{
-  const data=await sheetsFetch(env,"?fields=sheets.properties(title,gridProperties(rowCount))",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};
+  const data=await identityInspectionGet(env,"?fields=sheets.properties(title,gridProperties(rowCount))") as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};
   const matches=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);
   const n=matches[0]?.properties?.gridProperties?.rowCount;
   if(matches.length!==1||!Number.isSafeInteger(n)||Number(n)<1)throw new Error("LEDGER_GRID_UNAVAILABLE");
   return Number(n);
+}
+export async function getSheetIdentityValues(env:Env,range:string):Promise<unknown[][]>{
+  const data=await identityInspectionGet(env,`/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`) as {values?:unknown[][]};
+  if(data.values!==undefined&&!Array.isArray(data.values))throw new Error('LEDGER_IDENTITY_VALUES_INVALID');
+  return data.values||[];
 }
 export async function getSheetId(env:Env,title:string):Promise<number>{
   const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};

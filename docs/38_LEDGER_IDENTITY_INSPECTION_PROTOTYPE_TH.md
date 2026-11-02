@@ -8,7 +8,7 @@
 
 `inspectRawRecovery` เป็นตัวช่วยอ่านหลักฐานเมื่อผลเขียนไม่ชัดเจนเท่านั้น ผลทุกแบบยังเป็น REVIEW: ค่าที่ตรง preimage หรือ postimage ไม่ได้ยืนยันว่าใครเขียน ไม่อนุญาต retry, ปลด hold หรือปิดงานอัตโนมัติ; metadata ID ที่ตรวจต้องเป็น ID ของ intent และ provider observation ต้องสดและผ่านการยืนยันเอกลักษณ์
 
-มี candidate reader สำหรับ RAW จริงซึ่งรับเฉพาะ metadata ID และชื่อชีตจาก configuration; ปิด flag โดยค่าเริ่มต้นและยังไม่มี route. ตัว full-RAW inner intent และ migration 0031 เป็นงานค้าง: intent ถูก hard-disable ใน source เพราะยังไม่ได้ฝัง canonical outer dispatch fence และทดสอบ migration 0029/0030 ร่วมกัน ห้ามใช้ flag เปิดข้ามการปิดนี้ ไม่มี enrollment, append, finish หรือ production writer route. PERSONAL_USE ยังไม่มี source revision/outer intent สำหรับ production
+มี candidate reader สำหรับ RAW จริงซึ่งรับเฉพาะ metadata ID และชื่อชีตจาก configuration; ปิด flag โดยค่าเริ่มต้นและยังไม่มี route. ตัว full-RAW inner intent และ migration 0031 ใช้ canonical outer dispatch fence ใน SQL เดียวกับการจอง/ตรวจ intent และทดสอบ migrations 0029/0030/0031 ร่วมกันใน SQLite ภายในเครื่องแล้ว แต่ยังไม่มี enrollment, append, finish หรือ production writer route และยังไม่มีหลักฐาน end-to-end กับ D1/Google จริง การตรวจนี้ไม่ป้องกัน editor หรือ writer เก่าพร้อมกัน. PERSONAL_USE ยังไม่มี source revision/outer intent สำหรับ production
 
 เมื่อ `SHEETS_LEDGER_IDENTITY_INSPECTION=true` งาน EXPENSE/PERSONAL_USE และ purchase detail จะอ่านรหัสในชีตปัจจุบัน โดยไม่อ่าน `sheet_row_index` และพักเป็น REVIEW ก่อนจอง/เขียนแถวเสมอ การตรวจพบหนึ่งรายการไม่ได้อนุญาตเขียน เพราะผู้ใช้สามารถย้าย ลบ หรือคัดลอกแถวระหว่างอ่านกับเขียนได้ เมื่อไม่ตั้งค่า flag เส้นทางเดิมไม่เปลี่ยนและยังมีความเสี่ยงเดิม
 

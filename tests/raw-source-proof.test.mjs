@@ -12,10 +12,11 @@ const {projectRawFullShadow}=require('../dist/sheets/raw-full-projection-shadow.
 const auth=require('../dist/sheets/google-auth.js');
 const client=require('../dist/sheets/client.js');
 const {FullRawIdentityIntent}=require('../dist/sheets/full-raw-identity-intent.js');
+const {ExpenseProjectionRuntimeJournal}=require('../dist/sheets/expense-projection-runtime-journal.js');
 class Statement{constructor(db,sql){this.db=db;this.sql=sql;this.args=[]}bind(...args){this.args=args;return this}async first(){return this.db.prepare(this.sql).get(...this.args)??null}async run(){return{meta:{changes:Number(this.db.prepare(this.sql).run(...this.args).changes)}}}}
 class D1{constructor(db){this.db=db}prepare(sql){return new Statement(this.db,sql)}}
 function fixture(){
-  const db=new DatabaseSync(':memory:');for(const name of readdirSync(new URL('../migrations/',import.meta.url)).filter(x=>/^\d+.*\.sql$/.test(x)).sort())db.exec(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
+  const db=new DatabaseSync(':memory:');db.exec('PRAGMA foreign_keys=ON');for(const name of readdirSync(new URL('../migrations/',import.meta.url)).filter(x=>/^\d+.*\.sql$/.test(x)).sort())db.exec(readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8'));
   db.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,updated_at,version,trace_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('exp_fixture','msg','line','fixture',10000,'transfer','SHOP_BANK','ingredients','2026-10-01','CONFIRMED','then','now',2,'trace-a');
   db.prepare(`INSERT INTO owner_personal_transactions(personal_use_id,message_id,line_user_id,transaction_type,description,amount_satang,source_wallet,transaction_date,status,created_at,updated_at,version,trace_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run('personal_fixture','msg2','line','PERSONAL_USE','fixture',11000,'SHOP_BANK','2026-10-01','CONFIRMED','then','now',2,'trace-a');
   return{db,env:{DB:new D1(db)},close(){db.close()}};
@@ -117,37 +118,20 @@ test('full metadata adapter checks complete baseline and postimage yet remains R
     f.env.RUNTIME_MODE='production';assert.deepEqual(await run(),{status:'REVIEW',observation:'UNVERIFIED'});assert.equal(dispatches,2);
   }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}
 });
-function installIntentFixture(f,baseline,outerGuard=async()=>true){
-  f.db.exec(`CREATE TABLE expense_projection_runtime_intents(spreadsheet_id TEXT,expense_id TEXT,source_version INTEGER,source_revision INTEGER,projection TEXT,state TEXT,operation_token TEXT,cutover_generation TEXT,admission_watermark INTEGER);
-    CREATE TABLE expense_projection_source_revisions(expense_id TEXT,revision INTEGER,state TEXT);
-    CREATE TABLE expense_projection_admissions(expense_id TEXT,sequence INTEGER);
-    CREATE TABLE expense_projection_cutovers(spreadsheet_id TEXT,sheet_name TEXT,state TEXT,generation TEXT,admission_watermark INTEGER);
-    CREATE TABLE daily_legacy_writer_gates(spreadsheet_id TEXT,sheet_name TEXT,state TEXT,generation TEXT);
-    CREATE TABLE expense_projection_bootstrap(singleton INTEGER,state TEXT);
-    INSERT INTO expense_projection_runtime_intents VALUES('uat','exp_fixture',2,7,'RAW','IN_FLIGHT','outer_token_123456','generation_123',3);
-    INSERT INTO expense_projection_source_revisions VALUES('exp_fixture',7,'TRACKED');
-    INSERT INTO expense_projection_admissions VALUES('exp_fixture',4);
-    INSERT INTO expense_projection_cutovers VALUES('uat','daily','ACTIVE','generation_123',3);
-    INSERT INTO daily_legacy_writer_gates VALUES('uat','daily','HOLD','generation_123');
-    INSERT INTO expense_projection_bootstrap VALUES(1,'COMPLETE');
-    INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_fixture',2,'synthetic','PROCESSING',1,'now','9999-01-01T00:00:00.000Z','lease_token_123456');`);
-  for(const name of ['expense_projection_event_insert','expense_projection_event_update','expense_projection_event_delete','expense_projection_document_insert','expense_projection_document_update','expense_projection_document_delete','expense_projection_link_insert','expense_projection_link_update','expense_projection_link_delete','expense_projection_item_insert','expense_projection_item_update','expense_projection_item_delete'])f.db.exec(`CREATE TRIGGER ${name} AFTER UPDATE ON expense_events BEGIN SELECT 1; END;`);
-  f.db.prepare(`INSERT INTO full_raw_identity_intents(spreadsheet_id,sheet_name,expense_id,metadata_id,state,projected_version,baseline_json,source_version,source_revision,updated_at) VALUES('uat','raw','exp_fixture',44,'VERIFIED',1,?,1,1,'now')`).run(JSON.stringify(baseline));
+async function installIntentFixture(f,baseline){
   Object.assign(f.env,{RUNTIME_MODE:'production',RAW_FULL_IDENTITY_WRITER_ENABLED:'true',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'uat',SHEET_EXPENSE_RAW:'raw',SHEET_EXPENSE_DAILY:'daily',SHEET_PURCHASE_DETAILS:'details'});
-  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:2,traceId:'synthetic'};
-  return new FullRawIdentityIntent(f.env,job,'lease_token_123456','outer_token_123456',{revision:7,generation:'generation_123',watermark:3},{canDispatch:outerGuard});
+  f.db.exec(`INSERT INTO expense_projection_cutovers(spreadsheet_id,sheet_name,generation,state,admission_watermark,activated_at) VALUES('uat','daily','generation_123','ACTIVE',0,'now');
+    INSERT INTO daily_legacy_writer_gates(spreadsheet_id,sheet_name,state,generation,updated_at) VALUES('uat','daily','HOLD','generation_123','now');
+    INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_fixture',2,'synthetic','PROCESSING',1,'now','9999-01-01T00:00:00.000Z','lease_token_123456');`);
+  f.db.prepare(`INSERT INTO full_raw_identity_intents(spreadsheet_id,sheet_name,expense_id,metadata_id,state,projected_version,baseline_json,source_version,source_revision,updated_at) VALUES('uat','raw','exp_fixture',44,'VERIFIED',1,?,1,1,'now')`).run(JSON.stringify(baseline));
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:2,traceId:'synthetic'},outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_123456');
+  const context=await outer.context();assert.ok(context);const outerToken=await outer.begin('RAW',context);assert.ok(outerToken);
+  return {intent:new FullRawIdentityIntent(f.env,job,'lease_token_123456',outerToken,context),outer,outerToken,context};
 }
-test.skip('inner intent never authorizes dispatch when outer fence fails (pending canonical guard integration)',async()=>{
+test('canonical outer fence and inner baseline/lease are enforced in the same D1 statement',async()=>{
   const f=fixture();try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
-    let checks=0;const intent=installIntentFixture(f,baseline,async(projection,token,context)=>{checks++;assert.equal(projection,'RAW');assert.equal(token,'outer_token_123456');assert.equal(context.revision,7);return false});
-    assert.equal(await intent.begin(proof,44,baseline,'inner_token_123456'),true);assert.equal(await intent.canDispatch(proof,44,'inner_token_123456'),false);assert.equal(checks,1);
-  }finally{f.close();}
-});
-test.skip('inner full-RAW intent needs outer lease, revision and cutover (pending canonical guard integration)',async()=>{
-  const f=fixture();try{
-    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
-    const intent=installIntentFixture(f,baseline),token='inner_token_123456';
+    const {intent}=await installIntentFixture(f,baseline),token='inner_token_123456';
     assert.equal(await intent.begin(proof,44,{...baseline,'1':'0'.repeat(64)},token),false);
     assert.equal(await intent.begin(proof,44,baseline,token),true);assert.equal(await intent.canDispatch(proof,44,token),true);
     f.db.exec(`UPDATE expense_projection_cutovers SET generation='other_generation'`);assert.equal(await intent.canDispatch(proof,44,token),false);f.db.exec(`UPDATE expense_projection_cutovers SET generation='generation_123'`);
@@ -155,28 +139,25 @@ test.skip('inner full-RAW intent needs outer lease, revision and cutover (pendin
     f.db.exec(`UPDATE full_raw_identity_intents SET metadata_id=45`);assert.equal(await intent.canDispatch(proof,44,token),false);f.db.exec(`UPDATE full_raw_identity_intents SET metadata_id=44`);
     f.db.exec(`UPDATE full_raw_identity_intents SET projected_version=99`);assert.equal(await intent.canDispatch(proof,44,token),false);f.db.exec(`UPDATE full_raw_identity_intents SET projected_version=1`);
     f.db.exec(`UPDATE full_raw_identity_intents SET baseline_json='{}'`);assert.equal(await intent.canDispatch(proof,44,token),false);f.db.prepare(`UPDATE full_raw_identity_intents SET baseline_json=?`).run(JSON.stringify(baseline));
-    f.db.exec(`UPDATE expense_projection_source_revisions SET revision=8`);assert.equal(await intent.canDispatch(proof,44,token),false);
+    f.db.exec(`UPDATE expense_events SET trace_id='changed' WHERE expense_id='exp_fixture'; UPDATE expense_events SET trace_id='trace-a' WHERE expense_id='exp_fixture'`);
+    assert.equal(await intent.canDispatch(proof,44,token),false);
     await intent.hold(44,token);assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'REVIEW');assert.equal(await intent.begin(proof,44,baseline,token),false);
     assert.equal(f.db.prepare(`PRAGMA table_info(full_raw_identity_intents)`).all().some(r=>/row_number|row_index/.test(r.name)),false);
   }finally{f.close();}
 });
-test.skip('disabled flag, lost outer intent or old mapping prevents reservation (pending canonical guard integration)',async()=>{
-  for(const change of ['flag','outer','mapping','gate','other_projection']){const f=fixture();try{
+test('real migration guard fails closed on missing trigger, index, outer intent, old mapping or gate',async()=>{
+  for(const change of ['flag','outer','mapping','gate','trigger','index','other_projection']){const f=fixture();try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
-    const intent=installIntentFixture(f,baseline);
+    const {intent,context}=await installIntentFixture(f,baseline);
     if(change==='flag')f.env.RAW_FULL_IDENTITY_WRITER_ENABLED='false';
     if(change==='outer')f.db.exec(`UPDATE expense_projection_runtime_intents SET state='REVIEW'`);
     if(change==='mapping')f.db.exec(`INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('raw','exp_fixture',55)`);
     if(change==='gate')f.db.exec(`UPDATE daily_legacy_writer_gates SET state='OPEN'`);
-    if(change==='other_projection')f.db.exec(`INSERT INTO expense_projection_runtime_intents VALUES('uat','exp_fixture',2,7,'DAILY','REVIEW','other_token_123456','generation_123',3)`);
+    if(change==='trigger')f.db.exec(`DROP TRIGGER expense_projection_document_before_update`);
+    if(change==='index')f.db.exec(`DROP INDEX idx_expense_documents_reference_key`);
+    if(change==='other_projection')f.db.prepare(`INSERT INTO expense_projection_runtime_intents(spreadsheet_id,expense_id,source_version,source_revision,projection,state,operation_token,cutover_generation,admission_watermark,updated_at) VALUES('uat','exp_fixture',2,?,'DAILY','REVIEW','other_token_123456','generation_123',0,'now')`).run(context.revision);
     if(change==='flag')await assert.rejects(intent.begin(proof,44,baseline,'inner_token_123456'),/DISABLED/);
     else assert.equal(await intent.begin(proof,44,baseline,'inner_token_123456'),false);
     assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'VERIFIED');
   }finally{f.close();}}
-});
-test('inner intent is hard-disabled until canonical atomic guard is integrated',async()=>{
-  const f=fixture();try{
-    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
-    const intent=installIntentFixture(f,baseline);await assert.rejects(intent.begin(proof,44,baseline,'inner_token_123456'),/SHARED_GUARD_UNAVAILABLE/);
-  }finally{f.close();}
 });

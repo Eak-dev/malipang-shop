@@ -14,6 +14,7 @@ import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
 import { loadExpenseDailyPosting,reconcileExpenseItemRows,syncStableShadowFixtureJob } from "../sheets/sync";
 import {assertStableShadowConfig,assertStableShadowDatabase} from '../sheets/daily-stable-row-shadow';
+import {assertSyntheticLedgerUat,runSyntheticDailyAndRawCoreWorkflow} from '../sheets/synthetic-expense-workflow';
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification,recoverQuotaExhaustedLineNotifications } from "../line/attendance-notification";
@@ -26,6 +27,17 @@ function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.leng
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    // Dedicated isolated fixture only. Partial RAW or missing DETAIL causes a
+    // durable REVIEW; a daily-only readback cannot complete the whole job.
+    if(request.method==='POST'&&url.pathname==='/admin/uat/expense-projection-workflow'){
+      if(env.RUNTIME_MODE!=='shadow'||env.DAILY_STABLE_ID_PROTOTYPE_ENABLED!=='true')return new Response('Not found',{status:404});
+      try{
+        const id=env.DAILY_STABLE_UAT_NEW_EXPENSE_ID||'';assertStableShadowConfig(env,id);await assertStableShadowDatabase(env);await assertSyntheticLedgerUat(env);
+        const loaded=await loadExpenseDailyPosting(env,id);if(loaded.expense.status!=='CONFIRMED')throw new Error('UAT_SOURCE_NOT_CONFIRMED');
+        const result=await runSyntheticDailyAndRawCoreWorkflow(env,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:loaded.record.version,traceId:'synthetic-uat'});
+        return Response.json({ok:result==='VERIFIED',result},{status:result==='VERIFIED'?200:409,headers:{'cache-control':'no-store'}});
+      }catch{return Response.json({ok:false,result:'REVIEW'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
     // Explicit synthetic UAT only: no queue, RAW, production workbook or live
     // expense IDs. Response never echoes identity, metadata or sheet content.
     if(request.method==='POST'&&url.pathname==='/admin/uat/daily-stable-row'){

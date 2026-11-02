@@ -18,7 +18,7 @@ export async function assertStableShadowDatabase(env:Env):Promise<void>{
   try{const marker=await env.DB.prepare(`SELECT marker FROM daily_stable_uat_guard WHERE marker=?`).bind(env.DAILY_STABLE_UAT_DATABASE_MARKER).first<{marker:string}>();if(!marker)throw new Error('missing');}
   catch{throw new DailyCancelReviewRequired('DAILY_STABLE_UAT_DATABASE_UNVERIFIED');}
 }
-export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord,options:{verifyOnly?:boolean}={}):Promise<void>{
+export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord,options:{verifyOnly?:boolean;beforeDispatch?:()=>Promise<void>}={}):Promise<void>{
   assertStableShadowConfig(env,record.expenseId);
   await assertStableShadowDatabase(env);
   const eligibility=await classifyStableShadowSource(env,record.expenseId,record.version);
@@ -41,6 +41,7 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord,o
     const assertFence=async()=>{
       const row=await env.DB.prepare(`SELECT 1 AS ok FROM owner_correction_daily_write_fences f JOIN expense_events e ON e.expense_id=? JOIN daily_stable_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=f.sheet_name AND c.state='ACTIVE' AND c.generation=? AND c.source_watermark=? WHERE f.sheet_name=? AND f.lease_token=? AND f.state='OWNED' AND f.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND e.status='CONFIRMED' AND e.version=? AND e.transaction_date=? AND e.description=? AND e.amount_satang=? AND e.payment_key=? AND e.source_wallet=? AND e.category=? AND (?='ENROLLED' OR (EXISTS(SELECT 1 FROM daily_stable_source_admissions a WHERE a.expense_id=e.expense_id AND a.sequence>c.source_watermark) AND NOT EXISTS(SELECT 1 FROM sheet_row_index r WHERE r.sheet_name=f.sheet_name AND (r.entity_key=e.expense_id OR substr(r.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|')))) AND (? IS NULL OR EXISTS(SELECT 1 FROM daily_stable_row_intents i WHERE i.spreadsheet_id=c.spreadsheet_id AND i.expense_id=e.expense_id AND i.state='IN_FLIGHT' AND i.metadata_id=? AND i.expense_version=e.version)) AND (? IS NOT NULL OR ?='NEW' OR EXISTS(SELECT 1 FROM daily_stable_row_intents i WHERE i.spreadsheet_id=c.spreadsheet_id AND i.expense_id=e.expense_id AND i.state='VERIFIED' AND i.metadata_id=? AND i.projected_version=? AND i.baseline_json=?))`).bind(record.expenseId,env.GOOGLE_SPREADSHEET_ID,eligibility.generation,eligibility.watermark,sheet,token,record.version,record.transactionDate,record.description,Math.round(record.amountBaht*100),record.paymentKey,record.sourceWallet,record.category,eligibility.kind,reserved??null,reserved??null,reserved??null,eligibility.kind,entry?.metadataId??null,entry?.projectedVersion??null,entry?.baseline?JSON.stringify(entry.baseline):null).first<{ok:number}>();
       if(!row)throw new DailyCancelReviewRequired('DAILY_STABLE_FENCE_OR_SOURCE_CHANGED');
+      if(options.beforeDispatch)await options.beforeDispatch();
     };
     const read=async(formulas:boolean)=>{const info=await stablePrototypeSheetInfo(env,sheet);if(info.sheetId!==sheetId||info.rowCount!==expectedRowCount||info.columnCount!==initialInfo.columnCount)throw new DailyCancelReviewRequired('DAILY_STABLE_SHEET_GRID_CHANGED');return{sheetId,body:await stablePrototypeSnapshot(env,`'${escaped}'!A1:Y${info.rowCount}`,formulas)};};
     const port:StablePrototypePort={

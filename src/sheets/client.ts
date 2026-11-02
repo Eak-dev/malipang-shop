@@ -2,6 +2,8 @@ import type { Env } from "../types";
 import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
+import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
+import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 import type { MetadataValueRange } from './daily-stable-row-writes';
 export class SheetsHttpError extends Error{
@@ -46,6 +48,26 @@ export async function writeDailyByMetadataPrototype(env:Env,range:MetadataValueR
   let data:{responses?:Array<{updatedRows?:number}>};
   try{data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets mutation response') as typeof data;}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
   if(data.responses?.length!==1||data.responses[0]?.updatedRows!==1)throw new SheetsMutationOutcomeUnknownError(new Error('DAILY_STABLE_METADATA_RESPONSE_UNVERIFIED'));
+}
+/**
+ * Experimental single-row, metadata-anchored write. NOT called by live sync.
+ * The metadata lookup follows full-row moves; a caller must independently
+ * establish identity and exclusive cutover because Sheets has no value CAS.
+ * Any unparseable/ambiguous result must remain under manual REVIEW.
+ */
+export async function writeValuesByMetadataPrototype(env:Env,request:{identity:LedgerWriteIdentity;witness:LedgerMetadataWitness;identityRows:unknown[][];values:readonly unknown[];guard:LedgerWriteGuard;baselineHashes:LedgerBaseline;mode?:'PATCH'|'CANCEL_DETAIL'},beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+  if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('LEDGER_METADATA_WRITER_DISABLED');
+  if(!request||!beforeMutationDispatch)throw new Error('LEDGER_METADATA_REQUEST_INVALID');
+  verifyLedgerMetadataWitness(request.identity,request.witness,request.identityRows);
+  const data=buildLedgerMetadataValueRange(request.identity,request.witness.metadataId,request.values,request.guard,request.mode);
+  canonicalLedgerBaseline(request.identity.kind,request.baselineHashes);
+  const cells:Record<string,LedgerCellValue>={};for(const index of request.guard.fields)cells[String(index)]=request.guard.observed[index]!.entered;
+  if(!await baselineMatches(request.baselineHashes,cells))throw new Error('LEDGER_BASELINE_DIGEST_MISMATCH');
+  const response=await sheetsFetch(env,'/values:batchUpdateByDataFilter',{method:'POST',body:JSON.stringify({valueInputOption:'RAW',data:[data]})},true,beforeMutationDispatch,true);
+  let result:{totalUpdatedRows?:unknown;responses?:unknown};
+  try{result=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata update response') as typeof result;}
+  catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(Number(result?.totalUpdatedRows)!==1 || !Array.isArray(result.responses) || result.responses.length!==1)throw new SheetsMutationOutcomeUnknownError(new Error('LEDGER_METADATA_UPDATE_COUNT_UNKNOWN'));
 }
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true,beforeMutationDispatch);}
@@ -117,6 +139,31 @@ export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promis
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+/** Bounded/sanitized read for the disabled-by-default inspection prototype. */
+async function identityInspectionGet(env:Env,path:string):Promise<unknown>{
+  const token=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
+  const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{method:'GET',headers:{Authorization:`Bearer ${token}`}},timeout,'Sheets identity inspection');
+  if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw new Error('LEDGER_INSPECTION_HTTP_ERROR');}
+  return readBoundedJson(response,4*1024*1024,timeout,'Sheets identity response');
+}
+/** Bounded authenticated read used only by the isolated ledger UAT probe. */
+export async function getLedgerUatSnapshotPart(env:Env,path:string):Promise<unknown>{
+  if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('LEDGER_METADATA_READER_DISABLED');
+  try{return await identityInspectionGet(env,path);}catch{throw new Error('LEDGER_METADATA_READER_UNAVAILABLE');}
+}
+/** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
+export async function getSheetRowCount(env:Env,title:string):Promise<number>{
+  const data=await identityInspectionGet(env,"?fields=sheets.properties(title,gridProperties(rowCount))") as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};
+  const matches=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);
+  const n=matches[0]?.properties?.gridProperties?.rowCount;
+  if(matches.length!==1||!Number.isSafeInteger(n)||Number(n)<1)throw new Error("LEDGER_GRID_UNAVAILABLE");
+  return Number(n);
+}
+export async function getSheetIdentityValues(env:Env,range:string):Promise<unknown[][]>{
+  const data=await identityInspectionGet(env,`/values/${encodeURIComponent(range)}?valueRenderOption=UNFORMATTED_VALUE`) as {values?:unknown[][]};
+  if(data.values!==undefined&&!Array.isArray(data.values))throw new Error('LEDGER_IDENTITY_VALUES_INVALID');
+  return data.values||[];
+}
 export async function getSheetId(env:Env,title:string):Promise<number>{
   const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};
   const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;

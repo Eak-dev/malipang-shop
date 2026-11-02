@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { batchWriteValues } from "./client";
 import type { DailyExpenseDocument,DailyExpenseDocumentItem,DailyExpenseRecord } from "./daily-expense";
+import { inspectLedgerAndHold } from './ledger-identity-inspection';
 
 export interface PurchaseDetailRecord extends DailyExpenseRecord { branchId:string; status:"CONFIRMED"|"CANCELLED"; createdAt:string; updatedAt:string; }
 export interface PurchaseDetailDocument extends DailyExpenseDocument { documentDate:string; }
@@ -51,6 +52,7 @@ async function reserveRow(env:Env,key:string):Promise<number>{
 
 export async function writeConfirmedExpensePurchaseDetails(env:Env,record:PurchaseDetailRecord,document:PurchaseDetailDocument|null,items:DailyExpenseDocumentItem[]):Promise<number>{
   const entries=buildPurchaseDetailEntries(record,document,items),sheet=detailSheet(env);
+  await inspectLedgerAndHold(env,'PURCHASE_DETAILS',sheet,record.expenseId,entries.map(entry=>entry.itemId));
   if(!entries.length)return 0;
   const writes=[] as Array<{range:string;values:unknown[][]}>;
   for(const entry of entries){const row=await reserveRow(env,entry.rowKey);writes.push({range:range(sheet,`A${row}:T${row}`),values:[entry.values]});}
@@ -59,7 +61,9 @@ export async function writeConfirmedExpensePurchaseDetails(env:Env,record:Purcha
 
 /** Keep a cancelled purchase visible and auditable; it no longer counts as an active detail. */
 export async function markCancelledExpensePurchaseDetails(env:Env,expenseId:string,now=new Date().toISOString()):Promise<number>{
-  const sheet=detailSheet(env),result=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND substr(entity_key,1,length(?)+1)=? || '|' ORDER BY row_number`).bind(sheet,expenseId,expenseId).all<{row_number:number}>();
+  const sheet=detailSheet(env);
+  await inspectLedgerAndHold(env,'PURCHASE_DETAILS',sheet,expenseId);
+  const result=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND substr(entity_key,1,length(?)+1)=? || '|' ORDER BY row_number`).bind(sheet,expenseId,expenseId).all<{row_number:number}>();
   const rows=(result.results||[]).map(row=>Number(row.row_number));
   await batchWriteValues(env,rows.flatMap(row=>[
     {range:range(sheet,`Q${row}`),values:[["CANCELLED"]]},

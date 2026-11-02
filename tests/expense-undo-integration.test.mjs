@@ -75,6 +75,14 @@ test('SQLite: Undo is held while a daily-sheet dispatch outcome is uncertain',as
  }finally{h.close();}
 });
 
+test('SQLite: Undo waits while an admin reconciliation holds an OWNED daily fence',async()=>{
+ const h=harness();try{
+  h.sqlite.prepare("INSERT INTO owner_correction_daily_write_fences(sheet_name,lease_token,lease_until,state,updated_at) VALUES('รายวัน','admin','2099-01-01T00:00:00.000Z','OWNED','now')").run();
+  await assert.rejects(undoConfirmedExpense(h.env,{expenseId:'exp_fixture',lineUserId:'line_fixture',traceId:'synthetic',actorEmployeeId:'fixture',branchId:null}),/EXPENSE_SYNC_REVIEW_OR_PROCESSING/);
+  assert.equal(row(h).status,'CONFIRMED');assert.equal(audits(h).length,0);
+ }finally{h.close();}
+});
+
 test('SQLite: Undo survives an existing COMPLETED version 2 without altering its history',async()=>{
   const h=harness();
   try{

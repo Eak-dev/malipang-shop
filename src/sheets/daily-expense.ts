@@ -1,6 +1,6 @@
 import type { Env } from "../types";
 import { batchClearValues,batchGetSheetValues,batchGetSheetFormulaValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId,SheetsMutationOutcomeUnknownError } from "./client";
-import {withCorrectionDailyWriteFence,type GuardedDailyMutation} from "./owner-correction-daily-write-fence";
+import {withCorrectionDailyWriteFence,type GuardedDailyMutation,type DailyFenceExpenseSnapshot} from "./owner-correction-daily-write-fence";
 
 export class DailyCancelReviewRequired extends Error{
   constructor(reason="DAILY_CANCEL_IDENTITY_REVIEW_REQUIRED"){super(reason);this.name="DailyCancelReviewRequired";}
@@ -10,6 +10,7 @@ export interface DailyExpenseRecord{
   expenseId:string;transactionDate:string;description:string;amountBaht:number;
   paymentKey:string;sourceWallet:string;category:string;version:number;
 }
+function fenceSnapshot(record:DailyExpenseRecord):DailyFenceExpenseSnapshot{return{expenseId:record.expenseId,version:record.version,transactionDate:record.transactionDate,description:record.description,amountSatang:Math.round(record.amountBaht*100),paymentKey:record.paymentKey,sourceWallet:record.sourceWallet,category:record.category};}
 export interface DailyExpenseDocument{
   documentId:string;documentType:string;vendorName:string;legalVendorName:string;
   documentNumber:string;orderId:string;
@@ -132,17 +133,20 @@ async function reserveRow(env:Env,expenseId:string,candidates:number[]):Promise<
   throw new Error("Unable to reserve an empty daily expense row");
 }
 /** Advance every mapped row and its expansion state in a single D1 batch. */
-export async function mapDailyCapacityExpansion(env:Env,month:number,anchor:number,marker:string,now:string):Promise<boolean>{
-  const sheet=env.SHEET_EXPENSE_DAILY;if(!sheet||!Number.isSafeInteger(month)||month<1||month>12||!Number.isSafeInteger(anchor)||anchor<2||!marker||!Number.isFinite(Date.parse(now)))return false;
-  const active=`EXISTS(SELECT 1 FROM daily_sheet_capacity_expansions e WHERE e.sheet_name=? AND e.month=? AND e.anchor_total_row=? AND e.marker=? AND e.state='PREPARED')`;
+export async function mapDailyCapacityExpansion(env:Env,month:number,anchor:number,marker:string,now:string,fenceToken:string):Promise<boolean>{
+  const sheet=env.SHEET_EXPENSE_DAILY;if(!sheet||!fenceToken||!Number.isSafeInteger(month)||month<1||month>12||!Number.isSafeInteger(anchor)||anchor<2||!marker||!Number.isFinite(Date.parse(now)))return false;
+  const active=`EXISTS(SELECT 1 FROM daily_sheet_capacity_expansions e WHERE e.sheet_name=? AND e.month=? AND e.anchor_total_row=? AND e.marker=? AND e.state='PREPARED') AND EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.lease_token=? AND f.state='OWNED' AND f.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
+  const fenceAssert=`SELECT CASE WHEN NOT EXISTS(SELECT 1 FROM owner_correction_daily_write_fences WHERE sheet_name=? AND lease_token=? AND state='OWNED' AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')) THEN json('daily capacity fence lost') ELSE 1 END AS verified`;
   const result=await env.DB.batch([
-    env.DB.prepare(`SELECT CASE WHEN ${active} AND EXISTS(SELECT 1 FROM sheet_row_index WHERE sheet_name=? AND row_number<=0) THEN json('invalid daily sheet row mapping') ELSE 1 END AS verified`).bind(sheet,month,anchor,marker,sheet),
-    env.DB.prepare(`UPDATE sheet_row_index SET row_number=-row_number WHERE sheet_name=? AND row_number>=? AND ${active}`).bind(sheet,anchor,sheet,month,anchor,marker),
-    env.DB.prepare(`UPDATE sheet_row_index SET row_number=-row_number+1 WHERE sheet_name=? AND row_number<=-? AND ${active}`).bind(sheet,anchor,sheet,month,anchor,marker),
-    env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='MAPPED',updated_at=? WHERE sheet_name=? AND month=? AND anchor_total_row=? AND marker=? AND state='PREPARED' AND NOT EXISTS(SELECT 1 FROM sheet_row_index WHERE sheet_name=? AND row_number<=0)`).bind(now,sheet,month,anchor,marker,sheet),
-    env.DB.prepare(`SELECT CASE WHEN ${active} THEN json('incomplete daily sheet mapping') ELSE 1 END AS verified`).bind(sheet,month,anchor,marker)
+    env.DB.prepare(fenceAssert).bind(sheet,fenceToken),
+    env.DB.prepare(`SELECT CASE WHEN ${active} AND EXISTS(SELECT 1 FROM sheet_row_index WHERE sheet_name=? AND row_number<=0) THEN json('invalid daily sheet row mapping') ELSE 1 END AS verified`).bind(sheet,month,anchor,marker,sheet,fenceToken,sheet),
+    env.DB.prepare(`UPDATE sheet_row_index SET row_number=-row_number WHERE sheet_name=? AND row_number>=? AND ${active}`).bind(sheet,anchor,sheet,month,anchor,marker,sheet,fenceToken),
+    env.DB.prepare(`UPDATE sheet_row_index SET row_number=-row_number+1 WHERE sheet_name=? AND row_number<=-? AND ${active}`).bind(sheet,anchor,sheet,month,anchor,marker,sheet,fenceToken),
+    env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='MAPPED',updated_at=? WHERE sheet_name=? AND month=? AND anchor_total_row=? AND marker=? AND state='PREPARED' AND NOT EXISTS(SELECT 1 FROM sheet_row_index WHERE sheet_name=? AND row_number<=0) AND ${active}`).bind(now,sheet,month,anchor,marker,sheet,sheet,month,anchor,marker,sheet,fenceToken),
+    env.DB.prepare(`SELECT CASE WHEN ${active} THEN json('incomplete daily sheet mapping') ELSE 1 END AS verified`).bind(sheet,month,anchor,marker,sheet,fenceToken),
+    env.DB.prepare(fenceAssert).bind(sheet,fenceToken)
   ]);
-  return Number(result[3]?.meta.changes||0)===1;
+  return Number(result[4]?.meta.changes||0)===1;
 }
 async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,write:GuardedDailyMutation,fenceToken:string):Promise<boolean>{
   const at=Date.now(),now=new Date(at).toISOString(),cutoff=new Date(at-15*60_000).toISOString(),lock=`${now}|${crypto.randomUUID()}`;
@@ -165,7 +169,7 @@ async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,w
     if(!existing||existing.state==="COMPLETED")await env.DB.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES(?,?,?,?, 'PREPARED',?,?) ON CONFLICT(sheet_name,month) DO UPDATE SET anchor_total_row=excluded.anchor_total_row,marker=excluded.marker,state='PREPARED',updated_at=excluded.updated_at`).bind(env.SHEET_EXPENSE_DAILY,block.month,block.totalRow,marker,now,now).run();
     if(markerRow===0){const sheetId=await getSheetId(env,env.SHEET_EXPENSE_DAILY);await write(before=>batchUpdateSpreadsheet(env,monthCapacityExpansionRequestsWithMarker(sheetId,anchor,marker),before));const observed=positions((await loadLayout(env)).body);if(observed.length!==1||observed[0]!==anchor)throw new Error(`Daily sheet capacity marker moved for month ${block.month}; review required.`);}
     // Move the index and state atomically: a crash must not leave them split.
-    if(!await mapDailyCapacityExpansion(env,block.month,anchor,marker,now))throw new Error(`Daily sheet capacity mapping changed for month ${block.month}; review required.`);
+    if(!await mapDailyCapacityExpansion(env,block.month,anchor,marker,now,fenceToken))throw new Error(`Daily sheet capacity mapping changed for month ${block.month}; review required.`);
     const refreshed=await loadLayout(env),refreshedMarkerRow=refreshed.body.findIndex(row=>String(row?.[0]??"")===marker)+1;if(refreshedMarkerRow>0)await write(before=>batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${refreshedMarkerRow}`)],before));
     await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(new Date().toISOString(),env.SHEET_EXPENSE_DAILY,block.month).run();
     return true;
@@ -241,7 +245,7 @@ export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,reco
     throw new DailyCancelReviewRequired("DAILY_LEGACY_IDENTITY_REVIEW_REQUIRED");
   }
   return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries,write,fenceToken),replacedLegacySummary:hasLegacyItemRows};
-  });
+  },undefined,fenceSnapshot(record));
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
@@ -249,7 +253,7 @@ export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRe
   if(!fenceToken)throw new Error("DAILY_FENCE_TOKEN_MISSING");
   const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write,fenceToken);
   return result[0]!;
-  });
+  },undefined,fenceSnapshot(record));
 }
 
 export async function clearCancelledExpenseFromDaily(env:Env,expenseId:string):Promise<number[]>{

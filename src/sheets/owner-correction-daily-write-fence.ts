@@ -3,6 +3,10 @@ import {numberEnv} from "../shared/env";
 import {SheetsHttpError,isAmbiguousSheetsMutationStatus} from "./client";
 
 const MIN_FENCE_MS=15*60_000;
+export interface DailyFenceExpenseSnapshot{
+  expenseId:string;version:number;transactionDate:string;description:string;
+  amountSatang:number;paymentKey:string;sourceWallet:string;category:string;
+}
 function times(env:Env,nowMs:number):{now:string;until:string}|null{
   if(!Number.isFinite(nowMs))return null;const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
   if(!Number.isFinite(timeout)||timeout<0)return null;const now=new Date(nowMs),until=new Date(nowMs+Math.max(MIN_FENCE_MS,timeout+240_000));
@@ -19,11 +23,15 @@ export async function claimCorrectionDailyWriteFence(env:Env,sheet:string,nowMs=
 }
 
 /** Call only after authentication and immediately before a Sheets dispatch. */
-export async function armCorrectionDailyWriteFence(env:Env,sheet:string,token:string,nowMs=Date.now()):Promise<string|null>{
+export async function armCorrectionDailyWriteFence(env:Env,sheet:string,token:string,nowMs=Date.now(),snapshot?:DailyFenceExpenseSnapshot):Promise<string|null>{
   const t=times(env,nowMs);if(!t||!sheet||!token)return null;const dispatch=crypto.randomUUID();
+  if(snapshot&&(!snapshot.expenseId||!Number.isSafeInteger(snapshot.version)||snapshot.version<1||!Number.isSafeInteger(snapshot.amountSatang)||snapshot.amountSatang<1))return null;
+  const condition=snapshot?` AND EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND e.transaction_date=? AND e.description=? AND e.amount_satang=? AND e.payment_key=? AND e.source_wallet=? AND e.category=?)`:"";
+  const values:unknown[]=[dispatch,t.until,t.until,t.now,sheet,token,t.now];
+  if(snapshot)values.push(snapshot.expenseId,snapshot.version,snapshot.transactionDate,snapshot.description,snapshot.amountSatang,snapshot.paymentKey,snapshot.sourceWallet,snapshot.category);
   const result=await env.DB.prepare(`UPDATE owner_correction_daily_write_fences SET state='IN_FLIGHT',dispatch_id=?,not_before=?,lease_until=?,updated_at=?
-    WHERE sheet_name=? AND lease_token=? AND state='OWNED' AND lease_until>?`)
-    .bind(dispatch,t.until,t.until,t.now,sheet,token,t.now).run();return Number(result.meta.changes||0)===1?dispatch:null;
+    WHERE sheet_name=? AND lease_token=? AND state='OWNED' AND lease_until>? AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')${condition}`)
+    .bind(...values).run();return Number(result.meta.changes||0)===1?dispatch:null;
 }
 
 /** A caller may finish only when the provider response proves an outcome. */
@@ -48,13 +56,13 @@ export type GuardedDailyMutation=(dispatch:(beforeDispatch?:()=>Promise<void>)=>
  * the operation must use `write`, and the provider must invoke its callback
  * immediately before dispatch. A lost response leaves the fence in flight.
  */
-export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,action:(write:GuardedDailyMutation,fenceToken?:string)=>Promise<T>,now:()=>number=()=>Date.now()):Promise<T>{
+export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,action:(write:GuardedDailyMutation,fenceToken?:string)=>Promise<T>,now:()=>number=()=>Date.now(),snapshot?:DailyFenceExpenseSnapshot):Promise<T>{
   const token=await claimCorrectionDailyWriteFence(env,sheet,now());if(!token)throw new CorrectionDailyFenceBusyError();
   try{
     const write:GuardedDailyMutation=async dispatch=>{
       let id:string|null=null;
       try{
-        await dispatch(async()=>{id=await armCorrectionDailyWriteFence(env,sheet,token,now());if(!id)throw new CorrectionDailyFenceBusyError();});
+        await dispatch(async()=>{id=await armCorrectionDailyWriteFence(env,sheet,token,now(),snapshot);if(!id)throw new CorrectionDailyFenceBusyError();});
         if(!id)throw new Error("CORRECTION_DAILY_DISPATCH_NOT_ARMED");
         if(!await finishCorrectionDailyWriteFence(env,sheet,token,id,now()))throw new CorrectionDailyFenceBusyError();
       }catch(error){

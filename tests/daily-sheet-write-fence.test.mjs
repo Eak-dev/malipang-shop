@@ -41,8 +41,23 @@ test('a loaded confirmed snapshot cannot post after reclassification',async()=>{
 
 test('capacity expansion advances state and index together and rolls back on failure',async()=>{
  const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),{mapDailyCapacityExpansion}=require('../dist/sheets/daily-expense.js');
- for(const failAt of [null,1,2,3,4]){const h=expenseSqlite();try{
-  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare("INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES('daily',10,10,'synthetic','PREPARED','now','now')").run();h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','a',10),('daily','b',11)").run();h.DB.failAt=failAt;
-  if(failAt===null){assert.equal(await mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z'),true);assert.deepEqual(h.sqlite.prepare("SELECT row_number FROM sheet_row_index ORDER BY entity_key").all().map(r=>r.row_number),[11,12]);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'MAPPED');assert.equal(await mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z'),false);}else{await assert.rejects(mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z'));assert.deepEqual(h.sqlite.prepare("SELECT row_number FROM sheet_row_index ORDER BY entity_key").all().map(r=>r.row_number),[10,11]);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');}
+ for(const failAt of [null,0,1,2,3,4,5,6]){const h=expenseSqlite();try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare("INSERT INTO owner_correction_daily_write_fences(sheet_name,lease_token,lease_until,state,updated_at) VALUES('daily','owner','2099-01-01T00:00:00.000Z','OWNED','now')").run();h.sqlite.prepare("INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES('daily',10,10,'synthetic','PREPARED','now','now')").run();h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','a',10),('daily','b',11)").run();h.DB.failAt=failAt;
+  if(failAt===null){assert.equal(await mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z','owner'),true);assert.deepEqual(h.sqlite.prepare("SELECT row_number FROM sheet_row_index ORDER BY entity_key").all().map(r=>r.row_number),[11,12]);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'MAPPED');assert.equal(await mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z','owner'),false);}else{await assert.rejects(mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z','owner'));assert.deepEqual(h.sqlite.prepare("SELECT row_number FROM sheet_row_index ORDER BY entity_key").all().map(r=>r.row_number),[10,11]);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');}
  }finally{h.close();}}
+});
+
+test('capacity mappings cannot be changed by an expired or replaced fence owner',async()=>{
+ const {createRequire}=await import('node:module');const {mapDailyCapacityExpansion}=createRequire(import.meta.url)('../dist/sheets/daily-expense.js');
+ for(const [token,until] of [['owner','2000-01-01T00:00:00.000Z'],['replacement','2099-01-01T00:00:00.000Z']]){const h=expenseSqlite();try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare("INSERT INTO owner_correction_daily_write_fences(sheet_name,lease_token,lease_until,state,updated_at) VALUES('daily',?,?,'OWNED','now')").run(token,until);h.sqlite.prepare("INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES('daily',10,10,'synthetic','PREPARED','now','now')").run();h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','a',10),('daily','b',11)").run();
+  await assert.rejects(mapDailyCapacityExpansion(h.env,10,10,'synthetic','2026-01-01T00:00:00Z','owner'));assert.deepEqual(h.sqlite.prepare('SELECT row_number FROM sheet_row_index ORDER BY entity_key').all().map(r=>r.row_number),[10,11]);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');
+ }finally{h.close();}}
+});
+
+test('fence dispatch atomically rejects a changed expense snapshot',async()=>{
+ const h=expenseSqlite(),now=Date.now();try{
+  h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('e','m','u','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();const snapshot={expenseId:'e',version:1,transactionDate:'2026-10-28',description:'Synthetic',amountSatang:10000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general'};
+  const token=await claim(h.env,'daily',now);h.sqlite.prepare("UPDATE expense_events SET version=2,status='CANCELLED' WHERE expense_id='e'").run();assert.equal(await arm(h.env,'daily',token,now,snapshot),null);assert.equal(h.sqlite.prepare('SELECT state FROM owner_correction_daily_write_fences').get().state,'OWNED');
+ }finally{h.close();}
 });

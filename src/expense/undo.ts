@@ -24,8 +24,8 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
         json_object('status','CANCELLED','version',MAX(version,COALESCE((SELECT MAX(entity_version) FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=expense_events.expense_id),0))+1),?
       FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
         AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=expense_events.expense_id AND j.status IN ('PROCESSING','REVIEW'))
-        AND NOT EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.state='IN_FLIGHT')`)
-      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน'),
+        AND NOT EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND (f.state='IN_FLIGHT' OR (f.state='OWNED' AND f.lease_until>?)))`)
+      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน',now),
     env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=?,
         version=(SELECT json_extract(after_json,'$.version') FROM expense_audit_log WHERE audit_id=?)
       WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
@@ -51,7 +51,7 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
   if(Number(results[1]?.meta.changes||0)!==1){
     // Do not claim a busy item is already cancelled. An unresolved provider
     // outcome requires review; an active projection must finish before Undo.
-    const blocked=await env.DB.prepare(`SELECT 1 AS present FROM expense_events e WHERE e.expense_id=? AND e.line_user_id=? AND e.status='CONFIRMED' AND (EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.status IN ('PROCESSING','REVIEW')) OR EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.state='IN_FLIGHT'))`).bind(input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน').first<{present:number}>();
+    const blocked=await env.DB.prepare(`SELECT 1 AS present FROM expense_events e WHERE e.expense_id=? AND e.line_user_id=? AND e.status='CONFIRMED' AND (EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.status IN ('PROCESSING','REVIEW')) OR EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND (f.state='IN_FLIGHT' OR (f.state='OWNED' AND f.lease_until>?))))`).bind(input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน',now).first<{present:number}>();
     if(blocked)throw new ExpenseSyncBusyError();
     return null;
   }

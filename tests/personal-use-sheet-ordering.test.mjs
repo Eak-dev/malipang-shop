@@ -97,6 +97,26 @@ test('collision is visible in failed jobs and forced reconcile cannot reset the 
   }finally{h.close();}
 });
 
+test('an unresolved review holds later versions of the same expense or personal transaction',async()=>{
+  for(const entityType of ['PERSONAL_USE','EXPENSE']){
+    const h=harness(),writes=[];
+    try{
+      h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
+      const insert=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,?,0,?,?,NULL,NULL)`);
+      const now='2026-09-06T00:00:00.000Z';
+      insert.run('review_v2',entityType,h.id,2,'trace','REVIEW',now,null);
+      const later={kind:'SHEETS_SYNC',entityType,entityKey:h.id,entityVersion:3,traceId:'trace_v3'};
+      await withSheetWriter(async(_env,data)=>writes.push(data),async()=>{
+        assert.equal(await syncJob(h.env,later),'REVIEW');
+        assert.equal(await syncJob(h.env,later),'REVIEW');
+      });
+      assert.equal(writes.length,0);
+      assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error,attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=3`).get(entityType,h.id)),{status:'REVIEW',last_error:'SHEET_SYNC_ENTITY_REVIEW_HOLD',attempt_count:0});
+      assert.equal(typeof await claimSheetSyncJob(h.env,{...later,entityKey:'unrelated_fixture'}),'string');
+    }finally{h.close();}
+  }
+});
+
 test('personal-use row is safe only for a blank row or the same identity',async()=>{
   const h=harness();
   try{

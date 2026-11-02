@@ -134,8 +134,8 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
   // same D1 statement. Other entity types retain their existing per-version claims.
-  const serializePersonalUse=job.entityType==="PERSONAL_USE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`;
-  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
+  const serializePersonalUse=job.entityType==="PERSONAL_USE",guardReview=serializePersonalUse||job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}${guardReview?` AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`:""}`;
+  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);if(guardReview)claimArgs.push(job.entityType,job.entityKey);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
@@ -144,6 +144,10 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     const held=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
     if(held?.status==="REVIEW")return"REVIEW";
+    if(job.entityType==="EXPENSE"||job.entityType==="PERSONAL_USE"){
+      const blocked=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_ENTITY_REVIEW_HOLD' WHERE entity_type=? AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED') AND EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`).bind(claimNow,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey).run();
+      if(Number(blocked.meta.changes||0)===1)return"REVIEW";
+    }
     return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";
   }
   let personalUse:PersonalUseProjectionRow|null=null,personalUseWriteOutcomeUncertain=false,personalUseAmbiguityLeaseUntil:string|null=null;

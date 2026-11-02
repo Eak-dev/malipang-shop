@@ -18,8 +18,8 @@ export async function claimCorrectionDailyWriteFence(env:Env,sheet:string,nowMs=
   const t=times(env,nowMs);if(!t||!sheet.trim()||sheet.length>200)return null;const token=crypto.randomUUID();
   const result=await env.DB.prepare(`INSERT INTO owner_correction_daily_write_fences(sheet_name,lease_token,lease_until,state,dispatch_id,not_before,updated_at)
     VALUES(?,?,?,'OWNED',NULL,NULL,?) ON CONFLICT(sheet_name) DO UPDATE SET lease_token=excluded.lease_token,lease_until=excluded.lease_until,state='OWNED',dispatch_id=NULL,not_before=NULL,updated_at=excluded.updated_at
-    WHERE owner_correction_daily_write_fences.lease_until<=? AND (owner_correction_daily_write_fences.state='OWNED' OR (owner_correction_daily_write_fences.state='IN_FLIGHT' AND owner_correction_daily_write_fences.not_before<=?))`)
-    .bind(sheet,token,t.until,t.now,t.now,t.now).run();return Number(result.meta.changes||0)===1?token:null;
+    WHERE owner_correction_daily_write_fences.lease_until<=? AND owner_correction_daily_write_fences.state='OWNED'`)
+    .bind(sheet,token,t.until,t.now,t.now).run();return Number(result.meta.changes||0)===1?token:null;
 }
 
 /** Call only after authentication and immediately before a Sheets dispatch. */
@@ -42,7 +42,8 @@ export async function finishCorrectionDailyWriteFence(env:Env,sheet:string,token
     .bind(t.until,t.now,sheet,token,dispatch,t.now).run();return Number(result.meta.changes||0)===1;
 }
 
-/** Unknown outcomes stay fenced until their original uncertainty deadline. */
+/** Unknown outcomes remain fenced until an independently verified resolution.
+ * A timeout or expired lease cannot prove that a paused sender will never send. */
 export async function releaseCorrectionDailyWriteFence(env:Env,sheet:string,token:string):Promise<boolean>{
   if(!sheet||!token)return false;const result=await env.DB.prepare(`DELETE FROM owner_correction_daily_write_fences WHERE sheet_name=? AND lease_token=? AND state='OWNED'`).bind(sheet,token).run();
   return Number(result.meta.changes||0)===1;

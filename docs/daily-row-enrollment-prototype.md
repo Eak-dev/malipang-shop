@@ -68,3 +68,7 @@ uniqueness, one-time consumption, reviewer authority, actual row observation,
 protection and fence lifecycle, metadata creation, recovery and audit. In
 particular, there is no Google Sheets compare-and-swap: double reads and range
 protections alone cannot guarantee owner-edit exclusion.
+
+### Read-only authenticated inspector
+
+`inspectSignedExistingRow` combines the Ed25519 approval verifier with direct D1 reads before and after two authenticated Sheets observations. It pins the reviewer public key, reviewer identifier, spreadsheet, sheet ID and approved month to worker-side configuration. It processes a single entry per call and returns only `CONSISTENT_READ_ONLY` or `HELD`. Tests use a mocked D1 and Google transport and do not establish that a production identity key was provisioned or that a live human reviewer validated the row. A successful result **must never authorize a write**: the lease attributes are only signed data, there is no live lease authority or approval consumption, and nothing prevents owner edits, ABA changes, unversioned or in-flight mutations. Pinning a public key is meaningful only after independently authenticated registration of the private key holder, which this code does not provide. Existing rows lack independently established metadata and manifests; this code does not create or attest them. There is no current safe integration with a real writer.

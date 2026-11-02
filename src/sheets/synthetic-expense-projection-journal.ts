@@ -21,7 +21,7 @@ export class SyntheticExpenseProjectionJournal{
     const result=await this.env.DB.prepare(`INSERT INTO synthetic_expense_projection_journal(spreadsheet_id,expense_id,expense_version,projection,state,operation_token,source_snapshot,updated_at)
       SELECT ?,e.expense_id,e.version,?,'IN_FLIGHT',?,${snapshot},? FROM expense_events e
       WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
-      AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=? AND p.expense_id=e.expense_id AND p.expense_version=e.version AND (p.state IN ('IN_FLIGHT','REVIEW') OR p.source_snapshot<>${snapshot}))
+      AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=? AND p.expense_id=e.expense_id AND (p.state IN ('IN_FLIGHT','REVIEW') OR (p.expense_version=e.version AND p.source_snapshot<>${snapshot})))
       ON CONFLICT(spreadsheet_id,expense_id,expense_version,projection) DO NOTHING`).bind(this.env.GOOGLE_SPREADSHEET_ID,projection,token,now,this.job.entityKey,this.job.entityVersion,this.leaseToken,this.env.GOOGLE_SPREADSHEET_ID).run();
     return Number(result.meta.changes||0)===1?token:null;
   }
@@ -29,7 +29,8 @@ export class SyntheticExpenseProjectionJournal{
     await this.check(projection);if(!token||!/^[0-9a-f]{64}$/.test(evidenceDigest))throw new Error('SYNTHETIC_PROJECTION_EVIDENCE_INVALID');
     const result=await this.env.DB.prepare(`UPDATE synthetic_expense_projection_journal SET state='VERIFIED',evidence_digest=?,updated_at=?
       WHERE spreadsheet_id=? AND expense_id=? AND expense_version=? AND projection=? AND state='IN_FLIGHT' AND operation_token=?
-      AND EXISTS(SELECT 1 FROM expense_events e JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version WHERE e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND ${snapshot}=synthetic_expense_projection_journal.source_snapshot AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token,this.job.entityKey,this.job.entityVersion,this.leaseToken).run();
+      AND EXISTS(SELECT 1 FROM expense_events e JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version WHERE e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND ${snapshot}=synthetic_expense_projection_journal.source_snapshot AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=synthetic_expense_projection_journal.spreadsheet_id AND p.expense_id=synthetic_expense_projection_journal.expense_id AND p.state IN ('IN_FLIGHT','REVIEW') AND (p.expense_version<>synthetic_expense_projection_journal.expense_version OR p.projection<>synthetic_expense_projection_journal.projection))`).bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token,this.job.entityKey,this.job.entityVersion,this.leaseToken).run();
     return Number(result.meta.changes||0)===1;
   }
   async hold(projection:SyntheticProjection,token:string):Promise<boolean>{
@@ -39,6 +40,7 @@ export class SyntheticExpenseProjectionJournal{
     await this.check();const result=await this.env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL
       WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       AND EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=sync_jobs.entity_key AND e.version=sync_jobs.entity_version AND e.status='CONFIRMED'
-        AND (SELECT COUNT(*) FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=? AND p.expense_id=e.expense_id AND p.expense_version=e.version AND p.state='VERIFIED' AND p.source_snapshot=${snapshot} AND p.projection IN ('RAW','DAILY','DETAIL'))=3)`).bind(new Date().toISOString(),this.job.entityKey,this.job.entityVersion,this.leaseToken,this.env.GOOGLE_SPREADSHEET_ID).run();return Number(result.meta.changes||0)===1;
+        AND (SELECT COUNT(*) FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=? AND p.expense_id=e.expense_id AND p.expense_version=e.version AND p.state='VERIFIED' AND p.source_snapshot=${snapshot} AND p.projection IN ('RAW','DAILY','DETAIL'))=3
+        AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=? AND p.expense_id=e.expense_id AND p.state IN ('IN_FLIGHT','REVIEW')))`).bind(new Date().toISOString(),this.job.entityKey,this.job.entityVersion,this.leaseToken,this.env.GOOGLE_SPREADSHEET_ID,this.env.GOOGLE_SPREADSHEET_ID).run();return Number(result.meta.changes||0)===1;
   }
 }

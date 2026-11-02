@@ -2,8 +2,9 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const {parseLedgerGoogleSnapshot,createLedgerGoogleUatProbe}=require('../dist/sheets/ledger-google-probe.js');
+const {parseLedgerGoogleSnapshot,createLedgerGoogleUatProbe,createExpenseRawProductionProbe}=require('../dist/sheets/ledger-google-probe.js');
 const auth=require('../dist/sheets/google-auth.js');
+const client=require('../dist/sheets/client.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
 test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
 const identity={kind:'EXPENSE',sheetId:7,entityId:'expense-1'};
@@ -53,4 +54,14 @@ test('metadata movement between provider reads and unsafe upstream error hold',a
   await assert.rejects(createLedgerGoogleUatProbe(env,'Ledger',identity,44).read(),e=>e.message==='LEDGER_METADATA_READER_UNAVAILABLE'&&!e.message.includes('secret'));
   globalThis.fetch=async()=>new Response(new ReadableStream({start(c){c.error(new Error('secret stream failure'))}}),{status:200});
   await assert.rejects(createLedgerGoogleUatProbe(env,'Ledger',identity,44).read(),e=>e.message==='LEDGER_METADATA_READER_UNAVAILABLE'&&!e.message.includes('secret'));
+});
+test('candidate production reader is read-only and disabled until all flags are explicit',async()=>{
+  let calls=0;const urls=[];auth.getGoogleAccessToken=async()=> 'synthetic-token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));calls++;return new Response(JSON.stringify(calls===2?fixture():metadata()))};
+  const candidate={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_EXPENSE_RAW:'Ledger',SHEET_EXPENSE_DAILY:'Daily',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true',RAW_FULL_IDENTITY_WRITER_ENABLED:'true'};
+  await assert.rejects(createExpenseRawProductionProbe({...candidate,RAW_FULL_IDENTITY_WRITER_ENABLED:undefined},'Ledger',identity,44).read(),/READER_DISABLED/);assert.equal(calls,0);
+  assert.throws(()=>createExpenseRawProductionProbe(candidate,'Other',identity,44),/PROBE_INVALID/);
+  assert.throws(()=>createExpenseRawProductionProbe(candidate,'Ledger',{...identity,kind:'PERSONAL_USE'},44),/PROBE_INVALID/);
+  const result=await createExpenseRawProductionProbe(candidate,'Ledger',identity,44).read();assert.equal(result.witness.metadataId,44);assert.equal(calls,3);
+  assert.equal(urls[1].searchParams.get('ranges'),"'Ledger'!A1:Q10000");assert.equal(urls[0].searchParams.get('fields'),'metadataId,metadataKey,visibility,location');
+  await assert.rejects(client.getRawIdentityProductionMetadata(candidate,'/other?fields=*'),/READER_INVALID/);assert.equal(calls,3);
 });

@@ -1,5 +1,5 @@
 import type {Env} from '../types';
-import {getLedgerUatSnapshotPart} from './client';
+import {getLedgerUatSnapshotPart,getRawIdentityProductionMetadata,getRawIdentityProductionGrid} from './client';
 import {verifyLedgerMetadataWitness,type LedgerCellState,type LedgerMetadataWitness,type LedgerWriteIdentity} from './ledger-metadata-writer';
 import type {LedgerProjectionProbe} from './ledger-stable-projector';
 
@@ -56,14 +56,22 @@ export function parseLedgerGoogleSnapshot(data:unknown,sheetName:string,identity
   return {witness,identityRows,guard:{fields:[...owned[identity.kind]],expected:observed,observed}};
 }
 
-export function createLedgerGoogleUatProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
+function createLedgerGoogleProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,reader:{metadata:()=>Promise<unknown>;grid:()=>Promise<unknown>}):LedgerProjectionProbe{
   if(!sheetName||identity.kind==='PURCHASE_DETAILS'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('LEDGER_UAT_PROBE_INVALID');
   return {async read(){
-    const path=`/developerMetadata/${metadataId}`,before=witnessOf(await getLedgerUatSnapshotPart(env,path));
-    const col=String.fromCharCode(64+limits[identity.kind]),range=`'${sheetName.replace(/'/g,"''")}'!A1:${col}10000`;
-    const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
-    const snapshot=await getLedgerUatSnapshotPart(env,`?${query.toString()}`),after=witnessOf(await getLedgerUatSnapshotPart(env,path));
+    const before=witnessOf(await reader.metadata()),snapshot=await reader.grid(),after=witnessOf(await reader.metadata());
     if(JSON.stringify(before)!==JSON.stringify(after))throw Error('LEDGER_UAT_METADATA_MOVED');
     return parseLedgerGoogleSnapshot(snapshot,sheetName,identity,after);
   }};
+}
+export function createLedgerGoogleUatProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
+  const col=String.fromCharCode(64+limits[identity.kind]),range=`'${sheetName.replace(/'/g,"''")}'!A1:${col}10000`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
+  return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getLedgerUatSnapshotPart(env,`/developerMetadata/${metadataId}`),grid:()=>getLedgerUatSnapshotPart(env,`?${query.toString()}`)});
+}
+/** Candidate production read-only adapter; disabled unless all explicit flags
+ * are set. No route is connected and PERSONAL_USE is not yet supported. */
+export function createExpenseRawProductionProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
+  if(identity.kind!=='EXPENSE'||!sheetName||sheetName!==env.SHEET_EXPENSE_RAW)throw Error('RAW_PRODUCTION_PROBE_INVALID');
+  return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getRawIdentityProductionMetadata(env,metadataId),grid:()=>getRawIdentityProductionGrid(env)});
 }

@@ -53,6 +53,24 @@ export async function writeValuesByMetadataPrototype(env:Env,request:{identity:L
   catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
   if(Number(result?.totalUpdatedRows)!==1 || !Array.isArray(result.responses) || result.responses.length!==1)throw new SheetsMutationOutcomeUnknownError(new Error('LEDGER_METADATA_UPDATE_COUNT_UNKNOWN'));
 }
+/** Full-row shadow adapter only. No runtime route calls this function. A
+ * whole-row baseline, durable source/intent guard and controlled editor
+ * cutover are still required; this method alone is not an atomic CAS. */
+export async function writeRawFullByMetadataUat(env:Env,request:{identity:LedgerWriteIdentity;witness:LedgerMetadataWitness;identityRows:unknown[][];values:readonly unknown[];guard:LedgerWriteGuard;baselineHashes:LedgerBaseline},beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+  if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_FULL_PROJECTION_UAT!=='true'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('RAW_FULL_WRITER_DISABLED');
+  if(!request||!beforeMutationDispatch||request.identity.kind==='PURCHASE_DETAILS')throw new Error('RAW_FULL_REQUEST_INVALID');
+  const size=request.identity.kind==='EXPENSE'?17:request.identity.kind==='PERSONAL_USE'?15:0,fields=request.guard?.fields,keys=Object.keys(request.baselineHashes||{});
+  if(!size||!Array.isArray(fields)||fields.length!==size-1||keys.length!==size-1||Array.from({length:size-1},(_,i)=>i+1).some(i=>!fields.includes(i)||!/^[a-f0-9]{64}$/.test(request.baselineHashes[String(i)]||'')))throw new Error('RAW_FULL_BASELINE_INCOMPLETE');
+  verifyLedgerMetadataWitness(request.identity,request.witness,request.identityRows);
+  const data=buildLedgerMetadataValueRange(request.identity,request.witness.metadataId,request.values,request.guard);
+  const cells:Record<string,LedgerCellValue>={};for(const index of fields)cells[String(index)]=request.guard.observed[index]!.entered;
+  if(!await baselineMatches(request.baselineHashes,cells))throw new Error('RAW_FULL_BASELINE_MISMATCH');
+  let response:Response;
+  try{response=await sheetsFetch(env,'/values:batchUpdateByDataFilter',{method:'POST',body:JSON.stringify({valueInputOption:'RAW',data:[data]})},true,beforeMutationDispatch,true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('RAW_FULL_REQUEST_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw new Error('RAW_FULL_PREFLIGHT_UNAVAILABLE');}
+  let result:{totalUpdatedRows?:unknown;responses?:unknown};try{result=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets full RAW response') as typeof result;}catch{throw new SheetsMutationOutcomeUnknownError(new Error('RAW_FULL_RESPONSE_UNAVAILABLE'));}
+  if(Number(result?.totalUpdatedRows)!==1||!Array.isArray(result.responses)||result.responses.length!==1)throw new SheetsMutationOutcomeUnknownError(new Error('RAW_FULL_UPDATE_COUNT_UNKNOWN'));
+}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true,beforeMutationDispatch);}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);}
@@ -77,6 +95,20 @@ async function identityInspectionGet(env:Env,path:string):Promise<unknown>{
 export async function getLedgerUatSnapshotPart(env:Env,path:string):Promise<unknown>{
   if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('LEDGER_METADATA_READER_DISABLED');
   try{return await identityInspectionGet(env,path);}catch{throw new Error('LEDGER_METADATA_READER_UNAVAILABLE');}
+}
+/** Candidate production read only; no live route calls it. Configuration
+ * flags do not establish editor exclusivity or authorize a mutation. */
+function assertRawIdentityProductionReader(env:Env):void{
+  if(env.RUNTIME_MODE!=='production'||env.RAW_FULL_IDENTITY_WRITER_ENABLED!=='true'||env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_EXPENSE_RAW||!env.SHEET_EXPENSE_DAILY)throw Error('RAW_IDENTITY_READER_DISABLED');
+}
+export async function getRawIdentityProductionMetadata(env:Env,metadataId:number):Promise<unknown>{
+  assertRawIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('RAW_IDENTITY_READER_INVALID');
+  try{return await identityInspectionGet(env,`/developerMetadata/${metadataId}?fields=metadataId,metadataKey,visibility,location`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getRawIdentityProductionGrid(env:Env):Promise<unknown>{
+  assertRawIdentityProductionReader(env);const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1:Q10000`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
 }
 /** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
 export async function getSheetRowCount(env:Env,title:string):Promise<number>{

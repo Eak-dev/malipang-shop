@@ -21,10 +21,12 @@ export interface StablePrototypePort {
    * expire by time and must refuse unresolved prior dispatch even when its
    * metadata disappeared (e.g. a user deleted the row). */
   reserveMetadataId(key:string):Promise<number>;
+  /** Atomic transition VERIFIED -> IN_FLIGHT for a newer source version. */
+  beginMetadataUpdate(key:string,metadataId:number):Promise<boolean>;
   /** D1 CAS: binds unique expense ID and unique metadata ID, never a row number. */
   bindMetadataId(key:string,metadataId:number):Promise<boolean>;
   /** Final CAS only after all postimages. Failures leave the intent held. */
-  finishMetadataIntent(key:string,metadataId:number):Promise<boolean>;
+  finishMetadataIntent(key:string,metadataId:number,baseline:unknown[]):Promise<boolean>;
   writeByMetadata(range:MetadataValueRange):Promise<void>;
   batchUpdate(requests:Array<Record<string,unknown>>):Promise<void>;
 }
@@ -58,6 +60,14 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     const nextMetadata=await port.lookupMetadata(key);
     if(nextMetadata.length!==1||nextMetadata[0]!.row!==metadata[0]!.row||nextMetadata[0]!.metadataId!==metadata[0]!.metadataId)return review('ROW_METADATA_CHANGED_BEFORE_DISPATCH');
   }
+  if(request.verifyOnly){
+    if(plan.status!=='FOUND'||!request.expectedPrevious)return review('VERIFY_ONLY_IDENTITY_MISSING');
+    for(const index of [1,2,3,5,6,7,10,11,12,13,14,15,16,21,22,23]){
+      const a=request.expectedPrevious[index],b=expected[index];
+      if(!((a===null||a===undefined||a==='')&&(b===null||b===undefined||b===''))&&a!==b)return review('SAME_VERSION_SOURCE_MISMATCH');
+    }
+    await port.requireExclusiveWriters();return {status:'VERIFIED'};
+  }
   const monthBlock=block[0]!;
   if(plan.status==='CAPACITY_REQUIRED'&&!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
   let expectedBalance:number|undefined;
@@ -76,6 +86,7 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
       if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
     }
   }
+  else if(!await port.beginMetadataUpdate(key,metadata[0]!.metadataId))return review('UPDATE_INTENT_UNAVAILABLE');
   let reservedMetadataId:number|undefined;
   if(plan.status!=='FOUND'){
     try{reservedMetadataId=await port.reserveMetadataId(key);}catch{return review('METADATA_RESERVATION_UNAVAILABLE');}
@@ -119,7 +130,7 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
       }
     }
     await port.requireExclusiveWriters();
-    if(plan.status!=='FOUND'&&!await port.finishMetadataIntent(key,reservedMetadataId!))return review('INTENT_COMPLETION_UNVERIFIED');
+    if(!await port.finishMetadataIntent(key,plan.status==='FOUND'?metadata[0]!.metadataId:reservedMetadataId!,expected))return review('INTENT_COMPLETION_UNVERIFIED');
     return {status:'VERIFIED'};
   }catch{return review('POSTIMAGE_READ_FAILED');}
 }

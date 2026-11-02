@@ -25,6 +25,8 @@ export interface StableDailyRowRequest {
   allowCreate: boolean;
   /** Previous values, obtained from trusted operation evidence, not the new D1 state. */
   expectedPrevious?: readonly unknown[];
+  /** Same D1 version already projected: verify only; never dispatch a write. */
+  verifyOnly?: boolean;
 }
 export type StableDailyRowPlan =
   | { status: 'FOUND'; observedRow: number }

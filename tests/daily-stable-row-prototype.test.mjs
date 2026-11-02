@@ -17,9 +17,10 @@ function portFor(rows){
   p.readEffectiveSnapshot=async()=>{let balance=50000;return {sheetId:123,body:p.rows.map(row=>{const out=[...row];out[8]=Number(row[5]||0)+Number(row[6]||0)+Number(row[7]||0);out[9]=balance-out[8];balance=out[9];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+Number(row[i]||0),0);out[18]=out[9]-out[17];out[20]=46321;return out;})};};
   p.lookupMetadata=async key=>p.metadata.filter(m=>m.key===key).map(m=>({metadataId:m.id,row:p.rows.indexOf(m.anchor)+1}));
   p.reserveMetadataId=async key=>{if(p.intents.has(key))throw new Error('prior attempt requires review');const id=900+p.metadata.length;p.intents.set(key,{id,state:'IN_FLIGHT'});return id;};
+  p.beginMetadataUpdate=async(key,id)=>{if(p.intents.has(key))return false;p.intents.set(key,{id,state:'IN_FLIGHT'});return true;};
   p.lookupMetadataAtRow=async row=>p.metadata.filter(m=>p.rows.indexOf(m.anchor)===row-1).map(m=>({metadataId:m.id,row}));
   p.bindMetadataId=async(key,id)=>{const m=p.metadata.find(x=>x.id===id),intent=p.intents.get(key);if(!m||!intent||intent.id!==id||intent.state!=='IN_FLIGHT'||m.key||p.metadata.some(x=>x.key===key))return false;m.key=key;return true;};
-  p.finishMetadataIntent=async(key,id)=>{const intent=p.intents.get(key);if(!intent||intent.id!==id||intent.state!=='IN_FLIGHT')return false;intent.state='VERIFIED';return true;};
+  p.finishMetadataIntent=async(key,id,baseline)=>{const intent=p.intents.get(key);if(!intent||intent.id!==id||intent.state!=='IN_FLIGHT')return false;intent.state='VERIFIED';intent.baseline=baseline;return true;};
   p.writeByMetadata=async range=>{
     p.dispatch++;
     if(p.moveBeforeWrite)[p.rows[1],p.rows[2]]=[p.rows[2],p.rows[1]];

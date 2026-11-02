@@ -24,10 +24,14 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord):
   const sheet=env.SHEET_EXPENSE_DAILY,escaped=sheet.replace(/'/g,"''"),snapshot:DailyFenceExpenseSnapshot={expenseId:record.expenseId,version:record.version,transactionDate:record.transactionDate,description:record.description,amountSatang:Math.round(record.amountBaht*100),paymentKey:record.paymentKey,sourceWallet:record.sourceWallet,category:record.category};
   await withCorrectionDailyWriteFence(env,sheet,async(write,token)=>{
     if(!token)throw new DailyCancelReviewRequired('DAILY_STABLE_FENCE_MISSING');
-    // Existing numeric mappings are not evidence of absence or identity.
+    const journal=new StableDailyJournal(env,env.GOOGLE_SPREADSHEET_ID,record.expenseId,record.version),entry=await journal.get();
+    if(entry?.state==='IN_FLIGHT')throw new DailyCancelReviewRequired('DAILY_STABLE_PRIOR_INTENT_REQUIRES_REVIEW');
+    if(entry?.projectedVersion&&entry.projectedVersion>record.version)throw new DailyCancelReviewRequired('DAILY_STABLE_PROJECTED_VERSION_AHEAD');
+    // Numeric legacy mappings do not prove identity. Once a verified stable
+    // identity exists, its metadata ID and baseline are the only authority.
     const prior=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,record.expenseId).first();
-    if(prior)throw new DailyCancelReviewRequired('DAILY_STABLE_LEGACY_REVIEW_REQUIRED');
-    const initialInfo=await stablePrototypeSheetInfo(env,sheet),sheetId=initialInfo.sheetId,journal=new StableDailyJournal(env,env.GOOGLE_SPREADSHEET_ID,record.expenseId,record.version),stableKey=`MALIPANG_EXPENSE:${record.expenseId}`;
+    if(prior&&!entry)throw new DailyCancelReviewRequired('DAILY_STABLE_LEGACY_REVIEW_REQUIRED');
+    const initialInfo=await stablePrototypeSheetInfo(env,sheet),sheetId=initialInfo.sheetId,stableKey=`MALIPANG_EXPENSE:${record.expenseId}`;
     let expectedRowCount=initialInfo.rowCount;
     let reserved:number|undefined;
     const assertFence=async()=>{
@@ -42,8 +46,9 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord):
       lookupMetadata:async key=>{if(key!==stableKey)throw new Error('DAILY_STABLE_ID_MISMATCH');const entry=await journal.get();if(!entry)return[];if(entry.state==='IN_FLIGHT'&&entry.metadataId!==reserved)throw new DailyCancelReviewRequired('DAILY_STABLE_PRIOR_INTENT_REQUIRES_REVIEW');return(await stablePrototypeSearchMetadata(env,{metadataId:entry.metadataId})).filter(m=>m.sheetId===sheetId).map(({metadataId,row})=>({metadataId,row}));},
       lookupMetadataAtRow:async row=>(await stablePrototypeSearchMetadata(env,{metadataKey:'e',metadataLocation:{dimensionRange:{sheetId,dimension:'ROWS',startIndex:row-1,endIndex:row}},locationMatchingStrategy:'EXACT_LOCATION'})).filter(m=>m.sheetId===sheetId).map(({metadataId,row})=>({metadataId,row})),
       reserveMetadataId:async key=>{if(key!==stableKey)throw new Error('DAILY_STABLE_ID_MISMATCH');reserved=await journal.reserve();return reserved;},
+      beginMetadataUpdate:async(key,id)=>{if(key!==stableKey||!entry?.projectedVersion||!await journal.beginUpdate(id,entry.projectedVersion))return false;reserved=id;return true;},
       bindMetadataId:async(key,id)=>key===stableKey&&await journal.matchesReserved(id),
-      finishMetadataIntent:async(key,id)=>key===stableKey&&await journal.finish(id),
+      finishMetadataIntent:async(key,id,baseline)=>key===stableKey&&await journal.finish(id,baseline),
       writeByMetadata:async range=>write(before=>writeDailyByMetadataPrototype(env,range,async()=>{await assertFence();if(before)await before();})),
       batchUpdate:async requests=>{
         const insertions=requests.filter(request=>'insertDimension' in request).length;
@@ -53,7 +58,7 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord):
       }
     };
     const headers=(await stablePrototypeSnapshot(env,`'${escaped}'!A1:W3`,true)),payment=resolvePayment(headers,record.paymentKey,Number(match[1]),Number(match[2]),Number(match[3]));
-    const result=await runStableDailyPrototype('shadow',true,port,{expenseId:record.expenseId,postingMonth:payment.postingMonth,allowCreate:true},{postingYear:payment.postingYear,month:payment.postingMonth,day:payment.postingDay,description:record.description,amountColumn:payment.amountColumn,amountBaht:record.amountBaht,category:record.category,sourceWallet:legacySourceWallet(record.paymentKey,record.sourceWallet)});
+    const result=await runStableDailyPrototype('shadow',true,port,{expenseId:record.expenseId,postingMonth:payment.postingMonth,allowCreate:!entry,...(entry?.baseline?{expectedPrevious:entry.baseline,verifyOnly:entry.projectedVersion===record.version}:{})},{postingYear:payment.postingYear,month:payment.postingMonth,day:payment.postingDay,description:record.description,amountColumn:payment.amountColumn,amountBaht:record.amountBaht,category:record.category,sourceWallet:legacySourceWallet(record.paymentKey,record.sourceWallet)});
     if(result.status!=='VERIFIED')throw new DailyCancelReviewRequired(result.status==='REVIEW'?result.reason:'DAILY_STABLE_OUTCOME_UNKNOWN');
   },undefined,snapshot);
 }

@@ -39,6 +39,7 @@
     "src/sheets/daily-stable-row-prototype.ts",
     "src/sheets/daily-stable-row-shadow.ts",
     "src/sheets/daily-stable-row-journal.ts",
+    "src/sheets/synthetic-expense-projection-journal.ts",
     "src/sheets/sync.ts",
     "src/attendance/service.ts",
     "src/attendance/messages.ts",

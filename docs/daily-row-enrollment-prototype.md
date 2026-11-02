@@ -85,3 +85,38 @@ no D1 mutation, metadata enrollment, queue send, or Sheet write. Disable it
 after a controlled review. Do not enable or provision a reviewer key in
 production until key registration, protection, identity and writer-exclusion
 steps above have been reviewed and a controlled test environment exists.
+
+### Provisional candidate staging (not enrollment)
+
+The separately gated `POST /admin/sheets/daily-identity-candidate` adds a
+`CANDIDATE_ONLY` evidence record after the signed observation; both inspector
+and staging flags must be explicitly enabled. It checks the live D1 sheet fence
+before observing, and atomically rechecks fence ownership, unexpired signed
+approval, the complete expense snapshot, REVIEW status, no active sync and
+index conflicts before staging. Unique indexes prevent active candidate
+collisions; a retained approval ID prevents replay after expiry. The D1 row
+stores hashes rather than signed payload, signature or message ID. It does not
+store a verifiable reviewer archive: an independent private approval service
+and registered keyholder are still needed. No active mapping, metadata write,
+queue message, or REVIEW release is created.
+
+If the staging response is lost or says `HELD` after a possible database
+commit, send the same signed payload to the read-only
+`POST /admin/sheets/daily-identity-candidate-status`. It compares the exact
+approval, signature and pinned-key digests and returns only `CANDIDATE_ONLY`,
+`EXPIRED`, `NOT_OBSERVED` or `UNAVAILABLE`, always with
+`releasePermitted:false`. A negative or unavailable read is not proof that a
+possibly in-flight commit failed; do not blindly repeat a mutation. The route
+does not re-observe Sheets or assert the candidate remains accurate.
+
+This is deliberately not an identity registry or recovery authorization.
+Sheet reads are not atomic with D1; an ABA edit or old writer may change the
+Sheet without participating in the fence. The lease version in the signed
+payload has no independent version source. A provisional candidate therefore
+cannot be used to write, release a hold, or prove a historical row identity.
+Keep both gates off in production until writer exclusion, approval issuance,
+key registration, controlled shadow tests and recovery have been reviewed.
+To roll back a future deployment, disable both flags or revert code; the
+additive candidate table can remain as private audit evidence. Do not delete
+or change candidate records to resolve business data. Reconcile any in-flight
+work separately. Migration `0022` has not been applied to production.

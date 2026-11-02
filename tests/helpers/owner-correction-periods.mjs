@@ -12,3 +12,8 @@ export async function grantSyntheticOpenPeriods(h,id,headers=syntheticCorrection
   const before=JSON.parse(draft.before_json),after=JSON.parse(draft.after_json),digest=await correctionPeriodHeaderDigest(headers);
   for(const period of correctionAccountingPeriods(before,after,headers))h.sqlite.prepare(`INSERT INTO expense_owner_correction_period_decisions(correction_id,period,header_digest,decision,actor_employee_id,created_at) VALUES(?,?,?,'OPEN',?,'2026-10-28T10:00:00.000Z')`).run(id,period,digest,draft.owner_employee_id);
 }
+export function grantSyntheticReportView(h,id,before){
+  const period=before.transactionDate.slice(0,7),view={correctionId:id,sheetId:50,metadataId:51,title:`__MP_REPORT_${id}_${period.replace('-','')}`,period};
+  h.sqlite.prepare(`INSERT INTO expense_owner_correction_report_views(correction_id,expense_id,expense_version,period,sheet_id,sheet_title,metadata_id,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,'ACTIVE','now','now')`).run(id,before.expenseId,before.version,period,view.sheetId,view.title,view.metadataId);
+  return view;
+}

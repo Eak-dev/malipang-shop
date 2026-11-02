@@ -5,12 +5,14 @@ import {isIsoDate} from "../shared/time";
 import {batchGetSheetFormulaValues,batchGetSheetSerialValues,getSheetId,getSheetRowMetadataById,type SheetRowMetadata} from "./client";
 import {legacySourceWallet,resolvePayment} from "./daily-expense";
 import {matchesOwnerCorrectionIdentity} from "./owner-correction-identity";
+import type {CorrectionReportView} from "./owner-correction-report-view";
 
 // The formulas were read from the private report test copy. Any drift fails closed.
 const formulaDigest="5aa6fbf7b33d26783d2ff0fc58fa385131bc110f5b961416a08d9fe4afb3d203";
 const flowFormulaDigest="7477383cebb25e383af88b6bb10564bbde0c79a1c898baccf8acc83c588b445f";
 const formulaRanges=["'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5","'35_EXPENSE_FLOW_CHECK'!B5:G65","'รายวัน'!A:W"];
 const valueRanges=["'04_OWNER_MONTH_CLOSE'!C2","'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2:H4500","'V52_EXPENSE_RAW'!A2:Q","'รายละเอียดการซื้อ'!A2:Q","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5:G65","'รายวัน'!A:W"];
+const quote=(name:string)=>`'${name.replace(/'/g,"''")}'`;
 interface Ports{formulas:typeof batchGetSheetFormulaValues;values:typeof batchGetSheetSerialValues;digest:(value:unknown)=>Promise<string>;metadata:(env:Env,id:number)=>Promise<SheetRowMetadata|null>;sheetId:(env:Env,name:string)=>Promise<number>}
 interface FlowRow{date:string;dailyAmount:number|null;cleanAmount:number|null;difference:number|null;status:string;dailyCount:number|null;cleanCount:number|null}
 export interface CorrectionReportSnapshot{month:string;expenseId:string;date:string;postingDate:string;description:string;amountSatang:number;wallet:string;category:string;total:number;categories:number[];bankTotal:number;otherRowsDigest:string;targetEvidenceDigest:string;formulaDigest:string;flowFormulaDigest:string;flowAlert:string;flow:FlowRow[]}
@@ -24,13 +26,17 @@ function day(value:unknown):string|null{
 }
 
 /** Capture stable report evidence for a modern expense with at most one verifiable detail row. */
-export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrectionSnapshot,dailyMetadataId:number,ports:Ports=defaults):Promise<CorrectionReportSnapshot|null>{
-  if(env.SHEET_EXPENSE_DAILY!=="รายวัน"||env.SHEET_EXPENSE_RAW!=="V52_EXPENSE_RAW"||(env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ")!=="รายละเอียดการซื้อ"||!snapshot.expenseId||snapshot.status!=="CONFIRMED"||!Number.isSafeInteger(snapshot.amountSatang)||snapshot.amountSatang<=0||!Number.isSafeInteger(dailyMetadataId)||dailyMetadataId<1||!isIsoDate(snapshot.transactionDate)||snapshot.transactionDate<"2026-09-01")return null;
-  const read=async()=>Promise.all([ports.formulas(env,formulaRanges),ports.values(env,valueRanges),ports.metadata(env,dailyMetadataId),ports.sheetId(env,env.SHEET_EXPENSE_DAILY)]),first=await read(),second=await read();
+export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrectionSnapshot,dailyMetadataId:number,ports:Ports=defaults,view?:CorrectionReportView):Promise<CorrectionReportSnapshot|null>{
+  if(env.SHEET_EXPENSE_DAILY!=="รายวัน"||env.SHEET_EXPENSE_RAW!=="V52_EXPENSE_RAW"||(env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ")!=="รายละเอียดการซื้อ"||!snapshot.expenseId||snapshot.status!=="CONFIRMED"||!Number.isSafeInteger(snapshot.amountSatang)||snapshot.amountSatang<=0||!Number.isSafeInteger(dailyMetadataId)||dailyMetadataId<1||!isIsoDate(snapshot.transactionDate)||snapshot.transactionDate<"2026-08-01")return null;
+  if(view&&(!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(view.correctionId)||view.title!==`__MP_REPORT_${view.correctionId}_${view.period.replace("-","")}`||view.period!==snapshot.transactionDate.slice(0,7)||!Number.isSafeInteger(view.sheetId)||view.sheetId<1||!Number.isSafeInteger(view.metadataId)||view.metadataId<1))return null;
+  const monthSheet=view?quote(view.title):"'04_OWNER_MONTH_CLOSE'",formulasToRead=view?[...formulaRanges,`${monthSheet}!B12`,`${monthSheet}!C24:C35`,`${monthSheet}!L14`]:formulaRanges;
+  const valuesToRead=view?[`${monthSheet}!C2`,`${monthSheet}!B12`,`${monthSheet}!C24:C35`,`${monthSheet}!L14`,...valueRanges.slice(4)]:valueRanges;
+  const read=async()=>Promise.all([ports.formulas(env,formulasToRead),ports.values(env,valuesToRead),ports.metadata(env,dailyMetadataId),ports.sheetId(env,env.SHEET_EXPENSE_DAILY)]),first=await read(),second=await read();
   if(JSON.stringify(first)!==JSON.stringify(second))return null;
-  const [formulaValues,values,metadata,dailySheetId]=first;if(formulaValues.length!==8||values.length!==10||!metadata||metadata.metadataId!==dailyMetadataId||metadata.metadataKey!=="malipang_expense_daily"||metadata.metadataValue!==snapshot.expenseId||metadata.sheetId!==dailySheetId)return null;
+  const [formulaValues,values,metadata,dailySheetId]=first;if(formulaValues.length!==(view?11:8)||values.length!==10||!metadata||metadata.metadataId!==dailyMetadataId||metadata.metadataKey!=="malipang_expense_daily"||metadata.metadataValue!==snapshot.expenseId||metadata.sheetId!==dailySheetId)return null;
   const formulas=formulaValues.slice(0,4).flatMap(rows=>rows.map(row=>row[0])),flowFormulas=formulaValues.slice(4,7).flatMap(rows=>rows.flatMap(row=>row)),dailyFormulas=formulaValues[7]||[];
   if(formulas.length!==15||formulas.some(value=>typeof value!=="string")||formulas.some(value=>(value as string).includes(snapshot.expenseId))||await ports.digest(formulas)!==formulaDigest)return null;
+  if(view){const viewFormulas=formulaValues.slice(8,11).flatMap(rows=>rows.map(row=>row[0]));if(JSON.stringify(viewFormulas)!==JSON.stringify(formulas.slice(0,14)))return null;}
   if(flowFormulas.length!==368||flowFormulas.some(value=>typeof value!=="string")||await ports.digest(flowFormulas)!==flowFormulaDigest)return null;
   const selected=day(values[0]?.[0]?.[0]),total=money(values[1]?.[0]?.[0]),categories=(values[2]||[]).map(row=>money(row[0])),bankTotal=money(values[3]?.[0]?.[0]);
   if(!selected||selected.slice(0,7)!==snapshot.transactionDate.slice(0,7)||total===null||bankTotal===null||categories.length!==12||categories.some(value=>value===null))return null;

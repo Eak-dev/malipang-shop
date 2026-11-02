@@ -46,6 +46,17 @@ test('daily totals may recalculate but other inputs and formula definitions may 
   const a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,b),true);
   next.formulas[7][10][7]='=SUM(H4:H9)';const altered=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,altered),false);
 });
+test('modern report snapshots include August but hold earlier legacy rows',async()=>{
+  const august={...before,transactionDate:'2026-08-15'},legacy={...before,transactionDate:'2026-07-15'},a=fixture(august),b=fixture(legacy);
+  assert.ok(await captureOwnerCorrectionReport(a.env,august,42,a.ports));assert.equal(await captureOwnerCorrectionReport(b.env,legacy,42,b.ports),null);
+});
+test('a private month view uses the same report formulas without changing the visible month',async()=>{
+  const f=fixture(),view={correctionId:'owner_correction_synthetic_123',sheetId:50,metadataId:51,title:'__MP_REPORT_owner_correction_synthetic_123_202610',period:'2026-10'},source=f.ports.formulas;let requested=[];
+  f.ports.formulas=async(env,ranges)=>{requested=ranges;const base=await source(env,ranges);return [...base,...structuredClone(base.slice(0,3))]};
+  assert.ok(await captureOwnerCorrectionReport(f.env,before,42,f.ports,view));assert.ok(requested.some(range=>range.includes(view.title)));
+  f.ports.formulas=async(env,ranges)=>{const base=await source(env,ranges),copy=structuredClone(base.slice(0,3));copy[0][0][0]='changed formula';return [...base,...copy]};
+  assert.equal(await captureOwnerCorrectionReport(f.env,before,42,f.ports,view),null);
+});
 
 test('the flow check must reflect amount changes on both daily and clean rows',async()=>{
   const initial={...before,transactionDate:'2026-11-01'},updated={...initial,amountSatang:210000},old=fixture(initial),next=fixture(updated),a=await captureOwnerCorrectionReport(old.env,initial,42,old.ports),b=await captureOwnerCorrectionReport(next.env,updated,42,next.ports);

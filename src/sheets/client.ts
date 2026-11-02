@@ -93,6 +93,15 @@ export async function getSheetRowMetadataById(env:Env,id:number):Promise<SheetRo
   if(metadata.metadataId!==id||!metadata.metadataKey||!metadata.metadataValue||!range||!Number.isSafeInteger(range.sheetId)||Number(range.sheetId)<0||range.dimension!=="ROWS"||!Number.isSafeInteger(range.startIndex)||Number(range.startIndex)<0||range.endIndex!==Number(range.startIndex)+1)throw new Error("INVALID_ROW_METADATA");
   return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(range.sheetId),rowIndex:Number(range.startIndex)};
 }
+export interface SheetIdentityMetadata{metadataId:number;metadataKey:string;metadataValue:string;sheetId:number}
+/** Verify a metadata marker attached to a whole sheet, not a row. */
+export async function getSheetIdentityMetadataById(env:Env,id:number):Promise<SheetIdentityMetadata|null>{
+  if(!Number.isSafeInteger(id)||id<1)throw new Error("INVALID_METADATA_ID");
+  let response:Response;try{response=await sheetsFetch(env,`/developerMetadata/${id}`,{method:"GET"});}catch(error){if(error instanceof SheetsHttpError&&error.status===404)return null;throw error;}
+  const metadata=await response.json() as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{sheetId?:number;dimensionRange?:unknown}};
+  if(metadata.metadataId!==id||!metadata.metadataKey||!metadata.metadataValue||!Number.isSafeInteger(metadata.location?.sheetId)||Number(metadata.location?.sheetId)<0||metadata.location?.dimensionRange!==undefined)throw new Error("INVALID_SHEET_METADATA");
+  return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(metadata.location!.sheetId)};
+}
 /** Create associations only after the caller has reverified each row identity. */
 export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[]):Promise<SheetRowMetadata[]>{
   if(!rows.length)return [];
@@ -169,6 +178,14 @@ export async function getSheetId(env:Env,title:string):Promise<number>{
   const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;
   if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
   return Number(found);
+}
+export interface BasicSheetProperties{sheetId:number;title:string;hidden:boolean}
+/** Includes hidden tabs, and rejects duplicate or malformed sheet identities. */
+export async function getAllSheetProperties(env:Env):Promise<BasicSheetProperties[]>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title,hidden)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string;hidden?:boolean}}>};
+  const ids=new Set<number>(),titles=new Set<string>();return(data.sheets||[]).map(item=>{const p=item.properties,id=Number(p?.sheetId),title=p?.title;
+    if(!p||!Number.isSafeInteger(id)||id<0||typeof title!=="string"||!title||ids.has(id)||titles.has(title)||(p.hidden!==undefined&&typeof p.hidden!=="boolean"))throw new Error("INVALID_SHEET_PROPERTIES");
+    ids.add(id);titles.add(title);return{sheetId:id,title,hidden:p.hidden===true};});
 }
 export async function bootstrapSheets(env:Env):Promise<void>{
   const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));

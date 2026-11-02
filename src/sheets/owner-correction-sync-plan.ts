@@ -2,10 +2,11 @@ import {buildMetadataRowPatchRequest,type MetadataRowPatch} from "./client";
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
 import {ownerCorrectionReportMatches,type CorrectionReportSnapshot} from "./owner-correction-report-snapshot";
 import type {CorrectionCellGuard} from "./owner-correction-cell-protection";
+import type {CorrectionReportView} from "./owner-correction-report-view";
 
 export interface CorrectionSyncOriginalRow{metadataId:number;values:unknown[]}
 export interface CorrectionSyncRebind{sourceMetadataId:number;reservationMetadataId:number;sheetId:number;correctionId:string}
-export interface CorrectionSyncPlan{expenseId:string;dailyMetadataId:number;rawMetadataId:number;patches:MetadataRowPatch[];originalRows:CorrectionSyncOriginalRow[];rebind:CorrectionSyncRebind|null;headerDigest?:string;reportBaseline?:CorrectionReportSnapshot;cellGuards?:{correctionId:string;guards:CorrectionCellGuard[]}}
+export interface CorrectionSyncPlan{expenseId:string;dailyMetadataId:number;rawMetadataId:number;patches:MetadataRowPatch[];originalRows:CorrectionSyncOriginalRow[];rebind:CorrectionSyncRebind|null;headerDigest?:string;reportBaseline?:CorrectionReportSnapshot;cellGuards?:{correctionId:string;guards:CorrectionCellGuard[]};reportView?:CorrectionReportView}
 const allowed=[1,2,3,4,5,6,7,10,11,12,13,14,15,16,21,22];
 const dailyColumns=new Set([1,2,3,5,6,7,10,11,12,13,14,15,16,21,22]),rawColumns=new Set([1,2,3,4,5,6]),itemColumns=new Set([3,12,13,14]);
 
@@ -25,6 +26,7 @@ export function serializeCorrectionSyncPlan(plan:CorrectionSyncPlan,expenseId:st
   if(!plan||plan.expenseId!==expenseId||!correctionId||!Array.isArray(plan.patches)||!plan.patches.length||plan.patches.length>300||!Array.isArray(plan.originalRows)||plan.originalRows.length!==plan.patches.length)return null;
   if(plan.headerDigest!==undefined&&!/^[0-9a-f]{64}$/.test(plan.headerDigest))return null;
   if(plan.reportBaseline!==undefined&&(plan.reportBaseline.expenseId!==expenseId||!ownerCorrectionReportMatches(plan.reportBaseline,plan.reportBaseline)))return null;
+  if(plan.reportView){const v=plan.reportView;if(!plan.reportBaseline||v.correctionId!==correctionId||v.period!==plan.reportBaseline.month||v.title!==`__MP_REPORT_${correctionId}_${v.period.replace("-","")}`||!Number.isSafeInteger(v.sheetId)||v.sheetId<1||!Number.isSafeInteger(v.metadataId)||v.metadataId<1)return null;}
   try{buildMetadataRowPatchRequest(plan.patches,allowed);}catch{return null;}
   const patchIds=new Set(plan.patches.map(row=>row.metadataId)),originalIds=new Set<number>();
   if(!Number.isSafeInteger(plan.dailyMetadataId)||plan.dailyMetadataId<1||!Number.isSafeInteger(plan.rawMetadataId)||plan.rawMetadataId<1||plan.dailyMetadataId===plan.rawMetadataId||!patchIds.has(plan.dailyMetadataId)||!patchIds.has(plan.rawMetadataId))return null;

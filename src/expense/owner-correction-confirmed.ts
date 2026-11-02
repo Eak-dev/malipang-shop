@@ -7,13 +7,14 @@ import {inspectOwnerCorrectionCategoryProtection} from "../sheets/owner-correcti
 import {inspectOwnerCorrectionReportDeduplication} from "../sheets/owner-correction-report-inspection";
 import {bootstrapStableOwnerCorrectionTargets} from "../sheets/owner-correction-stable-bootstrap";
 import {ensureOwnerCorrectionCellGuards} from "../sheets/owner-correction-cell-guard-service";
+import {ensureOwnerCorrectionReportView} from "../sheets/owner-correction-report-view";
 import {correctionPeriodHeaderDigest} from "./owner-correction-period-math";
 import {inspectOwnerCorrectionPeriods} from "./owner-correction-periods";
 import {commitOwnerCorrection,loadOwnerCorrectionDraft,ownerCorrectionStatus} from "./owner-correction-repository";
 import type {OwnerCorrectionSnapshot} from "./owner-correction";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 
-export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"UNSUPPORTED";
+export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"REPORT_PENDING"|"UNSUPPORTED";
 export interface ConfirmedCorrectionPorts{
   periods:typeof inspectOwnerCorrectionPeriods;
   headers:typeof getSheetValues;
@@ -22,12 +23,13 @@ export interface ConfirmedCorrectionPorts{
   posting:typeof loadExpenseDailyPosting;
   bootstrap:typeof bootstrapStableOwnerCorrectionTargets;
   guards:typeof ensureOwnerCorrectionCellGuards;
+  view:typeof ensureOwnerCorrectionReportView;
   plan:typeof prepareVerifiedSameMonthCorrectionPlan;
   commit:typeof commitOwnerCorrection;
   enqueue:typeof enqueueSheetSync;
   status:typeof ownerCorrectionStatus;
 }
-const defaults:ConfirmedCorrectionPorts={periods:inspectOwnerCorrectionPeriods,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection,dedupe:inspectOwnerCorrectionReportDeduplication,posting:loadExpenseDailyPosting,bootstrap:bootstrapStableOwnerCorrectionTargets,guards:ensureOwnerCorrectionCellGuards,plan:prepareVerifiedSameMonthCorrectionPlan,commit:commitOwnerCorrection,enqueue:enqueueSheetSync,status:ownerCorrectionStatus};
+const defaults:ConfirmedCorrectionPorts={periods:inspectOwnerCorrectionPeriods,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection,dedupe:inspectOwnerCorrectionReportDeduplication,posting:loadExpenseDailyPosting,bootstrap:bootstrapStableOwnerCorrectionTargets,guards:ensureOwnerCorrectionCellGuards,view:ensureOwnerCorrectionReportView,plan:prepareVerifiedSameMonthCorrectionPlan,commit:commitOwnerCorrection,enqueue:enqueueSheetSync,status:ownerCorrectionStatus};
 const quote=(value:string)=>`'${value.replace(/'/g,"''")}'`;
 
 /** Prepare and commit independently verified, same-month and same-row edits. */
@@ -45,13 +47,16 @@ export async function confirmOwnerCorrection(env:Env,owner:OwnerReviewIdentity,i
   if(!await ports.dedupe(env,before,after))return "DUPLICATE";
   const posting=await ports.posting(env,before.expenseId);if(posting.items.length>1)return "ALLOCATION";
   const linked=await ports.bootstrap(env,owner,id,before);if(linked==="PENDING")return "METADATA_PENDING";if(linked==="STALE")return "STALE";if(linked!=="READY")return "SHEET_REVIEW";
-  let plan=await ports.plan(env,before,after,id);if(!plan)return "SHEET_REVIEW";
+  const report=await ports.view(env,owner,id,before,before.transactionDate.slice(0,7));if(report.kind==="PENDING")return "REPORT_PENDING";if(report.kind==="STALE")return "STALE";if(report.kind!=="READY")return "SHEET_REVIEW";
+  let plan=await ports.plan(env,before,after,id,undefined,report.view);if(!plan)return "SHEET_REVIEW";
   const guard=await ports.guards(env,owner,id,before,plan);if(guard.kind==="PENDING")return "GUARD_PENDING";if(guard.kind==="STALE")return "STALE";if(guard.kind!=="READY")return "PROTECTION";
   if(guard.guards.length){
-    const fresh=await ports.plan(env,before,after,id);if(!fresh||JSON.stringify(fresh)!==JSON.stringify(plan))return "SHEET_REVIEW";
+    const fresh=await ports.plan(env,before,after,id,undefined,report.view);if(!fresh||JSON.stringify(fresh)!==JSON.stringify(plan))return "SHEET_REVIEW";
     const checked=await ports.guards(env,owner,id,before,fresh);if(checked.kind!=="READY"||JSON.stringify(checked.guards)!==JSON.stringify(guard.guards))return "PROTECTION";
     plan={...fresh,cellGuards:{correctionId:id,guards:checked.guards}};
   }
+  const reportAgain=await ports.view(env,owner,id,before,before.transactionDate.slice(0,7));if(reportAgain.kind!=="READY"||JSON.stringify(reportAgain.view)!==JSON.stringify(report.view))return "SHEET_REVIEW";
+  plan={...plan,reportView:report.view};
   const rechecked=await ports.periods(env,owner,id);
   if(!rechecked||rechecked.headerDigest!==periods.headerDigest)return "STALE";if(rechecked.periods.some(item=>item.decision!=="OPEN"))return "PERIOD_REVIEW";
   if(!await ports.protection(env))return "PROTECTION";

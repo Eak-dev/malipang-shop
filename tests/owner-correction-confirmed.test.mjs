@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
-import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
+import {grantSyntheticOpenPeriods,grantSyntheticReportView,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
 import {commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerExpense,ownerCorrectionStatus} from '../dist/expense/owner-correction-repository.js';
 import {inspectOwnerCorrectionPeriods} from '../dist/expense/owner-correction-periods.js';
 import {confirmOwnerCorrection} from '../dist/expense/owner-correction-confirmed.js';
@@ -17,10 +17,10 @@ async function setup(){
   const h=ownerOrderFixture();Object.assign(h.env,{OWNER_EXPENSE_CORRECTION_ENABLED:'true',SHEET_EXPENSE_DAILY:'daily'});
   h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
     VALUES('exp_confirmed_owner','msg_confirmed_owner','fixture_staff','Driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
-  const before=await loadOwnerExpense(h.env,owner,'exp_confirmed_owner'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport');await grantSyntheticOpenPeriods(h,id);
+  const before=await loadOwnerExpense(h.env,owner,'exp_confirmed_owner'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport');await grantSyntheticOpenPeriods(h,id);const view=grantSyntheticReportView(h,id,before);
   const plan={expenseId:before.expenseId,dailyMetadataId:1,rawMetadataId:2,patches:[{metadataId:1,cells:[{columnIndex:21,value:'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows:[{metadataId:1,values:Array(22).fill(null)},{metadataId:2,values:[null,null,null,null,null,null,'general']}],rebind:null,headerDigest:syntheticCorrectionHeaderDigest,reportBaseline:syntheticCorrectionReport(before)};
   const enqueued=[],headerPorts={headers:async()=>syntheticCorrectionHeaders()};
-  const ports={periods:(env,actor,key)=>inspectOwnerCorrectionPeriods(env,actor,key,Date.now(),headerPorts),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true,dedupe:async()=>true,posting:async()=>({items:[]}),bootstrap:async()=>'READY',guards:async()=>({kind:'READY',guards:[]}),plan:async()=>plan,commit:commitOwnerCorrection,enqueue:async(_env,job)=>{enqueued.push(job)},status:ownerCorrectionStatus};
+  const ports={periods:(env,actor,key)=>inspectOwnerCorrectionPeriods(env,actor,key,Date.now(),headerPorts),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true,dedupe:async()=>true,posting:async()=>({items:[]}),bootstrap:async()=>'READY',guards:async()=>({kind:'READY',guards:[]}),view:async()=>({kind:'READY',view}),plan:async()=>plan,commit:commitOwnerCorrection,enqueue:async(_env,job)=>{enqueued.push(job)},status:ownerCorrectionStatus};
   return {...h,before,id,plan,ports,enqueued};
 }
 test('confirmed correction checks gates, atomically saves and queues exactly once',async()=>{
@@ -44,7 +44,7 @@ test('failed enqueue preserves the committed outbox for scheduled recovery',asyn
   }finally{h.close()}
 });
 test('each missing safety condition keeps the confirmed expense unchanged',async()=>{
-  for(const [mode,want] of [['period','PERIOD_REVIEW'],['protection','PROTECTION'],['duplicate','DUPLICATE'],['allocation','ALLOCATION'],['metadataPending','METADATA_PENDING'],['metadataReview','SHEET_REVIEW'],['plan','SHEET_REVIEW'],['flag','UNSUPPORTED']]){
+  for(const [mode,want] of [['period','PERIOD_REVIEW'],['protection','PROTECTION'],['duplicate','DUPLICATE'],['allocation','ALLOCATION'],['metadataPending','METADATA_PENDING'],['metadataReview','SHEET_REVIEW'],['viewPending','REPORT_PENDING'],['viewReview','SHEET_REVIEW'],['plan','SHEET_REVIEW'],['flag','UNSUPPORTED']]){
     const h=await setup();try{
       if(mode==='period')h.sqlite.exec('DELETE FROM expense_owner_correction_period_decisions');
       if(mode==='protection')h.ports.protection=async()=>false;
@@ -52,6 +52,8 @@ test('each missing safety condition keeps the confirmed expense unchanged',async
       if(mode==='allocation')h.ports.posting=async()=>({items:[{},{}]});
       if(mode==='metadataPending')h.ports.bootstrap=async()=>'PENDING';
       if(mode==='metadataReview')h.ports.bootstrap=async()=>'REVIEW';
+      if(mode==='viewPending')h.ports.view=async()=>({kind:'PENDING'});
+      if(mode==='viewReview')h.ports.view=async()=>({kind:'REVIEW'});
       if(mode==='plan')h.ports.plan=async()=>null;
       if(mode==='flag')h.env.SHEETS_SYNC_ENABLED='false';
       assert.equal(await confirmOwnerCorrection(h.env,owner,h.id,1,'trace',h.ports),want,mode);assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
@@ -64,6 +66,12 @@ test('a newer expense snapshot or a hold during preparation prevents commit',asy
     else{const read=h.ports.periods;let calls=0;h.ports.periods=async(...args)=>{const result=await read(...args);if(++calls===2)result.periods[0].decision='HOLD';return result};}
     const result=await confirmOwnerCorrection(h.env,owner,h.id,1,'trace',h.ports);assert.equal(result,mode==='hold'?'PERIOD_REVIEW':'STALE');assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
   }finally{h.close()}}
+});
+test('a report view that loses its D1 reservation before commit cannot authorize an edit',async()=>{
+  const h=await setup();try{
+    const view=h.ports.view;let calls=0;h.ports.view=async(...args)=>{const result=await view(...args);if(++calls===2)h.sqlite.exec("UPDATE expense_owner_correction_report_views SET state='REVIEW'");return result};
+    assert.equal(await confirmOwnerCorrection(h.env,owner,h.id,1,'trace',h.ports),'STALE');assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
+  }finally{h.close()}
 });
 test('LINE displays the final old/new comparison and only the final owner action starts the durable job',async()=>{
   const h=await setup();try{
@@ -90,7 +98,7 @@ test('historic identity recovery, owner confirmation and queue reconciliation wo
     const rows=new Map(h.plan.originalRows.map(row=>[row.metadataId,[...row.values]]));
     const inspectPorts={sheetId:async(_env,name)=>({daily:1,raw:2,detail:3})[name],metadata:async(_env,key)=>metadata.filter(m=>m.metadataKey===key),rows:async()=>new Map([...rows].map(([id,values])=>[id,[...values]])),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true};
     const after={...h.before,category:'transport'},report=structuredClone(h.plan.reportBaseline);report.category='transport';report.categories[10]=0;report.categories[7]=2000;
-    const recPorts={saved:async()=>({before:h.before,after}),posting:async()=>({expense:h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_confirmed_owner'").get()}),projection:async()=>true,placement:async()=>true,report:async()=>report,protection:async()=>true};
+    const recPorts={saved:async()=>({before:h.before,after}),posting:async()=>({expense:h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_confirmed_owner'").get()}),projection:async()=>true,placement:async()=>true,report:async()=>report,protection:async()=>true,view:async()=>'VERIFIED'};
     const worker={now:()=>Date.now(),inspect:plan=>inspectOwnerCorrectionTargets(h.env,plan,inspectPorts),patch:async(plan,beforeDispatch)=>{await beforeDispatch();for(const patch of plan.patches)for(const cell of patch.cells)rows.get(patch.metadataId)[cell.columnIndex]=cell.value},inspectRebind:async()=>{throw Error('unexpected move')},rebind:async()=>{throw Error('unexpected move')},reconcile:(plan,job)=>reconcileOwnerCorrection(h.env,plan,job,recPorts)};
     assert.equal(await processOwnerCorrectionJob(h.env,{expenseId:h.before.expenseId,version:2},worker),'COMPLETED');assert.equal(await ownerCorrectionStatus(h.env,owner,h.id),'COMPLETED');
     assert.equal(rows.get(1)[21],'transport');assert.equal(rows.get(2)[6],'transport');assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,1);

@@ -10,6 +10,7 @@ import {classifyCorrectionPatchOutcome} from "./owner-correction-recovery";
 import {correctionRawPatchMatches,serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "./owner-correction-sync-plan";
 import {loadExpenseDailyPosting} from "./sync";
 import {captureOwnerCorrectionReport} from "./owner-correction-report-snapshot";
+import type {CorrectionReportView} from "./owner-correction-report-view";
 
 interface Ports {
   existing:typeof inspectOwnerCorrectionExistingTargets;
@@ -21,11 +22,11 @@ interface Ports {
 }
 
 /** A report baseline is required before a same-month plan may be committed. */
-export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot,correctionId:string,ports:{plan:typeof prepareSameMonthCorrectionPlan;report:typeof captureOwnerCorrectionReport}={plan:prepareSameMonthCorrectionPlan,report:captureOwnerCorrectionReport}):Promise<CorrectionSyncPlan|null>{
+export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot,correctionId:string,ports:{plan:typeof prepareSameMonthCorrectionPlan;report:typeof captureOwnerCorrectionReport}={plan:prepareSameMonthCorrectionPlan,report:captureOwnerCorrectionReport},view?:CorrectionReportView):Promise<CorrectionSyncPlan|null>{
   // A single selected month cannot prove both sides of a calendar-month move.
   if(before.transactionDate.slice(0,7)!==after.transactionDate.slice(0,7))return null;
   const plan=await ports.plan(env,before,after,correctionId);if(!plan||plan.rebind)return null;
-  const first=await ports.report(env,before,plan.dailyMetadataId),second=await ports.report(env,before,plan.dailyMetadataId);
+  const first=await ports.report(env,before,plan.dailyMetadataId,undefined,view),second=await ports.report(env,before,plan.dailyMetadataId,undefined,view);
   if(!first||!second||JSON.stringify(first)!==JSON.stringify(second))return null;
   const verified={...plan,reportBaseline:first};return serializeCorrectionSyncPlan(verified,before.expenseId,correctionId)?verified:null;
 }

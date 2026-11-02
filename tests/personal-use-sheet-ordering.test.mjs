@@ -752,7 +752,7 @@ test('expense raw identity guard fails closed for stale, occupied, duplicate and
 test('expense raw collision is held before any sheet write or daily cancellation',async()=>{
   const h=harness(),id='expense_guard_collision',writes=[],now='2026-10-04T00:00:00.000Z';
   try{
-    h.env.SHEET_EXPENSE_RAW='V52_EXPENSE_RAW';
+    h.env.SHEET_EXPENSE_RAW='V52_EXPENSE_RAW';h.env.SHEET_EXPENSE_DAILY='daily_fixture';
     h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES(?,?,?,'synthetic',100,'cash','CASH_DRAWER','ingredients','2026-10-04','CANCELLED','trace_fixture',?,1)`).run(id,'message_expense_guard','user_expense_guard',now);
     sheetsClient.batchGetSheetFormulaValues=async()=>[[['unrelated_id']],[['unrelated_id','2026-10-04']]];
     const request={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:1,traceId:'trace_expense_guard'};

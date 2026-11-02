@@ -24,11 +24,27 @@ class PersonalUseRowReviewRequired extends Error{
 class ExpenseRawRowReviewRequired extends Error{
   constructor(reason:string){super(reason);this.name="ExpenseRawRowReviewRequired";}
 }
+class ExpenseWriteFenceUnavailableError extends Error{
+  constructor(){super("EXPENSE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="ExpenseWriteFenceUnavailableError";}
+}
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
   return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
 }
 export function buildPersonalUseRawSheetValues(item:Record<string,unknown>):unknown[]{
   return[item.personal_use_id,item.transaction_type,item.transaction_date,item.description,baht(item.amount_satang),item.source_wallet,item.status,item.message_id,item.trace_id,item.submitted_by_employee_id,item.branch_id,item.approved_at,item.created_at,item.updated_at,item.version];
+}
+/** Do not update raw when the daily mirror is already known to be unsafe.
+ * This is a point-in-time D1 check, not a cross-system transaction or Sheets
+ * CAS: an old worker can still dispatch after the check. */
+async function assertExpensePreflight(env:Env,job:SheetsSyncJob,leaseToken:string,expected:unknown[]):Promise<void>{
+  if(!env.SHEET_EXPENSE_DAILY)throw new DailyCancelReviewRequired("EXPENSE_DAILY_SHEET_NOT_CONFIGURED");
+  const current=await env.DB.prepare(`SELECT e.*,
+    EXISTS(SELECT 1 FROM sheet_row_index r WHERE r.sheet_name=? AND (r.entity_key=e.expense_id OR substr(r.entity_key,1,length(e.expense_id)+1)=e.expense_id || '|')) AS daily_mapped,
+    EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=? AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>?) AS lease_owned
+    FROM expense_events e WHERE e.expense_id=?`).bind(env.SHEET_EXPENSE_DAILY,job.entityVersion,leaseToken,new Date().toISOString(),job.entityKey).first<Record<string,unknown>>();
+  if(!current||Number(current.lease_owned||0)!==1)throw new ExpenseWriteFenceUnavailableError();
+  if(Number(current.daily_mapped||0)===1)throw new DailyCancelReviewRequired("EXPENSE_DAILY_IDENTITY_UNVERIFIED");
+  if(Number(current.version)!==job.entityVersion||JSON.stringify(buildExpenseRawSheetValues(current,null).slice(0,12))!==JSON.stringify(expected.slice(0,12)))throw new DailyCancelReviewRequired("EXPENSE_SNAPSHOT_CHANGED_REVIEW_REQUIRED");
 }
 export interface LoadedExpenseDailyPosting{expense:Record<string,unknown>;summaryDocument:Record<string,unknown>|null;document:PurchaseDetailDocument|null;items:DailyExpenseDocumentItem[];record:PurchaseDetailRecord}
 export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<LoadedExpenseDailyPosting>{
@@ -195,6 +211,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(!Number.isSafeInteger(currentVersion)||currentVersion<1)throw new Error("EXPENSE_INVALID_VERSION");
       if(currentVersion>job.entityVersion){if(!await completeOwnedSheetSyncJob(env,job,leaseToken))return "BUSY";return "IGNORED";}
       if(currentVersion<job.entityVersion)throw new Error("EXPENSE_SYNC_VERSION_AHEAD");
+      await assertExpensePreflight(env,job,leaseToken,values);
     }else if(job.entityType==="PERSONAL_USE"){
       personalUse=await loadPersonalUseProjection(env,job.entityKey);
       const currentVersion=Number(personalUse.version);
@@ -216,7 +233,12 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       values=buildPersonalUseRawSheetValues(fenced);
     }
     const end=columnName(values.length),started=Date.now();try{
-      await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}],personalUse?async()=>{
+      await batchWriteValues(env,[{range:`'${sheet}'!A${row}:${end}${row}`,values:[values]}],expense?async()=>{
+        // Recheck after OAuth, immediately before dispatch. Both the row
+        // observation and the D1 preflight can still race an older writer.
+        await assertExpenseRawSheetRowSafe(env,sheet,row,job.entityKey,allocation.newlyAllocated);
+        await assertExpensePreflight(env,job,leaseToken,values);
+      }:personalUse?async()=>{
         // batchWriteValues invokes this only after OAuth succeeds and immediately
         // before dispatch. If auth outlives the original lease, this CAS fails
         // closed and the stale request is never sent.
@@ -248,6 +270,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     if(!completed){const state=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();return state?.status==="REVIEW"?"REVIEW":"BUSY";}
     return"PROCESSED";
   }catch(error){
+    if(error instanceof ExpenseWriteFenceUnavailableError)return "BUSY";
     if(error instanceof CorrectionDailyFenceBusyError&&job.entityType==="EXPENSE"){
       const released=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
       if(Number(released.meta.changes||0)!==1)throw new Error("SHEET_FENCE_CLAIM_LOST");

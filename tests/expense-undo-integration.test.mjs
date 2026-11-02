@@ -190,7 +190,7 @@ test('SQLite: cancellation holds even an identical mapped row without clearing i
   sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);};
   const identical=Array(22).fill('');Object.assign(identical,{0:1,1:1,2:'sanitized fixture',5:1,20:'ingredients',21:'ทอน/หน้าร้าน'});
   sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[identical]]);
-  try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(await syncJob(h.env,job),'REVIEW');assert.deepEqual(clears,[]);assert.equal(writes.filter(x=>x.range.includes('V52_EXPENSE_RAW')).length,1);assert.equal(writes.filter(x=>x.range.includes('details_fixture')).length,0);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE sheet_name='daily_fixture' AND entity_key='exp_fixture'").get().n,1);assert.equal(jobs(h).at(-1).status,'REVIEW');assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'DAILY_CANCEL_IDENTITY_UNVERIFIED'});}
+  try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(await syncJob(h.env,job),'REVIEW');assert.deepEqual(clears,[]);assert.equal(writes.length,0);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE sheet_name='daily_fixture' AND entity_key='exp_fixture'").get().n,1);assert.equal(jobs(h).at(-1).status,'REVIEW');assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'EXPENSE_DAILY_IDENTITY_UNVERIFIED'});}
   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
 });
 
@@ -203,6 +203,25 @@ test('cancel never clears another transaction when the numeric daily mapping is 
   sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[wrong]]);
   try{await h.undo();assert.equal(await syncJob(h.env,undoMessages(h)[0]),'REVIEW');assert.deepEqual(clears,[]);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE sheet_name='daily_fixture' AND entity_key='exp_fixture'").get().n,1);assert.equal(jobs(h).at(-1).status,'REVIEW');}
   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
+});
+
+test('confirmed expense with a mapped daily row is held before any Sheets write',async()=>{
+  const h=harness(),writes=[];Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
+  h.sqlite.prepare("UPDATE sync_jobs SET status='PENDING' WHERE entity_key='exp_fixture' AND entity_version=2").run();h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily_fixture','exp_fixture',10)").run();
+  const originalWrite=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};
+  try{const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:2,traceId:'trace_fixture'};assert.equal(await syncJob(h.env,job),'REVIEW');assert.deepEqual(writes,[]);assert.equal(jobs(h).at(-1).status,'REVIEW');}
+  finally{sheetsClient.batchWriteValues=originalWrite;h.close();}
+});
+
+test('raw expense dispatch rechecks daily mapping, source version and owned lease after the sheet read',async()=>{
+  for(const mode of ['mapping','version','lease']){const h=harness(),writes=[];Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
+   h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('V52_EXPENSE_RAW','exp_fixture',2)").run();
+   const originalWrite=sheetsClient.batchWriteValues,originalRead=sheetsClient.batchGetSheetFormulaValues;let calls=0;
+   sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>{if(calls++===0){if(mode==='mapping')h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily_fixture','exp_fixture',10)").run();if(mode==='version')h.sqlite.prepare("UPDATE expense_events SET version=version+1 WHERE expense_id='exp_fixture'").run();if(mode==='lease')h.sqlite.prepare("UPDATE sync_jobs SET lease_token='replacement' WHERE entity_key='exp_fixture' AND entity_version=3").run();}return readRawOrDaily(ranges,[[],[]]);};
+   sheetsClient.batchWriteValues=async(_env,data,before)=>{await before();writes.push(...data);};
+   try{await h.undo();const result=await syncJob(h.env,undoMessages(h)[0]);assert.equal(result,mode==='lease'?'BUSY':'REVIEW',mode);assert.deepEqual(writes,[],mode);}
+   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
+  }
 });
 
 test('cancellation with no daily mapping completes without a daily sheet mutation',async()=>{

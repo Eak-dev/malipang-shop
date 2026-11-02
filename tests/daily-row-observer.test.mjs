@@ -51,9 +51,9 @@ test('oversized Sheets responses are discarded and cannot become positive eviden
  try{assert.equal(await readDailyEvidence({GOOGLE_SPREADSHEET_ID:'test',SHEET_EXPENSE_DAILY:'daily',GOOGLE_SERVICE_ACCOUNT_EMAIL:'worker@example.org'},w),null)}finally{auth.getGoogleAccessToken=before;globalThis.fetch=oldFetch}
 });
 test('upstream Sheets error bodies are not consumed by the read-only inspector',async()=>{
- const {w}=await fixture(),auth=require('../dist/sheets/google-auth.js'),before=auth.getGoogleAccessToken,oldFetch=globalThis.fetch,{readDailyEvidence}=require('../dist/sheets/daily-row-observer.js');let consumed=0;
- auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>({ok:false,status:500,headers:new Headers(),text:async()=>{consumed++;throw new Error('must not read upstream body')}});
- try{assert.equal(await readDailyEvidence({GOOGLE_SPREADSHEET_ID:'test',SHEET_EXPENSE_DAILY:'daily',GOOGLE_SERVICE_ACCOUNT_EMAIL:'worker@example.org'},w),null);assert.equal(consumed,0)}finally{auth.getGoogleAccessToken=before;globalThis.fetch=oldFetch}
+ const {w}=await fixture(),auth=require('../dist/sheets/google-auth.js'),before=auth.getGoogleAccessToken,oldFetch=globalThis.fetch,{readDailyEvidence}=require('../dist/sheets/daily-row-observer.js');let consumed=0,cancelled=0;
+ auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>({ok:false,status:500,headers:new Headers(),body:{cancel(){cancelled++;return new Promise(()=>{});}},text:async()=>{consumed++;throw new Error('must not read upstream body')}});
+ try{assert.equal(await readDailyEvidence({GOOGLE_SPREADSHEET_ID:'test',SHEET_EXPENSE_DAILY:'daily',GOOGLE_SERVICE_ACCOUNT_EMAIL:'worker@example.org'},w),null);assert.equal(consumed,0);assert.equal(cancelled,1)}finally{auth.getGoogleAccessToken=before;globalThis.fetch=oldFetch}
 });
 
 async function existingFixture(){

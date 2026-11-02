@@ -11,7 +11,7 @@ export async function getGoogleAccessToken(env:Env):Promise<string>{
   const key=await importKey(env.GOOGLE_PRIVATE_KEY_BASE64); const sig=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(input)); const assertion=`${input}.${b64url(new Uint8Array(sig))}`;
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
   const res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion})},timeout,"Google OAuth");
-  if(!res.ok)throw new Error(`Google OAuth ${res.status}`);
+  if(!res.ok){if(res.body)void res.body.cancel().catch(()=>{});throw new Error(`Google OAuth ${res.status}`);}
   let data:{access_token?:unknown;expires_in?:unknown};
   try{data=await readBoundedJson(res,65536,timeout,"Google OAuth body") as {access_token?:unknown;expires_in?:unknown};}catch{throw new Error("Google OAuth invalid or unreadable response");}
   if(typeof data?.access_token!=="string"||!data.access_token||typeof data.expires_in!=="number"||!Number.isFinite(data.expires_in)||data.expires_in<=0)throw new Error("Google OAuth invalid response");

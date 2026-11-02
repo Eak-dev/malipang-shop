@@ -16,6 +16,8 @@ export interface Env {
   ATTENDANCE_ENABLED: string;
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
+  /** Experimental read-only identity inspection. Never permits a Sheets write. */
+  SHEETS_LEDGER_IDENTITY_INSPECTION?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;

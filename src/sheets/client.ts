@@ -44,6 +44,14 @@ export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promis
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+/** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
+export async function getSheetRowCount(env:Env,title:string):Promise<number>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(title,gridProperties(rowCount))",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};
+  const matches=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);
+  const n=matches[0]?.properties?.gridProperties?.rowCount;
+  if(matches.length!==1||!Number.isSafeInteger(n)||Number(n)<1)throw new Error("LEDGER_GRID_UNAVAILABLE");
+  return Number(n);
+}
 export async function getSheetId(env:Env,title:string):Promise<number>{
   const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};
   const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;

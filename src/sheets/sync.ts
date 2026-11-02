@@ -6,6 +6,7 @@ import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfir
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
+import { inspectLedgerAndHold,LedgerIdentityInspectionReview } from './ledger-identity-inspection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -62,6 +63,8 @@ export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<
 }
 export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"SUMMARY";rowCount:number;detailRowCount:number;replacedLegacySummary:boolean}>{
   const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
+  // Inspection mode must stop before the daily sheet is touched as well.
+  await inspectLedgerAndHold(env,'PURCHASE_DETAILS',env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',expenseId,loaded.items.map(item=>item.itemId));
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
   const detailRowCount=await writeConfirmedExpensePurchaseDetails(env,loaded.record,loaded.document,loaded.items);
   return{mode:"SUMMARY",rowCount:result.placements.length,detailRowCount,replacedLegacySummary:result.replacedLegacySummary};
@@ -230,6 +233,8 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(currentVersion<job.entityVersion)throw new Error(`Personal-use sync version ${job.entityVersion} is ahead of D1 version ${currentVersion}`);
       sheet=env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW";values=buildPersonalUseRawSheetValues(personalUse);
     }else throw new Error(`Unsupported sheet entity type: ${job.entityType}`);
+    if(expense)await inspectLedgerAndHold(env,'EXPENSE',sheet,job.entityKey);
+    if(personalUse)await inspectLedgerAndHold(env,'PERSONAL_USE',sheet,job.entityKey);
     const allocation=await allocateRow(env,sheet,job.entityKey),row=allocation.row;
     if(expense)await assertExpenseRawSheetRowSafe(env,sheet,row,job.entityKey,allocation.newlyAllocated);
     if(personalUse){
@@ -287,7 +292,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       if(Number(released.meta.changes||0)!==1)throw new Error("SHEET_FENCE_CLAIM_LOST");
       return "BUSY";
     }
-    if(error instanceof DailyCancelReviewRequired||error instanceof PersonalUseRowReviewRequired||error instanceof ExpenseRawRowReviewRequired){
+    if(error instanceof DailyCancelReviewRequired||error instanceof PersonalUseRowReviewRequired||error instanceof ExpenseRawRowReviewRequired||error instanceof LedgerIdentityInspectionReview){
       const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),error.message,job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
       if(Number(held.meta.changes||0)!==1)throw new Error("SHEET_REVIEW_STATE_LOST");
       return"REVIEW";

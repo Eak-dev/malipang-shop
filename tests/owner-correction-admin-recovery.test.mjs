@@ -19,7 +19,7 @@ async function setup(){
   assert.equal(await commitOwnerCorrection(h.env,owner,id,evidence,'synthetic_recover_trace',now,plan),2);
   h.sqlite.prepare("UPDATE expense_owner_correction_sync SET phase='REVIEW' WHERE correction_id=?").run(id);h.sqlite.prepare("UPDATE sync_jobs SET status='REVIEW' WHERE entity_type='EXPENSE_CORRECTION'").run();
   const rows=new Map(plan.originalRows.map(row=>[row.metadataId,[...row.values]]));for(const patch of plan.patches)for(const cell of patch.cells)rows.get(patch.metadataId)[cell.columnIndex]=cell.value;
-  const jobs=[],ports={now:()=>now,inspect:async()=>({identitiesVerified:true,rows:new Map([...rows].map(([key,value])=>[key,[...value]]))}),enqueue:async(_env,job)=>{jobs.push(job)}};
+  const jobs=[],ports={now:()=>now,inspect:async()=>({identitiesVerified:true,rows:new Map([...rows].map(([key,value])=>[key,[...value]]))}),report:async()=>structuredClone(plan.reportBaseline),view:async()=> 'VERIFIED',enqueue:async(_env,job)=>{jobs.push(job)}};
   return {...h,id,now,plan,rows,ports,jobs};
 }
 const recovery=h=>recoverVerifiedOwnerCorrection(h.env,h.id,'verified sheet values',h.ports);
@@ -33,18 +33,37 @@ test('a twice-verified applied result resumes only read-only reconciliation, onc
     assert.equal(await processOwnerCorrectionJob(h.env,{expenseId:'exp_recover',version:2},worker),'COMPLETED');assert.equal(status(h).phase,'RECONCILED');
   }finally{h.close()}
 });
-test('before, mixed, unstable or unverified observations remain in review',async()=>{
-  for(const mode of ['before','mixed','unstable','unverified']){const h=await setup();try{
-    if(mode==='before'){h.rows.get(1)[21]='general';h.rows.get(2)[6]='general'}
+test('a twice-verified original state resumes the same approved write once',async()=>{
+  const h=await setup();try{
+    h.rows.get(1)[21]='general';h.rows.get(2)[6]='general';
+    assert.equal(await recovery(h),'ENQUEUED');assert.deepEqual(status(h),{phase:'PREPARED',job:'PENDING',audits:1});
+    assert.equal(await recovery(h),'NOT_REVIEW');assert.equal(h.jobs.length,1);
+    let writes=0;const worker={now:()=>h.now,inspect:async()=>h.ports.inspect(),patch:async(plan,arm)=>{await arm();writes++;for(const patch of plan.patches)for(const cell of patch.cells)h.rows.get(patch.metadataId)[cell.columnIndex]=cell.value},inspectRebind:async()=>{throw Error('no move')},rebind:async()=>{throw Error('no move')},reconcile:async()=>({expenseId:'exp_recover',version:2,dailyMatches:true,rawMatches:true,detailsMatch:true,reportsMatch:true,duplicateCount:0,lostCount:0})};
+    assert.equal(await processOwnerCorrectionJob(h.env,{expenseId:'exp_recover',version:2},worker),'COMPLETED');assert.equal(writes,1);assert.equal(status(h).phase,'RECONCILED');
+    const audit=h.sqlite.prepare("SELECT after_json FROM admin_audit WHERE action='OWNER_CORRECTION_RESUME'").get();assert.deepEqual(JSON.parse(audit.after_json),{phase:'PREPARED',mode:'VERIFIED_RETRY'});
+  }finally{h.close()}
+});
+test('mixed, unstable or unverified observations remain in review',async()=>{
+  for(const mode of ['mixed','unstable','unverified']){const h=await setup();try{
     if(mode==='mixed')h.rows.get(1)[21]='general';
     if(mode==='unstable'){const read=h.ports.inspect;let count=0;h.ports.inspect=async(...args)=>{const result=await read(...args);if(++count===2)result.rows.get(1)[3]='changed';return result}}
     if(mode==='unverified')h.ports.inspect=async()=>({identitiesVerified:false,rows:h.rows});
     assert.equal(await recovery(h),'REVIEW',mode);assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});assert.equal(h.jobs.length,0);
   }finally{h.close()}}
 });
+test('retry requires the unchanged report and original expense snapshot',async()=>{
+  for(const mode of ['missing-report','changed-report','changed-expense']){const h=await setup();try{
+    h.rows.get(1)[21]='general';h.rows.get(2)[6]='general';
+    if(mode==='missing-report')h.ports.report=async()=>null;
+    if(mode==='changed-report')h.ports.report=async()=>({...structuredClone(h.plan.reportBaseline),total:h.plan.reportBaseline.total+1});
+    if(mode==='changed-expense')h.ports.report=async()=>{h.sqlite.exec("UPDATE expense_events SET amount_satang=1 WHERE expense_id='exp_recover'");return structuredClone(h.plan.reportBaseline)};
+    assert.equal(await recovery(h),mode==='changed-expense'?'NOT_REVIEW':'REVIEW',mode);assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});assert.equal(h.jobs.length,0);
+  }finally{h.close()}}
+});
 test('a possible in-flight write must finish its full uncertainty window',async()=>{
   const h=await setup();try{h.sqlite.prepare('UPDATE expense_owner_correction_sync SET not_before=?').run(new Date(h.now+1000).toISOString());assert.equal(await recovery(h),'WAIT');assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}
   finally{h.close()}
+  const original=await setup();try{original.rows.get(1)[21]='general';original.rows.get(2)[6]='general';original.sqlite.prepare('UPDATE expense_owner_correction_sync SET not_before=?').run(new Date(original.now+1000).toISOString());assert.equal(await recovery(original),'WAIT');assert.deepEqual(status(original),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{original.close()}
 });
 test('expense changes during the inspection and concurrent requests cannot resume twice',async()=>{
   {const h=await setup();try{const read=h.ports.inspect;let count=0;h.ports.inspect=async(...args)=>{const result=await read(...args);if(++count===2)h.sqlite.exec("UPDATE expense_events SET amount_satang=1 WHERE expense_id='exp_recover'");return result};assert.equal(await recovery(h),'NOT_REVIEW');assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{h.close()}}

@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
 import {cancelOwnerCorrectionDraft,commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerExpense,ownerCorrectionStatus} from '../dist/expense/owner-correction-repository.js';
-import {holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,ownerCorrectionManualReviewSummary} from '../dist/expense/owner-correction-manual-review.js';
+import {holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,ownerCorrectionManualReviewSummary,retryOwnerCorrectionManualReview} from '../dist/expense/owner-correction-manual-review.js';
 import {handleOwnerCorrectionPostback,handleOwnerCorrectionText} from '../dist/expense/owner-correction-service.js';
 import {handleAdmin} from '../dist/admin/handler.js';
 const owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},staff={employeeId:'TEST_STAFF',lineUserId:'fixture_staff'},other={employeeId:'TEST_OWNER_TWO',lineUserId:'fixture_owner_two'};
@@ -25,6 +25,21 @@ test('only the verified owner can hold, list and cancel a request without changi
 });
 test('a held request becomes stale if any business field changes even without a version bump',async()=>{
   const h=await setup();try{assert.equal(await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now),'HELD');h.sqlite.exec("UPDATE expense_events SET amount_satang=200001 WHERE expense_id='exp_manual'");assert.equal(await ownerCorrectionStatus(h.env,owner,h.id,h.now),'STALE');assert.equal((await listOwnerCorrectionManualReviews(h.env,owner))[0].snapshot_current,0)}finally{h.close()}
+});
+test('owner can reopen an unchanged held request once without applying it',async()=>{
+  const h=await setup();try{
+    await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);
+    assert.equal(await retryOwnerCorrectionManualReview(h.env,staff,h.id,h.now+60*60_000),null);assert.equal(await retryOwnerCorrectionManualReview(h.env,other,h.id,h.now+60*60_000),null);
+    const [first,second]=await Promise.all([retryOwnerCorrectionManualReview(h.env,owner,h.id,h.now+60*60_000),retryOwnerCorrectionManualReview(h.env,owner,h.id,h.now+60*60_000)]);
+    assert.ok(first);assert.equal(first,second);assert.notEqual(first,h.id);assert.equal(await ownerCorrectionStatus(h.env,owner,first,h.now+60*60_000),'DRAFT');
+    assert.equal(h.sqlite.prepare('SELECT status FROM expense_owner_correction_manual_reviews WHERE correction_id=?').get(h.id).status,'RESOLVED');assert.equal(await ownerCorrectionStatus(h.env,owner,h.id,h.now+60*60_000),'CANCELLED');
+    assert.equal(h.sqlite.prepare('SELECT transaction_date FROM expense_events').get().transaction_date,'2026-10-28');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
+    assert.equal(await holdOwnerCorrectionForReview(h.env,owner,first,'CROSS_MONTH',h.now+60*60_000),'HELD');assert.deepEqual(await ownerCorrectionManualReviewSummary(h.env),[{reason:'CROSS_MONTH',count:1}]);
+  }finally{h.close()}
+});
+test('reopening fails closed for a changed snapshot and rolls back every batch failure',async()=>{
+  {const h=await setup();try{await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);h.sqlite.exec("UPDATE expense_events SET amount_satang=200001 WHERE expense_id='exp_manual'");assert.equal(await retryOwnerCorrectionManualReview(h.env,owner,h.id,h.now),null);assert.equal(h.sqlite.prepare('SELECT status FROM expense_owner_correction_manual_reviews').get().status,'OPEN')}finally{h.close()}}
+  for(let index=0;index<4;index++){const h=await setup();try{await holdOwnerCorrectionForReview(h.env,owner,h.id,'SHEET_CHECK',h.now);h.DB.failAt=index;await assert.rejects(retryOwnerCorrectionManualReview(h.env,owner,h.id,h.now),/fixture batch failure/);h.DB.failAt=null;assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_corrections').get().n,1);assert.equal(h.sqlite.prepare('SELECT status FROM expense_owner_correction_manual_reviews').get().status,'OPEN');assert.equal(await ownerCorrectionStatus(h.env,owner,h.id,h.now),'MANUAL_REVIEW')}finally{h.close()}}
 });
 test('manual review pagination uses a stable tie breaker without dropping requests',async()=>{
   const h=await setup();try{
@@ -49,6 +64,15 @@ test('LINE exposes a durable review card, owner list and safe cancellation',asyn
     await h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'synthetic_list',text:'รายการแก้ไขรอตรวจ'}}),'trace'));assert.match(JSON.stringify(h.messages.at(-1)),/Synthetic supplier/);
     await post('owner_correction_status','fixture_staff');assert.match(JSON.stringify(h.messages.at(-1)),/สำหรับเจ้าของ/);
     await post('owner_correction_cancel');assert.equal(await ownerCorrectionStatus(h.env,owner,h.id),'CANCELLED');
+  }finally{h.close()}
+});
+test('LINE retry shows a fresh comparison and requires another owner confirmation',async()=>{
+  const h=await setup();try{
+    await holdOwnerCorrectionForReview(h.env,owner,h.id,'SHEET_CHECK',h.now);
+    const post=(line='fixture_owner')=>h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event(line,{type:'postback',postback:{data:`a=owner_correction_review_retry&id=${h.id}`}}),'trace'));
+    await post('fixture_staff');assert.match(JSON.stringify(h.messages.at(-1)),/สำหรับเจ้าของ/);
+    await post();assert.match(JSON.stringify(h.messages.at(-1)),/ตรวจการแก้ไขก่อนยืนยัน/);assert.equal(h.sqlite.prepare('SELECT transaction_date FROM expense_events').get().transaction_date,'2026-10-28');
+    const next=h.sqlite.prepare('SELECT correction_id FROM expense_owner_corrections WHERE input_id=?').get(`review_retry:${h.id}`).correction_id;await post();assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_corrections').get().n,2);assert.equal(await ownerCorrectionStatus(h.env,owner,next),'DRAFT');
   }finally{h.close()}
 });
 test('admin summary exposes counts only and requires authentication',async()=>{

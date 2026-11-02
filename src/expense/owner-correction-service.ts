@@ -9,7 +9,7 @@ import {inspectOwnerCorrectionPeriods,recordOwnerCorrectionPeriodDecision} from 
 import {confirmOwnerCorrection} from "./owner-correction-confirmed";
 import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitPendingOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
 import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionManualReview,buildOwnerCorrectionManualReviewList,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
-import {getOwnerCorrectionManualReview,holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,type ManualCorrectionReason} from "./owner-correction-manual-review";
+import {getOwnerCorrectionManualReview,holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,retryOwnerCorrectionManualReview,type ManualCorrectionReason} from "./owner-correction-manual-review";
 
 interface OwnerCorrectionPostbackPorts{periods:typeof inspectOwnerCorrectionPeriods;decision:typeof recordOwnerCorrectionPeriodDecision;confirmed?:typeof confirmOwnerCorrection}
 const postbackDefaults:OwnerCorrectionPostbackPorts={periods:inspectOwnerCorrectionPeriods,decision:recordOwnerCorrectionPeriodDecision,confirmed:confirmOwnerCorrection};
@@ -83,6 +83,11 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
   }
   if(action==="owner_correction_manual_next"){await manualReviews(env,event,owner,traceId,q.get("cursor")||"");return true;}
   const id=q.get("id")||"";
+  if(action==="owner_correction_review_retry"){
+    const draft=await retryOwnerCorrectionManualReview(env,owner,id);
+    if(!draft){await reply(env,event,"ข้อมูลเปลี่ยนแล้วหรือยังตรวจต่อไม่ได้ กรุณาค้นหาและตรวจรายการล่าสุด",traceId);return true;}
+    await preview(env,event,draft,owner,traceId);return true;
+  }
   if(action==="owner_correction_status"){
     const status=await ownerCorrectionStatus(env,owner,id),messages={DRAFT:"ร่างนี้ยังไม่ได้ยืนยัน รายการเดิมยังไม่เปลี่ยน",EXPIRED:"ร่างหมดอายุ กรุณาเปิดรายการใหม่",CANCELLED:"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน",STALE:"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",MANUAL_REVIEW:"รายการแก้ไขรอตรวจเพิ่มเติม ข้อมูลเดิมยังไม่เปลี่ยน",DRAFT_EDITED:"บันทึกการแก้ไขในร่างแล้ว โปรดตรวจสถานะและยืนยันรายการต้นฉบับ",SYNC_PENDING:"บันทึกแล้ว กำลังซิงก์และตรวจข้อมูลที่เกี่ยวข้อง",SYNC_FAILED:"บันทึกแล้ว แต่การซิงก์ยังไม่สำเร็จ ระบบต้องตรวจและลองต่อ",SYNC_REVIEW:"บันทึกแล้ว แต่ข้อมูลชีตต้องตรวจเพิ่มเติมก่อนซิงก์ กรุณาติดต่อผู้ดูแล",COMPLETED:"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว"} as const;
     if(status==="MANUAL_REVIEW"||status==="STALE"){const review=await getOwnerCorrectionManualReview(env,owner,id);if(review){await flex(env,event,buildOwnerCorrectionManualReview(id,review.reason_code,status==="STALE"),traceId);return true;}}

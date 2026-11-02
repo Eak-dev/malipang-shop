@@ -29,7 +29,7 @@ export function buildOwnerCorrectionSyncPending(correctionId:string){
 }
 
 export function buildOwnerCorrectionManualReview(correctionId:string,reason:string,stale=false){
-  return flex("รายการแก้ไขรอตรวจ",[text("รายการแก้ไขรอตรวจเพิ่มเติม",true),text(reviewReasons[reason]||"ต้องตรวจข้อมูลเพิ่มเติม"),text(stale?"ข้อมูลรายการเปลี่ยนแล้ว กรุณายกเลิกคำขอนี้และค้นหารายการล่าสุด":"คำขอนี้ยังไม่ได้เปลี่ยนข้อมูล พิมพ์ ‘รายการแก้ไขรอตรวจ’ เพื่อกลับมาดูได้")],[button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(correctionId)}`,true),button("ยกเลิกคำขอ",`a=owner_correction_cancel&id=${encode(correctionId)}`)]);
+  return flex("รายการแก้ไขรอตรวจ",[text("รายการแก้ไขรอตรวจเพิ่มเติม",true),text(reviewReasons[reason]||"ต้องตรวจข้อมูลเพิ่มเติม"),text(stale?"ข้อมูลรายการเปลี่ยนแล้ว กรุณายกเลิกคำขอนี้และค้นหารายการล่าสุด":"คำขอนี้ยังไม่ได้เปลี่ยนข้อมูล หลังแก้ปัญหาแล้วสามารถตรวจอีกครั้งได้")],[...(stale?[]:[button("ตรวจอีกครั้ง",`a=owner_correction_review_retry&id=${encode(correctionId)}`,true)]),button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(correctionId)}`),button("ยกเลิกคำขอ",`a=owner_correction_cancel&id=${encode(correctionId)}`)]);
 }
 
 export function buildOwnerCorrectionManualReviewList(rows:Record<string,unknown>[],nextCursor:string|null=null){

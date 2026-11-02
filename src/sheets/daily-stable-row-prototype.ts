@@ -14,6 +14,8 @@ export interface StablePrototypePort {
   readEffectiveSnapshot():Promise<{sheetId:number;body:unknown[][]}>;
   /** Value of A5 read in formula/effective state; must be actual number. */
   readSheetYear():Promise<number>;
+  /** Reject notes, validation or protected ranges in affected rows. */
+  requireSafeCellAnnotations(rows:number[],insertionRow?:number):Promise<void>;
   lookupMetadata(key:string):Promise<Array<{metadataId:number;row:number}>>;
   /** Return all visible short-key metadata at this row, excluding nothing. */
   lookupMetadataAtRow(row:number):Promise<Array<{metadataId:number;row:number}>>;
@@ -54,6 +56,15 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
   if(plan.status==='REVIEW')return plan;
   const block=findMonthBlocks(initial.body).filter(item=>item.month===request.postingMonth);
   if(block.length!==1)return review('MONTH_BLOCK_NOT_UNIQUE');
+  // A legacy row without X and without a numeric index can still be the same
+  // transaction. A tuple match is a warning only, never proof of identity.
+  if(plan.status!=='FOUND'){
+    for(let row=block[0]!.headerRow+1;row<block[0]!.totalRow;row++){
+      const cells=initial.body[row-1]??[];if(cells[23]!==null&&cells[23]!==undefined&&cells[23]!=='')continue;
+      const total=[5,6,7,10,11,12,13,14,15,16].reduce((sum,index)=>sum+(typeof cells[index]==='number'?Number(cells[index]):0),0);
+      if(Number(cells[1])===values.month&&Number(cells[2])===values.day&&String(cells[3]??'').trim()===values.description.trim()&&Math.abs(total-values.amountBaht)<0.001)return review('POSSIBLE_LEGACY_PROJECTION_REQUIRES_REVIEW');
+    }
+  }
   const expected=plan.status==='FOUND'?[...initial.body[plan.observedRow-1]!]:Array(25).fill(null);
   expected[1]=values.month;expected[2]=values.day;expected[3]=values.description;
   for(const column of [5,6,7,10,11,12,13,14,15,16])expected[column]='';
@@ -73,6 +84,8 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
   }
   const monthBlock=block[0]!;
   if(!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
+  const affected=plan.status==='CAPACITY_REQUIRED'?[monthBlock.totalRow]:[plan.observedRow,monthBlock.totalRow];
+  await port.requireSafeCellAnnotations(affected,plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:undefined);
   let expectedBalance:number|undefined;
   let subtotalBefore:unknown[]|undefined;
   {
@@ -111,6 +124,7 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
   }
   await port.requireExclusiveWriters();
   if(await port.readSheetYear()!==values.postingYear)return review('POSTING_YEAR_MISMATCH');
+  await port.requireSafeCellAnnotations(affected,plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:undefined);
   try{
     if(plan.status==='FOUND')await port.writeByMetadata(buildStableRowMetadataWrite(metadata[0]!.metadataId,values));
     else if(plan.status==='APPEND')await port.batchUpdate(buildStableEmptyRowAppend(fresh.sheetId,monthBlock.headerRow,plan.observedRow,key,values,plan.formulaColumnsMissing,request.postingMonth,reservedMetadataId!));

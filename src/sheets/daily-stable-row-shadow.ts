@@ -1,5 +1,5 @@
 import type {Env} from '../types';
-import {batchUpdateStablePrototype,stablePrototypeSearchMetadata,stablePrototypeSheetInfo,stablePrototypeSnapshot,writeDailyByMetadataPrototype} from './client';
+import {batchUpdateStablePrototype,requireStablePrototypeAnnotations,stablePrototypeSearchMetadata,stablePrototypeSheetInfo,stablePrototypeSnapshot,writeDailyByMetadataPrototype} from './client';
 import {DailyCancelReviewRequired,legacySourceWallet,resolvePayment,type DailyExpenseRecord} from './daily-expense';
 import {StableDailyJournal} from './daily-stable-row-journal';
 import {runStableDailyPrototype,type StablePrototypePort} from './daily-stable-row-prototype';
@@ -29,7 +29,7 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord):
     if(entry?.projectedVersion&&entry.projectedVersion>record.version)throw new DailyCancelReviewRequired('DAILY_STABLE_PROJECTED_VERSION_AHEAD');
     // Numeric legacy mappings do not prove identity. Once a verified stable
     // identity exists, its metadata ID and baseline are the only authority.
-    const prior=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND entity_key=?`).bind(sheet,record.expenseId).first();
+    const prior=await env.DB.prepare(`SELECT row_number FROM sheet_row_index WHERE sheet_name=? AND (entity_key=? OR substr(entity_key,1,length(?)+1)=? || '|') LIMIT 1`).bind(sheet,record.expenseId,record.expenseId,record.expenseId).first();
     if(prior&&!entry)throw new DailyCancelReviewRequired('DAILY_STABLE_LEGACY_REVIEW_REQUIRED');
     const initialInfo=await stablePrototypeSheetInfo(env,sheet),sheetId=initialInfo.sheetId,stableKey=`MALIPANG_EXPENSE:${record.expenseId}`;
     let expectedRowCount=initialInfo.rowCount;
@@ -41,6 +41,7 @@ export async function writeDailyStableShadow(env:Env,record:DailyExpenseRecord):
     const read=async(formulas:boolean)=>{const info=await stablePrototypeSheetInfo(env,sheet);if(info.sheetId!==sheetId||info.rowCount!==expectedRowCount||info.columnCount!==initialInfo.columnCount)throw new DailyCancelReviewRequired('DAILY_STABLE_SHEET_GRID_CHANGED');return{sheetId,body:await stablePrototypeSnapshot(env,`'${escaped}'!A1:Y${info.rowCount}`,formulas)};};
     const port:StablePrototypePort={
       requireExclusiveWriters:assertFence,
+      requireSafeCellAnnotations:(rows,insertionRow)=>requireStablePrototypeAnnotations(env,sheet,sheetId,rows,insertionRow),
       readFormulaSnapshot:()=>read(true),readEffectiveSnapshot:()=>read(false),
       readSheetYear:async()=>{const v=await stablePrototypeSnapshot(env,`'${escaped}'!A5`,false);return typeof v[0]?.[0]==='number'?v[0][0]:NaN;},
       lookupMetadata:async key=>{if(key!==stableKey)throw new Error('DAILY_STABLE_ID_MISMATCH');const entry=await journal.get();if(!entry)return[];if(entry.state==='IN_FLIGHT'&&entry.metadataId!==reserved)throw new DailyCancelReviewRequired('DAILY_STABLE_PRIOR_INTENT_REQUIRES_REVIEW');return(await stablePrototypeSearchMetadata(env,{metadataId:entry.metadataId})).filter(m=>m.sheetId===sheetId).map(({metadataId,row})=>({metadataId,row}));},

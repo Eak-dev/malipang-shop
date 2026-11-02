@@ -75,11 +75,37 @@ export async function stablePrototypeSheetInfo(env:Env,title:string):Promise<{sh
   const result=await readBoundedJson(response,1048576,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets tab metadata') as Parameters<typeof parseStablePrototypeSheetInfo>[0];
   return parseStablePrototypeSheetInfo(result,title);
 }
+type StableAnnotationResponse={sheets?:Array<{properties?:{sheetId?:number};protectedRanges?:Array<{range?:{sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number}}>;data?:Array<{startRow?:number;rowData?:Array<{values?:Array<{note?:string;dataValidation?:unknown}>}>}>}>};
+export function stablePrototypeAnnotationsSafe(result:StableAnnotationResponse,sheetId:number,rows:number[],insertionRow?:number):boolean{
+  const sheets=(result.sheets??[]).filter(sheet=>sheet.properties?.sheetId===sheetId);if(sheets.length!==1||!rows.length||rows.some(row=>!Number.isSafeInteger(row)||row<1))return false;
+  const sheet=sheets[0]!,data=sheet.data??[];
+  for(const row of new Set(rows)){
+    const ranges=data.filter(item=>(item.startRow??0)===row-1);if(ranges.length!==1)return false;
+    if((ranges[0]!.rowData??[]).some(record=>(record.values??[]).some(cell=>!!cell.note||cell.dataValidation!==undefined)))return false;
+  }
+  for(const protection of sheet.protectedRanges??[]){
+    const r=protection.range;if(!r||r.sheetId!==sheetId)return false;
+    const rs=r.startRowIndex??0,re=r.endRowIndex??Number.MAX_SAFE_INTEGER,cs=r.startColumnIndex??0,ce=r.endColumnIndex??Number.MAX_SAFE_INTEGER;
+    if(cs<25&&ce>0&&(rows.some(row=>rs<row&&re>row-1)||(insertionRow!==undefined&&re>insertionRow-1)))return false;
+  }
+  return true;
+}
+export async function requireStablePrototypeAnnotations(env:Env,sheet:string,sheetId:number,rows:number[],insertionRow?:number):Promise<void>{
+  assertStablePrototype(env);const quoted=sheet.replace(/'/g,"''"),query=new URLSearchParams({includeGridData:'true',fields:'sheets(properties(sheetId),protectedRanges(range),data(startRow,rowData(values(note,dataValidation))))'});
+  for(const row of new Set(rows))query.append('ranges',`'${quoted}'!A${row}:Y${row}`);
+  const response=await sheetsFetch(env,`?${query}`,{method:'GET'},false,undefined,true);
+  const result=await readBoundedJson(response,1048576,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets row annotations') as StableAnnotationResponse;
+  if(!stablePrototypeAnnotationsSafe(result,sheetId,rows,insertionRow))throw new Error('DAILY_STABLE_ROW_ANNOTATIONS_UNVERIFIED');
+}
+type StableMetadataResponse={matchedDeveloperMetadata?:Array<{developerMetadata?:{metadataId?:number;metadataKey?:string;visibility?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}>};
+export function parseStablePrototypeMetadata(result:StableMetadataResponse):Array<{metadataId:number;sheetId:number;row:number}>{
+  const matches=result.matchedDeveloperMetadata??[];if(matches.length>2)throw new Error('DAILY_STABLE_METADATA_DUPLICATE');
+  return matches.map(item=>{const m=item.developerMetadata,d=m?.location?.dimensionRange;if(!Number.isSafeInteger(m?.metadataId)||m!.metadataId!<1||m?.metadataKey!=='e'||m.visibility!=='DOCUMENT'||d?.dimension!=='ROWS'||!Number.isSafeInteger(d.sheetId)||!Number.isSafeInteger(d.startIndex)||d.endIndex!==d.startIndex!+1)throw new Error('DAILY_STABLE_METADATA_INVALID');return{metadataId:m!.metadataId!,sheetId:d.sheetId!,row:d.startIndex!+1};});
+}
 export async function stablePrototypeSearchMetadata(env:Env,filter:Record<string,unknown>):Promise<Array<{metadataId:number;sheetId:number;row:number}>>{
   assertStablePrototype(env);const response=await sheetsFetch(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:filter}]})},false,undefined,true);
-  const result=await readBoundedJson(response,262144,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata') as {matchedDeveloperMetadata?:Array<{developerMetadata?:{metadataId?:number;metadataKey?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}>};
-  const matches=result.matchedDeveloperMetadata??[];if(matches.length>2)throw new Error('DAILY_STABLE_METADATA_DUPLICATE');
-  return matches.map(item=>{const m=item.developerMetadata,d=m?.location?.dimensionRange;if(!Number.isSafeInteger(m?.metadataId)||m!.metadataId!<1||m?.metadataKey!=='e'||d?.dimension!=='ROWS'||!Number.isSafeInteger(d.sheetId)||!Number.isSafeInteger(d.startIndex)||d.endIndex!==d.startIndex!+1)throw new Error('DAILY_STABLE_METADATA_INVALID');return{metadataId:m!.metadataId!,sheetId:d.sheetId!,row:d.startIndex!+1};});
+  const result=await readBoundedJson(response,262144,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata') as StableMetadataResponse;
+  return parseStablePrototypeMetadata(result);
 }
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{

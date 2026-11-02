@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {buildStableRowMetadataWrite, buildStableMonthExpansion, buildStableEmptyRowAppend, hasExpectedMonthlySubtotal} from '../dist/sheets/daily-stable-row-writes.js';
-import {writeDailyByMetadataPrototype,parseStablePrototypeSheetInfo} from '../dist/sheets/client.js';
+import {writeDailyByMetadataPrototype,parseStablePrototypeSheetInfo,parseStablePrototypeMetadata,stablePrototypeAnnotationsSafe} from '../dist/sheets/client.js';
 
 const item={postingYear:2026,month:10,day:26,description:'Example',amountColumn:'H',amountBaht:930,category:'marketing',sourceWallet:'บัญชีร้าน'};
 test('targets unique metadata ID and leaves formulas and stable ID untouched',()=>{
@@ -62,6 +62,22 @@ test('a sheet beyond the supported full snapshot is held before any write',()=>{
   const metadata=rows=>({sheets:[{properties:{sheetId:123,title:'daily',gridProperties:{rowCount:rows,columnCount:25}}}]});
   assert.equal(parseStablePrototypeSheetInfo(metadata(5000),'daily').rowCount,5000);
   assert.throws(()=>parseStablePrototypeSheetInfo(metadata(5001),'daily'),/DAILY_STABLE_SHEET_GRID_UNSUPPORTED/);
+});
+
+test('row metadata must be document-visible and uniquely row-scoped',()=>{
+  const meta=visibility=>({matchedDeveloperMetadata:[{developerMetadata:{metadataId:123,metadataKey:'e',visibility,location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:9,endIndex:10}}}}]});
+  assert.deepEqual(parseStablePrototypeMetadata(meta('DOCUMENT')),[{metadataId:123,sheetId:7,row:10}]);
+  assert.throws(()=>parseStablePrototypeMetadata(meta('PROJECT')),/DAILY_STABLE_METADATA_INVALID/);
+});
+
+test('notes, validations, protected ranges and incomplete annotation reads are held',()=>{
+  const sheet=()=>({sheets:[{properties:{sheetId:7},data:[{startRow:9,rowData:[{values:[{}]}]},{startRow:19,rowData:[{values:[{}]}]}]}]});
+  assert.equal(stablePrototypeAnnotationsSafe(sheet(),7,[10,20]),true);
+  const note=sheet();note.sheets[0].data[0].rowData[0].values[0].note='reserved';assert.equal(stablePrototypeAnnotationsSafe(note,7,[10,20]),false);
+  const validation=sheet();validation.sheets[0].data[0].rowData[0].values[0].dataValidation={condition:{type:'ONE_OF_LIST'}};assert.equal(stablePrototypeAnnotationsSafe(validation,7,[10,20]),false);
+  const protectedSheet=sheet();protectedSheet.sheets[0].protectedRanges=[{range:{sheetId:7,startRowIndex:9,endRowIndex:10,startColumnIndex:0,endColumnIndex:25}}];assert.equal(stablePrototypeAnnotationsSafe(protectedSheet,7,[10,20]),false);
+  const below=sheet();below.sheets[0].protectedRanges=[{range:{sheetId:7,startRowIndex:21,endRowIndex:22}}];assert.equal(stablePrototypeAnnotationsSafe(below,7,[10,20],20),false);
+  const missing=sheet();missing.sheets[0].data.pop();assert.equal(stablePrototypeAnnotationsSafe(missing,7,[10,20]),false);
 });
 
 test('append into a blank row only fills inputs and missing helper formulas',()=>{

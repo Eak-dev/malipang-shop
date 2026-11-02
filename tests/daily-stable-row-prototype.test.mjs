@@ -17,6 +17,7 @@ function portFor(rows){
   }
   const p={rows,metadata:[],intents:new Map(),dispatch:0,moveBeforeWrite:false};
   p.requireExclusiveWriters=async()=>{};
+  p.requireSafeCellAnnotations=async()=>{};
   p.readSheetYear=async()=>2026;
   p.readFormulaSnapshot=async()=>({sheetId:123,body:p.rows.map(row=>[...row])});
   p.readEffectiveSnapshot=async()=>{let balance=50000;const totals=Array(25).fill(0);return {sheetId:123,body:p.rows.map(row=>{const out=[...row];if(row[0]==='รวม'){for(const i of [4,5,6,7,10,11,12,13,14,15,16])out[i]=totals[i];out[8]=totals[5]+totals[6]+totals[7];out[9]=50000-out[8];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+totals[i],0);out[18]=out[9]-out[17];return out;}if(row[3]!=='รายรับทั้งหมดในบัญชี')for(const i of [4,5,6,7,10,11,12,13,14,15,16])totals[i]+=typeof row[i]==='number'?row[i]:0;out[8]=Number(row[5]||0)+Number(row[6]||0)+Number(row[7]||0);out[9]=balance-out[8];balance=out[9];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+Number(row[i]||0),0);out[18]=out[9]-out[17];out[20]=46321;return out;})};};
@@ -75,6 +76,13 @@ test('duplicate ID and unverified subtotal stop before dispatch',async()=>{
   assert.equal(p.dispatch+q.dispatch,0);
 });
 
+test('unindexed legacy row with matching values is never treated as a new expense',async()=>{
+  const old=blank();old[1]=10;old[2]=26;old[3]='New description';old[7]=930;
+  const p=portFor([header(),old,blank(),total()]);
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'POSSIBLE_LEGACY_PROJECTION_REQUIRES_REVIEW');
+  assert.equal(p.dispatch,0);
+});
+
 test('subtotal with a truncated range is held even when a blank row exists',async()=>{
   const p=portFor([header(),previous(),blank(),total()]);p.rows[3][7]='=SUMIF($B$2:$B$2,$B4,H2:H2)';
   assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_PREIMAGE_UNVERIFIED');assert.equal(p.dispatch,0);
@@ -84,6 +92,12 @@ test('subtotal formula with incorrect effective total is held before mutation',a
   const p=portFor([header(),previous(),blank(),total()]),original=p.readEffectiveSnapshot;
   p.readEffectiveSnapshot=async()=>{const result=await original();result.body[3][7]=1;return result;};
   assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_VALUES_UNVERIFIED');assert.equal(p.dispatch,0);
+});
+
+test('notes or validation at target or subtotal stop before reservation or mutation',async()=>{
+  const p=portFor([header(),blank(),total()]);p.requireSafeCellAnnotations=async()=>{throw new Error('reserved cell');};
+  await assert.rejects(runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values),/reserved cell/);
+  assert.equal(p.dispatch,0);assert.equal(p.intents.size,0);
 });
 
 test('unknown dispatch outcome is held and not retried',async()=>{

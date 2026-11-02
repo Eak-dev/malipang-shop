@@ -39,6 +39,7 @@
     "src/sheets/ledger-uat-append-reader.ts",
     "src/sheets/raw-projection.ts",
     "src/sheets/raw-source-proof.ts",
+    "src/sheets/raw-recovery-inspection.ts",
     "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",

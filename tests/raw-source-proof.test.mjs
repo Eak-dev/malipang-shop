@@ -6,6 +6,8 @@ import {readdirSync,readFileSync} from 'node:fs';
 const require=createRequire(import.meta.url);
 const {readRawSourceProof,rawSourceStillMatches,rawProjectionValuesMatch}=require('../dist/sheets/raw-source-proof.js');
 const {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues}=require('../dist/sheets/sync.js');
+const {digestLedgerCell}=require('../dist/sheets/ledger-stable-journal.js');
+const {inspectRawRecovery}=require('../dist/sheets/raw-recovery-inspection.js');
 class Statement{constructor(db,sql){this.db=db;this.sql=sql;this.args=[]}bind(...args){this.args=args;return this}async first(){return this.db.prepare(this.sql).get(...this.args)??null}}
 class D1{constructor(db){this.db=db}prepare(sql){return new Statement(this.db,sql)}}
 function fixture(){
@@ -69,5 +71,21 @@ test('wrong identity, missing source, status and version do not authorize writes
     await assert.rejects(readRawSourceProof(f.env,'EXPENSE','other',2),/PROOF_INVALID/);
     await assert.rejects(readRawSourceProof(f.env,'EXPENSE','exp_missing',2),/SOURCE_UNAVAILABLE/);
     await assert.rejects(readRawSourceProof(f.env,'EXPENSE','exp_fixture',3),/VERSION_OR_STATUS/);
+  }finally{f.close();}
+});
+test('ambiguous-write inspection never authorizes retry or releases REVIEW',async()=>{
+  const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),identity={kind:'EXPENSE',sheetId:7,entityId:proof.entityId},witness={metadataId:44,metadataKey:'E',sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
+    const rows=[['Expense_ID'],[proof.entityId]],cells=proof.values.map(entered=>({entered,formula:null,note:null,hasValidation:false}));
+    const oldValues=proof.values.map((v,i)=>i===2?'old description':v),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(oldValues[i]);
+    const inspect=()=>inspectRawRecovery(f.env,proof,identity,witness,44,rows,cells,baseline);
+    assert.deepEqual(await inspect(),{status:'REVIEW',observation:'MATCHES_DESIRED'});
+    cells[2].entered='old description';assert.deepEqual(await inspect(),{status:'REVIEW',observation:'MATCHES_BASELINE'});
+    cells[3].entered=999;assert.deepEqual(await inspect(),{status:'REVIEW',observation:'DIFFERS'});
+    cells[3].note='manual';assert.deepEqual(await inspect(),{status:'REVIEW',observation:'UNAVAILABLE'});cells[3].note=null;
+    rows.push([proof.entityId]);assert.deepEqual(await inspect(),{status:'REVIEW',observation:'UNAVAILABLE'});rows.pop();
+    cells[0].entered='different';assert.deepEqual(await inspect(),{status:'REVIEW',observation:'UNAVAILABLE'});cells[0].entered=proof.entityId;
+    assert.deepEqual(await inspectRawRecovery(f.env,proof,identity,witness,45,rows,cells,baseline),{status:'REVIEW',observation:'UNAVAILABLE'});
+    f.db.prepare(`UPDATE expense_events SET trace_id='changed' WHERE expense_id='exp_fixture'`).run();assert.deepEqual(await inspect(),{status:'REVIEW',observation:'SOURCE_CHANGED_OR_UNAVAILABLE'});
   }finally{f.close();}
 });

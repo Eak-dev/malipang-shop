@@ -6,6 +6,8 @@
 
 มี helper `readRawSourceProof` และ `rawProjectionValuesMatch` สำหรับตรวจ source RAW/PERSONAL ทั้งแถวและเทียบค่าจาก provider ภายหลัง โดย source ของ expense และเอกสารอ่านใน D1 SELECT เดียว และเอกสารกำกวมต้องพักตรวจ helper เหล่านี้ยังไม่ต่อเข้าการเขียน production; fingerprint และค่าต้นทางอาจมีข้อมูลส่วนตัว ไม่ใช่วิธีปกปิดข้อมูล และการตรวจซ้ำยังไม่ใช่ immutable revision หรือ Sheets CAS
 
+`inspectRawRecovery` เป็นตัวช่วยอ่านหลักฐานเมื่อผลเขียนไม่ชัดเจนเท่านั้น ผลทุกแบบยังเป็น REVIEW: ค่าที่ตรง preimage หรือ postimage ไม่ได้ยืนยันว่าใครเขียน ไม่อนุญาต retry, ปลด hold หรือปิดงานอัตโนมัติ; metadata ID ที่ตรวจต้องเป็น ID ของ intent และ provider observation ต้องสดและผ่านการยืนยันเอกลักษณ์
+
 เมื่อ `SHEETS_LEDGER_IDENTITY_INSPECTION=true` งาน EXPENSE/PERSONAL_USE และ purchase detail จะอ่านรหัสในชีตปัจจุบัน โดยไม่อ่าน `sheet_row_index` และพักเป็น REVIEW ก่อนจอง/เขียนแถวเสมอ การตรวจพบหนึ่งรายการไม่ได้อนุญาตเขียน เพราะผู้ใช้สามารถย้าย ลบ หรือคัดลอกแถวระหว่างอ่านกับเขียนได้ เมื่อไม่ตั้งค่า flag เส้นทางเดิมไม่เปลี่ยนและยังมีความเสี่ยงเดิม
 
 RAW ใช้ Expense_ID และ Personal_Use_ID ในคอลัมน์ A; purchase detail ใช้ Purchase_Item_ID คอลัมน์ A ร่วม Expense_ID คอลัมน์ B. Snapshot ต้องครอบคลุมขนาด grid จริง ไม่เกิน 10,000 แถว และหัวตารางต้องตรง; ไม่พบ, พบซ้ำ, ข้อมูลไม่ครบ, grid ใหญ่เกินหรืออ่านไม่ได้ ต้อง REVIEW และไม่บันทึกข้อมูลส่วนตัวลงข้อความเหตุผล. ค่าตรงเพียงรายการเดียวเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การรับรองเอกลักษณ์หรืออนุญาตแก้ไข.

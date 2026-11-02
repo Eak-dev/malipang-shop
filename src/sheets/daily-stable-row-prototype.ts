@@ -1,0 +1,175 @@
+import {findMonthBlocks} from './daily-expense';
+import {planStableDailyExpenseRow,stableDailyExpenseKey,type StableDailyRowRequest} from './daily-stable-row-plan';
+import {buildStableEmptyRowAppend,buildStableMonthExpansion,buildStableRowMetadataWrite,isAcceptedHelperFormula,hasExpectedMonthlySubtotal,type MetadataValueRange,type StableRowValues} from './daily-stable-row-writes';
+
+/**
+ * Shadow-only orchestration. No production adapter is provided: there is no
+ * verified guard that excludes old worker versions and human sheet edits.
+ * Any uncertain dispatch or failed readback is held, never blindly retried.
+ */
+export interface StablePrototypePort {
+  requireExclusiveWriters():Promise<void>;
+  readFormulaSnapshot():Promise<{sheetId:number;body:unknown[][]}>;
+  /** UNFORMATTED_VALUE with dates rendered as SERIAL_NUMBER. */
+  readEffectiveSnapshot():Promise<{sheetId:number;body:unknown[][]}>;
+  /** Value of A5 read in formula/effective state; must be actual number. */
+  readSheetYear():Promise<number>;
+  /** Reject notes, validation or protected ranges in affected rows. */
+  requireSafeCellAnnotations(rows:number[],insertionRow?:number):Promise<void>;
+  lookupMetadata(key:string):Promise<Array<{metadataId:number;row:number}>>;
+  /** Return all visible short-key metadata at this row, excluding nothing. */
+  lookupMetadataAtRow(row:number):Promise<Array<{metadataId:number;row:number}>>;
+  /** Durable D1 IN_FLIGHT intent, unique per spreadsheet/expense; it must never
+   * expire by time and must refuse unresolved prior dispatch even when its
+   * metadata disappeared (e.g. a user deleted the row). */
+  reserveMetadataId(key:string):Promise<number>;
+  /** Atomic transition VERIFIED -> IN_FLIGHT for a newer source version. */
+  beginMetadataUpdate(key:string,metadataId:number):Promise<boolean>;
+  /** D1 CAS: binds unique expense ID and unique metadata ID, never a row number. */
+  bindMetadataId(key:string,metadataId:number):Promise<boolean>;
+  /** Final CAS only after all postimages. Failures leave the intent held. */
+  finishMetadataIntent(key:string,metadataId:number,baseline:unknown[]):Promise<boolean>;
+  writeByMetadata(range:MetadataValueRange):Promise<void>;
+  batchUpdate(requests:Array<Record<string,unknown>>):Promise<void>;
+}
+export type StablePrototypeResult={status:'VERIFIED'}|{status:'REVIEW';reason:string}|{status:'OUTCOME_UNKNOWN'};
+const review=(reason:string):StablePrototypeResult=>({status:'REVIEW',reason});
+function validSubtotalValues(body:unknown[][],headerRow:number,totalRow:number,month:number):boolean{
+  const total=body[totalRow-1]??[],header=body[headerRow-1]??[],sums=Array<number>(25).fill(0),columns=[4,5,6,7,10,11,12,13,14,15,16];
+  if(typeof header[4]!=='number'||!Number.isFinite(header[4])||typeof header[9]!=='number'||!Number.isFinite(header[9])||Math.abs(header[9]-header[4])>0.001)return false;
+  for(let row=headerRow+1;row<totalRow;row++){
+    const item=body[row-1]??[];if(Number(item[1])!==month)continue;
+    for(const col of columns){const value=item[col];if(value===undefined||value===null||value==='')continue;if(typeof value!=='number'||!Number.isFinite(value))return false;sums[col]=sums[col]!+value;}
+  }
+  const cash=sums[5]!+sums[6]!+sums[7]!,card=[10,11,12,13,14,15,16].reduce((sum,col)=>sum+sums[col]!,0),expected:Record<number,number>={8:cash,9:header[4]-cash,17:card,18:header[4]-cash-card};
+  for(const col of columns)expected[col]=sums[col]!;
+  return Object.entries(expected).every(([col,value])=>typeof total[Number(col)]==='number'&&Number.isFinite(total[Number(col)] as number)&&Math.abs((total[Number(col)] as number)-value)<0.001);
+}
+
+export async function runStableDailyPrototype(mode:string,enabled:boolean,port:StablePrototypePort,request:StableDailyRowRequest,values:StableRowValues):Promise<StablePrototypeResult>{
+  if(mode!=='shadow'||!enabled)return review('PROTOTYPE_DISABLED');
+  const key=stableDailyExpenseKey(request.expenseId);
+  if(request.postingMonth!==values.month)return review('POSTING_MONTH_MISMATCH');
+  await port.requireExclusiveWriters();
+  if(await port.readSheetYear()!==values.postingYear)return review('POSTING_YEAR_MISMATCH');
+  const initial=await port.readFormulaSnapshot(),plan=planStableDailyExpenseRow(initial.body,request);
+  if(plan.status==='REVIEW')return plan;
+  const block=findMonthBlocks(initial.body).filter(item=>item.month===request.postingMonth);
+  if(block.length!==1)return review('MONTH_BLOCK_NOT_UNIQUE');
+  // A legacy row without X and without a numeric index can still be the same
+  // transaction. A tuple match is a warning only, never proof of identity.
+  if(plan.status!=='FOUND'){
+    for(let row=block[0]!.headerRow+1;row<block[0]!.totalRow;row++){
+      const cells=initial.body[row-1]??[];if(cells[23]!==null&&cells[23]!==undefined&&cells[23]!=='')continue;
+      const total=[5,6,7,10,11,12,13,14,15,16].reduce((sum,index)=>sum+(typeof cells[index]==='number'?Number(cells[index]):0),0);
+      if(Number(cells[1])===values.month&&Number(cells[2])===values.day&&String(cells[3]??'').trim()===values.description.trim()&&Math.abs(total-values.amountBaht)<0.001)return review('POSSIBLE_LEGACY_PROJECTION_REQUIRES_REVIEW');
+    }
+  }
+  const expected=plan.status==='FOUND'?[...initial.body[plan.observedRow-1]!]:Array(25).fill(null);
+  expected[1]=values.month;expected[2]=values.day;expected[3]=values.description;
+  for(const column of [5,6,7,10,11,12,13,14,15,16])expected[column]='';
+  const amountIndex:Record<string,number>={F:5,G:6,H:7,K:10,L:11,M:12,N:13,O:14,P:15,Q:16};
+  const amountColumn=amountIndex[values.amountColumn];if(amountColumn===undefined)return review('INVALID_DAILY_AMOUNT_COLUMN');
+  expected[amountColumn]=values.amountBaht;expected[21]=values.category;expected[22]=values.sourceWallet;expected[23]=key;
+  const metadata=await port.lookupMetadata(key);
+  if(plan.status==='FOUND'){
+    if(metadata.length!==1||metadata[0]!.row!==plan.observedRow)return review('ROW_METADATA_NOT_UNIQUE_OR_MISMATCH');
+  }else if(metadata.length!==0)return review('UNEXPECTED_EXISTING_METADATA');
+  await port.requireExclusiveWriters();
+  const fresh=await port.readFormulaSnapshot(),freshPlan=planStableDailyExpenseRow(fresh.body,request);
+  if(JSON.stringify(plan)!==JSON.stringify(freshPlan)||fresh.sheetId!==initial.sheetId)return review('SHEET_CHANGED_BEFORE_DISPATCH');
+  if(plan.status==='FOUND'){
+    const nextMetadata=await port.lookupMetadata(key);
+    if(nextMetadata.length!==1||nextMetadata[0]!.row!==metadata[0]!.row||nextMetadata[0]!.metadataId!==metadata[0]!.metadataId)return review('ROW_METADATA_CHANGED_BEFORE_DISPATCH');
+  }
+  const monthBlock=block[0]!;
+  if(!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
+  const affected=plan.status==='CAPACITY_REQUIRED'?[monthBlock.totalRow]:[plan.observedRow,monthBlock.totalRow];
+  await port.requireSafeCellAnnotations(affected,plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:undefined);
+  let expectedBalance:number|undefined;
+  let subtotalBefore:unknown[]|undefined;
+  {
+    const beforeEffective=await port.readEffectiveSnapshot();
+    if(beforeEffective.sheetId!==fresh.sheetId)return review('SHEET_CHANGED_BEFORE_DISPATCH');
+    const target=plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:plan.observedRow;
+    for(let row=target-1;row>=monthBlock.headerRow;row--){
+      const candidate=beforeEffective.body[row-1]??[],balance=candidate[9];
+      if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){expectedBalance=balance;break;}
+    }
+    if(expectedBalance===undefined)return review('PREVIOUS_BALANCE_UNVERIFIED');
+    const targetFormula=(fresh.body[target-1]??[])[9];
+    if(targetFormula===`=J${target-1}-I${target}`){const previous=beforeEffective.body[target-2]??[];if(typeof previous[9]!=='number'||!Number.isFinite(previous[9]))return review('PREVIOUS_BALANCE_UNVERIFIED');}
+    if(plan.status==='FOUND'){
+      const row=fresh.body[target-1]??[],previous=fresh.body[target-2]??[],visible=beforeEffective.body[target-1]??[];
+      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(!isAcceptedHelperFormula(monthBlock.headerRow,target,request.postingMonth,name,row[index],previous))return review('PREIMAGE_HELPER_UNVERIFIED');
+      const cash=[5,6,7].reduce((sum,index)=>sum+Number(row[index]||0),0),card=[10,11,12,13,14,15,16].reduce((sum,index)=>sum+Number(row[index]||0),0),day=Number(row[2]);
+      const date=(Date.UTC(values.postingYear,request.postingMonth-1,day)-Date.UTC(1899,11,30))/86400000;
+      if(visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-(expectedBalance-cash))>0.001||Math.abs(visible[18]-(expectedBalance-cash-card))>0.001||visible[20]!==date)return review('PREIMAGE_HELPER_VALUE_UNVERIFIED');
+    }
+    subtotalBefore=beforeEffective.body[monthBlock.totalRow-1];
+    if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
+    if(!validSubtotalValues(beforeEffective.body,monthBlock.headerRow,monthBlock.totalRow,request.postingMonth))return review('SUBTOTAL_VALUES_UNVERIFIED');
+  }
+  if(request.verifyOnly){
+    if(plan.status!=='FOUND'||!request.expectedPrevious)return review('VERIFY_ONLY_IDENTITY_MISSING');
+    for(const index of [1,2,3,5,6,7,10,11,12,13,14,15,16,21,22,23]){
+      const a=request.expectedPrevious[index],b=expected[index];
+      if(!((a===null||a===undefined||a==='')&&(b===null||b===undefined||b===''))&&a!==b)return review('SAME_VERSION_SOURCE_MISMATCH');
+    }
+    await port.requireExclusiveWriters();return {status:'VERIFIED'};
+  }
+  if(plan.status==='FOUND'&&!await port.beginMetadataUpdate(key,metadata[0]!.metadataId))return review('UPDATE_INTENT_UNAVAILABLE');
+  let reservedMetadataId:number|undefined;
+  if(plan.status!=='FOUND'){
+    try{reservedMetadataId=await port.reserveMetadataId(key);}catch{return review('METADATA_RESERVATION_UNAVAILABLE');}
+    if(!Number.isSafeInteger(reservedMetadataId)||reservedMetadataId<1||reservedMetadataId>2147483647)return review('INVALID_METADATA_ID');
+  }
+  await port.requireExclusiveWriters();
+  if(await port.readSheetYear()!==values.postingYear)return review('POSTING_YEAR_MISMATCH');
+  await port.requireSafeCellAnnotations(affected,plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:undefined);
+  try{
+    if(plan.status==='FOUND')await port.writeByMetadata(buildStableRowMetadataWrite(metadata[0]!.metadataId,values));
+    else if(plan.status==='APPEND')await port.batchUpdate(buildStableEmptyRowAppend(fresh.sheetId,monthBlock.headerRow,plan.observedRow,key,values,plan.formulaColumnsMissing,request.postingMonth,reservedMetadataId!));
+    else await port.batchUpdate(buildStableMonthExpansion(fresh.sheetId,monthBlock.headerRow,monthBlock.totalRow,key,values,request.postingMonth,reservedMetadataId!));
+  }catch{return {status:'OUTCOME_UNKNOWN'};}
+  try{
+    const after=await port.readFormulaSnapshot(),post=planStableDailyExpenseRow(after.body,{expenseId:request.expenseId,postingMonth:request.postingMonth,allowCreate:false,expectedPrevious:expected});
+    if(post.status!=='FOUND')return review('POSTIMAGE_UNVERIFIED');
+    let expectedMetadataId=plan.status==='FOUND'?metadata[0]!.metadataId:undefined;
+    if(plan.status!=='FOUND'){
+      const candidates=await port.lookupMetadataAtRow(post.observedRow);
+      if(candidates.length!==1||candidates[0]!.row!==post.observedRow||candidates[0]!.metadataId!==reservedMetadataId)return review('POSTIMAGE_METADATA_UNVERIFIED');
+      if(!await port.bindMetadataId(key,candidates[0]!.metadataId))return review('POSTIMAGE_METADATA_BINDING_CONFLICT');
+      expectedMetadataId=candidates[0]!.metadataId;
+    }
+    const postMetadata=await port.lookupMetadata(key);
+    if(postMetadata.length!==1||postMetadata[0]!.row!==post.observedRow||postMetadata[0]!.metadataId!==expectedMetadataId)return review('POSTIMAGE_METADATA_UNVERIFIED');
+    {
+      const row=after.body[post.observedRow-1]??[],previous=after.body[post.observedRow-2]??[];
+      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(!isAcceptedHelperFormula(monthBlock.headerRow,post.observedRow,request.postingMonth,name,row[index],previous))return review('POSTIMAGE_HELPER_UNVERIFIED');
+      const effective=await port.readEffectiveSnapshot(),visible=effective.body[post.observedRow-1]??[];
+      if(row[9]===`=J${post.observedRow-1}-I${post.observedRow}`){const prev=effective.body[post.observedRow-2]??[];if(typeof prev[9]!=='number'||!Number.isFinite(prev[9]))return review('POSTIMAGE_PRIOR_BALANCE_UNVERIFIED');}
+      const cash=['F','G','H'].includes(values.amountColumn)?values.amountBaht:0, card=cash?0:values.amountBaht;
+      let postBalance:number|undefined=expectedBalance;
+      if(plan.status==='FOUND'&&post.observedRow!==plan.observedRow){
+        postBalance=undefined;
+        for(let row=post.observedRow-1;row>=monthBlock.headerRow;row--){const candidate=effective.body[row-1]??[],balance=candidate[9];if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){postBalance=balance;break;}}
+        if(postBalance===undefined)return review('POSTIMAGE_PRIOR_BALANCE_UNVERIFIED');
+      }
+      const expectedJ=postBalance!-cash;
+      const expectedDate=(Date.UTC(values.postingYear,values.month-1,values.day)-Date.UTC(1899,11,30))/86400000;
+      if(effective.sheetId!==fresh.sheetId||await port.readSheetYear()!==values.postingYear||visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-expectedJ)>0.001||Math.abs(visible[18]-(expectedJ-card))>0.001||visible[20]!==expectedDate)return review('POSTIMAGE_HELPER_VALUE_UNVERIFIED');
+      const blocks=findMonthBlocks(after.body).filter(item=>item.month===request.postingMonth),expectedTotalRow=monthBlock.totalRow+(plan.status==='CAPACITY_REQUIRED'?1:0);
+      if(blocks.length!==1||blocks[0]!.totalRow!==expectedTotalRow||!hasExpectedMonthlySubtotal(after.body[blocks[0]!.totalRow-1]??[],monthBlock.headerRow,blocks[0]!.totalRow))return review('POSTIMAGE_SUBTOTAL_FORMULA_UNVERIFIED');
+      const total=effective.body[blocks[0]!.totalRow-1]??[],old=plan.status==='FOUND'?fresh.body[plan.observedRow-1]??[]:[];
+      const oldCash=[5,6,7].reduce((sum,index)=>sum+Number(old[index]||0),0),oldCard=[10,11,12,13,14,15,16].reduce((sum,index)=>sum+Number(old[index]||0),0),cashDelta=cash-oldCash,cardDelta=card-oldCard;
+      for(const index of [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]){
+        const expectedDelta=[5,6,7,10,11,12,13,14,15,16].includes(index)?(index===amountColumn?values.amountBaht:0)-Number(old[index]||0):index===8?cashDelta:index===9?-cashDelta:index===17?cardDelta:index===18?-cashDelta-cardDelta:0;
+        if(typeof total[index]!=='number'||!Number.isFinite(total[index] as number)||Math.abs((total[index] as number)-(subtotalBefore![index] as number)-expectedDelta)>0.001)return review('POSTIMAGE_SUBTOTAL_VALUE_UNVERIFIED');
+      }
+    }
+    await port.requireExclusiveWriters();
+    if(!await port.finishMetadataIntent(key,plan.status==='FOUND'?metadata[0]!.metadataId:reservedMetadataId!,expected))return review('INTENT_COMPLETION_UNVERIFIED');
+    return {status:'VERIFIED'};
+  }catch{return review('POSTIMAGE_READ_FAILED');}
+}

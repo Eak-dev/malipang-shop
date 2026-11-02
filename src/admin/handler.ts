@@ -12,7 +12,8 @@ import { importShiftScheduleFromSheet } from "./shift-import";
 import { generateDefaultSchedule,overrideShiftSchedule } from "./shift-schedule";
 import { checkReadiness } from "./readiness";
 import { reconcileSheets } from "./reconcile-sheets";
-import { reconcileExpenseItemRows } from "../sheets/sync";
+import { loadExpenseDailyPosting,reconcileExpenseItemRows,syncStableShadowFixtureJob } from "../sheets/sync";
+import {assertStableShadowConfig,assertStableShadowDatabase} from '../sheets/daily-stable-row-shadow';
 import { evaluateEvidenceImage,evaluateUploadedImage } from "./vision-evaluate";
 import { inspectLineImage } from "./vision-inspect";
 import { enqueueAttendanceNotification,recoverQuotaExhaustedLineNotifications } from "../line/attendance-notification";
@@ -25,6 +26,18 @@ function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.leng
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    // Explicit synthetic UAT only: no queue, RAW, production workbook or live
+    // expense IDs. Response never echoes identity, metadata or sheet content.
+    if(request.method==='POST'&&url.pathname==='/admin/uat/daily-stable-row'){
+      if(env.RUNTIME_MODE!=='shadow'||env.DAILY_STABLE_ID_PROTOTYPE_ENABLED!=='true')return new Response('Not found',{status:404});
+      try{
+        const id=env.DAILY_STABLE_UAT_NEW_EXPENSE_ID||'';assertStableShadowConfig(env,id);await assertStableShadowDatabase(env);
+        const loaded=await loadExpenseDailyPosting(env,id);if(loaded.expense.status!=='CONFIRMED')throw new Error('UAT_SOURCE_NOT_CONFIRMED');
+        const result=await syncStableShadowFixtureJob(env,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:loaded.record.version,traceId:'synthetic-uat'});
+        if(result!=='PROCESSED')throw new Error('UAT_OUTBOX_REVIEW_REQUIRED');
+        return Response.json({ok:true,result:'VERIFIED'},{headers:{'cache-control':'no-store'}});
+      }catch{return Response.json({ok:false,result:'REVIEW'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }

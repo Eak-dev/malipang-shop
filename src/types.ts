@@ -49,6 +49,16 @@ export interface Env {
   /** Private, append-only reporting mirror for owner withdrawals and returns. */
   SHEET_PERSONAL_USE_RAW?: string;
   SHEET_EXPENSE_DAILY: string;
+  /** Disabled by default. A staging-only prototype; never enables production writes. */
+  DAILY_STABLE_ID_PROTOTYPE_ENABLED?: string;
+  DAILY_LEGACY_WRITER_GATE_ENABLED?: string;
+  /** Explicit QA workbook allowlist; never infer a production destination. */
+  DAILY_STABLE_UAT_SPREADSHEET_ID?: string;
+  DAILY_STABLE_PRODUCTION_SPREADSHEET_ID?: string;
+  DAILY_STABLE_UAT_DATABASE_MARKER?: string;
+  DAILY_STABLE_UAT_EXCLUSIVE_EDITORS?: string;
+  /** Specific synthetic expense only, independently proven never mirrored. */
+  DAILY_STABLE_UAT_NEW_EXPENSE_ID?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;

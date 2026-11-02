@@ -1,6 +1,7 @@
 import type { Env } from "../types";
 import { batchGetSheetValues,batchGetSheetFormulaValues,batchWriteValues } from "./client";
 import {withCorrectionDailyWriteFence,type GuardedDailyMutation,type DailyFenceExpenseSnapshot} from "./owner-correction-daily-write-fence";
+import {legacyDailyWriterOpen} from './daily-legacy-writer-gate';
 
 export class DailyCancelReviewRequired extends Error{
   constructor(reason="DAILY_CANCEL_IDENTITY_REVIEW_REQUIRED"){super(reason);this.name="DailyCancelReviewRequired";}
@@ -185,6 +186,7 @@ async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entrie
   // Revalidation reduces stale-work risk. The caller that changes the expense
   // must also hold this same sheet-wide fence; this check is not a Sheets CAS.
   const current=async()=>{
+    if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
     const row=await env.DB.prepare(`SELECT expense_id,transaction_date,description,amount_satang,payment_key,source_wallet,category,status,version FROM expense_events WHERE expense_id=?`).bind(record.expenseId).first<{expense_id:string;transaction_date:string;description:string;amount_satang:number;payment_key:string;source_wallet:string;category:string;status:string;version:number}>();
     if(!row||row.status!=="CONFIRMED"||!Number.isSafeInteger(record.version)||Number(row.version)!==record.version||row.transaction_date!==record.transactionDate||row.description!==record.description||Number(row.amount_satang)!==Math.round(record.amountBaht*100)||row.payment_key!==record.paymentKey||row.source_wallet!==record.sourceWallet||row.category!==record.category)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_SNAPSHOT_CHANGED");
   };
@@ -200,11 +202,12 @@ async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entrie
     if(values.length!==writePlan.clearRanges.length||values.some(range=>!Array.isArray(range)||range.some(row=>!Array.isArray(row)||row.some(value=>value!==null&&value!==undefined&&value!==""))))throw new DailyCancelReviewRequired("DAILY_NEW_ROW_NOT_EMPTY_OR_UNVERIFIED");
   };
   await blank();
-  await write(before=>batchWriteValues(env,writePlan.writes,async()=>{await current();await blank();if(before)await before();}));
+  await write(before=>batchWriteValues(env,writePlan.writes,async()=>{await current();await blank();await current();if(before)await before();}));
   return entries.map(entry=>({entityKey:entry.rowKey,row:rows.get(entry.rowKey)!,postingMonth:payment.postingMonth,postingDay:payment.postingDay,amountColumn:payment.amountColumn,sourceWallet}));
 }
 
 export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,record:DailyExpenseRecord,document:DailyExpenseDocument|null,items:DailyExpenseDocumentItem[],options:DailyExpenseItemPostingOptions={}):Promise<{plan:DailyExpensePostingPlan;placements:DailyExpensePlacement[];replacedLegacySummary:boolean}>{
+  if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
   if(!fenceToken)throw new Error("DAILY_FENCE_TOKEN_MISSING");
   const plan=buildDailyExpenseEntries(record,document,items);
@@ -223,6 +226,7 @@ export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,reco
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
+  if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
   if(!fenceToken)throw new Error("DAILY_FENCE_TOKEN_MISSING");
   const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write);
@@ -231,6 +235,7 @@ export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRe
 }
 
 export async function clearCancelledExpenseFromDaily(env:Env,expenseId:string):Promise<number[]>{
+  if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async()=>{
   const mapped=await mappedRowsForExpense(env,expenseId);if(!mapped.length)return[];
   // Even identical date, description, amount and category can belong to two

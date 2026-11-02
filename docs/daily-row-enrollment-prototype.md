@@ -9,7 +9,7 @@ mapping is true. Never call this code as a stand-alone write authorization.
 1. Assemble a mapping proposal from authenticated D1 expense records and an
    independent, bounded Sheet observation. Include spreadsheet and sheet IDs,
    exact row, expense ID and version, posting date, amount in integer satang,
-   payment, a unique proposed metadata ID, complete A:Y literal manifest,
+   payment, source wallet, status, category, description and message ID, a unique proposed metadata ID, complete A:Y literal manifest,
    independently approved formula manifest and header digest. Preserve any
    existing metadata; detect all document-visible row markers and the current
    Google project's project-visible markers. Check proposed metadata IDs using
@@ -61,7 +61,8 @@ mapping is true. Never call this code as a stand-alone write authorization.
    Resolve any interrupted restoration before allowing ordinary work to resume.
 
 The signed approval verifier currently checks only the signature, payload shape,
-in-batch uniqueness, freshness, exact lease values, and selected fresh D1
+in-batch uniqueness, freshness, exact lease values, and the signed transaction identity,
+CONFIRMED status, category, description, payment, wallet, message ID and other selected fresh D1
 fields and approved accounting period. The caller is responsible for trusted clock and data sources, global
 uniqueness, one-time consumption, reviewer authority, actual row observation,
 protection and fence lifecycle, metadata creation, recovery and audit. In

@@ -35,6 +35,7 @@
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",
     "src/sheets/expense-projection-runtime-journal.ts",
+    "src/sheets/expense-projection-generation-observer.ts",
     "src/sheets/sync.ts",
     "src/attendance/service.ts",
     "src/attendance/messages.ts",

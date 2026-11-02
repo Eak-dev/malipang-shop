@@ -161,3 +161,80 @@ test('real migration guard fails closed on missing trigger, index, outer intent,
     assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'VERIFIED');
   }finally{f.close();}}
 });
+function mockProductionRawProvider(proof,options={}){
+  let calls=0;auth.getGoogleAccessToken=async()=> 'synthetic-token';
+  const metadata={metadataId:44,metadataKey:'E',visibility:'DOCUMENT',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2}}};
+  const values=proof.values.map(value=>value===null||value===''?{}:typeof value==='string'?{userEnteredValue:{stringValue:value}}:typeof value==='number'?{userEnteredValue:{numberValue:value}}:{userEnteredValue:{boolValue:value}});
+  const grid={sheets:[{properties:{sheetId:7,title:'raw',gridProperties:{rowCount:2,columnCount:17}},data:[{rowData:[{values:[{userEnteredValue:{stringValue:'Expense_ID'}}]},{values}]}]}]};
+  globalThis.fetch=async(_url,init)=>{assert.equal(init.method,'GET');calls++;if(calls===2&&options.onGrid)await options.onGrid(grid);const payload=calls===2?grid:structuredClone(metadata);if(calls===3&&options.moveMetadata)payload.location.dimensionRange.startIndex=2;return new Response(JSON.stringify(payload));};
+  return()=>calls;
+}
+test('inner finish requires fresh provider identity and complete readback, leaving outer intent open',async()=>{
+  const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+    const {intent,outer,outerToken,context}=await installIntentFixture(f,baseline),token='inner_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    assert.equal(await intent.begin(proof,44,baseline,token),true);const calls=mockProductionRawProvider(proof);
+    const result=await intent.finish(proof,identity,44,token);assert.equal(result.status,'VERIFIED');assert.match(result.evidenceDigest,/^[a-f0-9]{64}$/);assert.equal(calls(),3);
+    const inner=f.db.prepare(`SELECT state,projected_version,operation_token FROM full_raw_identity_intents`).get();assert.equal(inner.state,'VERIFIED');assert.equal(inner.projected_version,2);assert.equal(inner.operation_token,null);
+    assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'IN_FLIGHT');assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
+    assert.equal(await outer.verify('RAW',outerToken,context,'0'.repeat(64)),false);assert.equal(await outer.verify('RAW',outerToken,context,result.evidenceDigest),true);
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}
+});
+test('inner finish holds on changed values, metadata movement, source ABA or missing guard trigger',async()=>{
+  for(const mode of ['value','metadata','source_aba','trigger']){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+    const {intent}=await installIntentFixture(f,baseline),token='inner_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    assert.equal(await intent.begin(proof,44,baseline,token),true);
+    mockProductionRawProvider(proof,{moveMetadata:mode==='metadata',onGrid:grid=>{
+      if(mode==='value')grid.sheets[0].data[0].rowData[1].values[2]={userEnteredValue:{stringValue:'changed'}};
+      if(mode==='source_aba')f.db.exec(`UPDATE expense_events SET trace_id='changed'; UPDATE expense_events SET trace_id='trace-a'`);
+      if(mode==='trigger')f.db.exec(`DROP TRIGGER expense_projection_link_before_update`);
+    }});
+    assert.deepEqual(await intent.finish(proof,identity,44,token),{status:mode==='source_aba'||mode==='trigger'?'UNKNOWN':'NOT_VERIFIED'});assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'IN_FLIGHT');
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}}
+});
+test('lost D1 finish acknowledgment cannot complete the outer projection',async()=>{
+  const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+    const {intent}=await installIntentFixture(f,baseline),token='inner_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    assert.equal(await intent.begin(proof,44,baseline,token),true);mockProductionRawProvider(proof);
+    const prepare=f.env.DB.prepare.bind(f.env.DB);f.env.DB.prepare=sql=>{
+      const statement=prepare(sql);if(!sql.includes("UPDATE full_raw_identity_intents SET state='VERIFIED'"))return statement;
+      return {bind(...args){const bound=statement.bind(...args);return{async first(){await bound.first();throw Error('synthetic lost acknowledgment');}}}};
+    };
+    assert.deepEqual(await intent.finish(proof,identity,44,token),{status:'UNKNOWN'});
+    assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'VERIFIED');
+    assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'IN_FLIGHT');
+    assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}
+});
+test('controller holds outer after unknown inner finish and reports an unconfirmed hold',async()=>{
+  for(const holdFails of [false,true]){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+    const {intent}=await installIntentFixture(f,baseline),token='inner_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    assert.equal(await intent.begin(proof,44,baseline,token),true);mockProductionRawProvider(proof);
+    const prepare=f.env.DB.prepare.bind(f.env.DB);f.env.DB.prepare=sql=>{
+      const statement=prepare(sql);
+      if(sql.includes("UPDATE full_raw_identity_intents SET state='VERIFIED'"))return {bind(...args){const bound=statement.bind(...args);return{async first(){await bound.first();throw Error('lost inner acknowledgment');}}}};
+      if(holdFails&&sql.includes("UPDATE expense_projection_runtime_intents SET state='REVIEW'"))return {bind(){return{async run(){throw Error('outer hold unavailable');}}}};
+      return statement;
+    };
+    const outcome=await intent.finishOrHold(proof,identity,44,token);
+    assert.deepEqual(outcome,{status:holdFails?'OUTER_HOLD_UNCONFIRMED':'OUTER_REVIEW_INNER_UNCERTAIN'});
+    assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'VERIFIED');
+    assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,holdFails?'IN_FLIGHT':'REVIEW');
+    assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}}
+});
+test('controller returns evidence only after readback, and holds both intents on mismatch',async()=>{
+  for(const mismatch of [false,true]){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+    const {intent,outer,outerToken,context}=await installIntentFixture(f,baseline),token='inner_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    assert.equal(await intent.begin(proof,44,baseline,token),true);
+    mockProductionRawProvider(proof,{onGrid:grid=>{if(mismatch)grid.sheets[0].data[0].rowData[1].values[2]={userEnteredValue:{stringValue:'changed'}};}});
+    const result=await intent.finishOrHold(proof,identity,44,token);
+    if(mismatch){assert.deepEqual(result,{status:'OUTER_REVIEW'});assert.equal(f.db.prepare(`SELECT state FROM full_raw_identity_intents`).get().state,'REVIEW');assert.equal(await outer.complete(context),false);}
+    else{assert.equal(result.status,'INNER_VERIFIED_OUTER_IN_FLIGHT');assert.match(result.evidenceDigest,/^[0-9a-f]{64}$/);assert.equal(await outer.verify('RAW',outerToken,context,result.evidenceDigest),true);}
+    assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}}
+});

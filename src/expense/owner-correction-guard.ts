@@ -5,6 +5,8 @@ export interface CorrectionGuardEvidence{
   ownerVerified:boolean;snapshotCurrent:boolean;
   sourcePeriod:"OPEN"|"CLOSED"|"UNKNOWN";destinationPeriod:"OPEN"|"CLOSED"|"UNKNOWN";
   itemCount:number;receiptAllocationVerified:boolean;rowIdentityVerified:boolean;projectionTargetsVerified:boolean;reportDeduplicationVerified:boolean;syncInProgress:boolean;
+  /** Freshly read header rows used to derive every affected accounting period. */
+  periodHeaders?:unknown[][];
 }
 /** Unknown evidence stops the financial mutation, rather than guessing. */
 export function assessOwnerCorrection(draft:OwnerCorrectionDraft,evidence:CorrectionGuardEvidence):CorrectionGuardReason[]{

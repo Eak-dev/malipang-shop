@@ -1,5 +1,6 @@
 import type {Env} from "../types";
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
+import {correctionPeriodHeaderDigest} from "../expense/owner-correction-period-math";
 import {getSheetId,getSheetValues,readSheetRowsByMetadata} from "./client";
 import {findMonthBlocks} from "./daily-expense";
 import {inspectOwnerCorrectionExistingTargets} from "./owner-correction-bootstrap-service";
@@ -8,6 +9,7 @@ import {inspectOwnerCorrectionTargets} from "./owner-correction-inspection";
 import {classifyCorrectionPatchOutcome} from "./owner-correction-recovery";
 import {correctionRawPatchMatches,serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "./owner-correction-sync-plan";
 import {loadExpenseDailyPosting} from "./sync";
+import {captureOwnerCorrectionReport} from "./owner-correction-report-snapshot";
 
 interface Ports {
   existing:typeof inspectOwnerCorrectionExistingTargets;
@@ -16,6 +18,16 @@ interface Ports {
   rows:typeof readSheetRowsByMetadata;
   expense:typeof loadExpenseDailyPosting;
   inspect:typeof inspectOwnerCorrectionTargets;
+}
+
+/** A report baseline is required before a same-month plan may be committed. */
+export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot,correctionId:string,ports:{plan:typeof prepareSameMonthCorrectionPlan;report:typeof captureOwnerCorrectionReport}={plan:prepareSameMonthCorrectionPlan,report:captureOwnerCorrectionReport}):Promise<CorrectionSyncPlan|null>{
+  // A single selected month cannot prove both sides of a calendar-month move.
+  if(before.transactionDate.slice(0,7)!==after.transactionDate.slice(0,7))return null;
+  const plan=await ports.plan(env,before,after,correctionId);if(!plan||plan.rebind)return null;
+  const first=await ports.report(env,before,plan.dailyMetadataId),second=await ports.report(env,before,plan.dailyMetadataId);
+  if(!first||!second||JSON.stringify(first)!==JSON.stringify(second))return null;
+  const verified={...plan,reportBaseline:first};return serializeCorrectionSyncPlan(verified,before.expenseId,correctionId)?verified:null;
 }
 const defaults:Ports={existing:inspectOwnerCorrectionExistingTargets,values:getSheetValues,sheetId:getSheetId,rows:readSheetRowsByMetadata,expense:loadExpenseDailyPosting,inspect:inspectOwnerCorrectionTargets};
 const quote=(name:string)=>`'${name.replace(/'/g,"''")}'`;
@@ -36,7 +48,14 @@ export async function prepareSameMonthCorrectionPlan(env:Env,before:OwnerCorrect
   if(!source||!rawValues||!Number.isSafeInteger(year)||year<2000)return null;
   const projectionRow=(link:typeof d)=>({metadataId:link.metadataId,metadataKey:link.target.key,metadataValue:link.target.value,sheetId:link.target.sheetId,values:rows.get(link.metadataId)||[]});
   const built=planOwnerCorrectionCombined({sheet:{before,after,headers:body.slice(0,3),source:{rowNumber:d.target.rowIndex+1,sheetYear:year,metadataExpenseId:d.target.value,values:source},destination:null,blocks:findMonthBlocks(body)},projection:{before,after,rawSheetId:r.target.sheetId,detailSheetId,raw:projectionRow(r),details:details.map(projectionRow),document:posting.document,items:posting.items,requireOriginal:true},sourceMetadataId:d.metadataId,destinationMetadataId:d.metadataId});
-  const plan:CorrectionSyncPlan={expenseId:before.expenseId,dailyMetadataId:d.metadataId,rawMetadataId:r.metadataId,patches:built.patches,originalRows:built.patches.map(row=>({metadataId:row.metadataId,values:rows.get(row.metadataId)||[]})),rebind:null};
+  // Do not rewrite unchanged inputs: a category edit, for example, must not
+  // clear and re-enter a payment amount while another person is using Sheets.
+  const blank=(value:unknown)=>value===null||value===undefined||value==="";
+  const patches=built.patches.map(patch=>patch.metadataId!==d.metadataId?patch:{...patch,cells:patch.cells.filter(cell=>!(source[cell.columnIndex]===cell.value||(blank(source[cell.columnIndex])&&cell.value==="")||(source[cell.columnIndex]===0&&cell.value==="")))});
+  // A same-month date can clamp to the same posting day; until that case has
+  // a separately verified observation-only row, do not manufacture a write.
+  if(patches.some(patch=>patch.cells.length===0))return null;
+  const plan:CorrectionSyncPlan={expenseId:before.expenseId,dailyMetadataId:d.metadataId,rawMetadataId:r.metadataId,patches,originalRows:patches.map(row=>({metadataId:row.metadataId,values:rows.get(row.metadataId)||[]})),rebind:null,headerDigest:await correctionPeriodHeaderDigest(body.slice(0,3))};
   if(!serializeCorrectionSyncPlan(plan,before.expenseId,correctionId)||!correctionRawPatchMatches(plan,before,after))return null;
   const [verified,latest,linksAfter]=await Promise.all([ports.inspect(env,plan),ports.expense(env,before.expenseId),ports.existing(env,before)]);
   if(JSON.stringify(linksAfter)!==JSON.stringify(links)||!matches(latest.expense,before)||!verified.identitiesVerified||classifyCorrectionPatchOutcome(plan.patches,new Map(plan.originalRows.map(row=>[row.metadataId,row.values])),verified.rows)!=="BEFORE")return null;

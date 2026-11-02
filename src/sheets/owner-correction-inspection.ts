@@ -1,5 +1,7 @@
 import type {Env} from "../types";
-import {getSheetId,readSheetRowsByMetadata,searchSheetRowMetadata,type SheetRowMetadata} from "./client";
+import {getSheetId,getSheetValues,readSheetRowsByMetadata,searchSheetRowMetadata,type SheetRowMetadata} from "./client";
+import {correctionPeriodHeaderDigest} from "../expense/owner-correction-period-math";
+import {inspectOwnerCorrectionCategoryProtection} from "./owner-correction-protection";
 import type {CorrectionSyncPlan} from "./owner-correction-sync-plan";
 import type {CorrectionInspection} from "./owner-correction-worker";
 
@@ -7,8 +9,10 @@ export interface CorrectionInspectionPorts{
   sheetId:(env:Env,name:string)=>Promise<number>;
   metadata:(env:Env,key:string)=>Promise<SheetRowMetadata[]>;
   rows:(env:Env,ids:number[])=>Promise<Map<number,unknown[]>>;
+  headers?:(env:Env,range:string)=>Promise<unknown[][]>;
+  protection?:(env:Env)=>Promise<boolean>;
 }
-const defaults:CorrectionInspectionPorts={sheetId:getSheetId,metadata:searchSheetRowMetadata,rows:readSheetRowsByMetadata};
+const defaults:CorrectionInspectionPorts={sheetId:getSheetId,metadata:searchSheetRowMetadata,rows:readSheetRowsByMetadata,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection};
 const norm=(value:unknown)=>value===undefined||value===null?"":value;
 
 /** Recheck metadata, target uniqueness, identities and every unchanged source cell. */
@@ -18,6 +22,11 @@ export async function inspectOwnerCorrectionTargets(env:Env,plan:CorrectionSyncP
     ports.metadata(env,"malipang_expense_daily"),ports.metadata(env,"malipang_expense_raw"),ports.metadata(env,"malipang_expense_item"),ports.metadata(env,"malipang_correction_reservation")
   ]);
   const all=[...daily,...raw,...items,...reservations],ids=plan.patches.map(row=>row.metadataId),rows=await ports.rows(env,ids),before=new Map(plan.originalRows.map(row=>[row.metadataId,row.values]));
+  if(plan.headerDigest!==undefined){
+    if(!ports.headers||!ports.protection||!await ports.protection(env))return {identitiesVerified:false,rows};
+    const headers=await ports.headers(env,`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!A1:W3`);
+    if(await correctionPeriodHeaderDigest(headers)!==plan.headerDigest)return {identitiesVerified:false,rows};
+  }
   if(new Set([dailyId,rawId,detailId]).size!==3||new Set(ids).size!==ids.length||rows.size!==ids.length||before.size!==ids.length)return {identitiesVerified:false,rows};
   const positions=new Set<string>();
   for(const patch of plan.patches){

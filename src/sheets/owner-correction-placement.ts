@@ -12,10 +12,10 @@ function identity(snapshot:OwnerCorrectionSnapshot,headers:unknown[][]):OwnerCor
 }
 const signature=(i:OwnerCorrectionIdentity)=>JSON.stringify([i.description,i.amountSatang,i.postingYear,i.postingMonth,i.postingDay,i.amountColumn]);
 
-/** Full-sheet verification after rebind. Caller must search source ID directly, not only by key. */
+/** Full-sheet verification after a move or in-place edit. For a move, the caller must search the source ID directly. */
 export function verifyOwnerCorrectionPlacement(input:{before:OwnerCorrectionSnapshot;after:OwnerCorrectionSnapshot;headers:unknown[][];candidates:OwnerCorrectionIdentity[];rows:OwnerCorrectionSheetRow[];dailySheetId:number;sourceMetadataId:number;expectedMetadataId:number;metadata:SheetRowMetadata[]}):boolean{
   const {before,after,headers,candidates,rows,dailySheetId,sourceMetadataId,expectedMetadataId,metadata}=input;
-  if(before.expenseId!==after.expenseId||after.status!=="CONFIRMED"||!Number.isSafeInteger(dailySheetId)||dailySheetId<0||!Number.isSafeInteger(sourceMetadataId)||sourceMetadataId<1||!Number.isSafeInteger(expectedMetadataId)||expectedMetadataId<1||sourceMetadataId===expectedMetadataId||metadata.some(item=>item.metadataId===sourceMetadataId)||new Set(rows.map(row=>row.rowNumber)).size!==rows.length)return false;
+  if(before.expenseId!==after.expenseId||after.status!=="CONFIRMED"||!Number.isSafeInteger(dailySheetId)||dailySheetId<0||!Number.isSafeInteger(sourceMetadataId)||sourceMetadataId<1||!Number.isSafeInteger(expectedMetadataId)||expectedMetadataId<1||(sourceMetadataId!==expectedMetadataId&&metadata.some(item=>item.metadataId===sourceMetadataId))||new Set(rows.map(row=>row.rowNumber)).size!==rows.length)return false;
   const old=identity(before,headers),current=identity(after,headers),selected=candidates.filter(candidate=>candidate.expenseId===after.expenseId);
   if(!old||!current||selected.length!==1||signature(selected[0]!)!==signature(current))return false;
   const marker=metadata.filter(item=>item.metadataKey==="malipang_expense_daily"&&item.metadataValue===after.expenseId);

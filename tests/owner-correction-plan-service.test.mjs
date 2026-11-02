@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {prepareSameMonthCorrectionPlan} from '../dist/sheets/owner-correction-plan-service.js';
+import {prepareSameMonthCorrectionPlan,prepareVerifiedSameMonthCorrectionPlan} from '../dist/sheets/owner-correction-plan-service.js';
+import {syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
 const before={expenseId:'exp_plan',status:'CONFIRMED',version:1,updatedAt:null,description:'Driver',category:'general',amountSatang:200000,transactionDate:'2026-10-28',paymentKey:'transfer',sourceWallet:'SHOP_BANK'};
 const after={...before,category:'transport'};
 function fixture(){
@@ -16,12 +17,14 @@ function fixture(){
 test('builds a same-month plan from verified real-shaped sheet rows without writing',async()=>{
   const f=fixture(),plan=await prepareSameMonthCorrectionPlan(f.env,before,after,'corr',f.ports);
   assert.equal(plan.expenseId,'exp_plan');assert.equal(plan.rebind,null);assert.equal(plan.patches.find(x=>x.metadataId===2).cells[0].value,'transport');
+  assert.deepEqual(plan.patches.find(x=>x.metadataId===1).cells,[{columnIndex:21,value:'transport'}]);
   f.stop();assert.equal(await prepareSameMonthCorrectionPlan(f.env,before,after,'corr',f.ports),null);
 });
 test('same-month planning covers description, amount, date and payment corrections',async()=>{
   for(const changed of [{description:'Taxi'},{amountSatang:205050},{transactionDate:'2026-10-29'},{paymentKey:'cash',sourceWallet:'CASH_DRAWER'}]){
     const f=fixture(),plan=await prepareSameMonthCorrectionPlan(f.env,before,{...before,...changed},'corr',f.ports);
     assert.ok(plan);assert.equal(plan.rebind,null);assert.equal(plan.patches.length,2);
+    if(changed.amountSatang)assert.deepEqual(plan.patches.find(x=>x.metadataId===1).cells,[{columnIndex:7,value:2050.5}]);
   }
 });
 test('rejects stale database data and never plans an unreserved move',async()=>{
@@ -29,4 +32,11 @@ test('rejects stale database data and never plans an unreserved move',async()=>{
   await assert.rejects(prepareSameMonthCorrectionPlan(f.env,before,{...before,transactionDate:'2026-11-02'},'corr',f.ports),/MONTH_BLOCK|DESTINATION/);
   const load=f.ports.existing;let calls=0;f.ports.existing=async(...args)=>{const links=await load(...args);return ++calls===1?links:links.map((link,index)=>index?link:{...link,target:{...link.target,rowIndex:link.target.rowIndex+1}})};
   assert.equal(await prepareSameMonthCorrectionPlan(f.env,before,after,'corr',f.ports),null);
+});
+test('a commit-ready plan requires two identical report baselines and same calendar month',async()=>{
+  const f=fixture(),ports={plan:(env,b,a,id)=>prepareSameMonthCorrectionPlan(env,b,a,id,f.ports),report:async()=>syntheticCorrectionReport(before)};
+  const plan=await prepareVerifiedSameMonthCorrectionPlan(f.env,before,after,'corr',ports);assert.ok(plan?.reportBaseline);assert.equal(plan.reportBaseline.category,'general');
+  let reads=0;ports.report=async()=>{const r=syntheticCorrectionReport(before);if(++reads===2)r.total++;return r};
+  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,before,after,'corr',ports),null);
+  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,before,{...before,transactionDate:'2026-11-01'},'corr',ports),null);
 });

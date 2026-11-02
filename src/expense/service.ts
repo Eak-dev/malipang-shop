@@ -467,7 +467,11 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   }
   if(action==="expense_undo"){
     const owner=actorValues(accessActor||actor),version=await undoConfirmedExpense(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
-    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
+    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}
+    else{
+      const corrected=await env.DB.prepare(`SELECT 1 AS present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND entity_key=? LIMIT 1`).bind(id).first<{present:number}>();
+      await respondText(env,event,corrected?"รายการนี้เคยแก้ไขผ่านระบบ จึงพักการยกเลิกไว้เพื่อตรวจความตรงกับชีตก่อน กรุณาติดต่อผู้ดูแลค่ะ":"This item is already cancelled or cannot be undone.",traceId);
+    }return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
   if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}

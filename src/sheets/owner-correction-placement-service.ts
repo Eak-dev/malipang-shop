@@ -14,7 +14,7 @@ const colIndex=(value:string)=>{let n=0;for(const letter of value)n=n*26+letter.
 /** Read the whole daily sheet and current D1 candidates; no row-number cache. */
 export async function inspectOwnerCorrectionPlacement(env:Env,input:{before:OwnerCorrectionSnapshot;after:OwnerCorrectionSnapshot;sourceMetadataId:number;destinationMetadataId:number;committedVersion:number},ports:CorrectionPlacementPorts=defaults):Promise<boolean>{
   const [sheetId,values,metadata,source,records]=await Promise.all([
-    ports.sheetId(env,env.SHEET_EXPENSE_DAILY),ports.values(env,`${quote(env.SHEET_EXPENSE_DAILY)}!A:W`),ports.metadata(env,"malipang_expense_daily"),ports.metadataById(env,input.sourceMetadataId),
+    ports.sheetId(env,env.SHEET_EXPENSE_DAILY),ports.values(env,`${quote(env.SHEET_EXPENSE_DAILY)}!A:W`),ports.metadata(env,"malipang_expense_daily"),input.sourceMetadataId===input.destinationMetadataId?Promise.resolve(null):ports.metadataById(env,input.sourceMetadataId),
     env.DB.prepare(`SELECT expense_id,description,category,amount_satang,transaction_date,payment_key,source_wallet,version FROM expense_events WHERE status='CONFIRMED'`).all<Record<string,unknown>>()
   ]);
   const year=Number(values[4]?.[0]);if(!Number.isSafeInteger(year)||year<2000)return false;

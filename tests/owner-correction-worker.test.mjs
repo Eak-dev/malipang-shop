@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
+import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
 import {commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerExpense,ownerCorrectionStatus} from '../dist/expense/owner-correction-repository.js';
 import {processOwnerCorrectionJob} from '../dist/sheets/owner-correction-worker.js';
 import {inspectOwnerCorrectionTargets} from '../dist/sheets/owner-correction-inspection.js';
@@ -13,8 +14,8 @@ async function setup(move=false){
   const daily=Array(23).fill(null);Object.assign(daily,{1:10,2:28,3:'Driver',7:2000,21:'general',22:'บัญชีร้าน'});const raw=['exp_worker','2026-10-28','Driver',2000,'transfer','SHOP_BANK','general','CONFIRMED'];
   const patches=[{metadataId:1,cells:[{columnIndex:21,value:move?'':'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows=[{metadataId:1,values:daily},{metadataId:2,values:raw}];
   if(move){patches.push({metadataId:3,cells:[{columnIndex:21,value:'transport'}]});originalRows.push({metadataId:3,values:Array(22).fill(null)});}
-  const plan={expenseId:'exp_worker',dailyMetadataId:1,rawMetadataId:2,patches,originalRows,rebind:move?{sourceMetadataId:1,reservationMetadataId:3,sheetId:100,correctionId:id}:null};
-  const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false};
+  const plan={expenseId:'exp_worker',dailyMetadataId:1,rawMetadataId:2,patches,originalRows,rebind:move?{sourceMetadataId:1,reservationMetadataId:3,sheetId:100,correctionId:id}:null,headerDigest:syntheticCorrectionHeaderDigest,reportBaseline:syntheticCorrectionReport(before)};
+  const e={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false,periodHeaders:syntheticCorrectionHeaders()};await grantSyntheticOpenPeriods(h,id,e.periodHeaders);
   assert.equal(await commitOwnerCorrection(h.env,owner,id,e,'trace',clock.now,plan),2);
   const rows=new Map(originalRows.map(row=>[row.metadataId,[...row.values]])),stats={patches:0,rebinds:0,failAfterWrite:false,failBeforeWrite:false,failAfterRebind:false,failBeforeRebind:false},meta={moved:false};
   const ports={now:()=>clock.now,inspect:async()=>({identitiesVerified:true,rows:new Map([...rows].map(([key,value])=>[key,[...value]]))}),
@@ -31,7 +32,7 @@ test('orchestration can use real identity inspection logic against independently
   const h=await setup();try{
     Object.assign(h.env,{SHEET_EXPENSE_DAILY:'daily',SHEET_EXPENSE_RAW:'raw',SHEET_PURCHASE_DETAILS:'detail'});
     const metadata=[{metadataId:1,metadataKey:'malipang_expense_daily',metadataValue:'exp_worker',sheetId:1,rowIndex:10},{metadataId:2,metadataKey:'malipang_expense_raw',metadataValue:'exp_worker',sheetId:2,rowIndex:1}];
-    const ports={sheetId:async(_env,name)=>({daily:1,raw:2,detail:3})[name],metadata:async(_env,key)=>metadata.filter(item=>item.metadataKey===key),rows:async()=>new Map([...h.rows].map(([key,value])=>[key,[...value]]))};
+    const ports={sheetId:async(_env,name)=>({daily:1,raw:2,detail:3})[name],metadata:async(_env,key)=>metadata.filter(item=>item.metadataKey===key),rows:async()=>new Map([...h.rows].map(([key,value])=>[key,[...value]])),headers:async()=>syntheticCorrectionHeaders(),protection:async()=>true};
     h.ports.inspect=plan=>inspectOwnerCorrectionTargets(h.env,plan,ports);
     assert.equal(await processOwnerCorrectionJob(h.env,h.job,h.ports),'COMPLETED');assert.equal(h.stats.patches,1);
   }finally{h.close()}

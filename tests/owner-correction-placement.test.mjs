@@ -21,3 +21,7 @@ test('after a changed amount an old matching row must not remain',()=>{
   assert.equal(verifyOwnerCorrectionPlacement(x),true);
   const old=[...x.rows[0].values];old[7]=2000;old[21]='general';x.rows.push({rowNumber:101,sheetYear:2026,values:old});assert.equal(verifyOwnerCorrectionPlacement(x),false);
 });
+test('in-place correction keeps the original metadata and still requires a unique row',()=>{
+  const x=fixture();x.sourceMetadataId=x.expectedMetadataId;assert.equal(verifyOwnerCorrectionPlacement(x),true);
+  x.rows.push({...x.rows[0],rowNumber:101});assert.equal(verifyOwnerCorrectionPlacement(x),false);
+});

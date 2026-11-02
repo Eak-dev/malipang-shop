@@ -13,6 +13,9 @@ test('live placement inspection requires current D1 values, one row, and direct 
     const ports={sheetId:async()=>1,values:async()=>daily,metadata:async()=>[marker],metadataById:async()=>source};
     const input={before,after,sourceMetadataId:11,destinationMetadataId:12,committedVersion:2};
     assert.equal(await inspectOwnerCorrectionPlacement(h.env,input,ports),true);
+    ports.metadataById=async()=>{throw new Error('same-row inspection must not request a deleted marker')};
+    assert.equal(await inspectOwnerCorrectionPlacement(h.env,{...input,sourceMetadataId:12},ports),true);
+    ports.metadataById=async()=>source;
     source={...marker,metadataId:11,metadataKey:'changed-key'};assert.equal(await inspectOwnerCorrectionPlacement(h.env,input,ports),false);source=null;
     h.sqlite.prepare("UPDATE expense_events SET version=3 WHERE expense_id='exp_place_service'").run();assert.equal(await inspectOwnerCorrectionPlacement(h.env,input,ports),false);
   }finally{h.close()}

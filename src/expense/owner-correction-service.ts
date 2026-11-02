@@ -5,8 +5,13 @@ import {isoDateInBangkok} from "../shared/time";
 import type {Env,LineEvent} from "../types";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 import {buildOwnerCorrectionDraft,parseOwnerCorrectionDate,type OwnerCorrectionField,type OwnerCorrectionSnapshot} from "./owner-correction";
+import {inspectOwnerCorrectionPeriods,recordOwnerCorrectionPeriodDecision} from "./owner-correction-periods";
+import {confirmOwnerCorrection} from "./owner-correction-confirmed";
 import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitPendingOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
-import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionPreview,buildOwnerCorrectionResults} from "./owner-correction-flex";
+import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
+
+interface OwnerCorrectionPostbackPorts{periods:typeof inspectOwnerCorrectionPeriods;decision:typeof recordOwnerCorrectionPeriodDecision;confirmed?:typeof confirmOwnerCorrection}
+const postbackDefaults:OwnerCorrectionPostbackPorts={periods:inspectOwnerCorrectionPeriods,decision:recordOwnerCorrectionPeriodDecision,confirmed:confirmOwnerCorrection};
 
 const reply=(env:Env,event:LineEvent,body:string,traceId:string)=>respondTextToLineEvent(env,event,body,{traceId,purpose:"OWNER_RESPONSE"});
 const flex=(env:Env,event:LineEvent,body:unknown,traceId:string)=>respondFlexToLineEvent(env,event,body,{traceId,purpose:"OWNER_RESPONSE"});
@@ -52,7 +57,7 @@ export async function handleOwnerCorrectionText(env:Env,event:LineEvent,traceId:
   if(!id){await reply(env,event,"ข้อมูลเปลี่ยนแล้วหรือรับข้อความนี้ไปแล้ว กรุณาเปิดรายการใหม่",traceId);return true;}
   await clearOwnerCorrectionInput(env,owner,inputId);await preview(env,event,id,owner,traceId);return true;
 }
-export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,traceId:string):Promise<boolean>{
+export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,traceId:string,ports:OwnerCorrectionPostbackPorts=postbackDefaults):Promise<boolean>{
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return false;
   const q=new URLSearchParams(event.postback?.data||""),action=q.get("a")||"";if(!action.startsWith("owner_correction_"))return false;
   const owner=await identity(env,event);if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
@@ -69,6 +74,36 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
   if(action==="owner_correction_cancel"){
     const cancelled=await cancelOwnerCorrectionDraft(env,owner,id);await reply(env,event,cancelled?"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน":"ร่างหมดอายุหรือได้รับการจัดการแล้ว",traceId);return true;
   }
+  if(action==="owner_correction_period_ask"||action==="owner_correction_period_set"){
+    try{
+      const v=Number(q.get("v")),p=q.get("p")||"",h=q.get("h")||"",view=await ports.periods(env,owner,id);
+      if(!view||view.version!==v||view.headerDigest!==h||!view.periods.some(item=>item.period===p)){await reply(env,event,"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาเปิดรายการใหม่",traceId);return true;}
+      if(action==="owner_correction_period_ask"){
+        if(view.periods.find(item=>item.period===p)?.decision==="HOLD"){await flex(env,event,buildOwnerCorrectionPeriods(view,id),traceId);return true;}
+        await flex(env,event,buildOwnerCorrectionPeriodQuestion(view,id,p),traceId);return true;
+      }
+      const decision=q.get("s");if(decision!=="OPEN"&&decision!=="HOLD"){await reply(env,event,"สถานะไม่ถูกต้อง กรุณาเปิดรายการใหม่",traceId);return true;}
+      const result=await ports.decision(env,owner,id,{period:p,headerDigest:h,version:v,decision});
+      if(result==="STALE"||result==="CONFLICT"){await reply(env,event,"ข้อมูลเปลี่ยนหรือเคยตอบแล้ว กรุณาตรวจรายการล่าสุด",traceId);return true;}
+      const updated=await ports.periods(env,owner,id);if(!updated){await reply(env,event,"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",traceId);return true;}
+      await flex(env,event,buildOwnerCorrectionPeriods(updated,id),traceId);return true;
+    }catch{await reply(env,event,"ตรวจสถานะเดือนบัญชีไม่ได้ รายการเดิมยังไม่เปลี่ยน กรุณาลองใหม่",traceId);return true;}
+  }
+  if(action==="owner_correction_execute"){
+    if(!ports.confirmed){await reply(env,event,"ยังบันทึกการแก้ไขไม่ได้ รายการเดิมยังไม่เปลี่ยน",traceId);return true;}
+    try{
+      const result=await ports.confirmed(env,owner,id,Number(q.get("v")),traceId);
+      if(result==="APPLIED"){
+        const current=await ownerCorrectionStatus(env,owner,id);
+        if(current==="COMPLETED")await reply(env,event,"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว",traceId);
+        else if(current==="SYNC_REVIEW"||current==="SYNC_FAILED")await reply(env,event,"บันทึกแล้ว แต่การซิงก์ต้องตรวจเพิ่มเติม กรุณาติดต่อผู้ดูแล",traceId);
+        else await flex(env,event,buildOwnerCorrectionSyncPending(id),traceId);
+        return true;
+      }
+      const messages={STALE:"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาค้นหาและตรวจรายการใหม่",PERIOD_REVIEW:"เดือนบัญชียังยืนยันไม่ครบหรือเลือกรอตรวจ รายการเดิมยังไม่เปลี่ยน",PROTECTION:"สิทธิ์แก้ไขชีตยังไม่พร้อม รายการเดิมยังไม่เปลี่ยน กรุณาติดต่อผู้ดูแล",DUPLICATE:"พบความเสี่ยงรายการซ้ำหรือข้อมูลรายงานไม่พร้อม กรุณาตรวจเพิ่ม รายการเดิมยังไม่เปลี่ยน",ALLOCATION:"ใบเสร็จมีหลายรายการ ต้องตรวจการแบ่งยอดก่อน รายการเดิมยังไม่เปลี่ยน",SHEET_REVIEW:"ยังตรวจแถวหรือรายงานเดือนได้ไม่ครบ กรุณาตรวจรายงานและติดต่อผู้ดูแล",UNSUPPORTED:"รายการนี้ต้องตรวจข้อมูลเพิ่มเติมก่อนแก้ไข รายการเดิมยังไม่เปลี่ยน"} as const;
+      await reply(env,event,messages[result],traceId);return true;
+    }catch{await reply(env,event,"ยังตรวจหรือบันทึกการแก้ไขไม่ได้ กรุณาตรวจสถานะก่อนลองใหม่",traceId);return true;}
+  }
   if(action==="owner_correction_confirm"){
     const draft=await loadOwnerCorrectionDraft(env,owner,id);let status="";
     if(!draft){
@@ -80,7 +115,16 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
       const result=await commitPendingOwnerCorrection(env,owner,id,Number(q.get("v")));
       await reply(env,event,result==="APPLIED"?"บันทึกการแก้ไขในร่างแล้ว รายการยังไม่ลงบัญชี กรุณาตรวจและยืนยันรายละเอียด หมวดหมู่ และช่องทางชำระในรายการต้นฉบับ":result==="REVIEW"?"ยอดหรือวันที่ของคำสั่งซื้อนี้ต้องตรวจหลักฐานและยืนยันใหม่ก่อนแก้ไข รายการเดิมยังไม่เปลี่ยน":"ร่างหมดอายุหรือข้อมูลเปลี่ยนแล้ว กรุณาค้นหาและเปิดรายการใหม่",traceId);return true;
     }
-    // Fail closed until the atomic financial update and verified Sheets outbox are implemented.
+    if(status==="CONFIRMED"){
+      try{
+        const view=await ports.periods(env,owner,id);
+        if(!view||view.version!==Number(q.get("v"))){await reply(env,event,"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาเปิดรายการใหม่",traceId);return true;}
+        if(view.periods.some(item=>item.decision!=="OPEN")){await flex(env,event,buildOwnerCorrectionPeriods(view,id),traceId);return true;}
+        const before=JSON.parse(String(draft.before_json)) as OwnerCorrectionSnapshot,after=JSON.parse(String(draft.after_json)) as OwnerCorrectionSnapshot;
+        await flex(env,event,buildOwnerCorrectionFinalPreview({before,after,field:String(draft.field) as OwnerCorrectionField},id),traceId);return true;
+      }catch{await reply(env,event,"ตรวจสถานะเดือนบัญชีไม่ได้ รายการเดิมยังไม่เปลี่ยน กรุณาลองใหม่",traceId);return true;}
+    }
+    // Keep confirmed changes disabled until the verified Sheets outbox is connected.
     await reply(env,event,"ยังบันทึกการแก้ไขไม่ได้ รายการเดิมยังไม่เปลี่ยน กรุณาติดต่อผู้ดูแล",traceId);return true;
   }
   const snapshot=await loadOwnerExpense(env,owner,id);if(!snapshot){await reply(env,event,"ไม่พบรายการ กรุณาค้นหาใหม่",traceId);return true;}

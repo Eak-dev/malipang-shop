@@ -2,7 +2,7 @@ export type RuntimeMode = "shadow" | "production";
 export type ImageKind = "CLOCK" | "RECEIPT" | "BANK_SLIP" | "ONLINE_ORDER" | "DELIVERY_ORDER" | "UNKNOWN";
 export type PunchType = "IN" | "OUT" | "DUPLICATE" | "COMPLETE" | "REVIEW";
 export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
-export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "PERSONAL_USE" | "SYSTEM_LOG";
+export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "EXPENSE_CORRECTION" | "PERSONAL_USE" | "SYSTEM_LOG";
 
 export interface Env {
   DB: D1Database;

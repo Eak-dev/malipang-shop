@@ -1,5 +1,6 @@
 import type {OwnerCorrectionDraft,OwnerCorrectionSnapshot} from "./owner-correction";
 import {expensePaymentOptions} from "./document";
+import type {CorrectionPeriodView} from "./owner-correction-periods";
 
 const labels:Record<string,string>={ingredients:"วัตถุดิบ",fillings:"ไส้ขนม",packaging:"บรรจุภัณฑ์",gas:"แก๊ส",utilities:"ค่าน้ำ/ค่าไฟ",rent:"ค่าเช่า",staff:"ค่าแรง",transport:"ขนส่ง/รถ",marketing:"การตลาด",equipment:"อุปกรณ์",cleaning:"ทำความสะอาด",bank_fee:"ค่าธรรมเนียมธนาคาร",general:"ทั่วไป"};
 const text=(value:string,bold=false)=>({type:"text",text:value,wrap:true,size:"sm",...(bold?{weight:"bold"}:{})});
@@ -15,6 +16,32 @@ const title:Record<OwnerCorrectionDraft["field"],string>={description:"ราย
 export function buildOwnerCorrectionPreview(draft:OwnerCorrectionDraft,correctionId:string){
   const query=`id=${encode(correctionId)}&v=${draft.before.version}`;
   return flex("ตรวจการแก้ไขค่าใช้จ่าย",[text("ตรวจการแก้ไขก่อนยืนยัน",true),text(draft.before.description),text(`ยอดเดิม ${money(draft.before.amountSatang)} • วันที่ ${draft.before.transactionDate}`),text(`ช่องที่แก้: ${title[draft.field]}`),text(`เดิม: ${valueFor(draft.before,draft.field)}`),text(`ใหม่: ${valueFor(draft.after,draft.field)}`,true),text("หลักฐานเดิมยังคงอยู่ และระบบจะตรวจข้อมูลอีกครั้งก่อนบันทึก")],[button("ยืนยันการแก้ไข",`a=owner_correction_confirm&${query}`,true),button("ยกเลิก",`a=owner_correction_cancel&${query}`)]);
+}
+
+export function buildOwnerCorrectionFinalPreview(draft:OwnerCorrectionDraft,correctionId:string){
+  const query=`id=${encode(correctionId)}&v=${draft.before.version}`;
+  return flex("ยืนยันบันทึกการแก้ไข",[text("ตรวจอีกครั้งก่อนบันทึก",true),text(draft.before.description),text(`ช่องที่แก้: ${title[draft.field]}`),text(`เดิม: ${valueFor(draft.before,draft.field)}`),text(`ใหม่: ${valueFor(draft.after,draft.field)}`,true),text("ระบบจะตรวจสิทธิ์ เดือนบัญชี และข้อมูลอีกครั้งก่อนเริ่มซิงก์")],[button("ยืนยันบันทึก",`a=owner_correction_execute&${query}`,true),button("ยกเลิกร่าง",`a=owner_correction_cancel&${query}`)]);
+}
+
+export function buildOwnerCorrectionSyncPending(correctionId:string){
+  return flex("บันทึกแล้ว กำลังตรวจการซิงก์",[text("บันทึกการแก้ไขแล้ว",true),text("ระบบกำลังซิงก์ชีตและตรวจรายงาน กรุณาตรวจสถานะก่อนถือว่าเสร็จ")],[button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(correctionId)}`,true)]);
+}
+
+/** The owner attests to periods only for the current, unexpired correction. */
+export function buildOwnerCorrectionPeriods(view:CorrectionPeriodView,correctionId:string){
+  const body:unknown[]=[text("ตรวจเดือนบัญชีก่อนแก้ไข",true),text("กรุณาตรวจแต่ละเดือน หากปิดบัญชีแล้วหรือไม่แน่ใจ ให้พักรายการไว้")];
+  for(const item of view.periods){
+    body.push(text(`${item.period} • ${item.decision==="OPEN"?"เจ้าของยืนยันยังไม่ปิด":item.decision==="HOLD"?"รอตรวจเพิ่มเติม":"ยังไม่ยืนยัน"}`));
+    if(item.decision!=="HOLD")body.push(button(`${item.decision==="OPEN"?"ทบทวน":"ตรวจ"} ${item.period}`,`a=owner_correction_period_ask&id=${encode(correctionId)}&v=${view.version}&p=${encode(item.period)}&h=${view.headerDigest}`));
+  }
+  return flex("ตรวจเดือนบัญชี",body,[button("ตรวจต่อ",`a=owner_correction_confirm&id=${encode(correctionId)}&v=${view.version}`,true),button("ยกเลิกร่าง",`a=owner_correction_cancel&id=${encode(correctionId)}&v=${view.version}`)]);
+}
+
+export function buildOwnerCorrectionPeriodQuestion(view:CorrectionPeriodView,correctionId:string,period:string){
+  const common=`id=${encode(correctionId)}&v=${view.version}&p=${encode(period)}&h=${view.headerDigest}`;
+  return flex("ยืนยันสถานะเดือนบัญชี",[text(`เดือน ${period} ยังไม่ปิดบัญชีใช่หรือไม่`,true),text("ยืนยันเฉพาะเมื่อได้ตรวจแล้ว หากปิดแล้วหรือไม่แน่ใจ ให้เลือกพักรายการ")],[
+    button("ยังไม่ปิด",`a=owner_correction_period_set&${common}&s=OPEN`,true),button("พักรายการไว้",`a=owner_correction_period_set&${common}&s=HOLD`)
+  ]);
 }
 
 export function buildOwnerCorrectionResults(rows:Record<string,unknown>[],query:string,nextCursor:string|null=null){

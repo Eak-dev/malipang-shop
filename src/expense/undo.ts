@@ -19,7 +19,8 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
       SELECT ?,?,'UNDO',expense_id,?,'',json_object('status',status,'version',version),
         json_object('status','CANCELLED','version',MAX(version,COALESCE((SELECT MAX(entity_version) FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=expense_events.expense_id),0))+1),?
-      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'`)
+      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
+        AND NOT EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=expense_events.expense_id)`)
       .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId),
     env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=?,
         version=(SELECT json_extract(after_json,'$.version') FROM expense_audit_log WHERE audit_id=?)

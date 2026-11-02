@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {claimOwnerCorrectionLease,renewOwnerCorrectionLease} from '../dist/sheets/owner-correction-lease.js';
 import {claimSheetSyncJob,syncJob} from '../dist/sheets/sync.js';
+import {undoConfirmedExpense} from '../dist/expense/undo.js';
 
 function setup(){
   const h=ownerOrderFixture(),now=Date.parse('2026-10-28T10:00:00Z');
@@ -42,4 +43,16 @@ test('legacy numeric row mapping cannot write a previously corrected expense',as
     await assert.rejects(syncJob(h.env,job),/CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC/);
     assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key='exp_lease' AND entity_version=3").get().status,'FAILED');
   }finally{h.close()}
+});
+
+test('undo cannot change D1 while corrected sheet rows require verified synchronization',async()=>{
+  for(const status of ['PENDING','PROCESSING','COMPLETED','REVIEW']){
+    const h=setup();try{
+      h.sqlite.prepare("UPDATE sync_jobs SET status=? WHERE job_id='job_correction'").run(status);
+      const version=await undoConfirmedExpense(h.env,{expenseId:'exp_lease',lineUserId:'fixture_staff',traceId:'synthetic_undo',actorEmployeeId:'TEST_STAFF',branchId:'B001'});
+      const row=h.sqlite.prepare("SELECT status,version FROM expense_events WHERE expense_id='exp_lease'").get();assert.equal(version,null);assert.equal(row.status,'CONFIRMED');assert.equal(row.version,2);
+      assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE expense_id='exp_lease' AND action='UNDO'").get().n,0);
+      assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key='exp_lease'").get().n,0);
+    }finally{h.close()}
+  }
 });

@@ -5,6 +5,7 @@ import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfir
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
+import {processOwnerCorrectionRuntime} from "./owner-correction-runtime";
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -12,7 +13,7 @@ export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
-export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY";
+export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY"|"REVIEW";
 interface PersonalUseProjectionRow extends Record<string,unknown>{version:unknown;sync_lease_owned?:unknown}
 class PersonalUseWriteFenceUnavailableError extends Error{
   constructor(){super("PERSONAL_USE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="PersonalUseWriteFenceUnavailableError";}
@@ -118,6 +119,11 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
+  if(job.entityType==="EXPENSE_CORRECTION"){
+    if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return "IGNORED";
+    const outcome=await processOwnerCorrectionRuntime(env,{expenseId:job.entityKey,version:job.entityVersion});
+    return outcome==="COMPLETED"?"PROCESSED":outcome==="BUSY"?"BUSY":outcome==="REVIEW"?"REVIEW":"IGNORED";
+  }
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     if(job.entityType==="PERSONAL_USE")return personalUseClaimOutcome(env,job,claimNow);
     if(job.entityType==="EXPENSE"){

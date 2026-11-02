@@ -145,11 +145,24 @@ export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unkno
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
+/** Numeric date serials are required when comparing accounting periods independent of locale. */
+export async function batchGetSheetSerialValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+  if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"SERIAL_NUMBER"});for(const range of ranges)query.append("ranges",range);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+}
 export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"FORMULA",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+export interface SheetProtectedRange{range?:{sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number};warningOnly?:boolean;requestingUserCanEdit?:boolean;unprotectedRanges?:unknown[];editors?:{users?:string[];groups?:string[];domainUsersCanEdit?:boolean}}
+/** Read-only protection metadata. Missing editor information is not proof of protection. */
+export async function getSheetProtectedRanges(env:Env,title:string):Promise<{sheetId:number;ranges:SheetProtectedRange[]}>{
+  const fields="sheets(properties(sheetId,title),protectedRanges(range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))";
+  const data=await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string};protectedRanges?:SheetProtectedRange[]}>};
+  const found=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);if(found.length!==1||!Number.isSafeInteger(found[0]?.properties?.sheetId)||Number(found[0]?.properties?.sheetId)<0)throw new Error("CORRECTION_PROTECTION_SHEET_INVALID");
+  return {sheetId:Number(found[0]!.properties!.sheetId),ranges:found[0]!.protectedRanges||[]};
+}
 export async function getSheetId(env:Env,title:string):Promise<number>{
   const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};
   const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;

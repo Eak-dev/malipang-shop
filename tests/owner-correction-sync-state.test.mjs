@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
+import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
 import {commitOwnerCorrection,createOwnerCorrectionDraft,loadOwnerExpense} from '../dist/expense/owner-correction-repository.js';
 import {claimOwnerCorrectionLease} from '../dist/sheets/owner-correction-lease.js';
 import {advanceOwnerCorrectionSyncPhase,armOwnerCorrectionDispatch,finalizeOwnerCorrectionSync} from '../dist/sheets/owner-correction-sync-state.js';
@@ -13,8 +14,8 @@ async function setup(move){
   const before=await loadOwnerExpense(h.env,owner,'exp_phase'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport',now);
   const patches=[{metadataId:1,cells:[{columnIndex:21,value:'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows=[{metadataId:1,values:Array(22).fill(null)},{metadataId:2,values:[null,null,null,null,null,null,'general']}];
   if(move){patches.push({metadataId:3,cells:[{columnIndex:21,value:'transport'}]});originalRows.push({metadataId:3,values:Array(22).fill(null)});}
-  const plan={expenseId:'exp_phase',dailyMetadataId:1,rawMetadataId:2,patches,originalRows,rebind:move?{sourceMetadataId:1,reservationMetadataId:3,sheetId:100,correctionId:id}:null};
-  const evidence={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false};
+  const plan={expenseId:'exp_phase',dailyMetadataId:1,rawMetadataId:2,patches,originalRows,rebind:move?{sourceMetadataId:1,reservationMetadataId:3,sheetId:100,correctionId:id}:null,headerDigest:syntheticCorrectionHeaderDigest,reportBaseline:syntheticCorrectionReport(before)};
+  const evidence={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false,periodHeaders:syntheticCorrectionHeaders()};await grantSyntheticOpenPeriods(h,id,evidence.periodHeaders);
   assert.equal(await commitOwnerCorrection(h.env,owner,id,evidence,'trace',now,plan),2);
   const job={expenseId:'exp_phase',version:2},token=await claimOwnerCorrectionLease(h.env,job,now);assert.ok(token);
   return {...h,id,job,token,now};

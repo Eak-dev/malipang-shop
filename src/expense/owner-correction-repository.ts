@@ -6,6 +6,7 @@ import {buildOwnerCorrectionDraft,parseOwnerCorrectionAmount,parseOwnerCorrectio
 import {assessOwnerCorrection,type CorrectionGuardEvidence} from "./owner-correction-guard";
 import {correctionRawPatchMatches,serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/owner-correction-sync-plan";
 import {commitPendingOrderCorrection} from "./owner-correction-pending-order";
+import {correctionAccountingPeriods,correctionPeriodHeaderDigest,correctionPostingDate} from "./owner-correction-period-math";
 
 export type OwnerCorrectionInput={mode:"SEARCH"}|{mode:"VALUE";field:"description"|"amountSatang"|"transactionDate";snapshot:OwnerCorrectionSnapshot};
 
@@ -159,6 +160,9 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
   const value=field==="payment"?{paymentKey:after.paymentKey,sourceWallet:after.sourceWallet}:field==="amountSatang"?`${Math.floor(after.amountSatang/100)}.${String(after.amountSatang%100).padStart(2,"0")}`:field==="transactionDate"?after.transactionDate:field==="category"?after.category:after.description;
   const rebuilt=buildOwnerCorrectionDraft(before,field,value);if(!rebuilt||JSON.stringify(rebuilt.after)!==JSON.stringify(after)||before.status!=="CONFIRMED"||assessOwnerCorrection(rebuilt,evidence).length)return null;
   const planJson=plan?serializeCorrectionSyncPlan(plan,before.expenseId,id):null;if(!planJson||!plan||!correctionRawPatchMatches(plan,before,after))return null;
+  let periods:string[],headerDigest:string,postingDate:string;try{if(!evidence.periodHeaders)return null;periods=correctionAccountingPeriods(before,after,evidence.periodHeaders);headerDigest=await correctionPeriodHeaderDigest(evidence.periodHeaders);postingDate=correctionPostingDate(before,evidence.periodHeaders);}catch{return null;}
+  if(!periods.length||plan.headerDigest!==headerDigest)return null;
+  const report=plan.reportBaseline;if(!report||report.expenseId!==before.expenseId||report.date!==before.transactionDate||report.postingDate!==postingDate||report.description!==before.description||report.amountSatang!==before.amountSatang||report.wallet!==before.sourceWallet||report.category!==before.category)return null;
   const auditId=randomId("exp_audit"),jobId=randomId("sync"),now=new Date(nowMs).toISOString(),next=before.version+1;
   if(!Number.isSafeInteger(next))return null;
   const result=await env.DB.batch([
@@ -167,8 +171,10 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
       WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND c.before_json=? AND c.after_json=?
       AND e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=?
       AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-      AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')`)
-      .bind(auditId,owner.employeeId,`OWNER_CORRECTION:${field}`,JSON.stringify(before),JSON.stringify({...after,version:next,correctionId:id}),now,id,owner.employeeId,now,String(row.before_json),String(row.after_json),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId),
+      AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+      AND NOT EXISTS(SELECT 1 FROM json_each(?) required WHERE NOT EXISTS(SELECT 1 FROM expense_owner_correction_period_decisions p WHERE p.correction_id=c.correction_id AND p.period=required.value AND p.header_digest=? AND p.decision='OPEN' AND p.actor_employee_id=c.owner_employee_id)
+        OR EXISTS(SELECT 1 FROM expense_owner_correction_period_decisions held WHERE held.correction_id=c.correction_id AND held.period=required.value AND held.header_digest=? AND held.decision='HOLD'))`)
+      .bind(auditId,owner.employeeId,`OWNER_CORRECTION:${field}`,JSON.stringify(before),JSON.stringify({...after,version:next,correctionId:id}),now,id,owner.employeeId,now,String(row.before_json),String(row.after_json),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId,JSON.stringify(periods),headerDigest,headerDigest),
     env.DB.prepare(`UPDATE expense_events SET description=?,category=?,amount_satang=?,transaction_date=?,payment_key=?,source_wallet=?,version=?,updated_at=? WHERE expense_id=? AND version=? AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`)
       .bind(after.description,after.category,after.amountSatang,after.transactionDate,after.paymentKey,after.sourceWallet,next,now,before.expenseId,before.version,auditId),
     env.DB.prepare(`UPDATE expense_owner_corrections SET status='APPLIED',applied_at=? WHERE correction_id=? AND status='DRAFT' AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=?)`)

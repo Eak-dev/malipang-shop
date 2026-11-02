@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectOwnerCorrectionTargets} from '../dist/sheets/owner-correction-inspection.js';
+import {syntheticCorrectionHeaderDigest,syntheticCorrectionHeaders} from './helpers/owner-correction-periods.mjs';
 
 function fixture(){
   const daily=Array(23).fill(null);Object.assign(daily,{1:10,2:28,3:'Driver',7:2000,21:'general',22:'บัญชีร้าน'});
@@ -22,4 +23,11 @@ test('duplicated metadata identities and wrong sheet associations fail closed',a
 test('metadata attached to a different raw expense is not accepted even when the old snapshot matches',async()=>{
   const x=fixture();x.plan.originalRows[1].values[0]='other';x.rows.get(20)[0]='other';
   assert.equal((await inspectOwnerCorrectionTargets(x.env,x.plan,x.ports)).identitiesVerified,false);
+});
+test('a plan bound to payment headers stops if they change or cannot be read',async()=>{
+  const x=fixture();x.plan.headerDigest=syntheticCorrectionHeaderDigest;
+  assert.equal((await inspectOwnerCorrectionTargets(x.env,x.plan,x.ports)).identitiesVerified,false);
+  x.ports.headers=async()=>syntheticCorrectionHeaders();x.ports.protection=async()=>true;assert.equal((await inspectOwnerCorrectionTargets(x.env,x.plan,x.ports)).identitiesVerified,true);
+  x.ports.protection=async()=>false;assert.equal((await inspectOwnerCorrectionTargets(x.env,x.plan,x.ports)).identitiesVerified,false);x.ports.protection=async()=>true;
+  x.ports.headers=async()=>[[],['changed'],[]];assert.equal((await inspectOwnerCorrectionTargets(x.env,x.plan,x.ports)).identitiesVerified,false);
 });

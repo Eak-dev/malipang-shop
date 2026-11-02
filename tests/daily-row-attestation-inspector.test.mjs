@@ -11,7 +11,13 @@ async function runCase(kind){
  const keys=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']);
  const pub=Buffer.from(await crypto.subtle.exportKey('raw',keys.publicKey)).toString('base64');
  const headers=[['heading'],['','','','','','','','เงินโอน'],['','','','','','','NON-FIXED']],headerDigest=await sha256Hex(new TextEncoder().encode(JSON.stringify(headers)).buffer);
- const literals=Object.fromEntries(literalCols.map(i=>[i,'']));Object.assign(literals,{1:10,2:10,3:'personal',10:735,21:'บัญชีร้าน'});
+ const literals=Object.fromEntries(literalCols.map(i=>[i,'']));Object.assign(literals,{1:10,2:10,3:'personal',7:735,21:'general',22:'บัญชีร้าน'});
+ if(kind==='wrong-signed-amount')literals[7]=734;
+ if(kind==='wrong-signed-category')literals[21]='marketing';
+ if(kind==='wrong-signed-wallet')literals[22]='ทอน/หน้าร้าน';
+ if(kind==='wrong-signed-column'){literals[7]='';literals[6]=735;}
+ if(kind==='extra-signed-amount')literals[6]=1;
+ if(kind==='wrong-signed-date')literals[2]=11;
  const formulas={8:'=SUM(F10:H10)',9:'=J9-I10',17:'=SUM(K10:Q10)',18:'=J10-R10',20:'=DATE($A$5,B10,C10)'};
  const entry={expenseId:'exp1',expenseVersion:5,postingDate:'2026-10-10',amountSatang:73500,paymentKey:'transfer',expenseStatus:'CONFIRMED',sourceWallet:'SHOP_BANK',category:'general',description:'personal',messageId:'msg1',rowNumber:10,metadataId:11,headerDigest,literals,formulas};
  const now=Date.now(),approval={version:'daily-row-enrollment-v1',approvalId:'a1',reviewerId:'owner1',spreadsheetId:'book',sheetId:1,leaseId:'unverified-lease',leaseVersion:1,issuedAtMs:now-1000,expiresAtMs:now+60000,entries:[entry]};
@@ -27,13 +33,35 @@ async function runCase(kind){
  if(kind==='tampered')entry.literals[10]=1000;
  const rows=Array.from({length:20},()=>[]);rows[4]=[2026];rows[5]=['',10,'','รายรับทั้งหมดในบัญชี'];rows[15]=['รวม',10];
  const cells=Array.from({length:25},()=>({}));for(const [i,f] of Object.entries(formulas))cells[Number(i)]={userEnteredValue:{formulaValue:f},effectiveValue:{numberValue:0}};for(const [i,v] of Object.entries(literals))if(v!=='')cells[Number(i)]={userEnteredValue:typeof v==='number'?{numberValue:v}:{stringValue:v},effectiveValue:typeof v==='number'?{numberValue:v}:{stringValue:v}};
- if(kind==='sheet-changed')cells[10].effectiveValue.numberValue=734;
+ if(kind==='sheet-changed')cells[7].effectiveValue.numberValue=734;
  const sheet={properties:{sheetId:1,title:'daily',gridProperties:{rowCount:20,columnCount:25}},protectedRanges:[{range:{sheetId:1},requestingUserCanEdit:true,editors:{users:['worker@example.org']}}]};
  const target={properties:{sheetId:1,title:'daily'},data:[{startRow:9,rowData:[{values:cells}]}]};
- const marker={metadataId:11,metadataKey:'malipang_expense_daily',metadataValue:'exp1',location:{dimensionRange:{sheetId:1,dimension:'ROWS',startIndex:9,endIndex:10}}};
+ const marker={metadataId:11,visibility:'DOCUMENT',metadataKey:'malipang_expense_daily',metadataValue:'exp1',location:{dimensionRange:{sheetId:1,dimension:'ROWS',startIndex:9,endIndex:10}}};
  const originalFetch=globalThis.fetch,originalAuth=auth.getGoogleAccessToken;auth.getGoogleAccessToken=async()=> 'synthetic';
  globalThis.fetch=async(input)=>{fetches++;const url=new URL(String(input));let json;if(url.pathname.endsWith('/developerMetadata:search'))json={matchedDeveloperMetadata:[{developerMetadata:marker}]};else if(url.pathname.endsWith('/developerMetadata/11'))json=marker;else if(url.pathname.endsWith('/values:batchGet'))json={valueRanges:[{values:rows},{values:headers}]};else if(url.searchParams.has('ranges'))json={sheets:[target]};else json={sheets:[sheet]};return new Response(JSON.stringify(json),{status:200,headers:{'content-type':'application/json'}})};
- try{return {result:await inspectSignedExistingRow(env,approval,signature),dbReads,fetches}}finally{globalThis.fetch=originalFetch;auth.getGoogleAccessToken=originalAuth;}
+ try{
+  if(kind==='route-valid'){
+   env.ADMIN_TOKEN='synthetic-long-admin-token-for-test';env.DAILY_ROW_INSPECTOR_ENABLED='true';
+   const {handleAdmin}=require('../dist/admin/handler.js');
+   const req=new Request('https://synthetic.invalid/admin/sheets/daily-row-inspection',{method:'POST',headers:{authorization:`Bearer ${env.ADMIN_TOKEN}`},body:JSON.stringify({approval,signature:Buffer.from(signature).toString('base64')})});
+   const r=await handleAdmin(req,env,{});assert.equal(r.status,200);assert.equal(r.headers.get('cache-control'),'no-store');
+   return {result:await r.json(),dbReads,fetches};
+  }
+  return {result:await inspectSignedExistingRow(env,approval,signature),dbReads,fetches};
+ }finally{globalThis.fetch=originalFetch;auth.getGoogleAccessToken=originalAuth;}
 }
 test('pinned signer, direct fresh D1 source and authenticated bounded sheet observations must all match',async()=>{const result=await runCase('valid');assert.equal(result.result,'CONSISTENT_READ_ONLY');assert.equal(result.dbReads,2);assert.equal(result.fetches,10)});
-test('fail closed on untrusted authority, stale source, modified sheet or changed source',async()=>{for(const kind of ['wrong-reviewer','wrong-key','wrong-sheet','invalid-key','wrong-period','tampered','stale-db','missing-db','sheet-changed','changed-db']){const r=await runCase(kind);assert.equal(r.result,'HELD',kind)}});
+test('fail closed on untrusted authority, stale source, modified sheet or changed source',async()=>{for(const kind of ['wrong-reviewer','wrong-key','wrong-sheet','invalid-key','wrong-period','tampered','stale-db','missing-db','sheet-changed','changed-db','wrong-signed-amount','wrong-signed-category','wrong-signed-wallet','wrong-signed-column','extra-signed-amount','wrong-signed-date']){const r=await runCase(kind);assert.equal(r.result,'HELD',kind)}});
+test('admin route performs only the read-only signed observation and never authorizes release',async()=>{const r=await runCase('route-valid');assert.deepEqual(r.result,{ok:true,result:'CONSISTENT_READ_ONLY',releasePermitted:false});assert.equal(r.dbReads,2);assert.equal(r.fetches,10)});
+test('admin route denies unauthorized and disabled requests and fails closed on malformed or oversized evidence',async()=>{
+ const {handleAdmin}=require('../dist/admin/handler.js'),token='synthetic-long-admin-token-for-test';let touches=0;
+ const env={ADMIN_TOKEN:token,DB:{prepare(){touches++;throw new Error('must not read DB')}}};
+ const request=(body,auth=token)=>new Request('https://synthetic.invalid/admin/sheets/daily-row-inspection',{method:'POST',headers:{authorization:`Bearer ${auth}`},body});
+ assert.equal((await handleAdmin(request('{}','wrong'),env,{})).status,401);
+ assert.equal((await handleAdmin(request('{}'),env,{})).status,404);
+ env.DAILY_ROW_INSPECTOR_ENABLED='true';
+ for(const body of ['{bad',JSON.stringify({approval:{},signature:'bad'}),JSON.stringify({data:'x'.repeat(33000)})]){
+  const r=await handleAdmin(request(body),env,{});assert.equal(r.status,200);assert.deepEqual(await r.json(),{ok:true,result:'HELD',releasePermitted:false});
+ }
+ assert.equal(touches,0);
+});

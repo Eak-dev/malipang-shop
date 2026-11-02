@@ -1,12 +1,12 @@
 import type { Env } from '../types';
-import { sheetsFetch, batchGetSheetValues } from './client';
+import { sheetsFetch } from './client';
 import { findMonthBlocks, resolvePayment } from './daily-expense';
 import { sha256Hex } from '../shared/ids';
 
 /** Read-only evidence for the still-unwired verified daily posting path.
  * It is NOT an authorization to write, a Sheets CAS, or a substitute for the
  * sheet-wide writer fence and a separately enforced no-human-edit window. */
-export interface Marker { metadataId:number; metadataKey:string; metadataValue:string; sheetId:number; rowIndex:number }
+export interface Marker { metadataId:number; metadataKey:string; metadataValue:string; visibility:'DOCUMENT'|'PROJECT'; sheetId:number; rowIndex:number }
 interface Range {sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number}
 interface Protection {range?:Range;warningOnly?:boolean;requestingUserCanEdit?:boolean;unprotectedRanges?:unknown[];editors?:{users?:string[];groups?:string[];domainUsersCanEdit?:boolean}}
 interface ExtendedValue {numberValue?:number;stringValue?:string;boolValue?:boolean;formulaValue?:string;errorValue?:unknown}
@@ -20,9 +20,20 @@ export interface DailyExpectation {sheetTitle:string;sheetId:number;rowNumber:nu
  * cover every non-formula cell in A:Y, including blank cells. A candidate
  * Sheet row, caller input, or a row number alone is not a trusted manifest. */
 export interface ExistingDailyExpectation extends DailyExpectation {expectedLiterals:Readonly<Record<number,string|number|boolean>>}
-export interface DailyRowObservation {marker:Marker;headerDigest:string;sheetYear:number;monthBlock:{month:number;headerRow:number;totalRow:number};values:unknown[];formulas:unknown[];observedColumnCount:25;completeIdentityAndProtection:true;formulasVerified:true}
+export interface DailyRowObservation {marker:Marker;headerDigest:string;sheetYear:number;monthBlock:{month:number;headerRow:number;totalRow:number};payment:{amountColumn:string;postingMonth:number;postingYear:number;postingDay:number};values:unknown[];formulas:unknown[];observedColumnCount:25;completeIdentityAndProtection:true;formulasVerified:true}
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 const isBlank=(x:unknown)=>x===undefined||x===null||x==='';
+const MAX_RESPONSE_BYTES=4*1024*1024;
+/** Sheets may return a large metadata collection. Do not buffer unbounded
+ * responses in the Worker; an oversized/incomplete read is not evidence. */
+async function boundedJson(res:Response):Promise<unknown>{
+ if(!res.body)throw new Error('EMPTY_SHEETS_RESPONSE');
+ const reader=res.body.getReader(),parts:Uint8Array[]=[];let length=0;
+ try{while(true){const part=await reader.read();if(part.done)break;length+=part.value.byteLength;if(length>MAX_RESPONSE_BYTES){await reader.cancel().catch(()=>{});throw new Error('SHEETS_RESPONSE_TOO_LARGE');}parts.push(part.value);}}
+ finally{reader.releaseLock();}
+ const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
+ return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;
+}
 const INPUT_COLS=[1,2,3,5,6,7,10,11,12,13,14,15,16,21,22];
 const FORMULA_COLS=[8,9,17,18,20];
 const LITERAL_COLS=Array.from({length:25},(_,i)=>i).filter(i=>!FORMULA_COLS.includes(i));
@@ -51,7 +62,7 @@ async function verifyDailyEvidenceMode(e:DailyEvidence,w:DailyExpectation,litera
  if(!w.sheetTitle||!w.expenseId||!Number.isSafeInteger(w.sheetId)||w.sheetId<0||!Number.isSafeInteger(w.rowNumber)||w.rowNumber<6||!Number.isSafeInteger(w.metadataId)||w.metadataId<1||p?.sheetId!==w.sheetId||t?.sheetId!==w.sheetId||p.title!==w.sheetTitle||t.title!==w.sheetTitle||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||Number(g!.columnCount)<25||w.rowNumber>Number(g!.rowCount)||e.rows.length>Number(g!.rowCount)||!protectedInputs(e.sheet.protectedRanges||[],w.sheetId,w.rowNumber-1,w.serviceAccount))return null;
  const all=e.markers, found=all.filter(m=>m.metadataKey==='malipang_expense_daily'&&m.metadataValue===w.expenseId);
  if(found.length!==1||!e.markerById||JSON.stringify(found[0])!==JSON.stringify(e.markerById))return null;
- const marker=found[0]!;if(marker.metadataId!==w.metadataId||marker.sheetId!==w.sheetId||marker.rowIndex!==w.rowNumber-1||all.filter(m=>m.metadataId===w.metadataId).length!==1||all.filter(m=>m.sheetId===w.sheetId&&m.rowIndex===marker.rowIndex).length!==1)return null;
+ const marker=found[0]!;if(marker.visibility!=='DOCUMENT'||marker.metadataId!==w.metadataId||marker.sheetId!==w.sheetId||marker.rowIndex!==w.rowNumber-1||all.filter(m=>m.metadataId===w.metadataId).length!==1||all.filter(m=>m.sheetId===w.sheetId&&m.rowIndex===marker.rowIndex).length!==1)return null;
  const parts=/^(\d{4})-(\d{2})-(\d{2})$/.exec(w.postingDate);if(!parts)return null;
  const year=Number(parts[1]),month=Number(parts[2]),day=Number(parts[3]),date=new Date(Date.UTC(year,month-1,day));if(date.getUTCFullYear()!==year||date.getUTCMonth()+1!==month||date.getUTCDate()!==day)return null;
  if(e.headers.length!==3||e.headers.some(r=>!Array.isArray(r)))return null;
@@ -72,7 +83,7 @@ async function verifyDailyEvidenceMode(e:DailyEvidence,w:DailyExpectation,litera
   else if(primitive(entered)!==literals[i]||primitive(cell.effectiveValue)!==literals[i])return null;
   values.push(primitive(cell.effectiveValue));formulas.push(formula??'');
  }
- return {marker,headerDigest,sheetYear,monthBlock:matching[0],values,formulas,observedColumnCount:25,completeIdentityAndProtection:true,formulasVerified:true};
+ return {marker,headerDigest,sheetYear,monthBlock:matching[0],payment,values,formulas,observedColumnCount:25,completeIdentityAndProtection:true,formulasVerified:true};
  }catch{return null;}}
 export function verifyDailyEvidence(e:DailyEvidence,w:DailyExpectation):Promise<DailyRowObservation|null>{return verifyDailyEvidenceMode(e,w);}
 /** Verify a populated row only against a complete, separately trusted literal
@@ -82,27 +93,30 @@ export function verifyExistingDailyEvidence(e:DailyEvidence,w:ExistingDailyExpec
  return verifyDailyEvidenceMode(e,w,w.expectedLiterals);
 }
 function parseMetadata(value:unknown):Marker|null{
- const o=value as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}};const r=o?.location?.dimensionRange;
- if(!Number.isSafeInteger(o?.metadataId)||Number(o.metadataId)<1||typeof o.metadataKey!=='string'||!o.metadataKey||(o.metadataValue!==undefined&&typeof o.metadataValue!=='string')||!r||!Number.isSafeInteger(r.sheetId)||Number(r.sheetId)<0||r.dimension!=='ROWS'||!Number.isSafeInteger(r.startIndex)||Number(r.startIndex)<0||r.endIndex!==Number(r.startIndex)+1)return null;
- return {metadataId:Number(o.metadataId),metadataKey:o.metadataKey,metadataValue:o.metadataValue??'',sheetId:Number(r.sheetId),rowIndex:Number(r.startIndex)};
+ const o=value as {metadataId?:number;metadataKey?:string;metadataValue?:string;visibility?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}};const r=o?.location?.dimensionRange;
+ if(!Number.isSafeInteger(o?.metadataId)||Number(o.metadataId)<1||typeof o.metadataKey!=='string'||!o.metadataKey||(o.metadataValue!==undefined&&typeof o.metadataValue!=='string')||(o.visibility!=='DOCUMENT'&&o.visibility!=='PROJECT')||!r||!Number.isSafeInteger(r.sheetId)||Number(r.sheetId)<0||r.dimension!=='ROWS'||!Number.isSafeInteger(r.startIndex)||Number(r.startIndex)<0||r.endIndex!==Number(r.startIndex)+1)return null;
+ return {metadataId:Number(o.metadataId),metadataKey:o.metadataKey,metadataValue:o.metadataValue??'',visibility:o.visibility,sheetId:Number(r.sheetId),rowIndex:Number(r.startIndex)};
 }
 /** Bounded network read; input lengths are validated before constructing ranges.
  * Missing/duplicate responses, metadata or invalid shapes fail closed. */
 export async function readDailyEvidence(env:Env,w:DailyExpectation):Promise<DailyEvidence|null>{try{
  if(w.sheetTitle!==env.SHEET_EXPENSE_DAILY||!env.GOOGLE_SERVICE_ACCOUNT_EMAIL||w.serviceAccount.trim().toLowerCase()!==env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase()||!Number.isSafeInteger(w.rowNumber)||w.rowNumber<6||!Number.isSafeInteger(w.metadataId)||w.metadataId<1)return null;
  const fields='sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges(range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))';
- const base=await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:'GET'}).then(r=>r.json()) as Spreadsheet;
+ const base=await boundedJson(await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:'GET'})) as Spreadsheet;
  const ss=(base.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle);if(ss.length!==1)return null;const sheet=ss[0]!,count=Number(sheet.properties?.gridProperties?.rowCount);if(!Number.isSafeInteger(count)||count<w.rowNumber||count>10000)return null;
  const q=new URLSearchParams();q.append('ranges',`${quote(w.sheetTitle)}!A${w.rowNumber}:Y${w.rowNumber}`);q.set('fields','sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredValue,effectiveValue))))');
+ const valueQuery=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE',dateTimeRenderOption:'FORMATTED_STRING'});for(const range of [`${quote(w.sheetTitle)}!A1:D${count}`,`${quote(w.sheetTitle)}!A1:W3`])valueQuery.append('ranges',range);
  const [targetData,read,search,byId]=await Promise.all([
-  sheetsFetch(env,`?${q}`,{method:'GET'}).then(r=>r.json()) as Promise<Spreadsheet>,
-  batchGetSheetValues(env,[`${quote(w.sheetTitle)}!A1:D${count}`,`${quote(w.sheetTitle)}!A1:W3`]),
-  sheetsFetch(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:{locationType:'ROW',visibility:'DOCUMENT'}}]})}).then(r=>r.json()) as Promise<{matchedDeveloperMetadata?:Array<{developerMetadata?:unknown}>}>,
-  sheetsFetch(env,`/developerMetadata/${w.metadataId}`,{method:'GET'}).then(r=>r.json()) as Promise<unknown>
+  sheetsFetch(env,`?${q}`,{method:'GET'}).then(boundedJson) as Promise<Spreadsheet>,
+  sheetsFetch(env,`/values:batchGet?${valueQuery}`,{method:'GET'}).then(boundedJson) as Promise<{valueRanges?:Array<{values?:unknown[][]}>}>,
+  // Omitting visibility sees both document-visible metadata and metadata from
+  // this Google project. Foreign projects' private metadata remains invisible.
+  sheetsFetch(env,'/developerMetadata:search',{method:'POST',body:JSON.stringify({dataFilters:[{developerMetadataLookup:{locationType:'ROW'}}]})}).then(boundedJson) as Promise<{matchedDeveloperMetadata?:Array<{developerMetadata?:unknown}>}>,
+  sheetsFetch(env,`/developerMetadata/${w.metadataId}`,{method:'GET'}).then(boundedJson)
  ]);
- const targets=(targetData.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle);if(targets.length!==1||read.length!==2||!search||!Array.isArray(search.matchedDeveloperMetadata))return null;
+ const targets=(targetData.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle),ranges=read.valueRanges;if(targets.length!==1||!Array.isArray(ranges)||ranges.length!==2||!search||!Array.isArray(search.matchedDeveloperMetadata))return null;
  const markers=search.matchedDeveloperMetadata.map(v=>parseMetadata(v.developerMetadata));if(markers.some(m=>!m))return null;
- return {sheet,target:targets[0]!,rows:read[0]||[],headers:read[1]||[],markers:markers as Marker[],markerById:parseMetadata(byId)};
+ return {sheet,target:targets[0]!,rows:ranges[0]?.values||[],headers:ranges[1]?.values||[],markers:markers as Marker[],markerById:parseMetadata(byId)};
  }catch{return null;}}
 /** Two independent full reads must agree. A shared write fence and external
  * maintenance window remain prerequisites before any mutation. */

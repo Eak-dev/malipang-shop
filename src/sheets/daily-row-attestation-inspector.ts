@@ -5,6 +5,7 @@
 import type {Env} from '../types';
 import {observeExistingDailyRow} from './daily-row-observer';
 import {verifyEnrollmentApproval,type EnrollmentApproval,type SourceExpense} from './daily-row-enrollment';
+import {legacySourceWallet} from './daily-expense';
 
 /** These must be provisioned as trusted worker configuration, never supplied
  * by an HTTP request. A public key only identifies a holder of a private key;
@@ -38,6 +39,11 @@ export async function inspectSignedExistingRow(env:InspectorEnv,a:EnrollmentAppr
  if(!await verifyEnrollmentApproval(a,signature,key,context))return 'HELD';
  const observation=await observeExistingDailyRow(env,{sheetTitle:env.SHEET_EXPENSE_DAILY,sheetId,rowNumber:e.rowNumber,metadataId:e.metadataId,expenseId:e.expenseId,postingDate:e.postingDate,paymentKey:e.paymentKey,serviceAccount:env.GOOGLE_SERVICE_ACCOUNT_EMAIL,expectedHeaderDigest:e.headerDigest,expectedFormulas:e.formulas,expectedLiterals:e.literals});
  if(!observation)return 'HELD';
+ // A signer can approve a faithful but incorrect snapshot. Independently bind
+ // the actual ledger inputs to the fresh D1 expense and resolved sheet layout.
+ const {payment,values}=observation,col=payment.amountColumn.charCodeAt(0)-65,amountColumns=[5,6,7,10,11,12,13,14,15,16];
+ if(payment.amountColumn.length!==1||!amountColumns.includes(col)||values[1]!==payment.postingMonth||values[2]!==payment.postingDay||values[3]!==before.description.trim()||values[21]!==before.category||values[22]!==legacySourceWallet(before.paymentKey,before.sourceWallet))return 'HELD';
+ if(amountColumns.some(i=>i===col?typeof values[i]!=='number'||!Number.isSafeInteger(Math.round(Number(values[i])*100))||Math.abs(Number(values[i])*100-before.amountSatang)>1e-7:values[i]!==''))return 'HELD';
  const after=await source(env,e.expenseId);if(!after||JSON.stringify(before)!==JSON.stringify(after))return 'HELD';
  context.nowMs=Date.now();context.sourceExpenses=[after];if(!await verifyEnrollmentApproval(a,signature,key,context))return 'HELD';
  return 'CONSISTENT_READ_ONLY';

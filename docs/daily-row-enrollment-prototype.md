@@ -71,4 +71,17 @@ protections alone cannot guarantee owner-edit exclusion.
 
 ### Read-only authenticated inspector
 
-`inspectSignedExistingRow` combines the Ed25519 approval verifier with direct D1 reads before and after two authenticated Sheets observations. It pins the reviewer public key, reviewer identifier, spreadsheet, sheet ID and approved month to worker-side configuration. It processes a single entry per call and returns only `CONSISTENT_READ_ONLY` or `HELD`. Tests use a mocked D1 and Google transport and do not establish that a production identity key was provisioned or that a live human reviewer validated the row. A successful result **must never authorize a write**: the lease attributes are only signed data, there is no live lease authority or approval consumption, and nothing prevents owner edits, ABA changes, unversioned or in-flight mutations. Pinning a public key is meaningful only after independently authenticated registration of the private key holder, which this code does not provide. Existing rows lack independently established metadata and manifests; this code does not create or attest them. There is no current safe integration with a real writer.
+`inspectSignedExistingRow` combines the Ed25519 approval verifier with direct D1 reads before and after two authenticated Sheets observations. It independently compares the observed date, description, resolved payment column, amount, empty alternative payment columns, category and wallet to that D1 record. It pins the reviewer public key, reviewer identifier, spreadsheet, sheet ID and approved month to worker-side configuration. It processes a single entry per call and returns only `CONSISTENT_READ_ONLY` or `HELD`. Tests use a mocked D1 and Google transport and do not establish that a production identity key was provisioned or that a live human reviewer validated the row. A successful result **must never authorize a write**: the lease attributes are only signed data, there is no live lease authority or approval consumption, and nothing prevents owner edits, ABA changes, unversioned or in-flight mutations. Pinning a public key is meaningful only after independently authenticated registration of the private key holder, which this code does not provide. Existing rows lack independently established metadata and manifests; this code does not create or attest them. There is no current safe integration with a real writer.
+
+The authenticated admin `POST /admin/sheets/daily-row-inspection` exposes the
+same **observation only**. It is disabled unless `DAILY_ROW_INSPECTOR_ENABLED`
+is exactly `true`; an absent, invalid, or mismatched reviewer key, reviewer ID,
+sheet ID, approved period, approval, or evidence produces `HELD`. The caller
+submits `{approval, signature}` with a canonical base64 Ed25519 signature. A
+bounded request is limited to 32 KiB, and every enabled response contains
+`releasePermitted: false` and `Cache-Control: no-store`. Neither response
+contains signed input, personal data, IDs, or source values. This route performs
+no D1 mutation, metadata enrollment, queue send, or Sheet write. Disable it
+after a controlled review. Do not enable or provision a reviewer key in
+production until key registration, protection, identity and writer-exclusion
+steps above have been reviewed and a controlled test environment exists.

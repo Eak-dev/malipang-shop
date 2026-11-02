@@ -58,6 +58,12 @@ export interface Env {
   GOOGLE_SERVICE_ACCOUNT_EMAIL: string;
   GOOGLE_PRIVATE_KEY_BASE64: string;
   GOOGLE_SPREADSHEET_ID: string;
+  /** Read-only diagnostic: absent/off by default. Never authorizes a write. */
+  DAILY_ROW_INSPECTOR_ENABLED?: string;
+  DAILY_ROW_REVIEWER_ID?: string;
+  DAILY_ROW_REVIEWER_ED25519_PUBLIC_KEY_BASE64?: string;
+  DAILY_ROW_SHEET_ID?: string;
+  DAILY_ROW_APPROVED_PERIOD?: string;
   OPENAI_API_KEY?: string;
 }
 

@@ -20,6 +20,7 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import { recoverVerifiedOwnerCorrection } from "./owner-correction-recovery";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -70,6 +71,11 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});}
+    if(request.method==="POST"&&url.pathname==="/admin/owner-correction/recover"){
+      const body=await request.json().catch(()=>({})) as{correctionId?:unknown;reason?:unknown};
+      const result=await recoverVerifiedOwnerCorrection(env,typeof body.correctionId==="string"?body.correctionId:"",typeof body.reason==="string"?body.reason:"");
+      return Response.json({ok:result==="ENQUEUED",result},{status:result==="ENQUEUED"?200:409});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
       const purpose=typeof body.purpose==="string"?body.purpose:undefined;

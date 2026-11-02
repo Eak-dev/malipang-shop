@@ -18,7 +18,9 @@ export async function reconcileSheets(env:Env,input:ReconcileInput={}):Promise<{
     env.DB.prepare(`SELECT wage_id entity_key,version FROM employee_wage_history WHERE effective_from<=? AND (effective_to IS NULL OR effective_to>=?) ORDER BY employee_id,effective_from LIMIT ?`).bind(toDate,fromDate,limit).all<EntityRow>(),
     env.DB.prepare(`SELECT employee_id||'|'||work_date entity_key,version FROM employee_shift_days WHERE work_date BETWEEN ? AND ? ORDER BY work_date,employee_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),
     env.DB.prepare(`SELECT ot_id entity_key,version FROM ot_requests WHERE work_date BETWEEN ? AND ? ORDER BY work_date,employee_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),
-    env.DB.prepare(`SELECT expense_id entity_key,1 version FROM expense_events WHERE status='CONFIRMED' AND transaction_date BETWEEN ? AND ? ORDER BY transaction_date,expense_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),
+    env.DB.prepare(`SELECT e.expense_id entity_key,e.version FROM expense_events e WHERE e.status='CONFIRMED' AND e.transaction_date BETWEEN ? AND ?
+      AND NOT EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=e.expense_id)
+      ORDER BY e.transaction_date,e.expense_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>(),
     env.DB.prepare(`SELECT personal_use_id entity_key,version FROM owner_personal_transactions WHERE transaction_date BETWEEN ? AND ? ORDER BY transaction_date,personal_use_id LIMIT ?`).bind(fromDate,toDate,limit).all<EntityRow>()
   ]);
   const grouped={ATTENDANCE_EVENT:jobs(attendance.results||[],"ATTENDANCE_EVENT",traceId),DAILY_PAYROLL:jobs(daily.results||[],"DAILY_PAYROLL",traceId),WEEKLY_PAYROLL:jobs(weekly.results||[],"WEEKLY_PAYROLL",traceId),WAGE_HISTORY:jobs(wages.results||[],"WAGE_HISTORY",traceId),SHIFT_SCHEDULE:jobs(shifts.results||[],"SHIFT_SCHEDULE",traceId),OT_REQUEST:jobs(ot.results||[],"OT_REQUEST",traceId),EXPENSE:jobs(expense.results||[],"EXPENSE",traceId),PERSONAL_USE:jobs(personalUse.results||[],"PERSONAL_USE",traceId)};

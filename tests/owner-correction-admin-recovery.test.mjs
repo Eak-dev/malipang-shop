@@ -1,0 +1,61 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
+import {grantSyntheticOpenPeriods,syntheticCorrectionHeaders,syntheticCorrectionHeaderDigest,syntheticCorrectionReport} from './helpers/owner-correction-periods.mjs';
+import {createOwnerCorrectionDraft,loadOwnerExpense,commitOwnerCorrection} from '../dist/expense/owner-correction-repository.js';
+import {recoverVerifiedOwnerCorrection} from '../dist/admin/owner-correction-recovery.js';
+import {processOwnerCorrectionJob} from '../dist/sheets/owner-correction-worker.js';
+import {handleAdmin} from '../dist/admin/handler.js';
+
+async function setup(){
+  const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},now=Date.now();h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
+  h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+    VALUES('exp_recover','msg_recover','fixture_staff','Synthetic driver',200000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  const before=await loadOwnerExpense(h.env,owner,'exp_recover'),id=await createOwnerCorrectionDraft(h.env,owner,before,'category','transport',now);await grantSyntheticOpenPeriods(h,id);
+  const daily=Array(23).fill(null);Object.assign(daily,{1:10,2:28,3:'Synthetic driver',7:2000,21:'general',22:'บัญชีร้าน'});
+  const raw=['exp_recover','2026-10-28','Synthetic driver',2000,'transfer','SHOP_BANK','general','CONFIRMED'];
+  const plan={expenseId:'exp_recover',dailyMetadataId:1,rawMetadataId:2,patches:[{metadataId:1,cells:[{columnIndex:21,value:'transport'}]},{metadataId:2,cells:[{columnIndex:6,value:'transport'}]}],originalRows:[{metadataId:1,values:daily},{metadataId:2,values:raw}],rebind:null,headerDigest:syntheticCorrectionHeaderDigest,reportBaseline:syntheticCorrectionReport(before)};
+  const evidence={ownerVerified:true,snapshotCurrent:true,sourcePeriod:'OPEN',destinationPeriod:'OPEN',itemCount:0,receiptAllocationVerified:false,rowIdentityVerified:true,projectionTargetsVerified:true,reportDeduplicationVerified:true,syncInProgress:false,periodHeaders:syntheticCorrectionHeaders()};
+  assert.equal(await commitOwnerCorrection(h.env,owner,id,evidence,'synthetic_recover_trace',now,plan),2);
+  h.sqlite.prepare("UPDATE expense_owner_correction_sync SET phase='REVIEW' WHERE correction_id=?").run(id);h.sqlite.prepare("UPDATE sync_jobs SET status='REVIEW' WHERE entity_type='EXPENSE_CORRECTION'").run();
+  const rows=new Map(plan.originalRows.map(row=>[row.metadataId,[...row.values]]));for(const patch of plan.patches)for(const cell of patch.cells)rows.get(patch.metadataId)[cell.columnIndex]=cell.value;
+  const jobs=[],ports={now:()=>now,inspect:async()=>({identitiesVerified:true,rows:new Map([...rows].map(([key,value])=>[key,[...value]]))}),enqueue:async(_env,job)=>{jobs.push(job)}};
+  return {...h,id,now,plan,rows,ports,jobs};
+}
+const recovery=h=>recoverVerifiedOwnerCorrection(h.env,h.id,'verified sheet values',h.ports);
+const status=h=>({phase:h.sqlite.prepare('SELECT phase FROM expense_owner_correction_sync').get().phase,job:h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION'").get().status,audits:h.sqlite.prepare("SELECT COUNT(*) n FROM admin_audit WHERE action='OWNER_CORRECTION_RESUME'").get().n});
+
+test('a twice-verified applied result resumes only read-only reconciliation, once',async()=>{
+  const h=await setup();try{
+    assert.equal(await recovery(h),'ENQUEUED');assert.deepEqual(status(h),{phase:'IDENTITY_VERIFIED',job:'PENDING',audits:1});assert.equal(h.jobs.length,1);
+    assert.equal(await recovery(h),'NOT_REVIEW');assert.equal(h.jobs.length,1);
+    const worker={now:()=>h.now,inspect:async()=>{throw Error('no new sheet mutation')},patch:async()=>{throw Error('no new sheet mutation')},inspectRebind:async()=>{throw Error('no move')},rebind:async()=>{throw Error('no move')},reconcile:async()=>({expenseId:'exp_recover',version:2,dailyMatches:true,rawMatches:true,detailsMatch:true,reportsMatch:true,duplicateCount:0,lostCount:0})};
+    assert.equal(await processOwnerCorrectionJob(h.env,{expenseId:'exp_recover',version:2},worker),'COMPLETED');assert.equal(status(h).phase,'RECONCILED');
+  }finally{h.close()}
+});
+test('before, mixed, unstable or unverified observations remain in review',async()=>{
+  for(const mode of ['before','mixed','unstable','unverified']){const h=await setup();try{
+    if(mode==='before'){h.rows.get(1)[21]='general';h.rows.get(2)[6]='general'}
+    if(mode==='mixed')h.rows.get(1)[21]='general';
+    if(mode==='unstable'){const read=h.ports.inspect;let count=0;h.ports.inspect=async(...args)=>{const result=await read(...args);if(++count===2)result.rows.get(1)[3]='changed';return result}}
+    if(mode==='unverified')h.ports.inspect=async()=>({identitiesVerified:false,rows:h.rows});
+    assert.equal(await recovery(h),'REVIEW',mode);assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});assert.equal(h.jobs.length,0);
+  }finally{h.close()}}
+});
+test('a possible in-flight write must finish its full uncertainty window',async()=>{
+  const h=await setup();try{h.sqlite.prepare('UPDATE expense_owner_correction_sync SET not_before=?').run(new Date(h.now+1000).toISOString());assert.equal(await recovery(h),'WAIT');assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}
+  finally{h.close()}
+});
+test('expense changes during the inspection and concurrent requests cannot resume twice',async()=>{
+  {const h=await setup();try{const read=h.ports.inspect;let count=0;h.ports.inspect=async(...args)=>{const result=await read(...args);if(++count===2)h.sqlite.exec("UPDATE expense_events SET amount_satang=1 WHERE expense_id='exp_recover'");return result};assert.equal(await recovery(h),'NOT_REVIEW');assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{h.close()}}
+  {const h=await setup();try{assert.deepEqual((await Promise.all([recovery(h),recovery(h)])).sort(),['ENQUEUED','NOT_REVIEW']);assert.deepEqual(status(h),{phase:'IDENTITY_VERIFIED',job:'PENDING',audits:1});assert.equal(h.jobs.length,1);}finally{h.close()}}
+});
+test('each recovery batch failure rolls back state and audit together',async()=>{
+  for(let index=0;index<5;index++){const h=await setup();try{h.DB.failAt=index;await assert.rejects(recovery(h),/fixture batch failure/);h.DB.failAt=null;assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{h.close()}}
+});
+test('a failed queue dispatch keeps the audited outbox recoverable',async()=>{
+  const h=await setup();try{h.ports.enqueue=async()=>{throw Error('synthetic queue failure')};assert.equal(await recovery(h),'ENQUEUED');assert.deepEqual(status(h),{phase:'IDENTITY_VERIFIED',job:'PENDING',audits:1});}finally{h.close()}
+});
+test('the recovery endpoint requires the existing admin authentication',async()=>{
+  const h=await setup();try{h.env.ADMIN_TOKEN='a'.repeat(40);const request=new Request('https://example.invalid/admin/owner-correction/recover',{method:'POST',headers:{authorization:'Bearer incorrect','content-type':'application/json'},body:JSON.stringify({correctionId:h.id,reason:'verified sheet values'})});assert.equal((await handleAdmin(request,h.env,{})).status,401);assert.deepEqual(status(h),{phase:'REVIEW',job:'REVIEW',audits:0});}finally{h.close()}
+});

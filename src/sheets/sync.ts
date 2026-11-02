@@ -39,6 +39,11 @@ export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<
   return{expense,summaryDocument,document,items,record};
 }
 export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"SUMMARY";rowCount:number;detailRowCount:number;replacedLegacySummary:boolean}>{
+  // This legacy operation writes by numeric row, without the correction
+  // worker's metadata and lease fence. Do not race it with owner corrections.
+  if(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true")throw new Error("EXPENSE_ITEM_RECONCILE_REQUIRES_VERIFIED_SYNC");
+  const corrected=await env.DB.prepare(`SELECT 1 present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND entity_key=? LIMIT 1`).bind(expenseId).first<{present:number}>();
+  if(corrected)throw new Error("CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC");
   const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
   const detailRowCount=await writeConfirmedExpensePurchaseDetails(env,loaded.record,loaded.document,loaded.items);
@@ -109,7 +114,7 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE ?<>'EXPENSE' OR NOT EXISTS(SELECT 1 FROM sync_jobs c WHERE c.entity_type='EXPENSE_CORRECTION' AND c.entity_key=?) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now,job.entityType,job.entityKey).run();
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
   // same D1 statement. Other entity types retain their existing per-version claims.
   const serializePersonalUse=job.entityType==="PERSONAL_USE",serializeExpense=job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}${serializeExpense?` AND NOT EXISTS(SELECT 1 FROM sync_jobs correction WHERE correction.entity_type='EXPENSE_CORRECTION' AND correction.entity_key=? AND correction.status<>'COMPLETED')`:""}`;

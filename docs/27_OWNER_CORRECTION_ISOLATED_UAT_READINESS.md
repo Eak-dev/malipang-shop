@@ -36,3 +36,13 @@
 ## ข้อจำกัดของ code และการย้อนกลับ
 
 การทดสอบในเครื่องเป็น fixture ไม่ใช่หลักฐานว่าบริการจริงเชื่อมต่อสำเร็จ. การย้ายข้ามเดือนและโครงสร้างที่ยังอยู่ระหว่างพัฒนาต้องตรวจ integration ของ SHA สุดท้ายก่อนกำหนด expected outcome ไม่สมมติว่าทำงานได้แล้ว. หลังเปิดใช้ correction แล้ว การ rollback ห้ามลบตาราง shared fence และต้องคงการกู้คิวที่คอมมิตแล้วไว้ รวมถึงรอผลคำสั่ง Sheets ที่ยังไม่แน่นอนและ drain Worker รุ่นเก่าก่อนเปลี่ยนเวอร์ชัน
+
+## ตรวจสูตรและสร้าง fixture แบบ offline เพิ่มเติม
+
+ตรวจอ่านเฉพาะ formula-rendered ranges ในไฟล์ที่ค้นพบชื่อ `MaliPang_OWNER_MASTER` โดยไม่อ่านค่า secret ที่ Worker ผูกไว้: รอบแรกพบสูตรครบ 15 ช่องของ report และ 368 ช่องของ flow. คำนวณด้วย normalizer จริงของโค้ดแล้ว flow digest ตรง แต่ report digest ไม่ตรงค่าที่ตรึงใน verifier; ช่องทุกช่องผ่านเงื่อนไข normalize และจำนวน/รูปร่างข้อมูลตรงที่ verifier ใช้ จึงไม่ใช่แค่การนับเซลล์ผิด. **ยังพิสูจน์ไม่ได้ว่าไฟล์ที่ค้นพบนี้เป็นไฟล์เดียวกับ spreadsheet ที่ Worker production ใช้** และยังระบุไม่ได้ว่าความต่างก่อน layout shift เป็น formula drift หรือ source selection ห้ามแก้ fingerprint จากผลตรวจนี้
+
+ขณะอ่านซ้ำ metadata ของแท็บ `04_OWNER_MONTH_CLOSE` ในไฟล์เดียวกันเปลี่ยนจาก 798 เป็น 829 แถว และพบสูตรตำแหน่งเดิม L14 ที่ L45; C24:C35 ไม่ใช่สูตรแล้ว ขณะที่ C55:C66 มี 12 สูตร. แสดงว่า layout เปลี่ยนระหว่างตรวจและไม่ตรงกับ fixed ranges ของ verifier ณ รอบหลัง แต่ไม่ยืนยันผู้เปลี่ยน สาเหตุ หรือผลต่อ production. ตัว verifier ต้องอ่านสองครั้งตรงกันจึงจะทำต่อ ไม่ควรใช้ไฟล์นี้เป็น template จนตรวจ binding และ formula/layout ซ้ำแบบคงที่. ไฟล์ candidate ที่ค้นพบชื่อ `MaliPang OWNER V2 TEST` ไม่มีแท็บ `35_EXPENSE_FLOW_CHECK` จึงยังไม่ครบสำหรับ verifier เช่นกัน
+
+`scripts/owner-correction-synthetic-sheet.mjs` สร้าง **local JSON fixture เท่านั้น** จากค่า synthetic ที่กำหนดในโค้ด มีแท็บ/ตำแหน่งหลักตาม verifier และไม่มีการติดต่อ Google; ค่าเริ่มต้นใช้สูตร placeholder ซึ่งไม่ผ่าน verifier และระบุ `safeForRemote: false`. รับ formula-only bundle จากไฟล์ท้องถิ่นได้เฉพาะรูปแบบ/จำนวนที่กำหนด เมื่อ normalize แล้วต้องตรง digest ทั้งสองที่ตรึงในโค้ด และปฏิเสธ external import/URL บางประเภท; หากไม่ตรงจะไม่สร้างไฟล์. การผ่าน digest ไม่พิสูจน์ว่า literal ในสูตรไม่มีข้อมูลส่วนบุคคล, spreadsheet ไม่มี Apps Script/trigger หรือสิทธิ์แชร์แยก จึงยังต้องตรวจอิสระก่อนใช้จริงและห้ามถือ output ว่าอนุญาตให้เขียน Google
+
+คำสั่งสร้าง local skeleton ใหม่โดยไม่ทับไฟล์เดิม: `node scripts/owner-correction-synthetic-sheet.mjs --output /tmp/owner-correction-uat-skeleton.json`. ไม่มีการสร้าง spreadsheet หรือทดสอบบริการจริงจากขั้นตอนนี้

@@ -56,6 +56,7 @@
     "src/sheets/owner-correction-daily-write-fence.ts",
     "src/sheets/owner-correction-daily-posting-reservation.ts",
     "src/sheets/owner-correction-daily-posting-marker.ts",
+    "src/sheets/owner-correction-daily-posting-write.ts",
     "src/sheets/owner-correction-projections.ts",
     "src/sheets/owner-correction-combined-plan.ts",
     "src/sheets/owner-correction-plan-service.ts",

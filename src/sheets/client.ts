@@ -146,6 +146,11 @@ async function identityInspectionGet(env:Env,path:string):Promise<unknown>{
   if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw new Error('LEDGER_INSPECTION_HTTP_ERROR');}
   return readBoundedJson(response,4*1024*1024,timeout,'Sheets identity response');
 }
+/** Bounded authenticated read used only by the isolated ledger UAT probe. */
+export async function getLedgerUatSnapshotPart(env:Env,path:string):Promise<unknown>{
+  if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('LEDGER_METADATA_READER_DISABLED');
+  try{return await identityInspectionGet(env,path);}catch{throw new Error('LEDGER_METADATA_READER_UNAVAILABLE');}
+}
 /** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
 export async function getSheetRowCount(env:Env,title:string):Promise<number>{
   const data=await identityInspectionGet(env,"?fields=sheets.properties(title,gridProperties(rowCount))") as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};

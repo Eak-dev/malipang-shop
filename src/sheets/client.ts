@@ -3,6 +3,7 @@ import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
+import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -38,11 +39,14 @@ export async function batchWriteValues(env:Env,data:Array<{range:string;values:u
  * establish identity and exclusive cutover because Sheets has no value CAS.
  * Any unparseable/ambiguous result must remain under manual REVIEW.
  */
-export async function writeValuesByMetadataPrototype(env:Env,request:{identity:LedgerWriteIdentity;witness:LedgerMetadataWitness;identityRows:unknown[][];values:readonly unknown[];guard:LedgerWriteGuard;mode?:'PATCH'|'CANCEL_DETAIL'},beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
+export async function writeValuesByMetadataPrototype(env:Env,request:{identity:LedgerWriteIdentity;witness:LedgerMetadataWitness;identityRows:unknown[][];values:readonly unknown[];guard:LedgerWriteGuard;baselineHashes:LedgerBaseline;mode?:'PATCH'|'CANCEL_DETAIL'},beforeMutationDispatch:BeforeSheetsMutationDispatch):Promise<void>{
   if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw new Error('LEDGER_METADATA_WRITER_DISABLED');
   if(!request||!beforeMutationDispatch)throw new Error('LEDGER_METADATA_REQUEST_INVALID');
   verifyLedgerMetadataWitness(request.identity,request.witness,request.identityRows);
   const data=buildLedgerMetadataValueRange(request.identity,request.witness.metadataId,request.values,request.guard,request.mode);
+  canonicalLedgerBaseline(request.identity.kind,request.baselineHashes);
+  const cells:Record<string,LedgerCellValue>={};for(const index of request.guard.fields)cells[String(index)]=request.guard.observed[index]!.entered;
+  if(!await baselineMatches(request.baselineHashes,cells))throw new Error('LEDGER_BASELINE_DIGEST_MISMATCH');
   const response=await sheetsFetch(env,'/values:batchUpdateByDataFilter',{method:'POST',body:JSON.stringify({valueInputOption:'RAW',data:[data]})},true,beforeMutationDispatch,true);
   let result:{totalUpdatedRows?:unknown;responses?:unknown};
   try{result=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets metadata update response') as typeof result;}

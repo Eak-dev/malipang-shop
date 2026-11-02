@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const {verifyLedgerMetadataWitness,buildLedgerMetadataValueRange}=require('../dist/sheets/ledger-metadata-writer.js');
+const {digestLedgerCell}=require('../dist/sheets/ledger-stable-journal.js');
 const client=require('../dist/sheets/client.js');
 const auth=require('../dist/sheets/google-auth.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
@@ -14,6 +15,7 @@ const guard=(size,fields)=>{
   const cells=Array.from({length:size},()=>({entered:null,formula:null,note:null,hasValidation:false}));
   return{fields,expected:structuredClone(cells),observed:structuredClone(cells)};
 };
+const fullExpenseBaseline=async()=>Object.fromEntries(await Promise.all([1,2,3,4,5,6,7].map(async i=>[String(i),await digestLedgerCell(null)])));
 test('preflight follows moved rows and rejects duplicate, wrong row, metadata, or header',()=>{
   assert.doesNotThrow(()=>verifyLedgerMetadataWitness(identity,witness,rows));
   const moved=[rows[0],rows[2],rows[1]];
@@ -56,7 +58,7 @@ test('writer dispatches metadata DataFilter after fence and rejects unknown resu
   auth.getGoogleAccessToken=async()=> 'synthetic';let dispatch=0,received;
   const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
   globalThis.fetch=async(url,init)=>{received={url:String(url),body:JSON.parse(init.body)};return new Response(JSON.stringify({totalUpdatedRows:1,responses:[{}]}),{status:200})};
-  const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4])};
+  const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4]),baselineHashes:await fullExpenseBaseline()};
   await client.writeValuesByMetadataPrototype(env,p,async()=>{dispatch++});
   assert.equal(dispatch,1);assert.match(received.url,/values:batchUpdateByDataFilter$/);assert.equal(received.body.data[0].dataFilter.developerMetadataLookup.metadataId,123);
   globalThis.fetch=async()=>new Response(JSON.stringify({totalUpdatedRows:0,responses:[]}),{status:200});
@@ -65,7 +67,7 @@ test('writer dispatches metadata DataFilter after fence and rejects unknown resu
   await assert.rejects(client.writeValuesByMetadataPrototype(env,p,async()=>{}),{message:'Sheets HTTP 403'});
 });
 test('a lost response or failed pre-dispatch fence never appears successful',async()=>{
-  auth.getGoogleAccessToken=async()=> 'synthetic';const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4])};let calls=0;
+  auth.getGoogleAccessToken=async()=> 'synthetic';const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4]),baselineHashes:await fullExpenseBaseline()};let calls=0;
   const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
   globalThis.fetch=async()=>{calls++;return new Response('not-json')};
   await assert.rejects(client.writeValuesByMetadataPrototype({GOOGLE_SPREADSHEET_ID:'synthetic'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
@@ -74,6 +76,7 @@ test('a lost response or failed pre-dispatch fence never appears successful',asy
   await assert.rejects(client.writeValuesByMetadataPrototype({...env,GOOGLE_SPREADSHEET_ID:'production'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
   const changed={...p,guard:guard(17,[4])};changed.guard.observed[4].formula='=1+1';
   await assert.rejects(client.writeValuesByMetadataPrototype(env,changed,async()=>{}),/PREIMAGE/);assert.equal(calls,0);
+  await assert.rejects(client.writeValuesByMetadataPrototype(env,{...p,baselineHashes:{...p.baselineHashes,'4':'f'.repeat(64)}},async()=>{}),/DIGEST_MISMATCH/);assert.equal(calls,0);
   await assert.rejects(client.writeValuesByMetadataPrototype(env,{...p,witness:{...witness,sheetId:99}},async()=>{}),/METADATA_INVALID/);assert.equal(calls,0);
   await assert.rejects(client.writeValuesByMetadataPrototype(env,p,async()=>{throw Error('FENCE_LOST')}),{message:'FENCE_LOST'});assert.equal(calls,0);
   await assert.rejects(client.writeValuesByMetadataPrototype(env,p,async()=>{}),{name:'SheetsMutationOutcomeUnknownError'});assert.equal(calls,1);

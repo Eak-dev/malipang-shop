@@ -25,7 +25,7 @@ class SqliteD1Statement{
   bind(...args){this.args=args;return this;}
   async first(){const row=this.owner.sqlite.prepare(this.sql).get(...this.args)??null;if(this.owner.afterFirst)await this.owner.afterFirst(this.sql,this.args,row);return row;}
   async all(){return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
-  async run(){const result=this.owner.sqlite.prepare(this.sql).run(...this.args);return{meta:{changes:Number(result.changes)}};}
+  async run(){if(/^\s*SELECT\b/i.test(this.sql))return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};const result=this.owner.sqlite.prepare(this.sql).run(...this.args);return{meta:{changes:Number(result.changes)}};}
 }
 
 class SqliteD1{
@@ -623,16 +623,43 @@ test('reconcile interleaving queues the authoritative version and converges afte
       assert.equal(result.counts.PERSONAL_USE,1);
       assert.ok(result.enqueued>=1,'reconcile may also enqueue seeded migration fixtures from other entity types');
       const reconciled=h.queued.find(message=>message.body?.entityType==='PERSONAL_USE')?.body;
-      assert.equal(reconciled?.entityVersion,3);
-      assert.equal(await syncJob(h.env,reconciled),'BUSY');
+      assert.equal(reconciled,undefined,'reconcile must report the held version instead of dispatching it');
+      assert.ok(result.held>=1);
       releaseOlderWrite.resolve();
       assert.equal(await older,'PROCESSED');
-      assert.equal(await syncJob(h.env,reconciled),'PROCESSED');
+      h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=3`).run(h.id);
+      await recoverPendingSheetJobs(h.env,0);
+      const recovered=h.queued.find(message=>message.body?.entityType==='PERSONAL_USE')?.body;
+      assert.equal(recovered?.entityVersion,3);
+      assert.equal(await syncJob(h.env,recovered),'PROCESSED');
     });
     assert.deepEqual(sheet.writes,[2,3]);
     assert.equal(sheet.row[6],'CANCELLED');
     assert.equal(sheet.row[14],3);
   }finally{releaseOlderWrite.resolve();h.close();}
+});
+
+test('reconcile uses actual confirmed expense versions and reports held rows',async()=>{
+  const h=harness(),now='2026-09-06T00:00:00.000Z';
+  try{
+    const insert=h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES(?,?,?,'sanitized',100,'cash','CASH_DRAWER','ingredients','2026-09-06','CONFIRMED','trace_fixture',?,?)`);
+    for(const [id,version] of [['exp_v2',2],['exp_v3',3],['exp_review',3],['exp_processing',3]])insert.run(id,`message_${id}`,'user_fixture',now,version);
+    const insertJob=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES(?,'EXPENSE',?,2,'trace_fixture',?,1,?,'2099-01-01T00:00:00.000Z','fixture')`);
+    insertJob.run('review_fixture','exp_review','REVIEW',now);
+    insertJob.run('processing_fixture','exp_processing','PROCESSING',now);
+    const result=await reconcileSheets(h.env,{fromDate:'2026-09-06',toDate:'2026-09-06',limitPerType:100});
+    assert.equal(result.counts.EXPENSE,4);
+    assert.equal(result.held,2);
+    assert.equal(result.disabled,0);
+    assert.equal(result.enqueued+result.held,Object.values(result.counts).reduce((a,b)=>a+b,0));
+    const sent=h.queued.map(m=>m.body).filter(j=>j?.entityType==='EXPENSE');
+    assert.deepEqual(sent.map(j=>[j.entityKey,j.entityVersion]),[['exp_v2',2],['exp_v3',3]]);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT entity_key,entity_version,status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key IN ('exp_processing','exp_review') AND entity_version=3 ORDER BY entity_key`).all()),[{entity_key:'exp_processing',entity_version:3,status:'PENDING'},{entity_key:'exp_review',entity_version:3,status:'PENDING'}]);
+    h.env.SHEETS_SYNC_ENABLED='false';
+    const disabled=await reconcileSheets(h.env,{fromDate:'2026-09-06',toDate:'2026-09-06',limitPerType:100});
+    assert.equal(disabled.enqueued,0);assert.equal(disabled.held,0);
+    assert.equal(disabled.disabled,Object.values(disabled.counts).reduce((a,b)=>a+b,0));
+  }finally{h.close();}
 });
 
 test('EXPENSE versions cannot process simultaneously',async()=>{

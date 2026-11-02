@@ -68,18 +68,32 @@ async function sendScheduledSheetJobs(env:Env,jobs:ScheduledSheetJob[]):Promise<
     await env.JOB_QUEUE.sendBatch(messages);
   }
 }
-export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
-  if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
-  const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs);
+export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{return (await enqueueSheetSyncBatchDetailed(env,jobs,force)).enqueued;}
+export async function enqueueSheetSyncBatchDetailed(env:Env,jobs:SheetsSyncJob[],force=false):Promise<{enqueued:number;held:number;disabled:number}>{
+  const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()];
+  if(env.SHEETS_SYNC_ENABLED!=="true")return{enqueued:0,held:0,disabled:unique.length};
+  if(!unique.length)return{enqueued:0,held:0,disabled:0};
+  const nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs),eligible:ScheduledSheetJob[]=[];let held=0;
   for(let offset=0;offset<scheduled.length;offset+=50){
-    const statements=scheduled.slice(offset,offset+50).map(({body:job,nextAttemptAt})=>env.DB.prepare(force
-      ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,lease_until=NULL,lease_token=NULL WHERE sync_jobs.status NOT IN ('PROCESSING','REVIEW')`
-      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
-      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt));
-    await env.DB.batch(statements);
+    const batch=scheduled.slice(offset,offset+50),statements=batch.flatMap(({body:job,nextAttemptAt})=>{
+      const upsert=env.DB.prepare(force
+        ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,lease_until=NULL,lease_token=NULL WHERE sync_jobs.status NOT IN ('PROCESSING','REVIEW')`
+        :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
+        .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt);
+      if(!force)return[upsert];
+      const check=env.DB.prepare(`SELECT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type=s.entity_type AND active.entity_key=s.entity_key AND active.status IN ('PROCESSING','REVIEW')) AS held FROM sync_jobs s WHERE s.entity_type=? AND s.entity_key=? AND s.entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion);
+      return[upsert,check];
+    });
+    const results=await env.DB.batch<{held:number}>(statements);
+    for(let index=0;index<batch.length;index++){
+      const item=batch[index]!;
+      if(!force){eligible.push(item);continue;}
+      const row=results[index*2+1]?.results?.[0];if(!row||![0,1].includes(Number(row.held)))throw new Error("SHEET_SYNC_ENQUEUE_HOLD_RESULT_MISSING");
+      if(Number(row.held)===1)held++;else eligible.push(item);
+    }
   }
-  await sendScheduledSheetJobs(env,scheduled);
-  return unique.length;
+  if(eligible.length)await sendScheduledSheetJobs(env,eligible);
+  return{enqueued:eligible.length,held,disabled:0};
 }
 export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,includeTerminalDlq=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;

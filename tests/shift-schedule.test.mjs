@@ -54,6 +54,7 @@ function makeEnv({inactive=[]}={}){
           return{meta:{changes:1}};
         }
         if(sql.startsWith("INSERT INTO sync_jobs"))return{meta:{changes:1}};
+        if(sql.startsWith("SELECT EXISTS(SELECT 1 FROM sync_jobs"))return{results:[{held:0}],meta:{changes:0}};
         throw new Error(`Unhandled SQL in test: ${sql}`);
       });
     }

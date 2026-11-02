@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { batchClearValues,batchGetSheetValues,batchGetSheetFormulaValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId } from "./client";
+import { batchGetSheetValues,batchGetSheetFormulaValues,batchWriteValues } from "./client";
 import {withCorrectionDailyWriteFence,type GuardedDailyMutation,type DailyFenceExpenseSnapshot} from "./owner-correction-daily-write-fence";
 
 export class DailyCancelReviewRequired extends Error{
@@ -95,20 +95,6 @@ export function candidateRows(body:unknown[][],blocks:MonthBlock[],month:number)
 }
 export function requiredMonthlyCapacityExpansions(availableRows:number,requiredRows:number):number{return Math.max(0,requiredRows-Math.max(0,availableRows));}
 export function isDailyExpenseMappingKey(expenseId:string,entityKey:string):boolean{return entityKey===expenseId||entityKey.startsWith(`${expenseId}|`);}
-export function monthCapacityExpansionRequests(sheetId:number,totalRow:number):unknown[]{
-  // Sheets row indexes are zero based and the total row must stay below the
-  // new detail row. Copying the preceding detail row preserves its formulas
-  // and formatting; input cells are explicitly cleared before use.
-  const index=totalRow-1;
-  return[
-    {insertDimension:{range:{sheetId,dimension:"ROWS",startIndex:index,endIndex:index+1},inheritFromBefore:true}},
-    {copyPaste:{source:{sheetId,startRowIndex:index-1,endRowIndex:index,startColumnIndex:0,endColumnIndex:23},destination:{sheetId,startRowIndex:index,endRowIndex:index+1,startColumnIndex:0,endColumnIndex:23},pasteType:"PASTE_NORMAL",pasteOrientation:"NORMAL"}}
-  ];
-}
-function monthCapacityExpansionRequestsWithMarker(sheetId:number,totalRow:number,marker:string):unknown[]{
-  return[...monthCapacityExpansionRequests(sheetId,totalRow),{updateCells:{start:{sheetId,rowIndex:totalRow-1,columnIndex:0},rows:[{values:[{userEnteredValue:{stringValue:marker}}]}],fields:"userEnteredValue"}}];
-}
-
 async function loadLayout(env:Env):Promise<DailyLayout>{
   // The production daily tab already exceeds 1,000 rows.  This bounded range
   // deliberately covers the current 2,533-row layout plus room for safe
@@ -132,9 +118,13 @@ async function reserveRow(env:Env,expenseId:string,candidates:number[]):Promise<
     if(Number(inserted.meta.changes||0)===1&&allocated===row)return row;
     if(allocated!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
   }
-  throw new Error("Unable to reserve an empty daily expense row");
+  // Visually blank rows may already be mapped to other expenses; retrying
+  // cannot prove they are safe or create new capacity.
+  throw new DailyCancelReviewRequired("DAILY_CAPACITY_ROWS_RESERVED_REVIEW_REQUIRED");
 }
-/** Advance every mapped row and its expansion state in a single D1 batch. */
+/** Historical D1-only repair primitive; no runtime callers. It does not prove
+ * a Sheets insertion happened at the intended row and must not be used to
+ * resume or repair an ambiguous expansion without independent review. */
 export async function mapDailyCapacityExpansion(env:Env,month:number,anchor:number,marker:string,now:string,fenceToken:string):Promise<boolean>{
   const sheet=env.SHEET_EXPENSE_DAILY;if(!sheet||!fenceToken||!Number.isSafeInteger(month)||month<1||month>12||!Number.isSafeInteger(anchor)||anchor<2||!marker||!Number.isFinite(Date.parse(now)))return false;
   const active=`EXISTS(SELECT 1 FROM daily_sheet_capacity_expansions e WHERE e.sheet_name=? AND e.month=? AND e.anchor_total_row=? AND e.marker=? AND e.state='PREPARED') AND EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.lease_token=? AND f.state='OWNED' AND f.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))`;
@@ -150,33 +140,6 @@ export async function mapDailyCapacityExpansion(env:Env,month:number,anchor:numb
   ]);
   return Number(result[4]?.meta.changes||0)===1;
 }
-async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout,write:GuardedDailyMutation,fenceToken:string):Promise<boolean>{
-  const at=Date.now(),now=new Date(at).toISOString(),cutoff=new Date(at-15*60_000).toISOString(),lock=`${now}|${crypto.randomUUID()}`;
-  const held=`EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND f.lease_token=? AND f.state='OWNED' AND f.lease_until>?)`;
-  const locked=await env.DB.prepare(`INSERT INTO daily_sheet_capacity_locks(sheet_name,month,locked_at) SELECT ?,?,? WHERE ${held} ON CONFLICT(sheet_name,month) DO UPDATE SET locked_at=excluded.locked_at WHERE daily_sheet_capacity_locks.locked_at<=? AND ${held}`).bind(env.SHEET_EXPENSE_DAILY,block.month,lock,env.SHEET_EXPENSE_DAILY,fenceToken,now,cutoff,env.SHEET_EXPENSE_DAILY,fenceToken,now).run();
-  if(Number(locked.meta.changes||0)!==1)return false;
-  try{
-    const existing=await env.DB.prepare(`SELECT anchor_total_row,marker,state FROM daily_sheet_capacity_expansions WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).first<{anchor_total_row:number;marker:string;state:string}>();
-    // A completed expansion cannot be reused: its old anchor now points to a
-    // detail row.  Every new slot is inserted immediately before the current
-    // monthly total, while an interrupted expansion resumes from its marker.
-    const inFlight=!!existing&&existing.state!=="COMPLETED",anchor=inFlight?Number(existing!.anchor_total_row):block.totalRow,marker=inFlight?existing!.marker:`__MALIPANG_CAPACITY_${block.month}_${block.totalRow}__`;
-    const positions=(body:unknown[][])=>body.flatMap((row,index)=>String(row?.[0]??"")===marker?[index+1]:[]),found=positions(layout.body);
-    if(found.length>1||(found.length===1&&(!inFlight||found[0]!==anchor)))throw new Error(`Daily sheet capacity marker moved for month ${block.month}; review required.`);
-    const markerRow=found[0]||0;
-    if(existing?.state==="MAPPED"){
-      if(markerRow===0)throw new Error(`Daily sheet capacity marker missing for month ${block.month}; review required.`);
-      await write(before=>batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${markerRow}`)],before));await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(now,env.SHEET_EXPENSE_DAILY,block.month).run();return true;
-    }
-    if(!existing||existing.state==="COMPLETED")await env.DB.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES(?,?,?,?, 'PREPARED',?,?) ON CONFLICT(sheet_name,month) DO UPDATE SET anchor_total_row=excluded.anchor_total_row,marker=excluded.marker,state='PREPARED',updated_at=excluded.updated_at`).bind(env.SHEET_EXPENSE_DAILY,block.month,block.totalRow,marker,now,now).run();
-    if(markerRow===0){const sheetId=await getSheetId(env,env.SHEET_EXPENSE_DAILY);await write(before=>batchUpdateSpreadsheet(env,monthCapacityExpansionRequestsWithMarker(sheetId,anchor,marker),before));const observed=positions((await loadLayout(env)).body);if(observed.length!==1||observed[0]!==anchor)throw new Error(`Daily sheet capacity marker moved for month ${block.month}; review required.`);}
-    // Move the index and state atomically: a crash must not leave them split.
-    if(!await mapDailyCapacityExpansion(env,block.month,anchor,marker,now,fenceToken))throw new Error(`Daily sheet capacity mapping changed for month ${block.month}; review required.`);
-    const refreshed=await loadLayout(env),refreshedMarkerRow=refreshed.body.findIndex(row=>String(row?.[0]??"")===marker)+1;if(refreshedMarkerRow>0)await write(before=>batchClearValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,`A${refreshedMarkerRow}`)],before));
-    await env.DB.prepare(`UPDATE daily_sheet_capacity_expansions SET state='COMPLETED',updated_at=? WHERE sheet_name=? AND month=?`).bind(new Date().toISOString(),env.SHEET_EXPENSE_DAILY,block.month).run();
-    return true;
-  }finally{await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=? AND locked_at=?`).bind(env.SHEET_EXPENSE_DAILY,block.month,lock).run();}
-}
 export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{
   // Funding source is independent of payment method: cash can come from the
   // shop bank rather than the till. Preserve the legacy fallback otherwise.
@@ -185,7 +148,7 @@ export function legacySourceWallet(paymentKey:string,sourceWallet:string):string
 }
 export function dailyInputRanges(sheet:string,row:number):string[]{return[sheetRange(sheet,`B${row}:D${row}`),sheetRange(sheet,`F${row}:H${row}`),sheetRange(sheet,`K${row}:Q${row}`),sheetRange(sheet,`V${row}:W${row}`)];}
 
-async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation,fenceToken:string):Promise<{payment:ReturnType<typeof resolvePayment>;rows:Map<string,number>}>{
+async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[]):Promise<{payment:ReturnType<typeof resolvePayment>;rows:Map<string,number>}>{
   if(!record.description.trim()||!Number.isFinite(record.amountBaht)||record.amountBaht<=0)throw new Error("Invalid confirmed expense for daily sheet");
   if(!entries.length)throw new Error("No confirmed expense entries for daily sheet");
   const entryKeys=new Set(entries.map(entry=>entry.rowKey));if(entryKeys.size!==entries.length||[...entryKeys].some(key=>!key.trim()))throw new Error("Daily expense entry keys must be stable and unique");
@@ -196,17 +159,12 @@ async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:D
   // identity. Hold rather than clearing an existing mapped row. A replacement
   // path must first establish independently authenticated row identity.
   for(const entry of entries)if(await mappedRow(env,entry.rowKey)!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
-  const {year,month,day}=parseTransactionDate(record.transactionDate);let layout=await loadLayout(env),payment=resolvePayment(layout.headers,record.paymentKey,year,month,day),rows=new Map<string,number>();
-  while(rows.size<entries.length){
-    const candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
-    if(requiredMonthlyCapacityExpansions(candidates.length,entries.length-rows.size)===0)break;
-    const block=layout.blocks.find(item=>item.month===payment.postingMonth);if(!block)throw new Error(`Daily sheet month block not found: ${payment.postingMonth}`);
-    const expanded=await expandMonthCapacity(env,block,layout,write,fenceToken);if(!expanded)throw new Error(`Daily sheet capacity expansion is busy for month ${payment.postingMonth}; retry safely.`);
-    // Existing item mappings after the inserted total row move down one row.
-    // Reload them from D1 before writing so a retry never targets the old row.
-    layout=await loadLayout(env);payment=resolvePayment(layout.headers,record.paymentKey,year,month,day);rows=new Map<string,number>();
-    for(const entry of entries)if(await mappedRow(env,entry.rowKey)!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
-  }
+  const {year,month,day}=parseTransactionDate(record.transactionDate),layout=await loadLayout(env),payment=resolvePayment(layout.headers,record.paymentKey,year,month,day),rows=new Map<string,number>();
+  // No automatic row insertion or recovery: historical PREPARED anchors may
+  // refer to another month, and copying a populated row duplicates inputs.
+  // A full month must remain held until capacity and any prior ambiguous
+  // expansion are independently reviewed. Clock expiry is not proof of safety.
+  if(requiredMonthlyCapacityExpansions(candidateRows(layout.body,layout.blocks,payment.postingMonth).length,entries.length)>0)throw new DailyCancelReviewRequired("DAILY_CAPACITY_MANUAL_REVIEW_REQUIRED");
   let candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
   for(const entry of entries)if(!rows.has(entry.rowKey)){const row=await reserveRow(env,entry.rowKey,candidates);rows.set(entry.rowKey,row);candidates=candidates.filter(candidate=>candidate!==row);}
   return{payment,rows};
@@ -223,7 +181,7 @@ export function buildDailySheetWritePlan(sheet:string,record:DailyExpenseRecord,
   };
 }
 
-async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation,fenceToken:string):Promise<DailyExpensePlacement[]>{
+async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[],write:GuardedDailyMutation):Promise<DailyExpensePlacement[]>{
   // Revalidation reduces stale-work risk. The caller that changes the expense
   // must also hold this same sheet-wide fence; this check is not a Sheets CAS.
   const current=async()=>{
@@ -231,7 +189,7 @@ async function writeDailyExpenseEntries(env:Env,record:DailyExpenseRecord,entrie
     if(!row||row.status!=="CONFIRMED"||!Number.isSafeInteger(record.version)||Number(row.version)!==record.version||row.transaction_date!==record.transactionDate||row.description!==record.description||Number(row.amount_satang)!==Math.round(record.amountBaht*100)||row.payment_key!==record.paymentKey||row.source_wallet!==record.sourceWallet||row.category!==record.category)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_SNAPSHOT_CHANGED");
   };
   await current();
-  const {payment,rows}=await reserveDailyEntryRows(env,record,entries,write,fenceToken),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet),writePlan=buildDailySheetWritePlan(env.SHEET_EXPENSE_DAILY,record,payment,sourceWallet,entries,rows);
+  const {payment,rows}=await reserveDailyEntryRows(env,record,entries),sourceWallet=legacySourceWallet(record.paymentKey,record.sourceWallet),writePlan=buildDailySheetWritePlan(env.SHEET_EXPENSE_DAILY,record,payment,sourceWallet,entries,rows);
   // A visually blank candidate can still contain an amount, category, or an
   // input-cell formula outside the columns used by candidateRows(). Do not
   // clear any input cells: require all of them to be blank before writing.
@@ -260,14 +218,14 @@ export async function writeConfirmedExpenseWithDocumentItemsToDaily(env:Env,reco
     // index is not sufficient authority to clear any row, even under a fence.
     throw new DailyCancelReviewRequired("DAILY_LEGACY_IDENTITY_REVIEW_REQUIRED");
   }
-  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries,write,fenceToken),replacedLegacySummary:hasLegacyItemRows};
+  return{plan,placements:await writeDailyExpenseEntries(env,record,plan.entries,write),replacedLegacySummary:hasLegacyItemRows};
   },undefined,fenceSnapshot(record));
 }
 
 export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRecord):Promise<DailyExpensePlacement>{
   return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async (write,fenceToken)=>{
   if(!fenceToken)throw new Error("DAILY_FENCE_TOKEN_MISSING");
-  const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write,fenceToken);
+  const result=await writeDailyExpenseEntries(env,record,[{rowKey:record.expenseId,description:record.description.trim(),amountBaht:record.amountBaht}],write);
   return result[0]!;
   },undefined,fenceSnapshot(record));
 }

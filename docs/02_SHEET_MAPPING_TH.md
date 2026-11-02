@@ -19,7 +19,7 @@ RAW ต้องเก็บคู่ค่าทั้งสองตาม D1 
 
 Delivery Order และ payment evidence ไม่สร้าง detail row ซ้ำ; ใช้ primary purchase document เท่านั้น. Undo/CANCELLED อัปเดตเฉพาะ detail rows ของ Expense นั้นเป็น `CANCELLED` พร้อมเวลา โดยคง D1/audit/evidence ไว้.
 
-เมื่อเดือนนั้นไม่มี detail row ว่าง Worker จะ insert detail row ก่อนแถว `รวม`, คัดลอกรูปแบบ/สูตรจาก detail row ก่อนหน้า, ล้างเฉพาะ writable input cells และเลื่อน `sheet_row_index` หลัง total อย่าง idempotent. สูตร, total และ manual/fixed row ห้ามถูกเขียนทับ. `รายละเอียดการซื้อ` ใช้ append-only mapping แยกจึงไม่เปลี่ยน month block หรือสูตรรายวัน.
+เมื่อเดือนนั้นไม่มี detail row ว่างที่จองได้ Worker จะพักงานเป็น `REVIEW` และไม่แทรกแถวอัตโนมัติ: anchor ของ expansion เก่าอาจไม่ตรงแถว `รวม` ปัจจุบัน และการคัดลอกแถวอาจคัดลอกยอดเดิมมาด้วย. ตรวจหลักฐาน expansion/marker และสถานะ request ที่อาจค้างก่อนแก้ด้วยวิธีที่ได้รับการทดสอบ; ห้ามใช้ตัวเลข row index เดิมเป็นหลักฐานว่าแถวถูกต้อง. RAW อาจเขียนสำเร็จก่อนพบว่าแถวรายวันเต็ม จึงต้องตรวจสองปลายทาง. `รายละเอียดการซื้อ` ใช้ append-only mapping แยก.
 
 ## Attendance LINE flow
 

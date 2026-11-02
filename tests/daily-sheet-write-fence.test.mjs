@@ -98,6 +98,62 @@ test('capacity expansion advances state and index together and rolls back on fai
  }finally{h.close();}}
 });
 
+test('persisted ambiguous expansion and a stale anchor hold without dispatch or index mutation',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const oldRead=client.batchGetSheetValues,oldId=client.getSheetId,oldUpdate=client.batchUpdateSpreadsheet,oldClear=client.batchClearValues;
+ try{for(const [state,anchor] of [['PREPARED',1688],['PREPARED',11],['MAPPED',11]]){const h=expenseSqlite();try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('new','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  h.sqlite.prepare(`INSERT INTO daily_sheet_capacity_expansions(sheet_name,month,anchor_total_row,marker,state,created_at,updated_at) VALUES('daily',10,?,'synthetic',?,'now','now')`).run(anchor,state);
+  h.sqlite.prepare(`INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','untouched',20)`).run();
+  const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];for(let i=6;i<10;i++)body[i]=[null,10,1,'filled'];body[10]=['รวม',10];headers[1][7]='เงินโอน';
+  client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];let writes=0;client.getSheetId=async()=>{writes++;throw Error('must not request sheet ID');};client.batchUpdateSpreadsheet=async()=>{writes++;};client.batchClearValues=async()=>{writes++;};
+  const record={expenseId:'new',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+  await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CAPACITY_MANUAL_REVIEW_REQUIRED/);assert.equal(writes,0);
+  assert.equal(h.sqlite.prepare(`SELECT state FROM daily_sheet_capacity_expansions WHERE month=10`).get().state,state);assert.equal(h.sqlite.prepare(`SELECT row_number FROM sheet_row_index WHERE entity_key='untouched'`).get().row_number,20);
+ }finally{h.close();}}}finally{client.batchGetSheetValues=oldRead;client.getSheetId=oldId;client.batchUpdateSpreadsheet=oldUpdate;client.batchClearValues=oldClear;}
+});
+
+test('a full month without previous expansion remains held instead of inserting any row',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldId=client.getSheetId,oldUpdate=client.batchUpdateSpreadsheet;try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('new','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  const body=Array.from({length:13},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];for(let i=6;i<10;i++)body[i]=[null,10,1,'filled'];body[10]=['รวม',10];headers[1][7]='เงินโอน';let dispatched=0;
+  client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];client.getSheetId=async()=>1;
+  client.batchUpdateSpreadsheet=async(_env,_requests,before)=>{await before();dispatched++;};
+  const record={expenseId:'new',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+  await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CAPACITY_MANUAL_REVIEW_REQUIRED/);assert.equal(dispatched,0);assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM daily_sheet_capacity_expansions`).get().n,0);
+ }finally{client.batchGetSheetValues=oldRead;client.getSheetId=oldId;client.batchUpdateSpreadsheet=oldUpdate;h.close();}
+});
+
+test('visually blank but fully reserved candidate rows hold for review without writing',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldWrite=client.batchWriteValues;try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('new','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  const body=Array.from({length:9},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[8]=['รวม',10];headers[1][7]='เงินโอน';
+  h.sqlite.prepare(`INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','reserved-a',7),('daily','reserved-b',8)`).run();
+  client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];let writes=0;client.batchWriteValues=async()=>{writes++;};
+  const record={expenseId:'new',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+  await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CAPACITY_ROWS_RESERVED_REVIEW_REQUIRED/);assert.equal(writes,0);assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sheet_row_index WHERE entity_key='new'`).get().n,0);
+ }finally{client.batchGetSheetValues=oldRead;client.batchWriteValues=oldWrite;h.close();}
+});
+
+test('full-month sync enters REVIEW and queue acknowledges rather than retries or inserts rows',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),worker=require('../dist/index.js').default;
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldFormula=client.batchGetSheetFormulaValues,oldWrite=client.batchWriteValues,oldUpdate=client.batchUpdateSpreadsheet;try{
+  Object.assign(h.env,{SHEET_EXPENSE_DAILY:'daily',SHEET_EXPENSE_RAW:'raw',SHEETS_SYNC_ENABLED:'true'});
+  h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('new','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];for(let i=6;i<10;i++)body[i]=[null,10,1,'filled'];body[10]=['รวม',10];headers[1][7]='เงินโอน';
+  client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(()=>[]);
+  let rawWrites=0,inserts=0,ack=0,retries=0;client.batchWriteValues=async(_env,_values,before)=>{await before?.();rawWrites++;};client.batchUpdateSpreadsheet=async()=>{inserts++;};
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'new',entityVersion:1,traceId:'synthetic'};
+  await worker.queue({queue:'malipang-jobs',messages:[{body:job,attempts:1,ack(){ack++;},retry(){retries++;}}]},h.env,{});
+  const status=h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key='new'`).get();assert.equal(status.status,'REVIEW');assert.equal(status.last_error,'DAILY_CAPACITY_MANUAL_REVIEW_REQUIRED');
+  assert.equal(ack,1);assert.equal(retries,0);assert.equal(inserts,0);assert.equal(rawWrites,1);
+  await worker.queue({queue:'malipang-jobs',messages:[{body:job,attempts:2,ack(){ack++;},retry(){retries++;}}]},h.env,{});
+  assert.equal(ack,2);assert.equal(retries,0);assert.equal(inserts,0);assert.equal(rawWrites,1,'duplicate queue delivery must not replay the raw or daily write');
+ }finally{client.batchGetSheetValues=oldRead;client.batchGetSheetFormulaValues=oldFormula;client.batchWriteValues=oldWrite;client.batchUpdateSpreadsheet=oldUpdate;h.close();}
+});
+
 test('capacity mappings cannot be changed by an expired or replaced fence owner',async()=>{
  const {createRequire}=await import('node:module');const {mapDailyCapacityExpansion}=createRequire(import.meta.url)('../dist/sheets/daily-expense.js');
  for(const [token,until] of [['owner','2000-01-01T00:00:00.000Z'],['replacement','2099-01-01T00:00:00.000Z']]){const h=expenseSqlite();try{

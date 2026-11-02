@@ -107,16 +107,17 @@ export async function insertMissingScheduleRows(env:Env,rawRows:ShiftInsertInput
   const employeeIds=[...new Set(rows.map(row=>row.employeeId))],employees=await loadActiveEmployees(env,employeeIds),fromDate=rows.map(row=>row.workDate).sort()[0]!,toDate=rows.map(row=>row.workDate).sort().at(-1)!,wages=await loadWages(env,employeeIds,fromDate,toDate);
   const planned:PlannedShift[]=rows.map(row=>{const employee=employees.get(row.employeeId)!;return{...row,employee,wage:wageFor(employee,row.workDate,wages)};});
   let inserted=0;const jobs:SheetsSyncJob[]=[],operationId=`shift_${crypto.randomUUID()}`,createdAt=new Date().toISOString();
-  for(let offset=0;offset<planned.length;offset+=40){
-    const chunk=planned.slice(offset,offset+40),statements:D1PreparedStatement[]=[];
+  for(let offset=0;offset<planned.length;offset+=30){
+    const chunk=planned.slice(offset,offset+30),statements:D1PreparedStatement[]=[];
     for(const row of chunk){
       const reason=row.reason||defaultReason,auditId=crypto.randomUUID();
       statements.push(env.DB.prepare(`INSERT OR IGNORE INTO employee_shift_days(employee_id,work_date,scheduled_in,scheduled_out,daily_wage_snapshot_satang,wage_source_id,status,note,version,created_at,updated_at,created_action_id) VALUES(?,?,?,?,?,?,?,?,1,?,?,?)`).bind(row.employeeId,row.workDate,row.scheduledIn,row.scheduledOut,row.wage.dailyWageSatang,row.wage.wageSourceId,row.status,reason,createdAt,createdAt,operationId));
       statements.push(env.DB.prepare(`INSERT INTO shift_schedule_audit(audit_id,employee_id,work_date,previous_status,new_status,previous_scheduled_in,previous_scheduled_out,new_scheduled_in,new_scheduled_out,changed_by,reason,action,created_at) SELECT ?,employee_id,work_date,NULL,status,NULL,NULL,scheduled_in,scheduled_out,?,?,?,? FROM employee_shift_days WHERE employee_id=? AND work_date=? AND created_action_id=?`).bind(auditId,changedBy,reason,context.action,createdAt,row.employeeId,row.workDate,operationId));
+      statements.push(env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,'SHIFT_SCHEDULE',employee_id||'|'||work_date,version,?,'PENDING',0,?,?,NULL,NULL FROM employee_shift_days WHERE employee_id=? AND work_date=? AND created_action_id=? ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),operationId,createdAt,createdAt,row.employeeId,row.workDate,operationId));
     }
     const results=await env.DB.batch(statements);
     for(let index=0;index<chunk.length;index++){
-      const row=chunk[index]!,shiftChanges=Number(results[index*2]?.meta.changes||0),auditChanges=Number(results[index*2+1]?.meta.changes||0);
+      const row=chunk[index]!,shiftChanges=Number(results[index*3]?.meta.changes||0),auditChanges=Number(results[index*3+1]?.meta.changes||0);
       if(shiftChanges!==auditChanges)throw new Error(`Schedule audit mismatch for ${row.employeeId}|${row.workDate}`);
       if(shiftChanges===1){inserted++;jobs.push({kind:"SHEETS_SYNC",entityType:"SHIFT_SCHEDULE",entityKey:`${row.employeeId}|${row.workDate}`,entityVersion:1,traceId:operationId});}
     }
@@ -143,12 +144,13 @@ export async function overrideShiftSchedule(env:Env,input:OverrideShiftInput):Pr
   if(!row)throw new Error("Shift schedule row not found; generate defaults before overriding");
   const previousStatus=parseShiftStatus(row.status);
   if(previousStatus===newStatus)throw new Error(`Shift status is already ${newStatus}`);
-  const previousVersion=Number(row.version||0),version=previousVersion+1,now=new Date().toISOString(),auditId=crypto.randomUUID();
+  const previousVersion=Number(row.version||0),version=previousVersion+1,now=new Date().toISOString(),auditId=crypto.randomUUID(),traceId=`shift_override_${auditId}`;
   const results=await env.DB.batch([
     env.DB.prepare(`INSERT INTO shift_schedule_audit(audit_id,employee_id,work_date,previous_status,new_status,previous_scheduled_in,previous_scheduled_out,new_scheduled_in,new_scheduled_out,changed_by,reason,action,created_at) SELECT ?,employee_id,work_date,status,?,scheduled_in,scheduled_out,scheduled_in,scheduled_out,?,?, 'OWNER_OVERRIDE',? FROM employee_shift_days WHERE employee_id=? AND work_date=? AND version=? AND status=?`).bind(auditId,newStatus,changedBy,reason,now,employeeId,workDate,previousVersion,previousStatus),
-    env.DB.prepare(`UPDATE employee_shift_days SET status=?,note=?,version=version+1,updated_at=? WHERE employee_id=? AND work_date=? AND version=? AND status=?`).bind(newStatus,reason,now,employeeId,workDate,previousVersion,previousStatus)
+    env.DB.prepare(`UPDATE employee_shift_days SET status=?,note=?,version=version+1,updated_at=? WHERE employee_id=? AND work_date=? AND version=? AND status=?`).bind(newStatus,reason,now,employeeId,workDate,previousVersion,previousStatus),
+    env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,'SHIFT_SCHEDULE',s.employee_id||'|'||s.work_date,s.version,?,'PENDING',0,?,?,NULL,NULL FROM employee_shift_days s WHERE s.employee_id=? AND s.work_date=? AND s.version=? AND EXISTS(SELECT 1 FROM shift_schedule_audit a WHERE a.audit_id=? AND a.employee_id=s.employee_id AND a.work_date=s.work_date) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),traceId,now,now,employeeId,workDate,version,auditId)
   ]);
   if(Number(results[0]?.meta.changes||0)!==1||Number(results[1]?.meta.changes||0)!==1)throw new Error("Shift changed concurrently; reload before retrying");
-  await enqueueSheetSyncBatch(env,[{kind:"SHEETS_SYNC",entityType:"SHIFT_SCHEDULE",entityKey:`${employeeId}|${workDate}`,entityVersion:version,traceId:`shift_override_${auditId}`}]);
+  await enqueueSheetSyncBatch(env,[{kind:"SHEETS_SYNC",entityType:"SHIFT_SCHEDULE",entityKey:`${employeeId}|${workDate}`,entityVersion:version,traceId}]);
   return{employeeId,workDate,previousStatus,newStatus,version};
 }

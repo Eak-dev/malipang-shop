@@ -20,7 +20,7 @@ function harness(){
     if(sql.includes('INSERT INTO expense_audit_log')){state.expenseAudits.push(this.args);return{meta:{changes:1}};}
     if(sql.includes('INSERT INTO owner_personal_transactions')){state.personalRows.push({status:'WAITING_CONFIRM',args:this.args});return{meta:{changes:1}};}
     if(sql.includes('INSERT INTO owner_personal_transaction_audit')){state.personalAudits.push(this.args);return{meta:{changes:1}};}
-    if(sql.includes('INSERT INTO sync_jobs')){state.syncJobs.push({entityType:this.args[1],entityVersion:this.args[3]});return{meta:{changes:1}};}
+    if(sql.includes('INSERT INTO sync_jobs')){const job=sql.includes("SELECT ?,'EXPENSE'")?{entityType:'EXPENSE',entityVersion:1}:{entityType:this.args[1],entityVersion:this.args[3]};if(state.syncJobs.some(item=>item.entityType===job.entityType&&item.entityVersion===job.entityVersion))return{meta:{changes:0}};state.syncJobs.push(job);return{meta:{changes:1}};}
     return{meta:{changes:1}};
   }});
   const DB={prepare:statement,async batch(statements){const results=[];for(const item of statements)results.push(await item.run());return results;}};

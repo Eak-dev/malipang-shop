@@ -4,6 +4,8 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {confirmExpenseAtomically} from '../dist/expense/confirm.js';
 import {undoConfirmedExpense} from '../dist/expense/undo.js';
+import {handleExpenseText} from '../dist/expense/service.js';
+import {generateDefaultSchedule,overrideShiftSchedule} from '../dist/admin/shift-schedule.js';
 import {enqueueSheetSync,recoverPendingSheetJobs} from '../dist/db/repositories.js';
 
 class Statement{
@@ -264,4 +266,63 @@ test('SQLite: disabled confirmation rolls back when outbox creation fails',async
   const h=harness({syncEnabled:false});
   try{h.sqlite.exec("CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON sync_jobs BEGIN SELECT RAISE(ABORT,'fixture outbox constraint'); END");const before=state(h);await assert.rejects(h.confirm(),/fixture outbox constraint/);assert.equal(state(h),before);}
   finally{h.close();}
+});
+
+test('SQLite: text quick-save is atomic with its audit and recoverable outbox',async()=>{
+  const h=harness({syncEnabled:false}),event={source:{type:'user',userId:'line_fixture'},message:{id:'quick_message',type:'text',text:'ไข่ ทอน 375'}};
+  h.env.RUNTIME_MODE='shadow';h.env.SHADOW_LINE_OUTPUT='false';
+  try{
+    assert.equal(await handleExpenseText(h.env,event,'trace_quick'),'CONFIRMED');
+    const saved=h.sqlite.prepare(`SELECT expense_id,version,status FROM expense_events WHERE message_id='quick_message'`).get();
+    assert.equal(saved.status,'CONFIRMED');assert.equal(saved.version,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM expense_audit_log WHERE expense_id=? AND action='CREATE_DRAFT'`).get(saved.expense_id).n,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs WHERE entity_key=? AND entity_version=1 AND status='PENDING'`).get(saved.expense_id).n,1);
+    assert.equal(h.messages.length,0);
+    h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_key=?`).run(saved.expense_id);
+    h.env.SHEETS_SYNC_ENABLED='true';assert.equal(await recoverPendingSheetJobs(h.env,0),1);
+    assert.equal(h.messages[0].body.entityVersion,1);
+    h.sqlite.prepare(`UPDATE expense_events SET version=3 WHERE expense_id=?`).run(saved.expense_id);
+    assert.equal(await handleExpenseText(h.env,event,'trace_retry'),'CONFIRMED');
+    assert.equal(h.messages.at(-1).body.entityVersion,3);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM expense_events WHERE message_id='quick_message'`).get().n,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM expense_audit_log WHERE expense_id=?`).get(saved.expense_id).n,1);
+  }finally{h.close();}
+});
+
+test('SQLite: quick-save rolls back the expense and audit if outbox creation fails',async()=>{
+  const h=harness(),event={source:{type:'user',userId:'line_fixture'},message:{id:'quick_failure',type:'text',text:'ไข่ ทอน 375'}};
+  h.env.RUNTIME_MODE='shadow';h.env.SHADOW_LINE_OUTPUT='false';
+  try{
+    h.sqlite.exec("CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON sync_jobs BEGIN SELECT RAISE(ABORT,'fixture outbox constraint'); END");
+    await assert.rejects(handleExpenseText(h.env,event,'trace_quick'),/fixture outbox constraint/);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM expense_events WHERE message_id='quick_failure'`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM expense_audit_log`).get().n,0);
+  }finally{h.close();}
+});
+
+test('SQLite: shift generation and override retain outboxes during a sync pause',async()=>{
+  const h=harness({syncEnabled:false});
+  try{
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('FIX001','Fixture','shift_user_fixture','08:00','17:00','ACTIVE',?)`).run(created);
+    const input={employeeIds:['FIX001'],fromDate:'2026-01-02',toDate:'2026-01-02',scheduledIn:'08:00',scheduledOut:'17:00',changedBy:'OWNER',reason:'Fixture'};
+    assert.equal((await generateDefaultSchedule(h.env,input)).inserted,1);
+    assert.equal((await generateDefaultSchedule(h.env,input)).inserted,0);
+    await overrideShiftSchedule(h.env,{employeeId:'FIX001',workDate:'2026-01-02',newStatus:'DAY_OFF',changedBy:'OWNER',reason:'Fixture'});
+    const rows=h.sqlite.prepare(`SELECT entity_version,status FROM sync_jobs WHERE entity_type='SHIFT_SCHEDULE' AND entity_key='FIX001|2026-01-02' ORDER BY entity_version`).all();
+    assert.deepEqual(rows.map(row=>({...row})),[{entity_version:1,status:'PENDING'},{entity_version:2,status:'PENDING'}]);
+    assert.equal(h.messages.length,0);
+    h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_type='SHIFT_SCHEDULE'`).run();h.env.SHEETS_SYNC_ENABLED='true';
+    assert.equal(await recoverPendingSheetJobs(h.env,0),2);
+  }finally{h.close();}
+});
+
+test('SQLite: shift generation rolls back row and audit if outbox creation fails',async()=>{
+  const h=harness({syncEnabled:false});
+  try{
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('FIX001','Fixture','shift_user_fixture','08:00','17:00','ACTIVE',?)`).run(created);
+    h.sqlite.exec("CREATE TRIGGER fixture_outbox_failure BEFORE INSERT ON sync_jobs WHEN NEW.entity_type='SHIFT_SCHEDULE' BEGIN SELECT RAISE(ABORT,'fixture shift outbox failure'); END");
+    await assert.rejects(generateDefaultSchedule(h.env,{employeeIds:['FIX001'],fromDate:'2026-01-02',toDate:'2026-01-02',scheduledIn:'08:00',scheduledOut:'17:00',changedBy:'OWNER',reason:'Fixture'}),/fixture shift outbox failure/);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM employee_shift_days WHERE employee_id='FIX001'`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM shift_schedule_audit WHERE employee_id='FIX001'`).get().n,0);
+  }finally{h.close();}
 });

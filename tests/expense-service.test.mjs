@@ -15,7 +15,7 @@ function harness(){
         async run(){state.runs.push({sql:this.sql,args:this.args});return{meta:{changes:1}};}
       };
     },
-    async batch(statements){state.batches.push(statements.map(statement=>({sql:statement.sql,args:statement.args})));return[];}
+    async batch(statements){state.batches.push(statements.map(statement=>({sql:statement.sql,args:statement.args})));return statements.map(()=>({meta:{changes:1}}));}
   };
   const env={
     DB,
@@ -31,12 +31,13 @@ function harness(){
 test('cash text writes CONFIRMED expense and enqueues Sheets',async()=>{
   const h=harness();
   await handleExpenseText(h.env,h.event('ไข่ ทอน 375'),'trace_cash');
-  assert.equal(h.state.runs.length,2);
-  const insert=h.state.runs.find(row=>row.sql.includes('INSERT INTO expense_events'));
+  assert.equal(h.state.runs.length,0);
+  const insert=h.state.batches[0].find(row=>row.sql.includes('INSERT INTO expense_events'));
   assert.match(insert.sql,/INSERT INTO expense_events/);
   assert.equal(insert.args[9],'CONFIRMED');
-  assert.ok(h.state.runs.some(row=>row.sql.includes('expense_audit_log')));
-  assert.equal(h.state.batches.length,1);
+  assert.ok(h.state.batches[0].some(row=>row.sql.includes('expense_audit_log')));
+  assert.ok(h.state.batches[0].some(row=>row.sql.includes('INSERT INTO sync_jobs')));
+  assert.equal(h.state.batches.length,2);
   assert.equal(h.state.queue.length,1);
   assert.equal(h.state.queue[0].body.entityType,'EXPENSE');
 });
@@ -53,8 +54,8 @@ test('English transfer text waits for confirmation and does not enqueue Sheets',
 test('Thai transfer quick saves like the original Apps Script flow',async()=>{
   const h=harness();
   await handleExpenseText(h.env,h.event('ค่าไฟ โอน 1200'),'trace_thai_transfer');
-  assert.equal(h.state.runs[0].args[9],'CONFIRMED');
-  assert.equal(h.state.batches.length,1);
+  assert.equal(h.state.batches[0][0].args[9],'CONFIRMED');
+  assert.equal(h.state.batches.length,2);
   assert.equal(h.state.queue.length,1);
 });
 

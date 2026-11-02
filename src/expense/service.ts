@@ -66,7 +66,7 @@ async function findExpense(env:Env,id:string,to:string):Promise<LoadedExpense|nu
   const document=await env.DB.prepare(`SELECT document_id,document_type,channel,institution,reference_id,gross_amount_satang,discount_amount_satang,review_note,normalized_json,needs_review,updated_at AS document_updated_at FROM expense_documents WHERE expense_id=? ORDER BY created_at,document_id LIMIT 1`).bind(id).first<ExpenseRow>();
   return recordFromRow(document?{...row,...document}:row);
 }
-async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<ExpenseFlexRecord|null>{
+async function findExpenseByMessage(env:Env,messageId:string,to:string):Promise<LoadedExpense|null>{
   const row=await env.DB.prepare(`SELECT * FROM expense_events WHERE message_id=? AND line_user_id=? LIMIT 1`).bind(messageId,to).first<ExpenseRow>();return row?recordFromRow(row):null;
 }
 async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,traceId:string):Promise<void>{
@@ -186,11 +186,21 @@ export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,a
   if(!parsed){await respondText(env,event,["Invalid expense format. ❌","","Examples:","• Egg change 375","• Electricity transfer 1200","• Boxes kbank 350","• 28/01 Egg change 375"].join("\n"),traceId);return"REJECTED";}
   const id=randomId("exp"),status=parsed.quickSave?"CONFIRMED":"WAITING_CONFIRM",now=new Date().toISOString();
   const ownership=actorValues(actor);
-  const inserted=await env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId).run();
-  let expense:ExpenseFlexRecord={expenseId:id,description:parsed.description,amountSatang:parsed.amountSatang,paymentKey:parsed.paymentKey,sourceWallet:parsed.sourceWallet,category:parsed.category,transactionDate:parsed.transactionDate,status};
+  const insert=env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId);
+  let inserted:D1Result;
+  if(parsed.quickSave){
+    // The generated expense ID makes each dependent INSERT conditional on
+    // this exact insert winning the message-id uniqueness race.
+    [inserted]=await env.DB.batch([
+      insert,
+      env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,document_id,branch_id,reason,before_json,after_json,created_at) SELECT ?,?,'CREATE_DRAFT',expense_id,NULL,?,'',NULL,?,? FROM expense_events WHERE expense_id=? AND message_id=?`).bind(randomId("exp_audit"),ownership.employeeId,ownership.branchId,JSON.stringify({source:"TEXT",status}),now,id,messageId),
+      env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,'EXPENSE',expense_id,version,?,'PENDING',0,?,?,NULL,NULL FROM expense_events WHERE expense_id=? AND message_id=? AND status='CONFIRMED' ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(randomId("sync"),traceId,now,now,id,messageId)
+    ]) as [D1Result,...D1Result[]];
+  }else inserted=await insert.run();
+  let expense:LoadedExpense={expenseId:id,description:parsed.description,amountSatang:parsed.amountSatang,paymentKey:parsed.paymentKey,sourceWallet:parsed.sourceWallet,category:parsed.category,transactionDate:parsed.transactionDate,status,version:1};
   if(Number(inserted.meta.changes||0)===0){const existing=await findExpenseByMessage(env,messageId,to);if(!existing)throw new Error("Expense message conflict without an existing row");expense=existing;}
-  if(Number(inserted.meta.changes||0)===1)await expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId:id,after:{source:"TEXT",status}}).run();
-  if(expense.status==="CONFIRMED")await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:1,traceId});
+  if(!parsed.quickSave&&Number(inserted.meta.changes||0)===1)await expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId:id,after:{source:"TEXT",status}}).run();
+  if(expense.status==="CONFIRMED")await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:expense.version,traceId});
   await showCurrent(env,event,expense,traceId);
   return expense.status==="CONFIRMED"?"CONFIRMED":expense.status==="WAITING_CONFIRM"?"WAITING_CONFIRM":"REJECTED";
 }

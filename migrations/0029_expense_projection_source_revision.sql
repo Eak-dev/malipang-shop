@@ -41,7 +41,7 @@ CREATE TRIGGER IF NOT EXISTS expense_projection_event_update AFTER UPDATE ON exp
   INSERT INTO expense_projection_source_revisions(expense_id,revision,state) SELECT OLD.expense_id,1,'REVIEW' WHERE OLD.expense_id<>NEW.expense_id
     ON CONFLICT(expense_id) DO UPDATE SET revision=revision+1,state='REVIEW';
   INSERT INTO expense_projection_source_revisions(expense_id,revision,state) VALUES(NEW.expense_id,1,'REVIEW')
-    ON CONFLICT(expense_id) DO UPDATE SET revision=revision+1,state=CASE WHEN OLD.expense_id<>NEW.expense_id THEN 'REVIEW' ELSE state END;
+    ON CONFLICT(expense_id) DO UPDATE SET revision=revision+1,state= CASE WHEN OLD.expense_id<>NEW.expense_id THEN 'REVIEW' ELSE state END;
 END;
 CREATE TRIGGER IF NOT EXISTS expense_projection_event_delete AFTER DELETE ON expense_events BEGIN
   INSERT INTO expense_projection_source_revisions(expense_id,revision,state) VALUES(OLD.expense_id,1,'REVIEW')

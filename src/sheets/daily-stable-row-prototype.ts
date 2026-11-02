@@ -36,7 +36,7 @@ export type StablePrototypeResult={status:'VERIFIED'}|{status:'REVIEW';reason:st
 const review=(reason:string):StablePrototypeResult=>({status:'REVIEW',reason});
 function validSubtotalValues(body:unknown[][],headerRow:number,totalRow:number,month:number):boolean{
   const total=body[totalRow-1]??[],header=body[headerRow-1]??[],sums=Array<number>(25).fill(0),columns=[4,5,6,7,10,11,12,13,14,15,16];
-  if(typeof header[4]!=='number'||!Number.isFinite(header[4]))return false;
+  if(typeof header[4]!=='number'||!Number.isFinite(header[4])||typeof header[9]!=='number'||!Number.isFinite(header[9])||Math.abs(header[9]-header[4])>0.001)return false;
   for(let row=headerRow+1;row<totalRow;row++){
     const item=body[row-1]??[];if(Number(item[1])!==month)continue;
     for(const col of columns){const value=item[col];if(value===undefined||value===null||value==='')continue;if(typeof value!=='number'||!Number.isFinite(value))return false;sums[col]=sums[col]!+value;}

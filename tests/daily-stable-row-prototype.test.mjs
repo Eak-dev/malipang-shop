@@ -5,7 +5,7 @@ import {stableDailyExpenseKey} from '../dist/sheets/daily-stable-row-plan.js';
 import {expectedHelperFormulae} from '../dist/sheets/daily-stable-row-writes.js';
 
 const blank=()=>Array(25).fill(null);
-const header=()=>{const row=blank();row[1]=10;row[3]='รายรับทั้งหมดในบัญชี';row[4]=50000;return row;};
+const header=()=>{const row=blank();row[1]=10;row[3]='รายรับทั้งหมดในบัญชี';row[4]=50000;row[9]='=E1';return row;};
 const total=()=>{const row=blank();row[0]='รวม';row[1]=10;return row;};
 const previous=()=>{const row=blank();row[1]=10;row[2]=26;row[3]='Previous';row[7]=930;row[21]='marketing';row[22]='บัญชีร้าน';row[23]=stableDailyExpenseKey('exp_a');const f=expectedHelperFormulae(1,2);for(const [i,k] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']])row[i]=f[k];return row;};
 const values={postingYear:2026,month:10,day:26,description:'New description',amountColumn:'H',amountBaht:930,category:'marketing',sourceWallet:'บัญชีร้าน'};
@@ -64,6 +64,19 @@ test('an existing sequential J helper is preserved when its preceding same-month
   const next=blank();next[9]='=J2-I3';const p=portFor([header(),previous(),next,total()]);
   assert.deepEqual(await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values),{status:'VERIFIED'});
   assert.equal(p.rows[2][9],'=J2-I3');
+});
+
+test('the first monthly row may reference the verified opening balance',async()=>{
+  const next=blank();next[9]='=J1-I2';const p=portFor([header(),next,total()]);
+  assert.deepEqual(await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values),{status:'VERIFIED'});
+  assert.equal(p.rows[1][9],'=J1-I2');
+});
+
+test('a first-row helper is held if the header balance disagrees with the opening amount',async()=>{
+  const next=blank();next[9]='=J1-I2';const p=portFor([header(),next,total()]),original=p.readEffectiveSnapshot;
+  p.readEffectiveSnapshot=async()=>{const result=await original();result.body[0][9]=49999;return result;};
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_VALUES_UNVERIFIED');
+  assert.equal(p.dispatch,0);
 });
 
 test('metadata update follows a whole-row move after the last lookup',async()=>{

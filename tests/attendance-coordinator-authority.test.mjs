@@ -22,7 +22,7 @@ const employee={employeeId:'FIX001',staffName:'Fixture',lineUserId:'fixture',sch
 function harness(){
   const sqlite=new DatabaseSync(':memory:'),dir=new URL('../migrations/',import.meta.url);
   for(const name of readdirSync(dir).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,dir),'utf8'));
-  sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,daily_wage_satang,status,updated_at) VALUES('FIX001','Fixture','fixture','08:00','17:00',50000,'ACTIVE','2026-01-01T00:00:00Z')`).run();
+  sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,daily_wage_satang,grace_min,status,updated_at) VALUES('FIX001','Fixture','fixture','08:00','17:00',50000,5,'ACTIVE','2026-01-01T00:00:00Z')`).run();
   const DB=new SqliteD1(sqlite),state={storage:{async transaction(){throw new Error('stale DO cache must never be used');}},async blockConcurrencyWhile(fn){return fn();}},queued=[];
   const env={DB,SHEETS_SYNC_ENABLED:'false',JOB_QUEUE:{async sendBatch(messages){queued.push(...messages);}}};
   return{sqlite,DB,env,queued,coordinator:new AttendanceCoordinator(state,env),close(){sqlite.close();}};
@@ -121,6 +121,64 @@ test('a concurrently created daily row is never overwritten by a stale first pun
     assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:03',time_out:null,version:4});
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events WHERE message_id='first'`).get().n,0);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM payroll_weekly WHERE employee_id='FIX001'`).get().n,0);
+  }finally{h.close();}
+});
+
+test('punch rejects employee policy or identity changes after the caller snapshot',async()=>{
+  for(const change of [
+    `scheduled_in='08:30'`,`scheduled_out='18:00'`,`daily_wage_satang=60000`,
+    `grace_min=6`,`late_deduction_satang=100`,`early_deduction_satang=100`,
+    `status='INACTIVE'`,`line_user_id='changed_fixture'`
+  ]){
+    const h=harness();
+    try{
+      h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT time_in,time_out')){h.DB.afterFirst=null;h.sqlite.exec(`UPDATE employees SET ${change} WHERE employee_id='FIX001'`);}};
+      await assert.rejects(commit(h,input('first','08:00')),/ATTENDANCE_DAILY_CHANGED_CONCURRENTLY/);
+      for(const table of ['attendance_events','attendance_daily','payroll_weekly','sync_jobs'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0,`${change}: ${table}`);
+    }finally{h.close();}
+  }
+});
+
+test('punch rejects approved OT changes after calculating its snapshot',async()=>{
+  const h=harness();
+  try{
+    h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT COALESCE(SUM(owner_final_amount_satang)')){h.DB.afterFirst=null;h.sqlite.prepare(`INSERT INTO ot_requests(ot_id,employee_id,work_date,reason,fixed_amount_satang,requested_by,owner_preapproved_at,owner_final_status,owner_final_amount_satang,status,created_at,updated_at) VALUES('ot_fixture','FIX001','2026-01-01','Fixture',100,'OWNER','2026-01-01T00:00:00Z','APPROVED',100,'APPROVED','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`).run();}};
+    await assert.rejects(commit(h,input('first','08:00')),/ATTENDANCE_DAILY_CHANGED_CONCURRENTLY/);
+    for(const table of ['attendance_events','attendance_daily','payroll_weekly','sync_jobs'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0,table);
+  }finally{h.close();}
+});
+
+test('punch rejects live wage selection changing after it is read',async()=>{
+  const h=harness();
+  try{
+    h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT wage_id,daily_wage_satang')){h.DB.afterFirst=null;h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','FIX001',60000,'2025-01-01',NULL,'TEST','',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`).run();}};
+    await assert.rejects(commit(h,input('first','08:00')),/ATTENDANCE_DAILY_CHANGED_CONCURRENTLY/);
+    for(const table of ['attendance_events','attendance_daily','payroll_weekly','sync_jobs'])assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n,0,table);
+  }finally{h.close();}
+});
+
+test('punch rechecks live wage for an existing legacy daily row without a wage snapshot',async()=>{
+  const h=harness();
+  try{
+    const schema=h.sqlite.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_daily'`).get().sql;
+    h.sqlite.exec('DROP TABLE attendance_daily');
+    h.sqlite.exec(schema.replace('daily_wage_satang INTEGER NOT NULL DEFAULT 0','daily_wage_satang INTEGER DEFAULT 0').replace('daily_wage_snapshot_satang INTEGER NOT NULL DEFAULT 0','daily_wage_snapshot_satang INTEGER DEFAULT 0'));
+    h.sqlite.prepare(`INSERT INTO attendance_daily(employee_id,work_date,scheduled_in,scheduled_out,grace_min,late_deduction_satang,early_deduction_satang,time_in,pay_status,review_flag,version,updated_at,daily_wage_satang,daily_wage_snapshot_satang) VALUES('FIX001','2026-01-01','08:00','17:00',5,0,0,'08:00','REVIEW',1,1,'2026-01-01T00:00:00Z',NULL,NULL)`).run();
+    h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT wage_id,daily_wage_satang')){h.DB.afterFirst=null;h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','FIX001',60000,'2025-01-01',NULL,'TEST','',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`).run();}};
+    await assert.rejects(commit(h,input('second','17:00')),/ATTENDANCE_DAILY_CHANGED_CONCURRENTLY/);
+    assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:00',time_out:null,version:1});
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,0);
+  }finally{h.close();}
+});
+
+test('punch keeps the existing daily wage snapshot even if later wage history changes',async()=>{
+  const h=harness();
+  try{
+    await commit(h,input('first','08:00'));
+    h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','FIX001',60000,'2025-01-01',NULL,'TEST','',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`).run();
+    assert.equal((await commit(h,input('second','17:00'))).punchType,'OUT');
+    assert.equal(h.sqlite.prepare(`SELECT daily_wage_snapshot_satang FROM attendance_daily WHERE employee_id='FIX001'`).get().daily_wage_snapshot_satang,50000);
   }finally{h.close();}
 });
 

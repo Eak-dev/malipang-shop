@@ -1,5 +1,6 @@
 import type {Env,SheetsSyncJob} from '../types';
 import {assertStableShadowConfig,assertStableShadowDatabase} from './daily-stable-row-shadow';
+import type {StableSourceEligibility} from './daily-stable-cutover';
 
 export type SyntheticProjection='RAW'|'DAILY'|'DETAIL';
 // Include all inputs used by current RAW, DAILY and DETAIL adapters, including
@@ -41,6 +42,21 @@ export class SyntheticExpenseProjectionJournal{
       AND EXISTS(SELECT 1 FROM expense_events e JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version WHERE e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND ${snapshot}=synthetic_expense_projection_journal.source_snapshot AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal p WHERE p.spreadsheet_id=synthetic_expense_projection_journal.spreadsheet_id AND p.expense_id=synthetic_expense_projection_journal.expense_id AND p.state IN ('IN_FLIGHT','REVIEW') AND (p.expense_version<>synthetic_expense_projection_journal.expense_version OR p.projection<>synthetic_expense_projection_journal.projection))`).bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token,this.job.entityKey,this.job.entityVersion,this.leaseToken).run();
     return Number(result.meta.changes||0)===1;
+  }
+  /** Recheck the full captured source, cutover boundary and lease immediately
+   * before a participating adapter dispatches its Google mutation. */
+  async canDispatch(projection:SyntheticProjection,token:string,boundary:Exclude<StableSourceEligibility,{kind:'REVIEW'}>):Promise<boolean>{
+    await this.check(projection);if(!token||!boundary.generation||!Number.isSafeInteger(boundary.watermark)||boundary.watermark<0)return false;
+    const row=await this.env.DB.prepare(`SELECT 1 AS ok FROM synthetic_expense_projection_journal p
+      JOIN expense_events e ON e.expense_id=p.expense_id AND e.version=p.expense_version AND e.status='CONFIRMED'
+      JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+      JOIN daily_stable_cutovers c ON c.spreadsheet_id=p.spreadsheet_id AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=? AND c.source_watermark=?
+      WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.expense_version=? AND p.projection=? AND p.state='IN_FLIGHT' AND p.operation_token=? AND p.source_snapshot=${snapshot}
+      AND NOT EXISTS(SELECT 1 FROM sheet_row_index r WHERE r.sheet_name=c.sheet_name AND (r.entity_key=e.expense_id OR substr(r.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))
+      AND (?='ENROLLED' OR EXISTS(SELECT 1 FROM daily_stable_source_admissions a WHERE a.expense_id=e.expense_id AND a.sequence>c.source_watermark))
+      AND (?='NEW' OR EXISTS(SELECT 1 FROM daily_stable_row_intents i WHERE i.spreadsheet_id=p.spreadsheet_id AND i.expense_id=e.expense_id AND i.metadata_id=? AND i.projected_version=? AND (i.state='VERIFIED' OR (?='DAILY' AND i.state='IN_FLIGHT'))))
+      AND NOT EXISTS(SELECT 1 FROM synthetic_expense_projection_journal q WHERE q.spreadsheet_id=p.spreadsheet_id AND q.expense_id=p.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.expense_version<>p.expense_version OR q.projection<>p.projection))`).bind(this.leaseToken,this.env.SHEET_EXPENSE_DAILY,boundary.generation,boundary.watermark,this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token,boundary.kind,boundary.kind,boundary.kind==='ENROLLED'?boundary.metadataId:null,boundary.kind==='ENROLLED'?boundary.projectedVersion:null,projection).first<{ok:number}>();
+    return !!row;
   }
   async hold(projection:SyntheticProjection,token:string):Promise<boolean>{
     await this.check(projection);const result=await this.env.DB.prepare(`UPDATE synthetic_expense_projection_journal SET state='REVIEW',updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND expense_version=? AND projection=? AND state='IN_FLIGHT' AND operation_token=?`).bind(new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token).run();return Number(result.meta.changes||0)===1;

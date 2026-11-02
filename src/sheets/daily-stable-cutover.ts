@@ -1,6 +1,6 @@
 import type {Env} from '../types';
 
-export type StableSourceEligibility = {kind:'NEW'|'ENROLLED';generation:string;watermark:number}|{kind:'REVIEW';reason:string};
+export type StableSourceEligibility = {kind:'NEW';generation:string;watermark:number}|{kind:'ENROLLED';generation:string;watermark:number;metadataId:number;projectedVersion:number}|{kind:'REVIEW';reason:string};
 const hold=(reason:string):StableSourceEligibility=>({kind:'REVIEW',reason});
 
 /** The UAT marker is intentionally provisioned outside migrations and must
@@ -28,16 +28,20 @@ export async function classifyStableShadowSource(env:Env,expenseId:string,versio
   try{await assertIsolatedShadow(env);}catch{return hold('DAILY_STABLE_UAT_UNVERIFIED');}
   if(!/^exp_[A-Za-z0-9_-]{1,128}$/.test(expenseId)||!Number.isSafeInteger(version)||version<1)return hold('DAILY_STABLE_SOURCE_INVALID');
   const row=await env.DB.prepare(`SELECT e.status,e.version,a.sequence,c.state AS cutover_state,c.source_watermark,c.generation,
-    i.state AS intent_state,i.projected_version,
+    i.state AS intent_state,i.projected_version,i.metadata_id,
     EXISTS(SELECT 1 FROM sheet_row_index r WHERE r.sheet_name=? AND (r.entity_key=e.expense_id OR substr(r.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|')) AS legacy_mapping
     FROM expense_events e LEFT JOIN daily_stable_source_admissions a ON a.expense_id=e.expense_id
     LEFT JOIN daily_stable_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=?
     LEFT JOIN daily_stable_row_intents i ON i.spreadsheet_id=? AND i.expense_id=e.expense_id
-    WHERE e.expense_id=?`).bind(env.SHEET_EXPENSE_DAILY,env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,env.GOOGLE_SPREADSHEET_ID,expenseId).first<{status:string;version:number;sequence:number|null;cutover_state:string|null;generation:string|null;source_watermark:number|null;intent_state:string|null;projected_version:number|null;legacy_mapping:number}>();
+    WHERE e.expense_id=?`).bind(env.SHEET_EXPENSE_DAILY,env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,env.GOOGLE_SPREADSHEET_ID,expenseId).first<{status:string;version:number;sequence:number|null;cutover_state:string|null;generation:string|null;source_watermark:number|null;intent_state:string|null;projected_version:number|null;metadata_id:number|null;legacy_mapping:number}>();
   if(!row||row.status!=='CONFIRMED'||Number(row.version)!==version)return hold('DAILY_STABLE_SOURCE_CHANGED');
   if(row.cutover_state!=='ACTIVE'||row.source_watermark===null||!row.generation)return hold('DAILY_STABLE_CUTOVER_NOT_ACTIVE');
   if(row.intent_state==='IN_FLIGHT')return hold('DAILY_STABLE_PRIOR_INTENT_REQUIRES_REVIEW');
-  if(row.intent_state==='VERIFIED')return Number(row.projected_version)>version?hold('DAILY_STABLE_PROJECTED_VERSION_AHEAD'):{kind:'ENROLLED',generation:row.generation,watermark:Number(row.source_watermark)};
+  if(row.intent_state==='VERIFIED'){
+    const metadataId=Number(row.metadata_id),projectedVersion=Number(row.projected_version);
+    if(!Number.isSafeInteger(metadataId)||metadataId<1||!Number.isSafeInteger(projectedVersion)||projectedVersion<1)return hold('DAILY_STABLE_IDENTITY_UNVERIFIED');
+    return projectedVersion>version?hold('DAILY_STABLE_PROJECTED_VERSION_AHEAD'):{kind:'ENROLLED',generation:row.generation,watermark:Number(row.source_watermark),metadataId,projectedVersion};
+  }
   if(Number(row.legacy_mapping)===1)return hold('DAILY_STABLE_LEGACY_REVIEW_REQUIRED');
   if(row.sequence===null||Number(row.sequence)<=Number(row.source_watermark))return hold('DAILY_STABLE_LEGACY_REVIEW_REQUIRED');
   if(version!==1)return hold('DAILY_STABLE_FIRST_PROJECTION_VERSION_UNVERIFIED');

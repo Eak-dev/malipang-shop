@@ -6,7 +6,7 @@ import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js');
 const {writeDailyStableShadow}=require('../dist/sheets/daily-stable-row-shadow.js');
 const {syncStableShadowFixtureJob}=require('../dist/sheets/sync.js');
-const {runSyntheticDailyOnlyWorkflow}=require('../dist/sheets/synthetic-expense-workflow.js');
+const {runSyntheticDailyAndRawCoreWorkflow}=require('../dist/sheets/synthetic-expense-workflow.js');
 const {expectedHelperFormulae}=require('../dist/sheets/daily-stable-row-writes.js');
 const {activateStableShadowCutover}=require('../dist/sheets/daily-stable-cutover.js');
 const migration=readFileSync(new URL('../migrations/0023_daily_stable_row_intents.sql',import.meta.url),'utf8');
@@ -16,7 +16,7 @@ const record={expenseId:'exp_uat',transactionDate:'2026-10-26',description:'Synt
 test('real D1 journal and fence route a new UAT row through metadata without storing its row number',async()=>{
   const h=expenseSqlite(),names=['stablePrototypeSheetInfo','stablePrototypeSearchMetadata','stablePrototypeSnapshot','batchUpdateStablePrototype','writeDailyByMetadataPrototype','requireStablePrototypeAnnotations'],old=Object.fromEntries(names.map(name=>[name,client[name]]));
   try{
-    h.sqlite.exec(migration);h.sqlite.exec(admission);h.sqlite.exec("CREATE TABLE daily_stable_uat_guard(marker TEXT); INSERT INTO daily_stable_uat_guard VALUES('fixture'); INSERT INTO daily_stable_cutovers(spreadsheet_id,sheet_name,generation,state,created_at) VALUES('uat','daily','fixture_1','PREPARED','now');");Object.assign(h.env,{RUNTIME_MODE:'shadow',DAILY_STABLE_ID_PROTOTYPE_ENABLED:'true',DAILY_STABLE_UAT_SPREADSHEET_ID:'uat',DAILY_STABLE_PRODUCTION_SPREADSHEET_ID:'production',DAILY_STABLE_UAT_DATABASE_MARKER:'fixture',GOOGLE_SPREADSHEET_ID:'uat',DAILY_STABLE_UAT_EXCLUSIVE_EDITORS:'true',DAILY_STABLE_UAT_NEW_EXPENSE_ID:'exp_uat',SHEET_EXPENSE_DAILY:'daily'});await activateStableShadowCutover(h.env,'fixture_1');
+    h.sqlite.exec(migration);h.sqlite.exec(admission);h.sqlite.exec("CREATE TABLE daily_stable_uat_guard(marker TEXT); INSERT INTO daily_stable_uat_guard VALUES('fixture'); CREATE TABLE ledger_stable_uat_guard(marker TEXT); INSERT INTO ledger_stable_uat_guard VALUES('ledger-fixture'); INSERT INTO daily_stable_cutovers(spreadsheet_id,sheet_name,generation,state,created_at) VALUES('uat','daily','fixture_1','PREPARED','now');");Object.assign(h.env,{RUNTIME_MODE:'shadow',DAILY_STABLE_ID_PROTOTYPE_ENABLED:'true',DAILY_STABLE_UAT_SPREADSHEET_ID:'uat',DAILY_STABLE_PRODUCTION_SPREADSHEET_ID:'production',DAILY_STABLE_UAT_DATABASE_MARKER:'fixture',GOOGLE_SPREADSHEET_ID:'uat',DAILY_STABLE_UAT_EXCLUSIVE_EDITORS:'true',DAILY_STABLE_UAT_NEW_EXPENSE_ID:'exp_uat',SHEET_EXPENSE_DAILY:'daily',SHEET_EXPENSE_RAW:'raw',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'uat',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_UAT_DATABASE_MARKER:'ledger-fixture'});await activateStableShadowCutover(h.env,'fixture_1');
     h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_uat','msg','fixture','Synthetic',93000,'transfer','SHOP_BANK','marketing','2026-10-26','CONFIRMED','now',1)`).run();
     const blank=()=>Array(25).fill(null),rows=Array.from({length:10},blank);rows[4][0]=2026;rows[6][1]=10;rows[6][3]='รายรับทั้งหมดในบัญชี';rows[6][4]=50000;rows[6][9]='=E7';rows[9][0]='รวม';rows[9][1]=10;
     const setTotals=t=>{const r=rows[t-1];for(const [name,index] of [['E',4],['F',5],['G',6],['H',7],['K',10],['L',11],['M',12],['N',13],['O',14],['P',15],['Q',16]])r[index]=`=SUMIF($B$8:$B$${t-1},$B${t},${name}8:${name}${t-1})`;r[8]=`=SUM(F${t}:H${t})`;r[9]=`=$E$7-I${t}`;r[17]=`=SUM(K${t}:Q${t})`;r[18]=`=J${t}-R${t}`;};setTotals(10);
@@ -47,7 +47,7 @@ test('real D1 journal and fence route a new UAT row through metadata without sto
     client.requireStablePrototypeAnnotations=async()=>{};h.sqlite.prepare('DELETE FROM daily_stable_row_intents').run();h.sqlite.prepare('DELETE FROM owner_correction_daily_write_fences').run();h.sqlite.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id='fixture'").run();
     // Execute the actual daily adapter against the in-memory Sheets fixture.
     // RAW/DETAIL are unavailable, so whole-job completion must remain held.
-    assert.equal(await runSyntheticDailyOnlyWorkflow(h.env,job),'REVIEW');
+    assert.equal(await runSyntheticDailyAndRawCoreWorkflow(h.env,job),'REVIEW');
     assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='fixture'").get().status,'REVIEW');
     assert.equal(h.sqlite.prepare("SELECT state FROM synthetic_expense_projection_journal WHERE projection='DAILY'").get().state,'VERIFIED');
     h.sqlite.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id='fixture'").run(); // reset this synthetic fixture for the separate daily-only replay test

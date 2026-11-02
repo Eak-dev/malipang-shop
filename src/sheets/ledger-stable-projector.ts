@@ -23,7 +23,7 @@ function sourceValues(proof:LedgerSourceProof):Record<number,unknown>{
  * new-row append or release workflow. The injected probe must eventually be
  * replaced by an authenticated, bounded Google reader with exclusive cutover.
  */
-export async function projectExistingLedgerShadow(env:Env,sheet:string,proof:LedgerSourceProof,identity:LedgerWriteIdentity,metadataId:number,projectedVersion:number,values:readonly unknown[],token:string,probe:LedgerProjectionProbe):Promise<LedgerProjectionResult>{
+export async function projectExistingLedgerShadow(env:Env,sheet:string,proof:LedgerSourceProof,identity:LedgerWriteIdentity,metadataId:number,projectedVersion:number,values:readonly unknown[],token:string,probe:LedgerProjectionProbe,options:{beforeDispatch?:()=>Promise<void>}={}):Promise<LedgerProjectionResult>{
   let journal:LedgerStableJournal|undefined,started=false;
   try{
     if(proof.kind==='PURCHASE_DETAILS'||identity.kind!==proof.kind||identity.entityId!==proof.id||metadataId<1)throw new Error('LEDGER_PROJECTION_SCOPE');
@@ -45,6 +45,7 @@ export async function projectExistingLedgerShadow(env:Env,sheet:string,proof:Led
       const refreshed=buildLedgerMetadataValueRange(identity,metadataId,values,fresh.guard);
       const current:Record<string,LedgerCellValue>={};for(const i of fresh.guard.fields)current[String(i)]=fresh.guard.observed[i]!.entered;
       if(JSON.stringify(refreshed)!==JSON.stringify(initial)||!await baselineMatches(baseline,current)||!await journal!.canDispatch(metadataId,token))throw new Error('LEDGER_DISPATCH_FENCE_LOST');
+      if(options.beforeDispatch)await options.beforeDispatch();
     });
     const post=await probe.read();
     if(post.witness.metadataId!==metadataId)throw new Error('LEDGER_POSTIMAGE_MISMATCH');

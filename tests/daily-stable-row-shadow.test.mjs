@@ -5,6 +5,7 @@ import {readFileSync} from 'node:fs';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js');
 const {writeDailyStableShadow}=require('../dist/sheets/daily-stable-row-shadow.js');
+const {expectedHelperFormulae}=require('../dist/sheets/daily-stable-row-writes.js');
 const migration=readFileSync(new URL('../migrations/0023_daily_stable_row_intents.sql',import.meta.url),'utf8');
 const record={expenseId:'exp_uat',transactionDate:'2026-10-26',description:'Synthetic',amountBaht:930,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'marketing',version:1};
 
@@ -30,7 +31,7 @@ test('real D1 journal and fence route a new UAT row through metadata without sto
     const journal=h.sqlite.prepare('SELECT expense_id,metadata_id,state FROM daily_stable_row_intents').get();assert.equal(journal.state,'VERIFIED');assert.equal(journal.metadata_id,metadata[0].metadataId);
     assert.equal(h.sqlite.prepare("SELECT count(*) AS n FROM sheet_row_index WHERE sheet_name='daily'").get().n,0);
     await writeDailyStableShadow(h.env,record);assert.equal(metadataWrites,0,'same version verifies without a second write');
-    rows.splice(7,0,blank());metadata[0].row++;
+    rows.splice(7,0,blank());metadata[0].row++;const moved=expectedHelperFormulae(7,9);for(const [i,k] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']])rows[8][i]=moved[k];
     h.sqlite.prepare("UPDATE expense_events SET description='Revised',amount_satang=80000,version=2 WHERE expense_id='exp_uat'").run();
     await writeDailyStableShadow(h.env,{...record,description:'Revised',amountBaht:800,version:2});
     assert.equal(metadataWrites,1);assert.equal(rows[8][3],'Revised');assert.equal(rows[8][7],800);assert.equal(rows[7][3],null,'row inserted above remains untouched');

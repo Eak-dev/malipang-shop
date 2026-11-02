@@ -2,11 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {runStableDailyPrototype} from '../dist/sheets/daily-stable-row-prototype.js';
 import {stableDailyExpenseKey} from '../dist/sheets/daily-stable-row-plan.js';
+import {expectedHelperFormulae} from '../dist/sheets/daily-stable-row-writes.js';
 
 const blank=()=>Array(25).fill(null);
 const header=()=>{const row=blank();row[1]=10;row[3]='รายรับทั้งหมดในบัญชี';return row;};
 const total=()=>{const row=blank();row[0]='รวม';row[1]=10;return row;};
-const previous=()=>{const row=blank();row[1]=10;row[2]=26;row[3]='Previous';row[7]=930;row[21]='marketing';row[22]='บัญชีร้าน';row[23]=stableDailyExpenseKey('exp_a');return row;};
+const previous=()=>{const row=blank();row[1]=10;row[2]=26;row[3]='Previous';row[7]=930;row[21]='marketing';row[22]='บัญชีร้าน';row[23]=stableDailyExpenseKey('exp_a');const f=expectedHelperFormulae(1,2);for(const [i,k] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']])row[i]=f[k];return row;};
 const values={postingYear:2026,month:10,day:26,description:'New description',amountColumn:'H',amountBaht:930,category:'marketing',sourceWallet:'บัญชีร้าน'};
 
 function portFor(rows){
@@ -23,7 +24,7 @@ function portFor(rows){
   p.finishMetadataIntent=async(key,id,baseline)=>{const intent=p.intents.get(key);if(!intent||intent.id!==id||intent.state!=='IN_FLIGHT')return false;intent.state='VERIFIED';intent.baseline=baseline;return true;};
   p.writeByMetadata=async range=>{
     p.dispatch++;
-    if(p.moveBeforeWrite)[p.rows[1],p.rows[2]]=[p.rows[2],p.rows[1]];
+    if(p.moveBeforeWrite){[p.rows[1],p.rows[2]]=[p.rows[2],p.rows[1]];const f=expectedHelperFormulae(1,3);for(const [i,k] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']])p.rows[2][i]=f[k];}
     const found=p.metadata.find(m=>m.id===range.dataFilter.developerMetadataLookup.metadataId);
     if(!found)throw new Error('missing metadata');
     const row=found.anchor;range.values[0].forEach((value,index)=>{if(value!==null)row[index]=value;});
@@ -96,6 +97,22 @@ test('metadata collision after the atomic batch stays held',async()=>{
 test('cross-year posting is held before dispatch',async()=>{
   const p=portFor([header(),blank(),total()]);
   assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},{...values,postingYear:2027})).reason,'POSTING_YEAR_MISMATCH');
+  assert.equal(p.dispatch,0);
+});
+
+test('same-version replay never verifies a changed or wrong helper formula',async()=>{
+  const a=previous(),p=portFor([header(),a,total()]);p.metadata=[{key:a[23],id:742,anchor:a}];
+  const source={...values,description:'Previous'};
+  a[8]='=ROW()';
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_a',postingMonth:10,allowCreate:false,expectedPrevious:[...a],verifyOnly:true},source)).reason,'PREIMAGE_HELPER_UNVERIFIED');
+  assert.equal(p.dispatch,0);
+});
+
+test('same-version replay holds on a wrong effective date even when inputs match',async()=>{
+  const a=previous(),p=portFor([header(),a,total()]),original=p.readEffectiveSnapshot;p.metadata=[{key:a[23],id:742,anchor:a}];
+  p.readEffectiveSnapshot=async()=>{const result=await original();result.body[1][20]=46322;return result;};
+  const source={...values,description:'Previous'};
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_a',postingMonth:10,allowCreate:false,expectedPrevious:[...a],verifyOnly:true},source)).reason,'PREIMAGE_HELPER_VALUE_UNVERIFIED');
   assert.equal(p.dispatch,0);
 });
 

@@ -60,6 +60,31 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     const nextMetadata=await port.lookupMetadata(key);
     if(nextMetadata.length!==1||nextMetadata[0]!.row!==metadata[0]!.row||nextMetadata[0]!.metadataId!==metadata[0]!.metadataId)return review('ROW_METADATA_CHANGED_BEFORE_DISPATCH');
   }
+  const monthBlock=block[0]!;
+  if(plan.status==='CAPACITY_REQUIRED'&&!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
+  let expectedBalance:number|undefined;
+  let subtotalBefore:unknown[]|undefined;
+  {
+    const beforeEffective=await port.readEffectiveSnapshot();
+    if(beforeEffective.sheetId!==fresh.sheetId)return review('SHEET_CHANGED_BEFORE_DISPATCH');
+    const target=plan.status==='CAPACITY_REQUIRED'?monthBlock.totalRow:plan.observedRow;
+    for(let row=target-1;row>=monthBlock.headerRow;row--){
+      const candidate=beforeEffective.body[row-1]??[],balance=candidate[9];
+      if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){expectedBalance=balance;break;}
+    }
+    if(expectedBalance===undefined)return review('PREVIOUS_BALANCE_UNVERIFIED');
+    if(plan.status==='FOUND'){
+      const helper=expectedHelperFormulae(monthBlock.headerRow,target),row=fresh.body[target-1]??[],visible=beforeEffective.body[target-1]??[];
+      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(row[index]!==helper[name])return review('PREIMAGE_HELPER_UNVERIFIED');
+      const cash=[5,6,7].reduce((sum,index)=>sum+Number(row[index]||0),0),card=[10,11,12,13,14,15,16].reduce((sum,index)=>sum+Number(row[index]||0),0),day=Number(row[2]);
+      const date=(Date.UTC(values.postingYear,request.postingMonth-1,day)-Date.UTC(1899,11,30))/86400000;
+      if(visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-(expectedBalance-cash))>0.001||Math.abs(visible[18]-(expectedBalance-cash-card))>0.001||visible[20]!==date)return review('PREIMAGE_HELPER_VALUE_UNVERIFIED');
+    }
+    if(plan.status==='CAPACITY_REQUIRED'){
+      subtotalBefore=beforeEffective.body[monthBlock.totalRow-1];
+      if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
+    }
+  }
   if(request.verifyOnly){
     if(plan.status!=='FOUND'||!request.expectedPrevious)return review('VERIFY_ONLY_IDENTITY_MISSING');
     for(const index of [1,2,3,5,6,7,10,11,12,13,14,15,16,21,22,23]){
@@ -68,25 +93,7 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     }
     await port.requireExclusiveWriters();return {status:'VERIFIED'};
   }
-  const monthBlock=block[0]!;
-  if(plan.status==='CAPACITY_REQUIRED'&&!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
-  let expectedBalance:number|undefined;
-  let subtotalBefore:unknown[]|undefined;
-  if(plan.status!=='FOUND'){
-    const beforeEffective=await port.readEffectiveSnapshot();
-    if(beforeEffective.sheetId!==fresh.sheetId)return review('SHEET_CHANGED_BEFORE_DISPATCH');
-    const target=plan.status==='APPEND'?plan.observedRow:monthBlock.totalRow;
-    for(let row=target-1;row>=monthBlock.headerRow;row--){
-      const candidate=beforeEffective.body[row-1]??[],balance=candidate[9];
-      if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){expectedBalance=balance;break;}
-    }
-    if(expectedBalance===undefined)return review('PREVIOUS_BALANCE_UNVERIFIED');
-    if(plan.status==='CAPACITY_REQUIRED'){
-      subtotalBefore=beforeEffective.body[monthBlock.totalRow-1];
-      if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
-    }
-  }
-  else if(!await port.beginMetadataUpdate(key,metadata[0]!.metadataId))return review('UPDATE_INTENT_UNAVAILABLE');
+  if(plan.status==='FOUND'&&!await port.beginMetadataUpdate(key,metadata[0]!.metadataId))return review('UPDATE_INTENT_UNAVAILABLE');
   let reservedMetadataId:number|undefined;
   if(plan.status!=='FOUND'){
     try{reservedMetadataId=await port.reserveMetadataId(key);}catch{return review('METADATA_RESERVATION_UNAVAILABLE');}
@@ -111,12 +118,18 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     }
     const postMetadata=await port.lookupMetadata(key);
     if(postMetadata.length!==1||postMetadata[0]!.row!==post.observedRow||postMetadata[0]!.metadataId!==expectedMetadataId)return review('POSTIMAGE_METADATA_UNVERIFIED');
-    if(plan.status!=='FOUND'){
+    {
       const helper=expectedHelperFormulae(monthBlock.headerRow,post.observedRow),row=after.body[post.observedRow-1]??[];
       for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(row[index]!==helper[name])return review('POSTIMAGE_HELPER_UNVERIFIED');
       const effective=await port.readEffectiveSnapshot(),visible=effective.body[post.observedRow-1]??[];
       const cash=['F','G','H'].includes(values.amountColumn)?values.amountBaht:0, card=cash?0:values.amountBaht;
-      const expectedJ=expectedBalance!-cash;
+      let postBalance:number|undefined=expectedBalance;
+      if(plan.status==='FOUND'&&post.observedRow!==plan.observedRow){
+        postBalance=undefined;
+        for(let row=post.observedRow-1;row>=monthBlock.headerRow;row--){const candidate=effective.body[row-1]??[],balance=candidate[9];if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){postBalance=balance;break;}}
+        if(postBalance===undefined)return review('POSTIMAGE_PRIOR_BALANCE_UNVERIFIED');
+      }
+      const expectedJ=postBalance!-cash;
       const expectedDate=(Date.UTC(values.postingYear,values.month-1,values.day)-Date.UTC(1899,11,30))/86400000;
       if(effective.sheetId!==fresh.sheetId||await port.readSheetYear()!==values.postingYear||visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-expectedJ)>0.001||Math.abs(visible[18]-(expectedJ-card))>0.001||visible[20]!==expectedDate)return review('POSTIMAGE_HELPER_VALUE_UNVERIFIED');
       if(plan.status==='CAPACITY_REQUIRED'){

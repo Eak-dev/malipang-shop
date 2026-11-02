@@ -7,6 +7,8 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import { inspectLedgerAndHold,LedgerIdentityInspectionReview } from './ledger-identity-inspection';
+import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
+export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -27,12 +29,6 @@ class ExpenseRawRowReviewRequired extends Error{
 }
 class ExpenseWriteFenceUnavailableError extends Error{
   constructor(){super("EXPENSE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="ExpenseWriteFenceUnavailableError";}
-}
-export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{
-  return[expense.expense_id,expense.transaction_date,expense.description,baht(expense.amount_satang),expense.payment_key,expense.source_wallet,expense.category,expense.status,expense.message_id,expense.trace_id,expense.submitted_by_employee_id,expense.branch_id,document?.document_id,document?.document_type,document?.vendor_name,document?.document_number,document?.order_id];
-}
-export function buildPersonalUseRawSheetValues(item:Record<string,unknown>):unknown[]{
-  return[item.personal_use_id,item.transaction_type,item.transaction_date,item.description,baht(item.amount_satang),item.source_wallet,item.status,item.message_id,item.trace_id,item.submitted_by_employee_id,item.branch_id,item.approved_at,item.created_at,item.updated_at,item.version];
 }
 /** Do not update raw when the daily mirror is already known to be unsafe.
  * This is a point-in-time D1 check, not a cross-system transaction or Sheets

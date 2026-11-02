@@ -65,7 +65,7 @@ test('disabled sync persists terminal quarantine and does not resolve failed-job
 
 test('disabled sync retains ordinary failed outbox and can recover it after transport resumes',async()=>{
   const h=expenseSqlite();try{
-    const first=await seed(h);h.sqlite.prepare(`UPDATE failed_jobs SET error='temporary' WHERE job_key=?`).run('EXPENSE:expense_a:1');h.env.SHEETS_SYNC_ENABLED='false';let acknowledged=0;
+    const first=await seed(h);h.sqlite.prepare(`UPDATE failed_jobs SET error='temporary' WHERE job_key=?`).run('EXPENSE:expense_a:1');h.sqlite.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=? WHERE entity_key='expense_a'`).run(old,old);h.env.SHEETS_SYNC_ENABLED='false';let acknowledged=0;
     await worker.queue({queue:'malipang-jobs',messages:[{body:first,attempts:1,ack(){acknowledged++},retry(){assert.fail('disabled message should be acknowledged')}}]},h.env,{});
     assert.equal(acknowledged,1);assert.equal(h.sqlite.prepare(`SELECT status FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1').status,'OPEN');
     assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a'`).get().status,'FAILED');
@@ -90,6 +90,50 @@ test('non-forced enqueue quarantines new versions before a terminal record is re
     h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
     assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a' AND entity_version=2`).get().status,'REVIEW');
     assert.equal(await syncJob(h.env,newer),'TERMINAL_HOLD');assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);
+  }finally{h.close();}
+});
+
+test('opening terminal atomically quarantines pre-existing pending versions even if subsequently resolved',async()=>{
+  const h=expenseSqlite();try{
+    const newer=job('expense_a',2);
+    h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at) VALUES('preexisting','EXPENSE','expense_a',2,?,'PENDING',0,?,?)`).run(newer.traceId,old,old);
+    await seed(h);
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a' AND entity_version=2`).get().status,'REVIEW');
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);assert.equal(h.queue.length,0);
+  }finally{h.close();}
+});
+
+test('recovery backfills a persistent review hold for terminal records predating rollout',async()=>{
+  const h=expenseSqlite();try{
+    const first=job('expense_a');
+    h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at) VALUES('legacy_pending','EXPENSE','expense_a',2,?,'PENDING',0,?,?)`).run(first.traceId,old,old);
+    h.sqlite.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('legacy_failure','malipang-jobs',?,?,?,'DEAD_LETTER_MAX_RETRIES','OPEN',1,?,?)`).run(first.traceId,'EXPENSE:expense_a:1',JSON.stringify(first),old,old);
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a'`).get().status,'REVIEW');
+    h.sqlite.prepare(`UPDATE failed_jobs SET status='RESOLVED' WHERE job_key=?`).run('EXPENSE:expense_a:1');
+    assert.equal(await recoverPendingSheetJobs(h.env,0,true),0);assert.equal(h.queue.length,0);
+  }finally{h.close();}
+});
+
+test('opening terminal quarantines an in-flight job without pretending its dispatch was cancelled',async()=>{
+  const h=expenseSqlite();try{
+    const first=job('expense_a');
+    h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('active','EXPENSE','expense_a',1,?,'PROCESSING',1,?,'2099-01-01T00:00:00.000Z','old-lease')`).run(first.traceId,old);
+    await createFailedJob(h.env,'malipang-jobs',first.traceId,first,'DEAD_LETTER_MAX_RETRIES');
+    const active=h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_key='expense_a'`).get();
+    assert.deepEqual({...active},{status:'REVIEW',last_error:'SHEET_SYNC_TERMINAL_DLQ_REVIEW_REQUIRED'});
+    await resolveFailedJobs(h.env,'malipang-jobs',first.traceId,first);
+    assert.equal(h.sqlite.prepare(`SELECT status FROM failed_jobs WHERE job_key=?`).get('EXPENSE:expense_a:1').status,'OPEN');
+  }finally{h.close();}
+});
+
+test('terminal and quarantine transaction rolls back together if quarantine fails',async()=>{
+  const h=expenseSqlite();try{
+    const first=job('expense_a');h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('active','EXPENSE','expense_a',1,?,'PROCESSING',0,?)`).run(first.traceId,old);
+    h.DB.failAt=1;await assert.rejects(createFailedJob(h.env,'malipang-jobs',first.traceId,first,'DEAD_LETTER_MAX_RETRIES'),/fixture batch failure/);
+    assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM failed_jobs`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_key='expense_a'`).get().status,'PROCESSING');
   }finally{h.close();}
 });
 

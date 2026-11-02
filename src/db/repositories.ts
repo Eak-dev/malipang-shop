@@ -35,7 +35,9 @@ function failedJobKey(payload:unknown):string{
   return"UNKNOWN";
 }
 export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
-  const now=new Date().toISOString(),jobKey=failedJobKey(payload),isSheets=(payload as {kind?:unknown})?.kind==='SHEETS_SYNC'?1:0;await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET payload_json=CASE WHEN ?=1 AND failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES' THEN failed_jobs.payload_json ELSE excluded.payload_json END,error=CASE WHEN ?=1 AND failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES' THEN failed_jobs.error ELSE excluded.error END,status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now,isSheets,isSheets).run();
+  const now=new Date().toISOString(),jobKey=failedJobKey(payload),isSheets=(payload as {kind?:unknown})?.kind==='SHEETS_SYNC'?1:0;
+  const write=env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET payload_json=CASE WHEN ?=1 AND failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES' THEN failed_jobs.payload_json ELSE excluded.payload_json END,error=CASE WHEN ?=1 AND failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES' THEN failed_jobs.error ELSE excluded.error END,status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now,isSheets,isSheets);
+  if(isSheets)await env.DB.batch([write,quarantineTerminalSheetJobs(env,payload as SheetsSyncJob,now)]);else await write.run();
 }
 export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
   const isSheets=(payload as {kind?:unknown})?.kind==='SHEETS_SYNC'?1:0;
@@ -53,7 +55,7 @@ export const SHEET_SYNC_TERMINAL_REVIEW_REASON="SHEET_SYNC_TERMINAL_DLQ_REVIEW_R
 /** Preserve the quarantine even if the terminal failure is later resolved.
  * Run in the same D1 transaction as insertion or a claim attempt. */
 export function quarantineTerminalSheetJobs(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
-  return env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',last_error=?,updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL WHERE entity_type=? AND entity_key=? AND status IN ('PENDING','FAILED') AND EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':'))=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':')`).bind(SHEET_SYNC_TERMINAL_REVIEW_REASON,now,job.entityType,job.entityKey);
+  return env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',last_error=?,updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL WHERE entity_type=? AND entity_key=? AND (status IN ('PENDING','FAILED','PROCESSING') OR (status='COMPLETED' AND entity_version=?)) AND EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':'))=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':')`).bind(SHEET_SYNC_TERMINAL_REVIEW_REASON,now,job.entityType,job.entityKey,job.entityVersion);
 }
 interface ScheduledSheetJob{body:SheetsSyncJob;delaySeconds:number;nextAttemptAt:string}
 interface RecoverableSheetJobRow{entity_type:unknown;entity_key:unknown;entity_version:unknown;trace_id:unknown;status:unknown;updated_at:unknown;next_attempt_at:unknown;lease_until:unknown;terminal_dlq_open?:unknown}
@@ -109,6 +111,9 @@ export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,_inc
   // Even callers using the legacy override must wait for an independently
   // verified review/reconciliation workflow; that workflow is not implemented.
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString(),terminalDlqAllowed=0;
+  // Backfill holds for terminal failures created before this code was deployed.
+  // A verified terminal resolver must also quarantine in its own transaction.
+  await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',last_error=?,updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL WHERE (status IN ('PENDING','FAILED','PROCESSING') OR (status='COMPLETED' AND EXISTS(SELECT 1 FROM failed_jobs z WHERE z.queue_name='malipang-jobs' AND z.status='OPEN' AND z.error='DEAD_LETTER_MAX_RETRIES' AND z.job_key=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':' || sync_jobs.entity_version))) AND EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES' AND substr(f.job_key,1,length(sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':'))=sync_jobs.entity_type || ':' || sync_jobs.entity_key || ':')`).bind(SHEET_SYNC_TERMINAL_REVIEW_REASON,now).run();
   // A crashed or paused sender may still reach Sheets. Quarantine expired
   // projections, and keep the alert recoverable if logging fails.
   await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE status='PROCESSING' AND (lease_until IS NULL OR lease_until<=?)`).bind(now,now).run();

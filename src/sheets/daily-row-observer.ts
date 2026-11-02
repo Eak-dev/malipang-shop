@@ -16,10 +16,16 @@ interface Sheet {properties?:SheetProperties;protectedRanges?:Protection[];data?
 interface Spreadsheet {sheets?:Sheet[]}
 export interface DailyEvidence {sheet:Sheet; target:Sheet; rows:unknown[][]; headers:unknown[][]; markers:Marker[]; markerById:Marker|null}
 export interface DailyExpectation {sheetTitle:string;sheetId:number;rowNumber:number;metadataId:number;expenseId:string;postingDate:string;paymentKey:string;serviceAccount:string;expectedHeaderDigest:string;expectedFormulas:Readonly<Record<number,string>>}
+/** Expected literals come from an independently authenticated source and must
+ * cover every non-formula cell in A:Y, including blank cells. A candidate
+ * Sheet row, caller input, or a row number alone is not a trusted manifest. */
+export interface ExistingDailyExpectation extends DailyExpectation {expectedLiterals:Readonly<Record<number,string|number|boolean>>}
 export interface DailyRowObservation {marker:Marker;headerDigest:string;sheetYear:number;monthBlock:{month:number;headerRow:number;totalRow:number};values:unknown[];formulas:unknown[];observedColumnCount:25;completeIdentityAndProtection:true;formulasVerified:true}
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 const isBlank=(x:unknown)=>x===undefined||x===null||x==='';
 const INPUT_COLS=[1,2,3,5,6,7,10,11,12,13,14,15,16,21,22];
+const FORMULA_COLS=[8,9,17,18,20];
+const LITERAL_COLS=Array.from({length:25},(_,i)=>i).filter(i=>!FORMULA_COLS.includes(i));
 const protectedInputs=(p:Protection[],id:number,row:number,account:string):boolean=>{
   const a=account.trim().toLowerCase();if(!a||!Array.isArray(p)||p.some(x=>{
    const r=x.range;if(!r||r.sheetId!==id)return true;
@@ -32,14 +38,15 @@ const protectedInputs=(p:Protection[],id:number,row:number,account:string):boole
   });
 };
 function primitive(v:ExtendedValue|undefined):unknown{
- if(!v)return '';if(v.errorValue!==undefined)throw new Error('SHEET_CELL_ERROR');
+ if(!v)return '';if(typeof v!=='object'||Array.isArray(v)||v.errorValue!==undefined||Object.keys(v).some(k=>!['numberValue','stringValue','boolValue','formulaValue','errorValue'].includes(k)))throw new Error('SHEET_CELL_ERROR');
  const keys=['numberValue','stringValue','boolValue'] as const;const present=keys.filter(k=>v[k]!==undefined);if(present.length>1||v.formulaValue!==undefined)throw new Error('SHEET_VALUE_INVALID');
+ if((v.numberValue!==undefined&&(typeof v.numberValue!=='number'||!Number.isFinite(v.numberValue)))||(v.stringValue!==undefined&&typeof v.stringValue!=='string')||(v.boolValue!==undefined&&typeof v.boolValue!=='boolean'))throw new Error('SHEET_VALUE_INVALID');
  return present.length?v[present[0]!]!:'';
 }
 /** Verify ONE complete read. Caller must hold the exclusive sheet write fence,
  * observe twice, and enforce a maintenance window. Formula manifest is not
  * supplied by the user or learned from the candidate row. */
-export async function verifyDailyEvidence(e:DailyEvidence,w:DailyExpectation):Promise<DailyRowObservation|null>{try{
+async function verifyDailyEvidenceMode(e:DailyEvidence,w:DailyExpectation,literals?:ExistingDailyExpectation['expectedLiterals']):Promise<DailyRowObservation|null>{try{
  const p=e.sheet.properties,t=e.target.properties,g=p?.gridProperties;
  if(!w.sheetTitle||!w.expenseId||!Number.isSafeInteger(w.sheetId)||w.sheetId<0||!Number.isSafeInteger(w.rowNumber)||w.rowNumber<6||!Number.isSafeInteger(w.metadataId)||w.metadataId<1||p?.sheetId!==w.sheetId||t?.sheetId!==w.sheetId||p.title!==w.sheetTitle||t.title!==w.sheetTitle||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||Number(g!.columnCount)<25||w.rowNumber>Number(g!.rowCount)||e.rows.length>Number(g!.rowCount)||!protectedInputs(e.sheet.protectedRanges||[],w.sheetId,w.rowNumber-1,w.serviceAccount))return null;
  const all=e.markers, found=all.filter(m=>m.metadataKey==='malipang_expense_daily'&&m.metadataValue===w.expenseId);
@@ -56,14 +63,24 @@ export async function verifyDailyEvidence(e:DailyEvidence,w:DailyExpectation):Pr
  const blocks=findMonthBlocks(e.rows),matching=blocks.filter(b=>b.month===payment.postingMonth);if(monthHeaders.length!==1||monthTotals.length!==1||matching.length!==1||blocks.some(b=>b.headerRow>=b.totalRow)||!matching[0]||w.rowNumber<=matching[0].headerRow||w.rowNumber>=matching[0].totalRow)return null;
  const data=e.target.data;if(!Array.isArray(data)||data.length!==1)return null;const grid=data[0]!;
  if((grid.startRow??0)!==w.rowNumber-1||(grid.startColumn??0)!==0||!Array.isArray(grid.rowData)||grid.rowData.length!==1||!Array.isArray(grid.rowData[0]?.values)||grid.rowData[0]!.values!.length>25)return null;
- const formulaCols=[8,9,17,18,20];if(Object.keys(w.expectedFormulas).length!==formulaCols.length||formulaCols.some(i=>typeof w.expectedFormulas[i]!=='string'||!w.expectedFormulas[i]!.startsWith('=')))return null;
+ if(Object.keys(w.expectedFormulas).length!==FORMULA_COLS.length||FORMULA_COLS.some(i=>typeof w.expectedFormulas[i]!=='string'||!w.expectedFormulas[i]!.startsWith('=')))return null;
+ if(literals!==undefined&&(Object.keys(literals).length!==LITERAL_COLS.length||LITERAL_COLS.some(i=>!Object.hasOwn(literals,i)||!['string','number','boolean'].includes(typeof literals[i])||(typeof literals[i]==='number'&&!Number.isFinite(literals[i])))))return null;
  const values:unknown[]=[],formulas:unknown[]=[];for(let i=0;i<25;i++){
   const cell=grid.rowData[0]!.values![i]||{},entered=cell.userEnteredValue;const formula=entered?.formulaValue;
-  if(formulaCols.includes(i)){if(formula!==w.expectedFormulas[i])return null;}else if(formula!==undefined||!isBlank(primitive(entered))||!isBlank(primitive(cell.effectiveValue)))return null;
+  if(FORMULA_COLS.includes(i)){if(formula!==w.expectedFormulas[i]||!entered||Object.keys(entered).length!==1)return null;}else if(formula!==undefined)return null;
+  else if(literals===undefined){if(!isBlank(primitive(entered))||!isBlank(primitive(cell.effectiveValue)))return null;}
+  else if(primitive(entered)!==literals[i]||primitive(cell.effectiveValue)!==literals[i])return null;
   values.push(primitive(cell.effectiveValue));formulas.push(formula??'');
  }
  return {marker,headerDigest,sheetYear,monthBlock:matching[0],values,formulas,observedColumnCount:25,completeIdentityAndProtection:true,formulasVerified:true};
  }catch{return null;}}
+export function verifyDailyEvidence(e:DailyEvidence,w:DailyExpectation):Promise<DailyRowObservation|null>{return verifyDailyEvidenceMode(e,w);}
+/** Verify a populated row only against a complete, separately trusted literal
+ * manifest; this pure verifier does not authenticate its inputs. */
+export function verifyExistingDailyEvidence(e:DailyEvidence,w:ExistingDailyExpectation):Promise<DailyRowObservation|null>{
+ if(!w.expectedLiterals||typeof w.expectedLiterals!=='object'||Array.isArray(w.expectedLiterals))return Promise.resolve(null);
+ return verifyDailyEvidenceMode(e,w,w.expectedLiterals);
+}
 function parseMetadata(value:unknown):Marker|null{
  const o=value as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}};const r=o?.location?.dimensionRange;
  if(!Number.isSafeInteger(o?.metadataId)||Number(o.metadataId)<1||typeof o.metadataKey!=='string'||!o.metadataKey||(o.metadataValue!==undefined&&typeof o.metadataValue!=='string')||!r||!Number.isSafeInteger(r.sheetId)||Number(r.sheetId)<0||r.dimension!=='ROWS'||!Number.isSafeInteger(r.startIndex)||Number(r.startIndex)<0||r.endIndex!==Number(r.startIndex)+1)return null;
@@ -92,4 +109,12 @@ export async function readDailyEvidence(env:Env,w:DailyExpectation):Promise<Dail
 export async function observeDailyRow(env:Env,w:DailyExpectation):Promise<DailyRowObservation|null>{
  const a=await readDailyEvidence(env,w);if(!a)return null;const proof=await verifyDailyEvidence(a,w);if(!proof)return null;
  const b=await readDailyEvidence(env,w);if(!b||JSON.stringify(a)!==JSON.stringify(b))return null;return verifyDailyEvidence(b,w);
+}
+/** Independently fetch twice using the configured service account. Observation
+ * is evidence, not write authorization: it requires a separately attested
+ * manifest, active sheet-wide fence and human-edit exclusion at mutation. */
+export async function observeExistingDailyRow(env:Env,w:ExistingDailyExpectation):Promise<DailyRowObservation|null>{
+ if(!w.expectedLiterals||typeof w.expectedLiterals!=='object'||Array.isArray(w.expectedLiterals))return null;
+ const a=await readDailyEvidence(env,w);if(!a)return null;const proof=await verifyExistingDailyEvidence(a,w);if(!proof)return null;
+ const b=await readDailyEvidence(env,w);if(!b||JSON.stringify(a)!==JSON.stringify(b))return null;return verifyExistingDailyEvidence(b,w);
 }

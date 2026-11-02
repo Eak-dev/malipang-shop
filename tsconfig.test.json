@@ -34,6 +34,7 @@
     "src/sheets/ledger-metadata-writer.ts",
     "src/sheets/ledger-stable-journal.ts",
     "src/sheets/ledger-stable-projector.ts",
+    "src/sheets/ledger-google-probe.ts",
     "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",

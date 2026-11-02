@@ -7,6 +7,7 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {assertStableShadowConfig,assertStableShadowDatabase,writeDailyStableShadow} from './daily-stable-row-shadow';
+import {legacyDailyWriterOpen,holdLegacyExpenseJob} from './daily-legacy-writer-gate';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -38,6 +39,7 @@ export function buildPersonalUseRawSheetValues(item:Record<string,unknown>):unkn
  * This is a point-in-time D1 check, not a cross-system transaction or Sheets
  * CAS: an old worker can still dispatch after the check. */
 async function assertExpensePreflight(env:Env,job:SheetsSyncJob,leaseToken:string,expected:unknown[]):Promise<void>{
+  if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
   if(!env.SHEET_EXPENSE_DAILY)throw new DailyCancelReviewRequired("EXPENSE_DAILY_SHEET_NOT_CONFIGURED");
   const current=await env.DB.prepare(`SELECT e.*,
     EXISTS(SELECT 1 FROM sheet_row_index r WHERE r.sheet_name=? AND (r.entity_key=e.expense_id OR substr(r.entity_key,1,length(e.expense_id)+1)=e.expense_id || '|')) AS daily_mapped,
@@ -62,6 +64,7 @@ export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<
   return{expense,summaryDocument,document,items,record};
 }
 export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"SUMMARY";rowCount:number;detailRowCount:number;replacedLegacySummary:boolean}>{
+  if(!await legacyDailyWriterOpen(env))throw new DailyCancelReviewRequired('DAILY_LEGACY_CUTOVER_HOLD');
   const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
   const detailRowCount=await writeConfirmedExpensePurchaseDetails(env,loaded.record,loaded.document,loaded.items);
@@ -215,6 +218,7 @@ export async function syncStableShadowFixtureJob(env:Env,job:SheetsSyncJob):Prom
   }
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  if(job.entityType==='EXPENSE'&&!await legacyDailyWriterOpen(env))return holdLegacyExpenseJob(env,job);
   if(env.SHEETS_SYNC_ENABLED!=="true"){
     // Pausing transport must not resolve a prior terminal failure or drop a
     // queued event. Preserve the outbox and any terminal review hold.

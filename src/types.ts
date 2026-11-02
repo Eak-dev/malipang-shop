@@ -51,6 +51,7 @@ export interface Env {
   SHEET_EXPENSE_DAILY: string;
   /** Disabled by default. A staging-only prototype; never enables production writes. */
   DAILY_STABLE_ID_PROTOTYPE_ENABLED?: string;
+  DAILY_LEGACY_WRITER_GATE_ENABLED?: string;
   /** Explicit QA workbook allowlist; never infer a production destination. */
   DAILY_STABLE_UAT_SPREADSHEET_ID?: string;
   DAILY_STABLE_PRODUCTION_SPREADSHEET_ID?: string;

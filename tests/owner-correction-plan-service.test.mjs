@@ -40,3 +40,15 @@ test('a commit-ready plan requires two identical report baselines and same calen
   assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,before,after,'corr',ports),null);
   assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,before,{...before,transactionDate:'2026-11-01'},'corr',ports),null);
 });
+test('legacy description-based report reclassification is held before any sheet write',async()=>{
+  const f=fixture(),old={...before,transactionDate:'2026-07-15',category:'ingredients',description:'flour'},after={...old,description:'sausage'};
+  const ports={plan:async()=>{throw Error('legacy mismatch must be caught first')},report:async()=>null};
+  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,after,'corr',ports),null);
+});
+test('an unverified legacy bank panel holds amount and payment edits before commit',async()=>{
+  const f=fixture(),old={...before,transactionDate:'2026-07-15'},plan=await prepareSameMonthCorrectionPlan(f.env,before,after,'corr',f.ports),baseline=syntheticCorrectionReport(old);baseline.bankTotal=null;baseline.bankStatus='รอตรวจข้อมูลระบบเดิม';
+  const ports={plan:async()=>plan,report:async()=>baseline};
+  assert.ok(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,description:'Taxi'},'corr',ports));
+  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,amountSatang:210000},'corr',ports),null);
+  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,paymentKey:'cash'},'corr',ports),null);
+});

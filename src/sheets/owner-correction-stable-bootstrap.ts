@@ -56,7 +56,8 @@ export async function bootstrapStableOwnerCorrectionTargets(env:Env,owner:OwnerR
         WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND c.before_json=?
           AND e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=?
           AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED'))
+          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+          AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN'))
       ON CONFLICT(expense_id,expense_version) DO NOTHING`)
       .bind(before.expenseId,before.version,JSON.stringify(before),JSON.stringify(targets),new Date(nowMs).toISOString(),correctionId,owner.employeeId,new Date(nowMs).toISOString(),JSON.stringify(before),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId).run();
     saved=await env.DB.prepare(`SELECT snapshot_json,targets_json FROM expense_owner_correction_bootstrap WHERE expense_id=? AND expense_version=?`).bind(before.expenseId,before.version).first<{snapshot_json:string;targets_json:string}>();

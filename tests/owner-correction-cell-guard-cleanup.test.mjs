@@ -4,6 +4,8 @@ import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {createOwnerCorrectionDraft,loadOwnerExpense} from '../dist/expense/owner-correction-repository.js';
 import {ensureOwnerCorrectionCellGuards} from '../dist/sheets/owner-correction-cell-guard-service.js';
 import {cleanupOwnerCorrectionCellGuards} from '../dist/sheets/owner-correction-cell-guard-cleanup.js';
+import {cleanupOwnerCorrectionReportViews} from '../dist/sheets/owner-correction-report-view-cleanup.js';
+import {holdOwnerCorrectionForReview} from '../dist/expense/owner-correction-manual-review.js';
 
 async function setup(){
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},clock={now:Date.now()};Object.assign(h.env,{OWNER_EXPENSE_CORRECTION_ENABLED:'true',GOOGLE_SERVICE_ACCOUNT_EMAIL:'synthetic@example.invalid',SHEET_EXPENSE_DAILY:'daily'});
@@ -27,6 +29,17 @@ test('a reconciled correction is eligible and cleanup remains active after featu
     h.sqlite.prepare("UPDATE expense_owner_corrections SET status='APPLIED',reconciled_at='now' WHERE correction_id=?").run(h.id);h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';
     assert.deepEqual(await cleanupOwnerCorrectionCellGuards(h.env,h.ports),{removed:1,review:0});assert.equal(h.ranges.length,0);
   }finally{h.close()}
+});
+test('cleanup is inert while the feature is off and the review migration is absent',async()=>{
+  const h=await setup();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.sqlite.exec('DROP TABLE expense_owner_correction_manual_reviews');
+    assert.deepEqual(await cleanupOwnerCorrectionCellGuards(h.env,h.ports),{removed:0,review:0});
+    assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:0,review:0});
+    assert.equal(h.ranges.length,1);assert.equal(h.sqlite.prepare('SELECT description FROM expense_events').get().description,'Synthetic driver');
+  }finally{h.close()}
+});
+test('a request held for review releases its temporary guard',async()=>{
+  const h=await setup();try{assert.equal(await holdOwnerCorrectionForReview(h.env,h.owner,h.id,'SHEET_CHECK',h.clock.now),'HELD');assert.deepEqual(await cleanupOwnerCorrectionCellGuards(h.env,h.ports),{removed:1,review:0});assert.equal(h.ranges.length,0)}finally{h.close()}
 });
 test('lost cleanup response does not dispatch a second deletion while the request may be in flight',async()=>{
   const h=await setup();try{

@@ -7,14 +7,14 @@ interface CleanupPorts{metadata:typeof getSheetRowMetadataById;ranges:typeof get
 const defaults:CleanupPorts={metadata:getSheetRowMetadataById,ranges:getSheetProtectedRanges,batch:batchUpdateSpreadsheet,now:()=>Date.now()};
 interface GuardRow{correction_id:string;expense_id:string;expense_version:number;daily_metadata_id:number;sheet_id:number;columns_json:string;guards_json:string|null;state:string;not_before:string|null}
 const eligible=`EXISTS(SELECT 1 FROM expense_owner_corrections c JOIN expense_events e ON e.expense_id=c.expense_id WHERE c.correction_id=expense_owner_correction_cell_guards.correction_id
-  AND (c.status IN ('CANCELLED','STALE') OR (c.status='DRAFT' AND (c.expires_at<=? OR e.status<>'CONFIRMED' OR e.version<>expense_owner_correction_cell_guards.expense_version)) OR (c.status='APPLIED' AND c.reconciled_at IS NOT NULL)))`;
+  AND (c.status IN ('CANCELLED','STALE') OR (c.status='DRAFT' AND (c.expires_at<=? OR e.status<>'CONFIRMED' OR e.version<>expense_owner_correction_cell_guards.expense_version OR EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN'))) OR (c.status='APPLIED' AND c.reconciled_at IS NOT NULL)))`;
 
 /** Remove only our own exact temporary guards after a terminal or expired draft. */
 export async function cleanupOwnerCorrectionCellGuards(env:Env,ports:CleanupPorts=defaults):Promise<{removed:number;review:number}>{
   // During a rollback the feature flag can be off while old temporary guards
   // still need removal. Before migration the table is absent and this is inert.
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"){
-    const table=await env.DB.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='expense_owner_correction_cell_guards'`).first<{present:number}>();
+    const table=await env.DB.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name IN ('expense_owner_correction_cell_guards','expense_owner_correction_manual_reviews') GROUP BY type HAVING COUNT(*)=2`).first<{present:number}>();
     if(!table)return {removed:0,review:0};
   }
   const nowMs=ports.now();if(!Number.isFinite(nowMs))throw new Error("CORRECTION_GUARD_CLEANUP_CONFIG_INVALID");

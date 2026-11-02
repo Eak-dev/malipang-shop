@@ -11,6 +11,7 @@ const encode=(value:string)=>encodeURIComponent(value);
 const payment=(s:OwnerCorrectionSnapshot)=>{const option=expensePaymentOptions.find(item=>item.paymentKey===s.paymentKey&&item.sourceWallet===s.sourceWallet);return option?`${option.label} • ${option.sourceLabel}`:`${s.paymentKey} • ${s.sourceWallet}`;};
 const valueFor=(s:OwnerCorrectionSnapshot,field:OwnerCorrectionDraft["field"])=>field==="description"?s.description:field==="category"?(labels[s.category]||s.category):field==="amountSatang"?money(s.amountSatang):field==="transactionDate"?s.transactionDate:payment(s);
 const title:Record<OwnerCorrectionDraft["field"],string>={description:"รายละเอียด",category:"หมวด",amountSatang:"ยอดชำระ",transactionDate:"วันที่ชำระ",payment:"ช่องทาง/แหล่งเงิน"};
+const reviewReasons:Record<string,string>={CROSS_MONTH:"ต้องตรวจแถวต้นทางและปลายทางข้ามเดือน",LEGACY_BANK:"ยอดธนาคารของระบบเดิมยังรอตรวจ",RECEIPT_ALLOCATION:"ต้องตรวจการแบ่งยอดรายการย่อย",REPORT_DUPLICATE:"พบความเสี่ยงรายการซ้ำในรายงาน",SHEET_CHECK:"ต้องตรวจแถวหรือรายงานเพิ่มเติม",PERIOD_UNCONFIRMED:"เดือนบัญชีปิดแล้วหรือยังยืนยันไม่ได้"};
 
 /** Render a version-bound confirmation; no action here changes data. */
 export function buildOwnerCorrectionPreview(draft:OwnerCorrectionDraft,correctionId:string){
@@ -25,6 +26,22 @@ export function buildOwnerCorrectionFinalPreview(draft:OwnerCorrectionDraft,corr
 
 export function buildOwnerCorrectionSyncPending(correctionId:string){
   return flex("บันทึกแล้ว กำลังตรวจการซิงก์",[text("บันทึกการแก้ไขแล้ว",true),text("ระบบกำลังซิงก์ชีตและตรวจรายงาน กรุณาตรวจสถานะก่อนถือว่าเสร็จ")],[button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(correctionId)}`,true)]);
+}
+
+export function buildOwnerCorrectionManualReview(correctionId:string,reason:string,stale=false){
+  return flex("รายการแก้ไขรอตรวจ",[text("รายการแก้ไขรอตรวจเพิ่มเติม",true),text(reviewReasons[reason]||"ต้องตรวจข้อมูลเพิ่มเติม"),text(stale?"ข้อมูลรายการเปลี่ยนแล้ว กรุณายกเลิกคำขอนี้และค้นหารายการล่าสุด":"คำขอนี้ยังไม่ได้เปลี่ยนข้อมูล พิมพ์ ‘รายการแก้ไขรอตรวจ’ เพื่อกลับมาดูได้")],[button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(correctionId)}`,true),button("ยกเลิกคำขอ",`a=owner_correction_cancel&id=${encode(correctionId)}`)]);
+}
+
+export function buildOwnerCorrectionManualReviewList(rows:Record<string,unknown>[],nextCursor:string|null=null){
+  const body:unknown[]=[text("รายการแก้ไขรอตรวจ",true)];
+  for(const row of rows.slice(0,8)){
+    let before:OwnerCorrectionSnapshot;try{before=JSON.parse(String(row.before_json)) as OwnerCorrectionSnapshot;}catch{continue;}
+    if(!before?.expenseId||!Number.isSafeInteger(before.amountSatang))continue;
+    const stale=Number(row.snapshot_current)!==1,id=String(row.correction_id||"");if(!id)continue;
+    body.push({type:"separator"},text(`${before.description} • ${money(before.amountSatang)}`),text(stale?"ข้อมูลเปลี่ยนแล้ว กรุณาเริ่มใหม่":reviewReasons[String(row.reason_code)]||"รอตรวจเพิ่มเติม"),button("ตรวจสถานะ",`a=owner_correction_status&id=${encode(id)}`));
+  }
+  if(body.length===1)body.push(text("ไม่มีคำขอที่รอตรวจ"));
+  return flex("รายการแก้ไขรอตรวจ",body,nextCursor?[button("รายการถัดไป",`a=owner_correction_manual_next&cursor=${encode(nextCursor)}`)]:[]);
 }
 
 /** The owner attests to periods only for the current, unexpired correction. */

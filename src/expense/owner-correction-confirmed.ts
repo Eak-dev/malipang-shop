@@ -8,13 +8,13 @@ import {inspectOwnerCorrectionReportDeduplication} from "../sheets/owner-correct
 import {bootstrapStableOwnerCorrectionTargets} from "../sheets/owner-correction-stable-bootstrap";
 import {ensureOwnerCorrectionCellGuards} from "../sheets/owner-correction-cell-guard-service";
 import {ensureOwnerCorrectionReportView} from "../sheets/owner-correction-report-view";
-import {correctionPeriodHeaderDigest} from "./owner-correction-period-math";
+import {correctionPeriodHeaderDigest,correctionPostingDate} from "./owner-correction-period-math";
 import {inspectOwnerCorrectionPeriods} from "./owner-correction-periods";
 import {commitOwnerCorrection,loadOwnerCorrectionDraft,ownerCorrectionStatus} from "./owner-correction-repository";
 import type {OwnerCorrectionSnapshot} from "./owner-correction";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 
-export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"REPORT_PENDING"|"UNSUPPORTED";
+export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"REPORT_PENDING"|"MOVE_REVIEW"|"UNSUPPORTED";
 export interface ConfirmedCorrectionPorts{
   periods:typeof inspectOwnerCorrectionPeriods;
   headers:typeof getSheetValues;
@@ -44,6 +44,7 @@ export async function confirmOwnerCorrection(env:Env,owner:OwnerReviewIdentity,i
   const periods=await ports.periods(env,owner,id);if(!periods||periods.version!==version)return "STALE";if(periods.periods.some(item=>item.decision!=="OPEN"))return "PERIOD_REVIEW";
   if(!await ports.protection(env))return "PROTECTION";
   const headers=await ports.headers(env,`${quote(env.SHEET_EXPENSE_DAILY)}!A1:W3`);if(await correctionPeriodHeaderDigest(headers)!==periods.headerDigest)return "STALE";
+  try{if(correctionPostingDate(before,headers).slice(0,7)!==correctionPostingDate(after,headers).slice(0,7))return "MOVE_REVIEW";}catch{return "SHEET_REVIEW";}
   if(!await ports.dedupe(env,before,after))return "DUPLICATE";
   const posting=await ports.posting(env,before.expenseId);if(posting.items.length>1)return "ALLOCATION";
   const linked=await ports.bootstrap(env,owner,id,before);if(linked==="PENDING")return "METADATA_PENDING";if(linked==="STALE")return "STALE";if(linked!=="READY")return "SHEET_REVIEW";

@@ -28,7 +28,8 @@ export async function ensureOwnerCorrectionCellGuards(env:Env,owner:OwnerReviewI
     SELECT ?,?,?,?,?,?,'PREPARED',?,? WHERE EXISTS(SELECT 1 FROM expense_owner_corrections c JOIN expense_events e ON e.expense_id=c.expense_id
       WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND c.before_json=? AND e.expense_id=? AND e.status='CONFIRMED' AND e.version=?
         AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=? AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')) ON CONFLICT DO NOTHING`)
+        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+        AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN')) ON CONFLICT DO NOTHING`)
     .bind(correctionId,before.expenseId,before.version,plan.dailyMetadataId,sheetId,columnsJson,now,now,correctionId,owner.employeeId,now,JSON.stringify(before),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId).run();
   let saved=await env.DB.prepare(`SELECT daily_metadata_id,sheet_id,columns_json,guards_json,state,dispatch_token,not_before FROM expense_owner_correction_cell_guards WHERE correction_id=? AND expense_id=? AND expense_version=?`).bind(correctionId,before.expenseId,before.version).first<SavedGuard>();
   if(!saved)return {kind:"PENDING"};
@@ -61,7 +62,8 @@ export async function ensureOwnerCorrectionCellGuards(env:Env,owner:OwnerReviewI
       const armed=await env.DB.prepare(`UPDATE expense_owner_correction_cell_guards SET state='IN_FLIGHT',dispatch_token=?,not_before=?,updated_at=? WHERE correction_id=? AND state='PREPARED'
         AND EXISTS(SELECT 1 FROM expense_owner_corrections c JOIN expense_events e ON e.expense_id=c.expense_id WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>?
           AND c.before_json=? AND e.status='CONFIRMED' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=? AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED'))`)
+          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+          AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN'))`)
         .bind(token,deadline,started,correctionId,correctionId,owner.employeeId,started,JSON.stringify(before),before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId).run();
       if(Number(armed.meta.changes||0)!==1)throw new Error("CORRECTION_CELL_GUARD_LEASE_LOST");dispatched=true;
     });

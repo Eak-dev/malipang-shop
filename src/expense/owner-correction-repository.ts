@@ -61,30 +61,36 @@ export async function createOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdenti
 /** Even draft contents are available only to the active verified owner. */
 export async function loadOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<Record<string,unknown>|null>{
   if(!id||!Number.isFinite(nowMs))return null;
-  return env.DB.prepare(`SELECT c.* FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND ${activeOwnerSql}`)
+  return env.DB.prepare(`SELECT c.* FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN') AND ${activeOwnerSql}`)
     .bind(id,owner.employeeId,new Date(nowMs).toISOString(),owner.employeeId,owner.lineUserId).first<Record<string,unknown>>();
 }
 
 /** Cancellation only changes the owner's uncommitted draft, never the expense. */
 export async function cancelOwnerCorrectionDraft(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<boolean>{
   if(!id||!Number.isFinite(nowMs))return false;
-  const result=await env.DB.prepare(`UPDATE expense_owner_corrections SET status='CANCELLED' WHERE correction_id=? AND owner_employee_id=? AND status='DRAFT' AND expires_at>? AND ${activeOwnerSql}`)
-    .bind(id,owner.employeeId,new Date(nowMs).toISOString(),owner.employeeId,owner.lineUserId).run();
-  return Number(result.meta.changes||0)===1;
+  const now=new Date(nowMs).toISOString(),result=await env.DB.batch([
+    env.DB.prepare(`UPDATE expense_owner_corrections SET status='CANCELLED' WHERE correction_id=? AND owner_employee_id=? AND status='DRAFT' AND (expires_at>? OR EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=expense_owner_corrections.correction_id AND r.status='OPEN')) AND ${activeOwnerSql}`)
+      .bind(id,owner.employeeId,now,owner.employeeId,owner.lineUserId),
+    env.DB.prepare(`UPDATE expense_owner_correction_manual_reviews SET status='CANCELLED',updated_at=? WHERE correction_id=? AND owner_employee_id=? AND status='OPEN' AND EXISTS(SELECT 1 FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='CANCELLED') AND ${activeOwnerSql}`)
+      .bind(now,id,owner.employeeId,id,owner.employeeId,owner.employeeId,owner.lineUserId)
+  ]);
+  return Number(result[0]?.meta.changes||0)===1;
 }
 
-export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"DRAFT_EDITED"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
+export type OwnerCorrectionStatus="DRAFT"|"EXPIRED"|"CANCELLED"|"STALE"|"MANUAL_REVIEW"|"DRAFT_EDITED"|"SYNC_PENDING"|"SYNC_FAILED"|"SYNC_REVIEW"|"COMPLETED";
 /** An approved D1 update is not reported complete until its sync job completes. */
 export async function ownerCorrectionStatus(env:Env,owner:OwnerReviewIdentity,id:string,nowMs=Date.now()):Promise<OwnerCorrectionStatus|null>{
   if(!id||!Number.isFinite(nowMs))return null;
-  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.status') AS before_status,(SELECT s.phase FROM expense_owner_correction_sync s WHERE s.correction_id=c.correction_id) AS sync_phase,
+  const row=await env.DB.prepare(`SELECT c.status,c.expires_at,c.reconciled_at,json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.status') AS before_status,
+    EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=c.expense_id AND json_valid(c.before_json) AND e.status=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.status') AND e.version=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.version') AND e.updated_at IS json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.updatedAt') AND e.description=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.description') AND e.category=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.category') AND e.amount_satang=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.amountSatang') AND e.transaction_date=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.transactionDate') AND e.payment_key=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.paymentKey') AND e.source_wallet=json_extract(CASE WHEN json_valid(c.before_json) THEN c.before_json ELSE '{}' END,'$.sourceWallet')) AS snapshot_current,
+    EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN') AS review_open,(SELECT s.phase FROM expense_owner_correction_sync s WHERE s.correction_id=c.correction_id) AS sync_phase,
     (SELECT j.status FROM expense_audit_log a JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=c.expense_id
        AND j.entity_version=CAST(json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.version') AS INTEGER)
      WHERE a.expense_id=c.expense_id AND a.action='EDIT' AND json_extract(CASE WHEN json_valid(a.after_json) THEN a.after_json ELSE '{}' END,'$.correctionId')=c.correction_id LIMIT 1) AS sync_status
     FROM expense_owner_corrections c WHERE c.correction_id=? AND c.owner_employee_id=? AND ${activeOwnerSql}`)
-    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;before_status:string|null;expires_at:string;reconciled_at:string|null;sync_status:string|null;sync_phase:string|null}>();
+    .bind(id,owner.employeeId,owner.employeeId,owner.lineUserId).first<{status:string;before_status:string|null;snapshot_current:number;review_open:number;expires_at:string;reconciled_at:string|null;sync_status:string|null;sync_phase:string|null}>();
   if(!row)return null;
-  if(row.status==="DRAFT")return row.expires_at<=new Date(nowMs).toISOString()?"EXPIRED":"DRAFT";
+  if(row.status==="DRAFT")return Number(row.review_open)===1?(Number(row.snapshot_current)!==1?"STALE":"MANUAL_REVIEW"):row.expires_at<=new Date(nowMs).toISOString()?"EXPIRED":"DRAFT";
   if(row.status==="CANCELLED"||row.status==="STALE")return row.status;
   if(row.status!=="APPLIED")return null;
   if(row.before_status==="WAITING_CONFIRM")return "DRAFT_EDITED";
@@ -164,7 +170,7 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
   if(guardedColumns.length&&(!plan.cellGuards||plan.cellGuards.correctionId!==id||plan.cellGuards.guards.length!==guardedColumns.length||plan.cellGuards.guards.some((guard,index)=>guard.columnIndex!==guardedColumns[index])))return null;
   let periods:string[],headerDigest:string,postingDate:string;try{if(!evidence.periodHeaders)return null;periods=correctionAccountingPeriods(before,after,evidence.periodHeaders);headerDigest=await correctionPeriodHeaderDigest(evidence.periodHeaders);postingDate=correctionPostingDate(before,evidence.periodHeaders);}catch{return null;}
   if(!periods.length||plan.headerDigest!==headerDigest)return null;
-  const report=plan.reportBaseline;if(!report||report.expenseId!==before.expenseId||report.date!==before.transactionDate||report.postingDate!==postingDate||report.description!==before.description||report.amountSatang!==before.amountSatang||report.wallet!==before.sourceWallet||report.category!==before.category)return null;
+  const report=plan.reportBaseline;if(!report||report.expenseId!==before.expenseId||report.date!==before.transactionDate||report.postingDate!==postingDate||report.description!==before.description||report.amountSatang!==before.amountSatang||report.paymentKey!==before.paymentKey||report.wallet!==before.sourceWallet||report.category!==before.category)return null;
   const auditId=randomId("exp_audit"),jobId=randomId("sync"),now=new Date(nowMs).toISOString(),next=before.version+1;
   if(!Number.isSafeInteger(next))return null;
   const result=await env.DB.batch([
@@ -174,6 +180,7 @@ export async function commitOwnerCorrection(env:Env,owner:OwnerReviewIdentity,id
       AND e.expense_id=? AND e.status='CONFIRMED' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=?
       AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
       AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+      AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews held WHERE held.correction_id=c.correction_id AND held.status='OPEN')
       AND NOT EXISTS(SELECT 1 FROM json_each(?) required WHERE NOT EXISTS(SELECT 1 FROM expense_owner_correction_period_decisions p WHERE p.correction_id=c.correction_id AND p.period=required.value AND p.header_digest=? AND p.decision='OPEN' AND p.actor_employee_id=c.owner_employee_id)
         OR EXISTS(SELECT 1 FROM expense_owner_correction_period_decisions held WHERE held.correction_id=c.correction_id AND held.period=required.value AND held.header_digest=? AND held.decision='HOLD'))
       AND (?=0 OR EXISTS(SELECT 1 FROM expense_owner_correction_cell_guards g WHERE g.correction_id=c.correction_id AND g.expense_id=e.expense_id AND g.expense_version=e.version AND g.daily_metadata_id=? AND g.state='ACTIVE' AND g.columns_json=? AND g.guards_json=?))

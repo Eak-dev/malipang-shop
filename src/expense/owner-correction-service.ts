@@ -8,7 +8,8 @@ import {buildOwnerCorrectionDraft,parseOwnerCorrectionDate,type OwnerCorrectionF
 import {inspectOwnerCorrectionPeriods,recordOwnerCorrectionPeriodDecision} from "./owner-correction-periods";
 import {confirmOwnerCorrection} from "./owner-correction-confirmed";
 import {cancelOwnerCorrectionDraft,clearOwnerCorrectionInput,commitPendingOwnerCorrection,createOwnerCorrectionDraft,loadOwnerCorrectionDraft,loadOwnerCorrectionInput,loadOwnerExpense,ownerCorrectionStatus,searchOwnerExpenses,startOwnerCorrectionInput,storeOwnerCorrectionQuery} from "./owner-correction-repository";
-import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
+import {buildOwnerCorrectionChoices,buildOwnerCorrectionFields,buildOwnerCorrectionFinalPreview,buildOwnerCorrectionManualReview,buildOwnerCorrectionManualReviewList,buildOwnerCorrectionPeriodQuestion,buildOwnerCorrectionPeriods,buildOwnerCorrectionPreview,buildOwnerCorrectionResults,buildOwnerCorrectionSyncPending} from "./owner-correction-flex";
+import {getOwnerCorrectionManualReview,holdOwnerCorrectionForReview,listOwnerCorrectionManualReviews,type ManualCorrectionReason} from "./owner-correction-manual-review";
 
 interface OwnerCorrectionPostbackPorts{periods:typeof inspectOwnerCorrectionPeriods;decision:typeof recordOwnerCorrectionPeriodDecision;confirmed?:typeof confirmOwnerCorrection}
 const postbackDefaults:OwnerCorrectionPostbackPorts={periods:inspectOwnerCorrectionPeriods,decision:recordOwnerCorrectionPeriodDecision,confirmed:confirmOwnerCorrection};
@@ -26,6 +27,15 @@ async function preview(env:Env,event:LineEvent,id:string,owner:OwnerReviewIdenti
     await flex(env,event,buildOwnerCorrectionPreview({before,after,field:String(row.field) as OwnerCorrectionField},id),traceId);
   }catch{await reply(env,event,"ไม่สามารถตรวจร่างได้ กรุณาเริ่มใหม่",traceId);}
 }
+async function hold(env:Env,event:LineEvent,owner:OwnerReviewIdentity,id:string,reason:ManualCorrectionReason,traceId:string):Promise<void>{
+  if(await holdOwnerCorrectionForReview(env,owner,id,reason)==="HELD"){const existing=await getOwnerCorrectionManualReview(env,owner,id);await flex(env,event,buildOwnerCorrectionManualReview(id,existing?.reason_code||reason),traceId);}
+  else await reply(env,event,"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาค้นหารายการใหม่",traceId);
+}
+async function manualReviews(env:Env,event:LineEvent,owner:OwnerReviewIdentity,traceId:string,cursor=""):Promise<void>{
+  const parts=cursor?cursor.split("|"):[];if(cursor&&(parts.length!==2||!parts[0]||!parts[1])){await reply(env,event,"หน้ารายการหมดอายุ กรุณาพิมพ์ ‘รายการแก้ไขรอตรวจ’",traceId);return;}
+  const rows=await listOwnerCorrectionManualReviews(env,owner,parts[0]||"",parts[1]||""),shown=rows.slice(0,8),last=shown.at(-1),next=rows.length>8&&last?`${String(last.created_at)}|${String(last.correction_id)}`:null;
+  await flex(env,event,buildOwnerCorrectionManualReviewList(shown,next),traceId);
+}
 async function results(env:Env,event:LineEvent,owner:OwnerReviewIdentity,query:string,traceId:string,cursor=""):Promise<void>{
   const parts=cursor?cursor.split("|"):[];if(cursor&&(parts.length!==2||!parts[0]||!parts[1])){await reply(env,event,"หน้าค้นหาหมดอายุ กรุณาเริ่มใหม่",traceId);return;}
   const rows=await searchOwnerExpenses(env,owner,query,parts[0]||"",parts[1]||""),shown=rows.slice(0,8),last=shown.at(-1);
@@ -35,6 +45,11 @@ async function results(env:Env,event:LineEvent,owner:OwnerReviewIdentity,query:s
 export async function handleOwnerCorrectionText(env:Env,event:LineEvent,traceId:string):Promise<boolean>{
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"||event.message?.type!=="text")return false;
   const text=(event.message.text||"").trim(),owner=await identity(env,event);
+  if(text==="รายการแก้ไขรอตรวจ"){
+    if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
+    const active=await loadOwnerCorrectionInput(env,owner);if(active)await clearOwnerCorrectionInput(env,owner,String(active.input_id));
+    await manualReviews(env,event,owner,traceId);return true;
+  }
   if(text==="แก้ไขค่าใช้จ่าย"){
     if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
     if(!await startOwnerCorrectionInput(env,owner,{mode:"SEARCH"})){await reply(env,event,"ยังเปิดการค้นหาไม่ได้ กรุณาลองใหม่",traceId);return true;}
@@ -66,9 +81,11 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
     if(!query){await reply(env,event,"การค้นหาหมดอายุ กรุณาพิมพ์ แก้ไขค่าใช้จ่าย",traceId);return true;}
     await results(env,event,owner,query,traceId,q.get("cursor")||"");return true;
   }
+  if(action==="owner_correction_manual_next"){await manualReviews(env,event,owner,traceId,q.get("cursor")||"");return true;}
   const id=q.get("id")||"";
   if(action==="owner_correction_status"){
-    const status=await ownerCorrectionStatus(env,owner,id),messages={DRAFT:"ร่างนี้ยังไม่ได้ยืนยัน รายการเดิมยังไม่เปลี่ยน",EXPIRED:"ร่างหมดอายุ กรุณาเปิดรายการใหม่",CANCELLED:"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน",STALE:"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",DRAFT_EDITED:"บันทึกการแก้ไขในร่างแล้ว โปรดตรวจสถานะและยืนยันรายการต้นฉบับ",SYNC_PENDING:"บันทึกแล้ว กำลังซิงก์และตรวจข้อมูลที่เกี่ยวข้อง",SYNC_FAILED:"บันทึกแล้ว แต่การซิงก์ยังไม่สำเร็จ ระบบต้องตรวจและลองต่อ",SYNC_REVIEW:"บันทึกแล้ว แต่ข้อมูลชีตต้องตรวจเพิ่มเติมก่อนซิงก์ กรุณาติดต่อผู้ดูแล",COMPLETED:"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว"} as const;
+    const status=await ownerCorrectionStatus(env,owner,id),messages={DRAFT:"ร่างนี้ยังไม่ได้ยืนยัน รายการเดิมยังไม่เปลี่ยน",EXPIRED:"ร่างหมดอายุ กรุณาเปิดรายการใหม่",CANCELLED:"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน",STALE:"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",MANUAL_REVIEW:"รายการแก้ไขรอตรวจเพิ่มเติม ข้อมูลเดิมยังไม่เปลี่ยน",DRAFT_EDITED:"บันทึกการแก้ไขในร่างแล้ว โปรดตรวจสถานะและยืนยันรายการต้นฉบับ",SYNC_PENDING:"บันทึกแล้ว กำลังซิงก์และตรวจข้อมูลที่เกี่ยวข้อง",SYNC_FAILED:"บันทึกแล้ว แต่การซิงก์ยังไม่สำเร็จ ระบบต้องตรวจและลองต่อ",SYNC_REVIEW:"บันทึกแล้ว แต่ข้อมูลชีตต้องตรวจเพิ่มเติมก่อนซิงก์ กรุณาติดต่อผู้ดูแล",COMPLETED:"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว"} as const;
+    if(status==="MANUAL_REVIEW"||status==="STALE"){const review=await getOwnerCorrectionManualReview(env,owner,id);if(review){await flex(env,event,buildOwnerCorrectionManualReview(id,review.reason_code,status==="STALE"),traceId);return true;}}
     await reply(env,event,status?messages[status]:"ไม่พบรายการหรือไม่มีสิทธิ์ตรวจสถานะ",traceId);return true;
   }
   if(action==="owner_correction_cancel"){
@@ -76,6 +93,7 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
   }
   if(action==="owner_correction_period_ask"||action==="owner_correction_period_set"){
     try{
+      const existing=await getOwnerCorrectionManualReview(env,owner,id);if(existing){const status=await ownerCorrectionStatus(env,owner,id);await flex(env,event,buildOwnerCorrectionManualReview(id,existing.reason_code,status==="STALE"),traceId);return true;}
       const v=Number(q.get("v")),p=q.get("p")||"",h=q.get("h")||"",view=await ports.periods(env,owner,id);
       if(!view||view.version!==v||view.headerDigest!==h||!view.periods.some(item=>item.period===p)){await reply(env,event,"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาเปิดรายการใหม่",traceId);return true;}
       if(action==="owner_correction_period_ask"){
@@ -85,6 +103,7 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
       const decision=q.get("s");if(decision!=="OPEN"&&decision!=="HOLD"){await reply(env,event,"สถานะไม่ถูกต้อง กรุณาเปิดรายการใหม่",traceId);return true;}
       const result=await ports.decision(env,owner,id,{period:p,headerDigest:h,version:v,decision});
       if(result==="STALE"||result==="CONFLICT"){await reply(env,event,"ข้อมูลเปลี่ยนหรือเคยตอบแล้ว กรุณาตรวจรายการล่าสุด",traceId);return true;}
+      if(decision==="HOLD"){await hold(env,event,owner,id,"PERIOD_UNCONFIRMED",traceId);return true;}
       const updated=await ports.periods(env,owner,id);if(!updated){await reply(env,event,"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",traceId);return true;}
       await flex(env,event,buildOwnerCorrectionPeriods(updated,id),traceId);return true;
     }catch{await reply(env,event,"ตรวจสถานะเดือนบัญชีไม่ได้ รายการเดิมยังไม่เปลี่ยน กรุณาลองใหม่",traceId);return true;}
@@ -100,7 +119,12 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
         else await flex(env,event,buildOwnerCorrectionSyncPending(id),traceId);
         return true;
       }
-      const messages={STALE:"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาค้นหาและตรวจรายการใหม่",PERIOD_REVIEW:"เดือนบัญชียังยืนยันไม่ครบหรือเลือกรอตรวจ รายการเดิมยังไม่เปลี่ยน",PROTECTION:"สิทธิ์แก้ไขชีตยังไม่พร้อม รายการเดิมยังไม่เปลี่ยน กรุณาติดต่อผู้ดูแล",DUPLICATE:"พบความเสี่ยงรายการซ้ำหรือข้อมูลรายงานไม่พร้อม กรุณาตรวจเพิ่ม รายการเดิมยังไม่เปลี่ยน",ALLOCATION:"ใบเสร็จมีหลายรายการ ต้องตรวจการแบ่งยอดก่อน รายการเดิมยังไม่เปลี่ยน",SHEET_REVIEW:"ยังตรวจแถวหรือรายงานเดือนได้ไม่ครบ กรุณาตรวจรายงานและติดต่อผู้ดูแล",METADATA_PENDING:"กำลังตรวจตำแหน่งแถวในชีต รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",GUARD_PENDING:"กำลังตรวจการป้องกันเซลล์ในชีต รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",REPORT_PENDING:"กำลังเตรียมตรวจรายงานของเดือนนี้ รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",UNSUPPORTED:"รายการนี้ต้องตรวจข้อมูลเพิ่มเติมก่อนแก้ไข รายการเดิมยังไม่เปลี่ยน"} as const;
+      if(result==="DUPLICATE"||result==="ALLOCATION"||result==="SHEET_REVIEW"||result==="MOVE_REVIEW"||result==="UNSUPPORTED"){
+        const draft=await loadOwnerCorrectionDraft(env,owner,id);let reason:ManualCorrectionReason=result==="DUPLICATE"?"REPORT_DUPLICATE":result==="ALLOCATION"?"RECEIPT_ALLOCATION":result==="MOVE_REVIEW"?"CROSS_MONTH":"SHEET_CHECK";
+        if(result==="UNSUPPORTED"&&draft){try{const before=JSON.parse(String(draft.before_json)) as OwnerCorrectionSnapshot,after=JSON.parse(String(draft.after_json)) as OwnerCorrectionSnapshot;if(before.transactionDate.slice(0,7)!==after.transactionDate.slice(0,7))reason="CROSS_MONTH";else{await reply(env,event,"ระบบซิงก์ยังไม่พร้อม รายการเดิมยังไม่เปลี่ยน กรุณาติดต่อผู้ดูแล",traceId);return true;}}catch{await reply(env,event,"ข้อมูลร่างไม่พร้อม กรุณาเริ่มใหม่",traceId);return true;}}
+        await hold(env,event,owner,id,reason,traceId);return true;
+      }
+      const messages={STALE:"ข้อมูลเปลี่ยนหรือร่างหมดอายุ กรุณาค้นหาและตรวจรายการใหม่",PERIOD_REVIEW:"เดือนบัญชียังยืนยันไม่ครบหรือเลือกรอตรวจ รายการเดิมยังไม่เปลี่ยน",PROTECTION:"สิทธิ์แก้ไขชีตยังไม่พร้อม รายการเดิมยังไม่เปลี่ยน กรุณาติดต่อผู้ดูแล",DUPLICATE:"พบความเสี่ยงรายการซ้ำหรือข้อมูลรายงานไม่พร้อม กรุณาตรวจเพิ่ม รายการเดิมยังไม่เปลี่ยน",ALLOCATION:"ใบเสร็จมีหลายรายการ ต้องตรวจการแบ่งยอดก่อน รายการเดิมยังไม่เปลี่ยน",SHEET_REVIEW:"ยังตรวจแถวหรือรายงานเดือนได้ไม่ครบ กรุณาตรวจรายงานและติดต่อผู้ดูแล",METADATA_PENDING:"กำลังตรวจตำแหน่งแถวในชีต รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",GUARD_PENDING:"กำลังตรวจการป้องกันเซลล์ในชีต รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",REPORT_PENDING:"กำลังเตรียมตรวจรายงานของเดือนนี้ รายการเดิมยังไม่เปลี่ยน กรุณากดยืนยันอีกครั้งในครู่ค่ะ",MOVE_REVIEW:"รายการนี้ต้องตรวจแถวต้นทางและปลายทางก่อนย้ายเดือน",UNSUPPORTED:"รายการนี้ต้องตรวจข้อมูลเพิ่มเติมก่อนแก้ไข รายการเดิมยังไม่เปลี่ยน"} as const;
       await reply(env,event,messages[result],traceId);return true;
     }catch{await reply(env,event,"ยังตรวจหรือบันทึกการแก้ไขไม่ได้ กรุณาตรวจสถานะก่อนลองใหม่",traceId);return true;}
   }
@@ -108,6 +132,7 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
     const draft=await loadOwnerCorrectionDraft(env,owner,id);let status="";
     if(!draft){
       const prior=await ownerCorrectionStatus(env,owner,id);
+      if(prior==="MANUAL_REVIEW"||prior==="STALE"){const review=await getOwnerCorrectionManualReview(env,owner,id);if(review){await flex(env,event,buildOwnerCorrectionManualReview(id,review.reason_code,prior==="STALE"),traceId);return true;}}
       await reply(env,event,prior==="DRAFT_EDITED"?"บันทึกการแก้ไขในร่างนี้แล้ว โปรดตรวจสถานะและยืนยันรายการต้นฉบับ":"ร่างหมดอายุ ได้รับการจัดการแล้ว หรือไม่พบรายการ กรุณาค้นหาใหม่",traceId);return true;
     }
     try{status=String(JSON.parse(String(draft?.before_json||"{}")).status||"");}catch{/* malformed snapshots cannot be applied */}

@@ -5,6 +5,7 @@ import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
 import {createOwnerCorrectionDraft,loadOwnerExpense} from '../dist/expense/owner-correction-repository.js';
 import {ensureOwnerCorrectionReportView,inspectOwnerCorrectionReportView} from '../dist/sheets/owner-correction-report-view.js';
 import {cleanupOwnerCorrectionReportViews} from '../dist/sheets/owner-correction-report-view-cleanup.js';
+import {holdOwnerCorrectionForReview} from '../dist/expense/owner-correction-manual-review.js';
 
 async function setup(){
   const h=ownerOrderFixture(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},clock={now:Date.now()};h.env.GOOGLE_SERVICE_ACCOUNT_EMAIL='synthetic@example.invalid';
@@ -51,4 +52,7 @@ test('finished or cancelled report views are cleaned up without touching the vis
 test('cleanup never deletes an altered report view and recovers an unknown delete',async()=>{
   {const h=await setup();try{assert.equal((await run(h)).kind,'READY');h.sqlite.prepare("UPDATE expense_owner_corrections SET status='CANCELLED' WHERE correction_id=?").run(h.id);h.properties[1].title='changed';assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:0,review:1});assert.equal(h.properties.length,2)}finally{h.close()}}
   {const h=await setup();try{assert.equal((await run(h)).kind,'READY');h.sqlite.prepare("UPDATE expense_owner_corrections SET status='CANCELLED' WHERE correction_id=?").run(h.id);const batch=h.ports.batch;let first=true;h.ports.batch=async(...args)=>{await batch(...args);if(first){first=false;throw Error('synthetic lost response')}};assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:0,review:1});assert.equal(h.properties.length,1);assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:0,review:0});h.clock.now+=15*60_000+1;assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:1,review:0});assert.equal(h.sent.length,2)}finally{h.close()}}
+});
+test('a request held for review releases its temporary report view',async()=>{
+  const h=await setup();try{assert.equal((await run(h)).kind,'READY');assert.equal(await holdOwnerCorrectionForReview(h.env,h.owner,h.id,'SHEET_CHECK',h.clock.now),'HELD');assert.deepEqual(await cleanupOwnerCorrectionReportViews(h.env,h.ports),{removed:1,review:0});assert.equal(h.properties.length,1)}finally{h.close()}
 });

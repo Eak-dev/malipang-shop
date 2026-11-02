@@ -8,13 +8,13 @@ const knownFlow='7477383cebb25e383af88b6bb10564bbde0c79a1c898baccf8acc83c588b445
 const before={expenseId:'exp_synthetic_report',status:'CONFIRMED',transactionDate:'2026-10-28',description:'Driver',amountSatang:200000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general'};
 const serial=iso=>(Date.parse(`${iso}T00:00:00Z`)-Date.UTC(1899,11,30))/86400000;
 function fixture(snapshot=before){
-  const categories=Array(12).fill(0),group={general:10,transport:7}[snapshot.category];categories[group]=snapshot.amountSatang/100;
-  const clean=[[serial(snapshot.transactionDate),snapshot.expenseId,snapshot.description,snapshot.amountSatang/100,snapshot.sourceWallet,snapshot.category,'V52_CONFIRMED']];
+  const categories=Array(12).fill(0),group={general:10,transport:7,cleaning:11,bank_fee:snapshot.transactionDate<'2026-08-01'?11:10}[snapshot.category];categories[group]=snapshot.amountSatang/100;
+  const legacy=snapshot.transactionDate<'2026-08-01',clean=[[serial(snapshot.transactionDate),legacy?'LEGACY|8':snapshot.expenseId,snapshot.description,snapshot.amountSatang/100,legacy?(snapshot.sourceWallet==='SHOP_BANK'?'บัญชีร้าน':'ทอน/หน้าร้าน'):snapshot.sourceWallet,snapshot.category,legacy?'LEGACY':'V52_CONFIRMED']];
   const raw=[[snapshot.expenseId,snapshot.transactionDate,snapshot.description,snapshot.amountSatang/100,snapshot.paymentKey,snapshot.sourceWallet,snapshot.category,'CONFIRMED']];
   const daily=Array.from({length:12},()=>[]);daily[4]=[2026];const dailyRow=Array(23).fill(null),amount=snapshot.amountSatang/100,dayNumber=Number(snapshot.transactionDate.slice(-2)),monthNumber=Number(snapshot.transactionDate.slice(5,7)),amountColumn=snapshot.paymentKey==='cash'?6:7;
   Object.assign(dailyRow,{1:monthNumber,2:dayNumber,3:snapshot.description,[amountColumn]:amount,8:amount,17:0,20:serial(snapshot.transactionDate),21:snapshot.category,22:snapshot.sourceWallet==='SHOP_BANK'?'บัญชีร้าน':'ทอน/หน้าร้าน'});daily[7]=dailyRow;
   const flow=Array.from({length:61},(_,i)=>{const date=new Date(Date.UTC(2026,10,1)+i*86400000).toISOString().slice(0,10),active=date===snapshot.transactionDate,n=active?amount:0,count=active?1:0;return [serial(date),n,n,0,active?'ยอดรวมตรง — ยังต้องตรวจรายการ':'ยังไม่พบรายการ / ยังไม่ยืนยัน',count,count];});
-  const values=[[[serial(`${snapshot.transactionDate.slice(0,7)}-01`)]],[[amount]],categories.map(n=>[n]),[[snapshot.sourceWallet==='SHOP_BANK'?amount:0]],clean,raw,[],[['alert']],flow,daily];
+  const values=[[[serial(`${snapshot.transactionDate.slice(0,7)}-01`)]],[[amount]],categories.map(n=>[n]),[[legacy?'รอตรวจข้อมูลระบบเดิม':snapshot.sourceWallet==='SHOP_BANK'?amount:0]],clean,raw,[],[['alert']],flow,daily];
   const formulas=[[['formula_0']],Array.from({length:12},(_,i)=>[`formula_${i+1}`]),[['formula_13']],[['formula_14']],[['flow_0']],[['flow_1']],Array.from({length:61},(_,i)=>Array.from({length:6},(_,j)=>`flow_${i}_${j}`)),structuredClone(daily)];
   const ports={formulas:async()=>structuredClone(formulas),values:async()=>structuredClone(values),metadata:async()=>({metadataId:42,metadataKey:'malipang_expense_daily',metadataValue:snapshot.expenseId,sheetId:1,rowIndex:7}),sheetId:async()=>1,digest:async value=>Array.isArray(value)&&typeof value[0]==='string'&&value.length===15?knownFormula:Array.isArray(value)&&value.length===368?knownFlow:createHash('sha256').update(JSON.stringify(value)).digest('hex')};
   return {env:{SHEET_EXPENSE_DAILY:'รายวัน',SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_PURCHASE_DETAILS:'รายละเอียดการซื้อ'},values,formulas,ports};
@@ -38,6 +38,12 @@ test('report comparison validates amount and funding changes without guessing ca
   const old=fixture(),next=fixture({...before,amountSatang:210000,sourceWallet:'CASH_DRAWER',paymentKey:'cash'}),a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,{...before,amountSatang:210000,sourceWallet:'CASH_DRAWER',paymentKey:'cash'},42,next.ports);
   assert.equal(ownerCorrectionReportMatches(a,b),true);assert.equal(ownerCorrectionReportMatches(a,{...b,category:'unclassified'}),false);
 });
+test('cleaning and legacy bank fees are verified in the report remainder',async()=>{
+  for(const [date,category] of [['2026-10-28','cleaning'],['2026-07-15','bank_fee']]){
+    const old={...before,transactionDate:date},next={...old,category},a=fixture(old),b=fixture(next),beforeReport=await captureOwnerCorrectionReport(a.env,old,42,a.ports),afterReport=await captureOwnerCorrectionReport(b.env,next,42,b.ports);
+    assert.equal(ownerCorrectionReportMatches(beforeReport,afterReport),true);
+  }
+});
 
 test('daily totals may recalculate but other inputs and formula definitions may not change',async()=>{
   const changed={...before,amountSatang:210000},old=fixture(),next=fixture(changed);
@@ -46,9 +52,12 @@ test('daily totals may recalculate but other inputs and formula definitions may 
   const a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,b),true);
   next.formulas[7][10][7]='=SUM(H4:H9)';const altered=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,altered),false);
 });
-test('modern report snapshots include August but hold earlier legacy rows',async()=>{
+test('report snapshots verify both August raw rows and uniquely identified legacy rows',async()=>{
   const august={...before,transactionDate:'2026-08-15'},legacy={...before,transactionDate:'2026-07-15'},a=fixture(august),b=fixture(legacy);
-  assert.ok(await captureOwnerCorrectionReport(a.env,august,42,a.ports));assert.equal(await captureOwnerCorrectionReport(b.env,legacy,42,b.ports),null);
+  assert.ok(await captureOwnerCorrectionReport(a.env,august,42,a.ports));const prior=await captureOwnerCorrectionReport(b.env,legacy,42,b.ports);assert.equal(prior.bankTotal,null);assert.equal(prior.bankStatus,'รอตรวจข้อมูลระบบเดิม');
+  const next=fixture({...legacy,category:'transport'}),updated=await captureOwnerCorrectionReport(next.env,{...legacy,category:'transport'},42,next.ports);assert.equal(ownerCorrectionReportMatches(prior,updated),true);
+  const changed=fixture({...legacy,amountSatang:210000}),amount=await captureOwnerCorrectionReport(changed.env,{...legacy,amountSatang:210000},42,changed.ports);assert.equal(ownerCorrectionReportMatches(prior,amount),false);
+  b.values[4][0][5]='fillings';assert.equal(await captureOwnerCorrectionReport(b.env,legacy,42,b.ports),null);
 });
 test('a private month view uses the same report formulas without changing the visible month',async()=>{
   const f=fixture(),view={correctionId:'owner_correction_synthetic_123',sheetId:50,metadataId:51,title:'__MP_REPORT_owner_correction_synthetic_123_202610',period:'2026-10'},source=f.ports.formulas;let requested=[];

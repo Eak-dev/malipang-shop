@@ -27,7 +27,7 @@ export async function inspectOwnerCorrectionReportView(env:Env,correctionId:stri
 /** Create a private month-specific copy of the report without changing its visible month. */
 export async function ensureOwnerCorrectionReportView(env:Env,owner:OwnerReviewIdentity,correctionId:string,before:OwnerCorrectionSnapshot,period:string,ports:ViewPorts=defaults):Promise<Result>{
   const at=ports.now(),account=String(env.GOOGLE_SERVICE_ACCOUNT_EMAIL||"").trim();
-  if(!Number.isFinite(at)||!account||!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(correctionId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||period<"2026-08"||before.status!=="CONFIRMED"||before.transactionDate.slice(0,7)!==period)return {kind:"REVIEW"};
+  if(!Number.isFinite(at)||!account||!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(correctionId)||!/^\d{4}-(0[1-9]|1[0-2])$/.test(period)||before.status!=="CONFIRMED"||before.transactionDate.slice(0,7)!==period)return {kind:"REVIEW"};
   const draft=await loadOwnerCorrectionDraft(env,owner,correctionId,at);if(!draft||draft.before_json!==JSON.stringify(before))return {kind:"STALE"};
   let saved=await env.DB.prepare(`SELECT sheet_id,sheet_title,metadata_id,period,state,dispatch_token,not_before FROM expense_owner_correction_report_views WHERE correction_id=? AND period=?`).bind(correctionId,period).first<Row>();
   if(!saved){
@@ -38,7 +38,8 @@ export async function ensureOwnerCorrectionReportView(env:Env,owner:OwnerReviewI
       SELECT ?,?,?,?,?,?,?,'PREPARED',?,? WHERE EXISTS(SELECT 1 FROM expense_owner_corrections c JOIN expense_events e ON e.expense_id=c.expense_id
         WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>? AND c.before_json=? AND e.expense_id=? AND e.status='CONFIRMED' AND e.version=?
           AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=? AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')) ON CONFLICT DO NOTHING`)
+          AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+          AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN')) ON CONFLICT DO NOTHING`)
       .bind(correctionId,before.expenseId,before.version,period,sheetId,title,metadataId,now,now,correctionId,owner.employeeId,now,JSON.stringify(before),before.expenseId,before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId).run();
     saved=await env.DB.prepare(`SELECT sheet_id,sheet_title,metadata_id,period,state,dispatch_token,not_before FROM expense_owner_correction_report_views WHERE correction_id=? AND period=?`).bind(correctionId,period).first<Row>();
   }
@@ -72,7 +73,8 @@ export async function ensureOwnerCorrectionReportView(env:Env,owner:OwnerReviewI
     const armed=await env.DB.prepare(`UPDATE expense_owner_correction_report_views SET state='IN_FLIGHT',dispatch_token=?,not_before=?,updated_at=? WHERE correction_id=? AND period=? AND state='PREPARED'
       AND EXISTS(SELECT 1 FROM expense_owner_corrections c JOIN expense_events e ON e.expense_id=c.expense_id WHERE c.correction_id=? AND c.owner_employee_id=? AND c.status='DRAFT' AND c.expires_at>?
         AND c.before_json=? AND e.status='CONFIRMED' AND e.version=? AND e.updated_at IS ? AND e.description=? AND e.category=? AND e.amount_satang=? AND e.transaction_date=? AND e.payment_key=? AND e.source_wallet=? AND ${activeOwnerSql}
-        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED'))`)
+        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_key=e.expense_id AND j.entity_type IN ('EXPENSE','EXPENSE_CORRECTION') AND j.status<>'COMPLETED')
+        AND NOT EXISTS(SELECT 1 FROM expense_owner_correction_manual_reviews r WHERE r.correction_id=c.correction_id AND r.status='OPEN'))`)
       .bind(token,deadline,now,correctionId,period,correctionId,owner.employeeId,now,JSON.stringify(before),before.version,before.updatedAt,before.description,before.category,before.amountSatang,before.transactionDate,before.paymentKey,before.sourceWallet,owner.employeeId,owner.lineUserId).run();
     if(Number(armed.meta.changes||0)!==1)throw new Error("CORRECTION_REPORT_VIEW_LEASE_LOST");dispatched=true;
   });}catch{return {kind:dispatched?"PENDING":"STALE"};}

@@ -42,6 +42,28 @@ test('a loaded confirmed snapshot cannot post after reclassification',async()=>{
  }finally{client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
 });
 
+test('confirmed expense never clears an unverified existing row mapping, even if values could match',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('historical','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','historical',10)").run();
+  let touched=false;client.batchGetSheetValues=async()=>{touched=true;throw Error('unsafe read');};client.batchClearValues=async()=>{touched=true;};client.batchWriteValues=async()=>{touched=true;};
+  const record={expenseId:'historical',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+  await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CONFIRMED_IDENTITY_UNVERIFIED/);assert.equal(touched,false);assert.equal(h.sqlite.prepare("SELECT row_number FROM sheet_row_index WHERE entity_key='historical'").get().row_number,10);
+ }finally{client.batchGetSheetValues=oldRead;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
+});
+
+test('confirmed expense holds if an old writer claims its row while the layout is being read',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{writeConfirmedExpenseToDaily}=require('../dist/sheets/daily-expense.js');
+ const h=expenseSqlite(),oldRead=client.batchGetSheetValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
+  h.env.SHEET_EXPENSE_DAILY='daily';h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('racing','msg','fixture','Synthetic',10000,'transfer','SHOP_BANK','general','2026-10-28','CONFIRMED','now',1)`).run();
+  const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[10]=['รวม',10];headers[1][7]='เงินโอน';
+  let touched=false;client.batchGetSheetValues=async()=>{h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','racing',7)").run();return[body,headers];};client.batchClearValues=async()=>{touched=true;};client.batchWriteValues=async()=>{touched=true;};
+  const record={expenseId:'racing',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general',version:1};
+  await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/DAILY_CONFIRMED_IDENTITY_UNVERIFIED/);assert.equal(touched,false);
+ }finally{client.batchGetSheetValues=oldRead;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close();}
+});
+
 test('capacity expansion advances state and index together and rolls back on failure',async()=>{
  const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),{mapDailyCapacityExpansion}=require('../dist/sheets/daily-expense.js');
  for(const failAt of [null,0,1,2,3,4,5,6]){const h=expenseSqlite();try{

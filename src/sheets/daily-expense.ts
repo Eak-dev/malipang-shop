@@ -125,10 +125,12 @@ async function mappedRowsForExpense(env:Env,expenseId:string):Promise<Array<{ent
   return(result.results||[]).filter(item=>isDailyExpenseMappingKey(expenseId,String(item.entity_key))).map(item=>({entityKey:String(item.entity_key),row:Number(item.row_number)}));
 }
 async function reserveRow(env:Env,expenseId:string,candidates:number[]):Promise<number>{
-  const existing=await mappedRow(env,expenseId);if(existing)return existing;
+  const existing=await mappedRow(env,expenseId);if(existing!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
   for(const row of candidates){
-    await env.DB.prepare(`INSERT OR IGNORE INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,expenseId,row).run();
-    const allocated=await mappedRow(env,expenseId);if(allocated)return allocated;
+    const inserted=await env.DB.prepare(`INSERT OR IGNORE INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)`).bind(env.SHEET_EXPENSE_DAILY,expenseId,row).run();
+    const allocated=await mappedRow(env,expenseId);
+    if(Number(inserted.meta.changes||0)===1&&allocated===row)return row;
+    if(allocated!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
   }
   throw new Error("Unable to reserve an empty daily expense row");
 }
@@ -188,8 +190,13 @@ async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:D
   if(!entries.length)throw new Error("No confirmed expense entries for daily sheet");
   const entryKeys=new Set(entries.map(entry=>entry.rowKey));if(entryKeys.size!==entries.length||[...entryKeys].some(key=>!key.trim()))throw new Error("Daily expense entry keys must be stable and unique");
   if(entries.some(entry=>!entry.description.trim()||!Number.isFinite(entry.amountBaht)||entry.amountBaht<=0))throw new Error("Invalid confirmed daily expense entry");
+  // A numeric D1 mapping is merely a historical hint: manual row insertions
+  // can make it point at a different expense. The daily sheet has no durable
+  // authenticated ID for old rows, and even a full value match does not prove
+  // identity. Hold rather than clearing an existing mapped row. A replacement
+  // path must first establish independently authenticated row identity.
+  for(const entry of entries)if(await mappedRow(env,entry.rowKey)!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
   const {year,month,day}=parseTransactionDate(record.transactionDate);let layout=await loadLayout(env),payment=resolvePayment(layout.headers,record.paymentKey,year,month,day),rows=new Map<string,number>();
-  for(const entry of entries){const existing=await mappedRow(env,entry.rowKey);if(existing)rows.set(entry.rowKey,existing);}
   while(rows.size<entries.length){
     const candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
     if(requiredMonthlyCapacityExpansions(candidates.length,entries.length-rows.size)===0)break;
@@ -198,7 +205,7 @@ async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:D
     // Existing item mappings after the inserted total row move down one row.
     // Reload them from D1 before writing so a retry never targets the old row.
     layout=await loadLayout(env);payment=resolvePayment(layout.headers,record.paymentKey,year,month,day);rows=new Map<string,number>();
-    for(const entry of entries){const existing=await mappedRow(env,entry.rowKey);if(existing)rows.set(entry.rowKey,existing);}
+    for(const entry of entries)if(await mappedRow(env,entry.rowKey)!==null)throw new DailyCancelReviewRequired("DAILY_CONFIRMED_IDENTITY_UNVERIFIED");
   }
   let candidates=candidateRows(layout.body,layout.blocks,payment.postingMonth);
   for(const entry of entries)if(!rows.has(entry.rowKey)){const row=await reserveRow(env,entry.rowKey,candidates);rows.set(entry.rowKey,row);candidates=candidates.filter(candidate=>candidate!==row);}

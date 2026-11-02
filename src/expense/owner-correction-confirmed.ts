@@ -14,7 +14,7 @@ import {commitOwnerCorrection,loadOwnerCorrectionDraft,ownerCorrectionStatus} fr
 import type {OwnerCorrectionSnapshot} from "./owner-correction";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 
-export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"REPORT_PENDING"|"MOVE_REVIEW"|"UNSUPPORTED";
+export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"LEGACY_BANK_REVIEW"|"METADATA_PENDING"|"GUARD_PENDING"|"REPORT_PENDING"|"MOVE_REVIEW"|"UNSUPPORTED";
 export interface ConfirmedCorrectionPorts{
   periods:typeof inspectOwnerCorrectionPeriods;
   headers:typeof getSheetValues;
@@ -49,10 +49,10 @@ export async function confirmOwnerCorrection(env:Env,owner:OwnerReviewIdentity,i
   const posting=await ports.posting(env,before.expenseId);if(posting.items.length>1)return "ALLOCATION";
   const linked=await ports.bootstrap(env,owner,id,before);if(linked==="PENDING")return "METADATA_PENDING";if(linked==="STALE")return "STALE";if(linked!=="READY")return "SHEET_REVIEW";
   const report=await ports.view(env,owner,id,before,before.transactionDate.slice(0,7));if(report.kind==="PENDING")return "REPORT_PENDING";if(report.kind==="STALE")return "STALE";if(report.kind!=="READY")return "SHEET_REVIEW";
-  let plan=await ports.plan(env,before,after,id,undefined,report.view);if(!plan)return "SHEET_REVIEW";
+  const prepared=await ports.plan(env,before,after,id,undefined,report.view);if(!prepared)return "SHEET_REVIEW";if("kind" in prepared)return "LEGACY_BANK_REVIEW";let plan=prepared;
   const guard=await ports.guards(env,owner,id,before,plan);if(guard.kind==="PENDING")return "GUARD_PENDING";if(guard.kind==="STALE")return "STALE";if(guard.kind!=="READY")return "PROTECTION";
   if(guard.guards.length){
-    const fresh=await ports.plan(env,before,after,id,undefined,report.view);if(!fresh||JSON.stringify(fresh)!==JSON.stringify(plan))return "SHEET_REVIEW";
+    const fresh=await ports.plan(env,before,after,id,undefined,report.view);if(!fresh||"kind" in fresh||JSON.stringify(fresh)!==JSON.stringify(plan))return "SHEET_REVIEW";
     const checked=await ports.guards(env,owner,id,before,fresh);if(checked.kind!=="READY"||JSON.stringify(checked.guards)!==JSON.stringify(guard.guards))return "PROTECTION";
     plan={...fresh,cellGuards:{correctionId:id,guards:checked.guards}};
   }

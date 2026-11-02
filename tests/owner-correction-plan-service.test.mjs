@@ -49,6 +49,6 @@ test('an unverified legacy bank panel holds amount and payment edits before comm
   const f=fixture(),old={...before,transactionDate:'2026-07-15'},plan=await prepareSameMonthCorrectionPlan(f.env,before,after,'corr',f.ports),baseline=syntheticCorrectionReport(old);baseline.bankTotal=null;baseline.bankStatus='รอตรวจข้อมูลระบบเดิม';
   const ports={plan:async()=>plan,report:async()=>baseline};
   assert.ok(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,description:'Taxi'},'corr',ports));
-  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,amountSatang:210000},'corr',ports),null);
-  assert.equal(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,paymentKey:'cash'},'corr',ports),null);
+  assert.deepEqual(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,amountSatang:210000},'corr',ports),{kind:'LEGACY_BANK'});
+  assert.deepEqual(await prepareVerifiedSameMonthCorrectionPlan(f.env,old,{...old,paymentKey:'cash'},'corr',ports),{kind:'LEGACY_BANK'});
 });

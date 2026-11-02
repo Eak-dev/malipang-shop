@@ -75,6 +75,13 @@ test('LINE retry shows a fresh comparison and requires another owner confirmatio
     const next=h.sqlite.prepare('SELECT correction_id FROM expense_owner_corrections WHERE input_id=?').get(`review_retry:${h.id}`).correction_id;await post();assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_corrections').get().n,2);assert.equal(await ownerCorrectionStatus(h.env,owner,next),'DRAFT');
   }finally{h.close()}
 });
+test('an unverified legacy bank total is tracked with its specific review reason',async()=>{
+  const h=await setup('amountSatang','2100');try{
+    const services={periods:async()=>null,decision:async()=> 'STALE',confirmed:async()=> 'LEGACY_BANK_REVIEW'};
+    await h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`a=owner_correction_execute&id=${h.id}&v=1`}}),'trace',services));
+    assert.match(JSON.stringify(h.messages.at(-1)),/ยอดธนาคารของระบบเดิมยังรอตรวจ/);assert.deepEqual(await ownerCorrectionManualReviewSummary(h.env),[{reason:'LEGACY_BANK',count:1}]);assert.equal(h.sqlite.prepare('SELECT amount_satang FROM expense_events').get().amount_satang,200000);
+  }finally{h.close()}
+});
 test('admin summary exposes counts only and requires authentication',async()=>{
   const h=await setup();try{
     await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);h.env.ADMIN_TOKEN='a'.repeat(40);

@@ -44,7 +44,7 @@ test('failed enqueue preserves the committed outbox for scheduled recovery',asyn
   }finally{h.close()}
 });
 test('each missing safety condition keeps the confirmed expense unchanged',async()=>{
-  for(const [mode,want] of [['period','PERIOD_REVIEW'],['protection','PROTECTION'],['duplicate','DUPLICATE'],['allocation','ALLOCATION'],['metadataPending','METADATA_PENDING'],['metadataReview','SHEET_REVIEW'],['viewPending','REPORT_PENDING'],['viewReview','SHEET_REVIEW'],['plan','SHEET_REVIEW'],['flag','UNSUPPORTED']]){
+  for(const [mode,want] of [['period','PERIOD_REVIEW'],['protection','PROTECTION'],['duplicate','DUPLICATE'],['allocation','ALLOCATION'],['metadataPending','METADATA_PENDING'],['metadataReview','SHEET_REVIEW'],['viewPending','REPORT_PENDING'],['viewReview','SHEET_REVIEW'],['plan','SHEET_REVIEW'],['legacyBank','LEGACY_BANK_REVIEW'],['flag','UNSUPPORTED']]){
     const h=await setup();try{
       if(mode==='period')h.sqlite.exec('DELETE FROM expense_owner_correction_period_decisions');
       if(mode==='protection')h.ports.protection=async()=>false;
@@ -55,6 +55,7 @@ test('each missing safety condition keeps the confirmed expense unchanged',async
       if(mode==='viewPending')h.ports.view=async()=>({kind:'PENDING'});
       if(mode==='viewReview')h.ports.view=async()=>({kind:'REVIEW'});
       if(mode==='plan')h.ports.plan=async()=>null;
+      if(mode==='legacyBank')h.ports.plan=async()=>({kind:'LEGACY_BANK'});
       if(mode==='flag')h.env.SHEETS_SYNC_ENABLED='false';
       assert.equal(await confirmOwnerCorrection(h.env,owner,h.id,1,'trace',h.ports),want,mode);assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
     }finally{h.close()}

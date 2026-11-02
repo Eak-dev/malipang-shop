@@ -23,7 +23,7 @@ interface Ports {
 }
 
 /** A report baseline is required before a same-month plan may be committed. */
-export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot,correctionId:string,ports:{plan:typeof prepareSameMonthCorrectionPlan;report:typeof captureOwnerCorrectionReport}={plan:prepareSameMonthCorrectionPlan,report:captureOwnerCorrectionReport},view?:CorrectionReportView):Promise<CorrectionSyncPlan|null>{
+export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:OwnerCorrectionSnapshot,after:OwnerCorrectionSnapshot,correctionId:string,ports:{plan:typeof prepareSameMonthCorrectionPlan;report:typeof captureOwnerCorrectionReport}={plan:prepareSameMonthCorrectionPlan,report:captureOwnerCorrectionReport},view?:CorrectionReportView):Promise<CorrectionSyncPlan|{kind:"LEGACY_BANK"}|null>{
   // A single selected month cannot prove both sides of a calendar-month move.
   if(before.transactionDate.slice(0,7)!==after.transactionDate.slice(0,7)||!legacyReportCategoryMatches(before)||!legacyReportCategoryMatches(after))return null;
   const plan=await ports.plan(env,before,after,correctionId);if(!plan||plan.rebind)return null;
@@ -31,7 +31,7 @@ export async function prepareVerifiedSameMonthCorrectionPlan(env:Env,before:Owne
   if(!first||!second||JSON.stringify(first)!==JSON.stringify(second))return null;
   // The legacy bank panel explicitly says it is awaiting verification. Do not
   // change amounts or funding until that report can independently verify them.
-  if(first.bankTotal===null&&(before.amountSatang!==after.amountSatang||before.paymentKey!==after.paymentKey||before.sourceWallet!==after.sourceWallet))return null;
+  if(first.bankTotal===null&&(before.amountSatang!==after.amountSatang||before.paymentKey!==after.paymentKey||before.sourceWallet!==after.sourceWallet))return {kind:"LEGACY_BANK"};
   const verified={...plan,reportBaseline:first};return serializeCorrectionSyncPlan(verified,before.expenseId,correctionId)?verified:null;
 }
 const defaults:Ports={existing:inspectOwnerCorrectionExistingTargets,values:getSheetValues,sheetId:getSheetId,rows:readSheetRowsByMetadata,expense:loadExpenseDailyPosting,inspect:inspectOwnerCorrectionTargets};

@@ -42,13 +42,12 @@ test('cron recovery does not re-enqueue a sync job with an open terminal DLQ rec
   assert.ok(select.indexOf("AND (?=1 OR NOT EXISTS")<select.indexOf('ORDER BY s.updated_at LIMIT 200'));
 });
 
-test('manual recovery can explicitly retry a terminal Sheets DLQ job',async()=>{
+test('legacy manual override does not retry a terminal Sheets DLQ job',async()=>{
   const old=new Date(Date.now()-600_000).toISOString(),sent=[];
   const rows=[{entity_type:'EXPENSE',entity_key:'terminal',entity_version:1,trace_id:'postback_exp_terminal',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:1}];
   const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){return{results:sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW')?[]:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
-  assert.equal(await recoverPendingSheetJobs(env,300,true),1);
-  assert.equal(sent.length,1);
-  assert.equal(sent[0].body.entityKey,'terminal');
+  assert.equal(await recoverPendingSheetJobs(env,300,true),0);
+  assert.equal(sent.length,0);
 });
 
 test('only one concurrent worker can claim the same sync job lease',async()=>{

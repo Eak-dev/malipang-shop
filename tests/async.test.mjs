@@ -13,3 +13,7 @@ test('bounded JSON times out even if stream read and cancel both stall',async()=
  const start=Date.now();await assert.rejects(readBoundedJson(new Response(stream),100,20,'body'),OperationTimeoutError);
  assert.ok(Date.now()-start<1000);assert.equal(cancelled,1);
 });
+test('oversize stream is cancelled before the reader lock is released',async()=>{
+ let cancelled=0;const stream=new ReadableStream({start(controller){controller.enqueue(new Uint8Array(9));},pull(){return new Promise(()=>{});},cancel(){cancelled++;return new Promise(()=>{});}});
+ await assert.rejects(readBoundedJson(new Response(stream),8,100,'body'),/too large/);assert.equal(cancelled,1);
+});

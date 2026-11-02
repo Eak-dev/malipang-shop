@@ -19,7 +19,7 @@ test('cron recovery does not enqueue a job whose queue delay is still active',as
     {entity_type:'EXPENSE',entity_key:'delayed',entity_version:1,trace_id:'t1',status:'PENDING',updated_at:old,next_attempt_at:future,lease_until:null},
     {entity_type:'EXPENSE',entity_key:'ready',entity_version:1,trace_id:'t2',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null}
   ];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){assert.match(sql,/next_attempt_at/);return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){if(sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW'))return{results:[]};assert.match(sql,/next_attempt_at/);return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   assert.equal(await recoverPendingSheetJobs(env,300),1);
   assert.equal(sent.length,1);
   assert.equal(sent[0].body.entityKey,'ready');
@@ -32,7 +32,7 @@ test('cron recovery does not re-enqueue a sync job with an open terminal DLQ rec
     {entity_type:'EXPENSE',entity_key:'recoverable',entity_version:1,trace_id:'postback_exp_recoverable',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:0}
   ];
   const queries=[];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){queries.push(sql);return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){queries.push(sql);return{bind(){return this;},async all(){return{results:sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW')?[]:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   assert.equal(await recoverPendingSheetJobs(env,300),1);
   assert.equal(sent.length,1);
   assert.equal(sent[0].body.entityKey,'recoverable');
@@ -45,7 +45,7 @@ test('cron recovery does not re-enqueue a sync job with an open terminal DLQ rec
 test('manual recovery can explicitly retry a terminal Sheets DLQ job',async()=>{
   const old=new Date(Date.now()-600_000).toISOString(),sent=[];
   const rows=[{entity_type:'EXPENSE',entity_key:'terminal',entity_version:1,trace_id:'postback_exp_terminal',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:1}];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(){return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){return{results:sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW')?[]:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   assert.equal(await recoverPendingSheetJobs(env,300,true),1);
   assert.equal(sent.length,1);
   assert.equal(sent[0].body.entityKey,'terminal');

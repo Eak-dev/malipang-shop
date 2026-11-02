@@ -84,22 +84,17 @@ async function loadFencedPersonalUseProjection(env:Env,job:SheetsSyncJob,leaseTo
   return item;
 }
 async function renewPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,nowMs=Date.now()):Promise<string|null>{
-  // Google documents a 180-second maximum server-side processing time for one
-  // Sheets request: https://developers.google.com/workspace/sheets/api/limits
-  // Renewing the entity lease to at least 15 minutes immediately before
-  // dispatch leaves the fence in place well beyond that provider-side bound.
-  // A configured client timeout longer than the normal 15 seconds also extends
-  // the lease, because Google could accept the request near that local deadline.
-  // The lease, rather than AbortController, is what protects an unknown outcome.
+  // This deadline only identifies an abandoned owner for quarantine; its
+  // expiry is not evidence that a request can no longer reach Sheets.
   const clientTimeoutMs=Math.max(0,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000)),leaseMs=Math.max(PERSONAL_USE_AMBIGUITY_LEASE_MS,clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS),now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+leaseMs).toISOString();
   const result=await env.DB.prepare(`UPDATE sync_jobs SET updated_at=?,lease_until=?
     WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND lease_until>?
       AND EXISTS(SELECT 1 FROM owner_personal_transactions p WHERE p.personal_use_id=? AND p.version=?)`).bind(now,leaseUntil,job.entityKey,job.entityVersion,leaseToken,now,job.entityKey,job.entityVersion).run();
   return Number(result.meta.changes||0)===1?leaseUntil:null;
 }
-async function retainAmbiguousPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,leaseUntil:string,error:Error):Promise<boolean>{
-  const result=await env.DB.prepare(`UPDATE sync_jobs SET updated_at=?,next_attempt_at=?,last_error=?
-    WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),leaseUntil,`${PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX}${String(error)}`,job.entityKey,job.entityVersion,leaseToken).run();
+async function retainAmbiguousPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,error:Error):Promise<boolean>{
+  const result=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error=?
+    WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),`${PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX}${String(error)}`,job.entityKey,job.entityVersion,leaseToken).run();
   return Number(result.meta.changes||0)===1;
 }
 async function completeOwnedSheetSyncJob(env:Env,job:SheetsSyncJob,leaseToken:string):Promise<boolean>{
@@ -132,10 +127,10 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
   await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
-  // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
-  // same D1 statement. Other entity types retain their existing per-version claims.
-  const serializePersonalUse=job.entityType==="PERSONAL_USE",guardReview=serializePersonalUse||job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}${guardReview?` AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`:""}`;
-  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);if(guardReview)claimArgs.push(job.entityType,job.entityKey);
+  // Mutable projections cannot be reclaimed on a clock timeout: a paused
+  // process may still dispatch a request after its lease expires.
+  const guarded=job.entityType==="PERSONAL_USE"||job.entityType==="EXPENSE",claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?))${guarded?"":` OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?)`})${guarded?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type=? AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`:""}`;
+  const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now];if(!guarded)claimArgs.push(now);if(guarded)claimArgs.push(job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
@@ -145,8 +140,14 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     const held=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
     if(held?.status==="REVIEW")return"REVIEW";
     if(job.entityType==="EXPENSE"||job.entityType==="PERSONAL_USE"){
+      // Quarantine any expired owner, including a different version. The
+      // existing worker's late completion cannot erase this hold.
+      await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_EXPIRED_OWNER_REVIEW' WHERE entity_type=? AND entity_key=? AND status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?`).bind(claimNow,job.entityType,job.entityKey,claimNow).run();
       const blocked=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='SHEET_SYNC_ENTITY_REVIEW_HOLD' WHERE entity_type=? AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED') AND EXISTS(SELECT 1 FROM sync_jobs held WHERE held.entity_type=? AND held.entity_key=? AND held.status='REVIEW')`).bind(claimNow,job.entityType,job.entityKey,job.entityVersion,job.entityType,job.entityKey).run();
       if(Number(blocked.meta.changes||0)===1)return"REVIEW";
+      const current=await env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
+      if(current?.status==="REVIEW")return"REVIEW";
+      if(job.entityType==="EXPENSE"&&current?.status==="PENDING")return"BUSY";
     }
     return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";
   }
@@ -234,10 +235,15 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     }
     const attemptRow=await env.DB.prepare(`SELECT attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=? AND lease_token=?`).bind(job.entityType,job.entityKey,job.entityVersion,leaseToken).first<{attempt_count:number}>(),attempt=Math.max(retryAttempt,Number(attemptRow?.attempt_count||1)),retryError=error instanceof Error?error:new Error(String(error));
     Object.defineProperty(retryError,"retryAttempt",{value:attempt,configurable:true});
+    if(job.entityType==="EXPENSE"&&retryError instanceof SheetsMutationOutcomeUnknownError){
+      const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error='EXPENSE_SHEETS_MUTATION_OUTCOME_UNKNOWN' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityKey,job.entityVersion,leaseToken).run();
+      if(Number(held.meta.changes||0)!==1)throw new Error("EXPENSE_SHEETS_AMBIGUITY_FENCE_LOST",{cause:retryError});
+      return"REVIEW";
+    }
     if(personalUse&&personalUseWriteOutcomeUncertain&&personalUseAmbiguityLeaseUntil&&retryError instanceof SheetsMutationOutcomeUnknownError){
-      const retained=await retainAmbiguousPersonalUseWriteFence(env,job,leaseToken,personalUseAmbiguityLeaseUntil,retryError);
+      const retained=await retainAmbiguousPersonalUseWriteFence(env,job,leaseToken,retryError);
       if(!retained)throw new Error(`PERSONAL_USE_SHEETS_AMBIGUITY_FENCE_LOST:v${job.entityVersion}`,{cause:retryError});
-      throw retryError;
+      return"REVIEW";
     }
     const nowMs=Date.now(),delaySeconds=queueRetryDelaySeconds(retryError,attempt,()=>0),nextAttemptAt=new Date(nowMs+(delaySeconds||0)*1000).toISOString();await env.DB.prepare(`UPDATE sync_jobs SET status='FAILED',updated_at=?,next_attempt_at=?,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date(nowMs).toISOString(),nextAttemptAt,String(retryError),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();throw retryError;
   }

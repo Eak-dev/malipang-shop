@@ -226,3 +226,20 @@ test('an applied daily clear with lost response is held for review and never sil
   try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(applied,true);assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(clears.length,4);assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'DAILY_CANCEL_OUTCOME_UNKNOWN'});}
   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
 });
+
+test('an applied expense raw write with lost response holds all versions and never retries automatically',async()=>{
+  const h=harness(),writes=[];Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
+  h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('V52_EXPENSE_RAW','exp_fixture',2);
+  const originalWrite=sheetsClient.batchWriteValues;
+  sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(data);throw new sheetsClient.SheetsMutationOutcomeUnknownError(new Error('lost response after apply'));};
+  try{
+    await h.undo();const job=undoMessages(h)[0];
+    assert.equal(await syncJob(h.env,job),'REVIEW');
+    assert.equal(await syncJob(h.env,job),'REVIEW');
+    assert.equal(await syncJob(h.env,{...job,entityVersion:4}),'REVIEW');
+    await recoverPendingSheetJobs(h.env,0);
+    assert.equal(await syncJob(h.env,job),'REVIEW');
+    assert.equal(writes.length,1);
+    assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'EXPENSE_SHEETS_MUTATION_OUTCOME_UNKNOWN'});
+  }finally{sheetsClient.batchWriteValues=originalWrite;h.close();}
+});

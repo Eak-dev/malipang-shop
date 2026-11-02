@@ -50,5 +50,5 @@ export async function reconcileSheets(env:Env,input:ReconcileInput={}){
     }
     if(rows.length>requested){const last=page[page.length-1]!;cursors[spec.type]={date:String(last.sort_date),key:String(last.entity_key)};hasMore=true;}else cursors[spec.type]=null;
   }
-  const result=await enqueueSheetSyncBatchDetailed(env,all,true);return{fromDate,toDate,...result,held:result.held+cancellationReview.length,counts,cursors,hasMore,cancellationReview};
+  const result=await enqueueSheetSyncBatchDetailed(env,all,true);return{fromDate,toDate,...result,counts,cursors,hasMore,cancellationReviewCount:cancellationReview.length,cancellationReview};
 }

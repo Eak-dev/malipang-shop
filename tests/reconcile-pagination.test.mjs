@@ -31,7 +31,8 @@ test('pagination covers over 500 matching expenses and eligible cancellations wi
       const result=await reconcileSheets(env,{fromDate:'2026-10-01',toDate:'2026-10-01',limitPerType:200,...(cursors?{cursors}:{})});
       assert.equal(result.counts.EXPENSE,passes<2?200:105);
       review.push(...result.cancellationReview);
-      assert.ok(result.held>=result.cancellationReview.length);
+      assert.equal(result.cancellationReviewCount,result.cancellationReview.length);
+      assert.equal(result.held,0);
       cursors=result.hasMore?result.cursors:null;passes++;
     }while(cursors&&passes<5);
     assert.equal(passes,3);const expenses=sent.filter(j=>j.entityType==='EXPENSE');

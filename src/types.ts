@@ -9,6 +9,9 @@ export interface Env {
   AI: { run(model: string, input: unknown): Promise<unknown> };
   EVIDENCE: R2Bucket;
   JOB_QUEUE: Queue<QueueJob>;
+  SYNTHETIC_PROJECTION_UAT_ENABLED?: string;
+  SYNTHETIC_PROJECTION_UAT_QUEUE?: Queue<{kind:'SYNTHETIC_PROJECTION_UAT';version:number}|{kind:'SYNTHETIC_PROJECTION_QUEUE_PROBE';workerVersionId:string;token:string}>;
+  SYNTHETIC_VERSION_METADATA?: {id:string};
   ATTENDANCE_COORDINATOR: DurableObjectNamespace;
   APP_ENV: string;
   RUNTIME_MODE: RuntimeMode;

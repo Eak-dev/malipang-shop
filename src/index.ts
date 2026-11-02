@@ -11,6 +11,7 @@ import { processLineNotificationMessage } from "./line/attendance-notification";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
+import {SYNTHETIC_QUEUE_NAME,SYNTHETIC_DLQ_NAME,hasSyntheticQueueKind,isSyntheticQueueMessage,acceptSyntheticQueueProbe,processSyntheticProjection,recoverSyntheticProjection,syntheticDeadLetterIsDurable} from './sheets/synthetic-expense-queue';
 export{AttendanceCoordinator};
 function queueMessageAttempt(message:Message<QueueJob>):number{
   const attempts=Number((message as Message<QueueJob>&{attempts?:number}).attempts||1);
@@ -20,19 +21,35 @@ export default{
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>{
     const url=new URL(request.url),missing=missingRuntimeConfig(env);
     if(request.method==="GET"&&url.pathname==="/health")return Response.json({ok:missing.length===0,service:"malipang-backend-v5.2-solo",version:"5.2.0-rc.2",mode:env.RUNTIME_MODE,configured:missing.length===0,check:"configuration_only",readiness:"/admin/readiness",missing,now:new Date().toISOString()},{status:missing.length?503:200});
+    // Dedicated QA routes need no live LINE credentials. The admin handler
+    // still authenticates and the route itself independently checks both QA
+    // database markers and workbook identities before any mutation.
+    if(request.method==='POST'&&env.RUNTIME_MODE==='shadow'&&env.SYNTHETIC_PROJECTION_UAT_ENABLED==='true'&&['/admin/uat/expense-projection-probe','/admin/uat/expense-projection-schedule','/admin/uat/expense-projection-workflow'].includes(url.pathname)){
+      if(typeof env.ADMIN_TOKEN!=='string'||env.ADMIN_TOKEN.length<32)return Response.json({ok:false,error:'SERVICE_NOT_CONFIGURED'},{status:503});
+      return handleAdmin(request,env,ctx);
+    }
     if(missing.length)return Response.json({ok:false,error:"SERVICE_NOT_CONFIGURED",missing},{status:503});
     if(request.method==="POST"&&url.pathname==="/webhook/line")return handleLineWebhook(request,env,ctx);
     if(url.pathname.startsWith("/admin/"))return handleAdmin(request,env,ctx);
     return new Response("Not found",{status:404});
   },
   async queue(batch:MessageBatch<QueueJob>,env:Env,ctx:ExecutionContext):Promise<void>{
-    if(batch.queue==="malipang-jobs-dlq"){
-      for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+    if(batch.queue===SYNTHETIC_QUEUE_NAME||batch.queue===SYNTHETIC_DLQ_NAME){
+      for(const message of batch.messages){try{
+        if(hasSyntheticQueueKind(message.body)&&!isSyntheticQueueMessage(message.body)){if(await acceptSyntheticQueueProbe(env,message.body,batch.queue===SYNTHETIC_DLQ_NAME))message.ack();else message.retry();}
+        else if(batch.queue===SYNTHETIC_DLQ_NAME){if(await syntheticDeadLetterIsDurable(env,message.body))message.ack();else message.retry();}
+        else if(await processSyntheticProjection(env,message.body)==='ACK')message.ack();else message.retry({delaySeconds:300});
+      }catch{message.retry({delaySeconds:300});}}
       return;
     }
-    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC")await processStaffConfigSyncJob(env,job);else{const outcome=await syncJob(env,job,attempt);if(outcome==="BUSY"){await env.JOB_QUEUE.send(job,{delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});message.ack();return;}if(outcome==="TERMINAL_HOLD"||outcome==="SYNC_DISABLED"){message.ack();return;}if(outcome==="REVIEW"){await createFailedJob(env,batch.queue,job.traceId,job,"SHEETS_SYNC_REVIEW_REQUIRED");message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
+    if(batch.queue==="malipang-jobs-dlq"){
+      for(const message of batch.messages){if(hasSyntheticQueueKind(message.body)){console.error('synthetic-queue-misrouted');message.retry();continue;}const job=message.body as QueueJob|StaffConfigSyncJob;try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+      return;
+    }
+    await Promise.all(batch.messages.map(async message=>{if(hasSyntheticQueueKind(message.body)){console.error('synthetic-queue-misrouted');message.retry();return;}const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC")await processStaffConfigSyncJob(env,job);else{const outcome=await syncJob(env,job,attempt);if(outcome==="BUSY"){await env.JOB_QUEUE.send(job,{delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});message.ack();return;}if(outcome==="TERMINAL_HOLD"||outcome==="SYNC_DISABLED"){message.ack();return;}if(outcome==="REVIEW"){await createFailedJob(env,batch.queue,job.traceId,job,"SHEETS_SYNC_REVIEW_REQUIRED");message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
+    if(env.RUNTIME_MODE==='shadow'&&env.SYNTHETIC_PROJECTION_UAT_ENABLED==='true'){ctx.waitUntil(recoverSyntheticProjection(env));return;}
     ctx.waitUntil(runScheduledMaintenance(env));
   }
 } satisfies ExportedHandler<Env,QueueJob>;

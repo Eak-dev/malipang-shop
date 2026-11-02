@@ -81,13 +81,23 @@ test('the recovery endpoint requires the existing admin authentication',async()=
 });
 test('the authenticated sync review queue exposes only minimal recovery metadata',async()=>{
   const h=await setup();try{
-    h.env.ADMIN_TOKEN='a'.repeat(40);const queue=token=>new Request('https://example.invalid/admin/owner-correction/review-queue?kind=sync',{headers:{authorization:`Bearer ${token}`}});
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.env.ADMIN_TOKEN='a'.repeat(40);const queue=token=>new Request('https://example.invalid/admin/owner-correction/review-queue?kind=sync',{headers:{authorization:`Bearer ${token}`}});
     assert.equal((await handleAdmin(queue('wrong'),h.env,{})).status,401);const response=await handleAdmin(queue(h.env.ADMIN_TOKEN),h.env,{}),body=await response.json();assert.equal(response.status,200);assert.equal(body.items.length,1);assert.equal(body.items[0].correctionId,h.id);assert.equal(body.items[0].reason,'SYNC_REVIEW');assert.doesNotMatch(JSON.stringify(body),/exp_recover|fixture_staff|Synthetic driver/);
     const bad=new Request('https://example.invalid/admin/owner-correction/review-queue?cursor=invalid',{headers:{authorization:`Bearer ${h.env.ADMIN_TOKEN}`}});assert.equal((await handleAdmin(bad,h.env,{})).status,400);
   }finally{h.close()}
 });
+test('after owner input is disabled, an audited recovery can resume a reviewed job',async()=>{
+  const h=await setup();try{h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';assert.equal(await recovery(h),'ENQUEUED');assert.deepEqual(status(h),{phase:'IDENTITY_VERIFIED',job:'PENDING',audits:1});assert.equal(h.jobs.length,1);}finally{h.close()}
+});
+test('admin review and recovery fail closed when the migration is absent',async()=>{
+  const h=await setup();try{h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.env.ADMIN_TOKEN='a'.repeat(40);h.sqlite.exec('DROP TABLE expense_owner_correction_sync');
+    const queue=new Request('https://example.invalid/admin/owner-correction/review-queue?kind=sync',{headers:{authorization:`Bearer ${h.env.ADMIN_TOKEN}`}});
+    assert.equal((await handleAdmin(queue,h.env,{})).status,503);assert.equal(await recovery(h),'NOT_REVIEW');assert.equal(h.jobs.length,0);
+  }finally{h.close()}
+});
 test('owner can rediscover review, retry and completion statuses after a lost LINE reply',async()=>{
   const h=await setup(),owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'},staff={employeeId:'TEST_STAFF',lineUserId:'fixture_staff'};try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';
     const show=line=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event(line,{message:{type:'text',id:`synthetic_${line}`,text:'สถานะการแก้ไข'}}),'trace'));
     await show('fixture_staff');assert.match(JSON.stringify(h.messages.at(-1)),/สำหรับเจ้าของ/);assert.equal((await listOwnerCorrectionHistory(h.env,staff)).length,0);
     await show('fixture_owner');assert.match(JSON.stringify(h.messages.at(-1)),/ซิงก์รอตรวจเพิ่มเติม/);

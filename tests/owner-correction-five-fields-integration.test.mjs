@@ -12,6 +12,8 @@ import {inspectOwnerCorrectionTargets} from '../dist/sheets/owner-correction-ins
 import {reconcileOwnerCorrection} from '../dist/sheets/owner-correction-reconciliation.js';
 import {processOwnerCorrectionJob} from '../dist/sheets/owner-correction-worker.js';
 import {buildPurchaseDetailEntries} from '../dist/sheets/purchase-details.js';
+import {bootstrapStableOwnerCorrectionTargets} from '../dist/sheets/owner-correction-stable-bootstrap.js';
+import {planCategoryMetadata} from '../dist/sheets/owner-correction-metadata.js';
 
 const owner={employeeId:'TEST_OWNER',lineUserId:'fixture_owner'};
 async function setup(field,value,multi=false){
@@ -36,7 +38,7 @@ async function setup(field,value,multi=false){
   const inspectionPorts={sheetId:async(_env,name)=>({daily:1,raw:2,detail:3})[name],metadata:async(_env,key)=>metadata.filter(item=>item.metadataKey===key),rows:async(_env,ids)=>readRows(ids),headers:async()=>headers,protection:async()=>true,cellRanges:guardPorts.ranges};
   const recPorts={saved:async()=>({before,after}),posting:sheetPorts.expense,projection:async()=>true,placement:async()=>true,report:async()=>syntheticCorrectionReport(after),protection:async()=>true,view:async()=>'VERIFIED'};
   const worker={now:()=>Date.now(),inspect:plan=>inspectOwnerCorrectionTargets(h.env,plan,inspectionPorts),patch:async(plan,arm)=>{await arm();for(const patch of plan.patches)for(const cell of patch.cells)rows.get(patch.metadataId)[cell.columnIndex]=cell.value},inspectRebind:async()=>{throw Error('unexpected move')},rebind:async()=>{throw Error('unexpected move')},reconcile:(plan,job)=>reconcileOwnerCorrection(h.env,plan,job,recPorts)};
-  return {...h,before,after,id,rows,ranges,queue,confirmation,worker};
+  return {...h,before,after,id,rows,ranges,metadata,queue,confirmation,worker};
 }
 for(const [field,value] of [['description','Taxi'],['category','transport'],['amountSatang','2050.50'],['transactionDate','2026-10-29'],['payment',{paymentKey:'cash',sourceWallet:'CASH_DRAWER'}]])test(`confirmed ${field} flows through owner approval, guards and reconciliation`,async()=>{
   const h=await setup(field,value);try{
@@ -45,6 +47,15 @@ for(const [field,value] of [['description','Taxi'],['category','transport'],['am
     const row=h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_fields'").get();assert.equal(row.description,h.after.description);assert.equal(row.category,h.after.category);assert.equal(row.amount_satang,h.after.amountSatang);assert.equal(row.transaction_date,h.after.transactionDate);assert.equal(row.payment_key,h.after.paymentKey);assert.equal(row.source_wallet,h.after.sourceWallet);
     assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,1);assert.equal(await confirmOwnerCorrection(h.env,owner,h.id,1,'synthetic_trace',h.confirmation),'APPLIED');assert.equal(h.queue.length,1);
     if(field==='category')assert.equal(h.ranges.length,0);else assert.ok(h.ranges.length>0);
+  }finally{h.close()}
+});
+test('multiple historic receipt lines acquire stable identities before a confirmed correction',async()=>{
+  const h=await setup('description','Taxi',true);try{
+    const targets=h.metadata.map(row=>({sheetId:row.sheetId,rowIndex:row.rowIndex,key:row.metadataKey,value:row.metadataValue}));h.metadata.length=0;let next=0;
+    const ports={now:()=>Date.now(),newId:()=>++next,inspect:async()=>planCategoryMetadata(targets,h.metadata.map(row=>({sheetId:row.sheetId,rowIndex:row.rowIndex,key:row.metadataKey,value:row.metadataValue,metadataId:row.metadataId}))),byId:async(_env,id)=>h.metadata.find(row=>row.metadataId===id)||null,create:async(_env,rows)=>{h.metadata.push(...rows.map(row=>({...row})));return rows}};
+    h.confirmation.bootstrap=(env,owner,id,before)=>bootstrapStableOwnerCorrectionTargets(env,owner,id,before,ports);
+    assert.equal(await confirmOwnerCorrection(h.env,owner,h.id,1,'synthetic_trace',h.confirmation),'APPLIED');assert.equal(h.metadata.length,4);
+    assert.equal(await processOwnerCorrectionJob(h.env,{expenseId:'exp_fields',version:2},h.worker),'COMPLETED');assert.equal(await ownerCorrectionStatus(h.env,owner,h.id),'COMPLETED');
   }finally{h.close()}
 });
 for(const [field,value] of [['description','Taxi'],['transactionDate','2026-10-29'],['payment',{paymentKey:'cash',sourceWallet:'CASH_DRAWER'}]])test(`multiple receipt lines preserve evidence through a ${field} correction`,async()=>{

@@ -15,6 +15,29 @@ const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
 export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY"|"REVIEW";
+// Do not consume durable correction jobs until every table their runtime may
+// need is present. This query also validates the key recovery columns, rather
+// than assuming a partially applied migration is usable.
+export async function correctionRecoverySchemaReady(env:Env):Promise<boolean>{
+  try{
+    await env.DB.prepare(`SELECT e.expense_id,e.version,e.status,e.description,e.category,e.amount_satang,e.transaction_date,e.payment_key,e.source_wallet,e.created_at,e.updated_at,e.branch_id,
+      j.entity_type,j.entity_key,j.entity_version,j.status,j.attempt_count,j.updated_at,j.lease_token,j.lease_until,j.next_attempt_at,j.last_error,
+      c.correction_id,c.expense_id,c.owner_employee_id,c.input_id,c.field,c.before_json,c.after_json,c.status,c.created_at,c.expires_at,c.applied_at,c.reconciled_at,
+      s.correction_id,s.expense_id,s.expense_version,s.phase,s.plan_json,s.dispatch_id,s.dispatch_token,s.not_before,s.reconciliation_id,s.reconciliation_json,s.updated_at,s.last_error,
+      f.sheet_name,f.lease_token,f.lease_until,f.state,f.dispatch_id,f.not_before,f.updated_at,
+      d.document_id,d.document_type,d.vendor_name,d.legal_vendor_name,d.document_number,d.order_id,d.document_date,d.expense_id,d.created_at,
+      l.expense_id,l.document_id,l.relation_type,l.created_at,
+      di.item_id,di.document_id,di.expense_id,di.seller_key,di.product_code,di.description,di.quantity,di.unit,di.unit_price_satang,di.discount_satang,di.line_total_satang,di.created_at
+      FROM expense_events e JOIN sync_jobs j ON 0 JOIN expense_owner_corrections c ON 0
+      JOIN expense_owner_correction_sync s ON 0 JOIN owner_correction_daily_write_fences f ON 0
+      JOIN expense_documents d ON 0 JOIN expense_document_links l ON 0
+      JOIN expense_document_items di ON 0 LIMIT 0`).all();
+    return true;
+  }catch(error){
+    if(/\bno such (?:table|column)\b/i.test(String(error)))return false;
+    throw error;
+  }
+}
 interface PersonalUseProjectionRow extends Record<string,unknown>{version:unknown;sync_lease_owned?:unknown}
 class PersonalUseWriteFenceUnavailableError extends Error{
   constructor(){super("PERSONAL_USE_SHEETS_WRITE_FENCE_UNAVAILABLE");this.name="PersonalUseWriteFenceUnavailableError";}
@@ -43,7 +66,9 @@ export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise
   // This legacy operation writes by numeric row, without the correction
   // worker's metadata and lease fence. Do not race it with owner corrections.
   if(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true")throw new Error("EXPENSE_ITEM_RECONCILE_REQUIRES_VERIFIED_SYNC");
-  const corrected=await env.DB.prepare(`SELECT 1 present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND entity_key=? LIMIT 1`).bind(expenseId).first<{present:number}>();
+  // A correction can move/insert rows shared by other expenses, so checking
+  // only this expense is insufficient even after the input flag is disabled.
+  const corrected=await env.DB.prepare(`SELECT 1 present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' LIMIT 1`).first<{present:number}>();
   if(corrected)throw new Error("CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC");
   const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
@@ -124,9 +149,11 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
-  if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
+  if(env.SHEETS_SYNC_ENABLED!=="true")return job.entityType==="EXPENSE_CORRECTION"?"BUSY":"IGNORED";
   if(job.entityType==="EXPENSE_CORRECTION"){
-    if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return "IGNORED";
+    // Closing owner input must not strand corrections already committed to D1.
+    // BUSY preserves the queue message during pre-migration and maintenance.
+    if(!await correctionRecoverySchemaReady(env))return "BUSY";
     try{const outcome=await processOwnerCorrectionRuntime(env,{expenseId:job.entityKey,version:job.entityVersion});
       return outcome==="COMPLETED"?"PROCESSED":outcome==="BUSY"?"BUSY":outcome==="REVIEW"?"REVIEW":"IGNORED";
     }catch(error){if(error instanceof CorrectionDailyFenceBusyError)return "BUSY";throw error;}

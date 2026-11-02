@@ -63,6 +63,13 @@ test('legacy manual item reconciliation is fenced from the correction workflow',
   }finally{h.close()}
 });
 
+test('legacy reconciliation of another expense is blocked after rollback for every correction status',async()=>{
+  for(const status of ['PENDING','PROCESSING','COMPLETED','REVIEW','FAILED']){const h=setup();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.sqlite.prepare("UPDATE sync_jobs SET status=? WHERE job_id='job_correction'").run(status);
+    await assert.rejects(reconcileExpenseItemRows(h.env,'another_expense'),/CORRECTED_EXPENSE_REQUIRES_VERIFIED_SYNC/);
+  }finally{h.close()}}
+});
+
 test('undo cannot change D1 while corrected sheet rows require verified synchronization',async()=>{
   for(const status of ['PENDING','PROCESSING','COMPLETED','REVIEW']){
     const h=setup();try{

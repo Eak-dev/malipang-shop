@@ -1,0 +1,7 @@
+{
+  "uatWorker": "REPLACE_WITH_ISOLATED_UAT_WORKER",
+  "uatDatabase": "REPLACE_WITH_ISOLATED_UAT_D1",
+  "uatQueue": "REPLACE_WITH_ISOLATED_UAT_QUEUE",
+  "uatDeadLetterQueue": "REPLACE_WITH_ISOLATED_UAT_DLQ",
+  "uatEvidenceBucket": "REPLACE_WITH_ISOLATED_UAT_R2"
+}

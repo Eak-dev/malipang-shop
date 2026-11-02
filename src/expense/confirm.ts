@@ -40,7 +40,10 @@ export async function confirmExpenseAtomically(env:Env,input:ConfirmExpenseInput
   const {snapshot,documentSnapshot}=input;
   if(!Number.isSafeInteger(snapshot.version)||snapshot.version<1)return null;
   const now=new Date().toISOString(),auditId=randomId("exp_audit");
-  const correctionEnabled=env.OWNER_EXPENSE_CORRECTION_ENABLED==="true";
+  // A pending order may have been re-attested before owner input was paused.
+  // Continue proving that lineage after rollback, while retaining compatibility
+  // with databases that have not installed the additive correction migration.
+  const correctionEnabled=env.OWNER_EXPENSE_CORRECTION_ENABLED==="true"||Boolean(await env.DB.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='expense_owner_corrections'`).first<{present:number}>());
   // Owner review keeps the submitting LINE identity on the evidence. The
   // exception to same-submitter confirmation must be proven relationally;
   // a normalized JSON marker alone never grants access to another document.

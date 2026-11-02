@@ -44,12 +44,17 @@ export class CorrectionDailyFenceBusyError extends Error{constructor(){super("CO
 export type GuardedDailyMutation=(dispatch:(beforeDispatch?:()=>Promise<void>)=>Promise<void>)=>Promise<void>;
 
 /**
- * The wrapper is inert while the feature is off. Every external mutation in
+ * Once installed, the fence remains active even when new corrections are off.
+ * Before installation, legacy writes can continue only if corrections are off.
+ * Every external mutation in
  * the operation must use `write`, and the provider must invoke its callback
  * immediately before dispatch. A lost response leaves the fence in flight.
  */
 export async function withCorrectionDailyWriteFence<T>(env:Env,sheet:string,action:(write:GuardedDailyMutation,fenceToken?:string)=>Promise<T>,now:()=>number=()=>Date.now()):Promise<T>{
-  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return action(async dispatch=>dispatch());
+  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"){
+    const installed=await env.DB.prepare(`SELECT 1 AS present FROM sqlite_master WHERE type='table' AND name='owner_correction_daily_write_fences'`).first<{present:number}>();
+    if(!installed)return action(async dispatch=>dispatch());
+  }
   const token=await claimCorrectionDailyWriteFence(env,sheet,now());if(!token)throw new CorrectionDailyFenceBusyError();
   try{
     const write:GuardedDailyMutation=async dispatch=>{

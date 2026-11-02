@@ -6,6 +6,7 @@ import {serializeCorrectionSyncPlan,type CorrectionSyncPlan} from "../sheets/own
 import {captureOwnerCorrectionReport,ownerCorrectionReportMatches} from "../sheets/owner-correction-report-snapshot";
 import {inspectOwnerCorrectionReportView} from "../sheets/owner-correction-report-view";
 import type {OwnerCorrectionSnapshot} from "../expense/owner-correction";
+import {correctionRecoverySchemaReady} from "../sheets/sync";
 
 interface RecoveryPorts{inspect:typeof inspectOwnerCorrectionTargets;report:typeof captureOwnerCorrectionReport;view:typeof inspectOwnerCorrectionReportView;enqueue:typeof enqueueSheetSync;now:()=>number}
 const defaults:RecoveryPorts={inspect:inspectOwnerCorrectionTargets,report:captureOwnerCorrectionReport,view:inspectOwnerCorrectionReportView,enqueue:enqueueSheetSync,now:()=>Date.now()};
@@ -19,7 +20,8 @@ type RecoveryResult="ENQUEUED"|"WAIT"|"REVIEW"|"NOT_REVIEW";
  */
 export async function recoverVerifiedOwnerCorrection(env:Env,correctionId:string,reason:string,ports:RecoveryPorts=defaults):Promise<RecoveryResult>{
   const nowMs=ports.now(),why=reason.trim();
-  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"||env.SHEETS_SYNC_ENABLED!=="true"||!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(correctionId)||why.length<4||why.length>500||!Number.isFinite(nowMs))return "NOT_REVIEW";
+  if(env.SHEETS_SYNC_ENABLED!=="true"||!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(correctionId)||why.length<4||why.length>500||!Number.isFinite(nowMs))return "NOT_REVIEW";
+  if(!await correctionRecoverySchemaReady(env))return "NOT_REVIEW";
   const row=await env.DB.prepare(`SELECT s.expense_id,s.expense_version,s.plan_json,s.not_before,j.trace_id,c.before_json FROM expense_owner_correction_sync s
     JOIN expense_owner_corrections c ON c.correction_id=s.correction_id AND c.status='APPLIED'
     JOIN sync_jobs j ON j.entity_type='EXPENSE_CORRECTION' AND j.entity_key=s.expense_id AND j.entity_version=s.expense_version AND j.status='REVIEW'

@@ -84,11 +84,38 @@ test('an unverified legacy bank total is tracked with its specific review reason
 });
 test('admin summary exposes counts only and requires authentication',async()=>{
   const h=await setup();try{
-    await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);h.env.ADMIN_TOKEN='a'.repeat(40);
+    await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now);h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.env.ADMIN_TOKEN='a'.repeat(40);
     const request=token=>new Request('https://example.invalid/admin/owner-correction/review-summary',{headers:{authorization:`Bearer ${token}`}});
     assert.equal((await handleAdmin(request('wrong'),h.env,{})).status,401);const response=await handleAdmin(request(h.env.ADMIN_TOKEN),h.env,{}),body=await response.json();assert.equal(response.status,200);assert.deepEqual(body.reasons,[{reason:'CROSS_MONTH',count:1}]);assert.doesNotMatch(JSON.stringify(body),/exp_manual|fixture_staff/);
     const queue=token=>new Request('https://example.invalid/admin/owner-correction/review-queue?kind=manual',{headers:{authorization:`Bearer ${token}`}});
     assert.equal((await handleAdmin(queue('wrong'),h.env,{})).status,401);const list=await (await handleAdmin(queue(h.env.ADMIN_TOKEN),h.env,{})).json();assert.equal(list.items.length,1);assert.equal(list.items[0].correctionId,h.id);assert.equal(list.items[0].reason,'CROSS_MONTH');assert.doesNotMatch(JSON.stringify(list),/exp_manual|fixture_staff|Synthetic supplier/);
+  }finally{h.close()}
+});
+test('paused corrections still expose owner-only read-only status and review lists',async()=>{
+  const h=await setup();try{
+    assert.equal(await holdOwnerCorrectionForReview(h.env,owner,h.id,'CROSS_MONTH',h.now),'HELD');h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';
+    const show=async(line,value)=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event(line,{message:{type:'text',id:'msg_status',text:value}}),'trace'));
+    const post=async(line,data)=>h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event(line,{type:'postback',postback:{data}}),'trace'));
+    await show('fixture_staff','รายการแก้ไขรอตรวจ');assert.match(JSON.stringify(h.messages.at(-1)),/สำหรับเจ้าของ/);
+    await show('fixture_owner','รายการแก้ไขรอตรวจ');assert.match(JSON.stringify(h.messages.at(-1)),/Synthetic supplier/);
+    await show('fixture_owner_two','รายการแก้ไขรอตรวจ');assert.doesNotMatch(JSON.stringify(h.messages.at(-1)),/Synthetic supplier/);
+    await post('fixture_owner',`a=owner_correction_status&id=${h.id}`);assert.match(JSON.stringify(h.messages.at(-1)),/รอตรวจเพิ่มเติม/);assert.doesNotMatch(JSON.stringify(h.messages.at(-1)),/owner_correction_review_retry|owner_correction_cancel/);
+    const before=JSON.stringify(h.sqlite.prepare('SELECT * FROM expense_owner_corrections').all());
+    for(const action of ['owner_correction_review_retry','owner_correction_cancel','owner_correction_confirm','owner_correction_execute','owner_correction_period_set','owner_correction_input']){
+      await post('fixture_owner',`a=${action}&id=${h.id}&v=1`);assert.match(JSON.stringify(h.messages.at(-1)),/พักการแก้ไข/);
+    }
+    await show('fixture_owner','แก้ไขค่าใช้จ่าย');assert.match(JSON.stringify(h.messages.at(-1)),/พักการแก้ไข/);
+    assert.equal(JSON.stringify(h.sqlite.prepare('SELECT * FROM expense_owner_corrections').all()),before);
+    assert.equal(await show('fixture_owner','ordinary expense text'),false);
+  }finally{h.close()}
+});
+test('before correction migrations, status requests fail closed and ordinary text passes through',async()=>{
+  const h=ownerOrderFixture();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.sqlite.exec('DROP TABLE expense_owner_correction_manual_reviews');
+    const show=value=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'msg_pre_migration',text:value}}),'trace'));
+    assert.equal(await show('ordinary expense text'),false);assert.equal(await show('สถานะการแก้ไข'),true);assert.match(JSON.stringify(h.messages.at(-1)),/ยังตรวจสถานะไม่ได้/);
+    const post=()=>h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:'a=owner_correction_history_next'}}),'trace'));
+    assert.equal(await post(),true);assert.match(JSON.stringify(h.messages.at(-1)),/ยังตรวจสถานะไม่ได้/);
   }finally{h.close()}
 });
 test('manual review migration is additive and repeatable',async()=>{

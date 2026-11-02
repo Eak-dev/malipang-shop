@@ -26,6 +26,29 @@ test('historic rows receive persisted unique metadata IDs before any request',as
     assert.equal(await run(h),'READY');assert.equal(h.sent.length,1);assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
   }finally{h.close()}
 });
+test('multiple receipt lines receive independently verified metadata in bounded batches',async()=>{
+  const h=await setup();try{
+    for(let i=0;i<205;i++)h.targets.push({sheetId:3,rowIndex:i+1,key:'malipang_expense_item',value:`synthetic_item_${i}`});
+    assert.equal(await run(h),'READY');assert.deepEqual(h.sent.map(batch=>batch.length),[100,100,7]);assert.equal(h.metadata.length,207);assert.equal(new Set(h.metadata.map(row=>row.metadataId)).size,207);
+    assert.equal(await run(h),'READY');assert.equal(h.sent.length,3);assert.equal(h.sqlite.prepare('SELECT category FROM expense_events').get().category,'general');
+  }finally{h.close()}
+});
+test('an uncertain multi-batch response stops further dispatch until rows are re-observed',async()=>{
+  const h=await setup();try{
+    for(let i=0;i<205;i++)h.targets.push({sheetId:3,rowIndex:i+1,key:'malipang_expense_item',value:`synthetic_item_${i}`});
+    const create=h.ports.create;let first=true;h.ports.create=async(...args)=>{const result=await create(...args);if(first){first=false;throw Error('synthetic lost response')}return result};
+    assert.equal(await run(h),'PENDING');assert.deepEqual(h.sent.map(batch=>batch.length),[100]);assert.equal(h.metadata.length,100);
+    assert.equal(await run(h),'READY');assert.deepEqual(h.sent.map(batch=>batch.length),[100,100,7]);assert.equal(h.metadata.length,207);assert.equal(new Set(h.metadata.map(row=>row.metadataId)).size,207);
+  }finally{h.close()}
+});
+test('oversized receipt targets are held even when metadata already exists',async()=>{
+  const h=await setup();try{
+    for(let i=0;i<301;i++)h.targets.push({sheetId:3,rowIndex:i+1,key:'malipang_expense_item',value:`synthetic_item_${i}`});
+    assert.equal(await run(h),'REVIEW');assert.equal(h.sent.length,0);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_bootstrap').get().n,0);
+    h.metadata.push(...h.targets.map((target,index)=>({metadataId:index+1,metadataKey:target.key,metadataValue:target.value,sheetId:target.sheetId,rowIndex:target.rowIndex})));
+    assert.equal(await run(h),'REVIEW');assert.equal(h.sent.length,0);
+  }finally{h.close()}
+});
 test('lost responses before and after creation reuse the same IDs without duplicate links',async()=>{
   for(const mode of ['before','after']){const h=await setup();try{
     const create=h.ports.create;let first=true;h.ports.create=async(...args)=>{if(first){first=false;if(mode==='after')await create(...args);else h.sent.push(structuredClone(args[1]));throw Error('synthetic lost response')}return create(...args)};

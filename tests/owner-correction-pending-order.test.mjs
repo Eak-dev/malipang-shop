@@ -40,6 +40,15 @@ test('a different verified owner can re-attest while retaining the original docu
   }finally{h.close()}
 });
 
+test('a re-attested pending order remains confirmable after disabling owner corrections',async()=>{
+  const h=await setup();try{
+    assert.equal((await edit(h,ownerTwo,'amountSatang','530')).result,'APPLIED');h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';
+    const actor=await h.actor(),perform=data=>h.capture(()=>handleExpensePostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`${data}&id=${h.expenseId}`}}),actor.employee,actor));
+    await perform('a=expense_accept_description');await perform('a=expense_set_category&category=equipment');await perform('a=expense_set_payment&payment=kbank&source=CARD_KBANK');
+    assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CONFIRMED');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,1);
+  }finally{h.close()}
+});
+
 test('broken provenance refuses a re-attestation without changing the order',async()=>{
   for(const mutation of ["DELETE FROM expense_document_links","UPDATE expense_online_order_claims SET state='REVIEW_ONLY',expense_id=NULL","DELETE FROM expense_document_reviews","UPDATE expense_document_cases SET final_paid_satang=1"]){
     const h=await setup();try{h.sqlite.exec(mutation);const count=h.sqlite.prepare('SELECT COUNT(*) n FROM expense_audit_log').get().n;
@@ -51,7 +60,7 @@ test('broken provenance refuses a re-attestation without changing the order',asy
 test('final confirmation refuses a re-attestation if its linked correction or original proof is lost',async()=>{
   for(const mutation of ["UPDATE expense_owner_corrections SET status='STALE'","DELETE FROM expense_audit_log WHERE action='EDIT'","DELETE FROM expense_audit_log WHERE action='REVIEW_APPROVE' AND json_extract(after_json,'$.correctionId') IS NULL"]){
     const h=await setup();try{
-      assert.equal((await edit(h,owner,'amountSatang','530')).result,'APPLIED');h.sqlite.exec(mutation);
+      assert.equal((await edit(h,owner,'amountSatang','530')).result,'APPLIED');h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';h.sqlite.exec(mutation);
       const actor=await h.actor(),perform=data=>h.capture(()=>handleExpensePostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:`${data}&id=${h.expenseId}`}}),actor.employee,actor));
       await perform('a=expense_accept_description');await perform('a=expense_set_category&category=equipment');await perform('a=expense_set_payment&payment=kbank&source=CARD_KBANK');await perform('a=expense_confirm');
       assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'WAITING_CONFIRM',mutation);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);

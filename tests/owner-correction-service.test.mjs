@@ -61,10 +61,17 @@ test('opening a result closes the search input so later messages are not capture
     assert.equal(await h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',id:'later',text:'ค่าขนส่ง'}}),'trace')),false);
   }finally{h.close()}
 });
-test('disabled feature does not intercept messages or postbacks',async()=>{
+test('disabled feature pauses write commands while ordinary messages pass through',async()=>{
   const h=ownerOrderFixture();try{
-    assert.equal(await handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',text:'แก้ไขค่าใช้จ่าย'}}),'trace'),false);
-    assert.equal(await handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data:'a=owner_correction_open&id=exp_x'}}),'trace'),false);
+    const send=text=>h.capture(()=>handleOwnerCorrectionText(h.env,h.event('fixture_owner',{message:{type:'text',text}}),'trace'));
+    const post=data=>h.capture(()=>handleOwnerCorrectionPostback(h.env,h.event('fixture_owner',{type:'postback',postback:{data}}),'trace'));
+    assert.equal(await send('ordinary expense text'),false);assert.equal(h.messages.length,0);
+    assert.equal(await send('แก้ไขค่าใช้จ่าย'),true);assert.match(JSON.stringify(h.messages.at(-1)),/พักการแก้ไข/);
+    assert.equal(await post('a=owner_correction_open&id=exp_x'),true);assert.match(JSON.stringify(h.messages.at(-1)),/พักการแก้ไข/);
+    assert.equal(await post('a=other_action'),false);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_correction_inputs').get().n,0);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_owner_corrections').get().n,0);
+    assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,0);
   }finally{h.close()}
 });
 

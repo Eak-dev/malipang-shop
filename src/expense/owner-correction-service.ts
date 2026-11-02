@@ -21,6 +21,17 @@ async function identity(env:Env,event:LineEvent):Promise<OwnerReviewIdentity|nul
   const actor=await getStaffActorByLineId(env,event.source.userId);
   return actor?.role==="OWNER"&&actor.scope==="ORGANIZATION"&&actor.employee.canSubmitExpense&&authorize(actor,"expense.branch.review")?{employeeId:actor.employeeId,lineUserId:event.source.userId}:null;
 }
+async function statusSchemaReady(env:Env):Promise<boolean>{
+  try{
+    await env.DB.prepare(`SELECT c.correction_id,c.expense_id,c.owner_employee_id,c.status,c.before_json,c.after_json,c.created_at,c.expires_at,c.reconciled_at,
+      s.correction_id,s.expense_id,s.expense_version,s.phase,j.entity_type,j.entity_key,j.entity_version,j.status,
+      r.correction_id,r.expense_id,r.owner_employee_id,r.status,r.reason_code,r.created_at,
+      e.expense_id,e.status,e.version,e.updated_at,e.description,e.category,e.amount_satang,e.transaction_date,e.payment_key,e.source_wallet,
+      a.expense_id,a.action,a.after_json FROM expense_owner_corrections c JOIN expense_owner_correction_sync s ON 0
+      JOIN sync_jobs j ON 0 JOIN expense_owner_correction_manual_reviews r ON 0 JOIN expense_events e ON 0 JOIN expense_audit_log a ON 0 LIMIT 0`).all();
+    return true;
+  }catch(error){if(/\bno such (?:table|column)\b/i.test(String(error)))return false;throw error;}
+}
 async function preview(env:Env,event:LineEvent,id:string,owner:OwnerReviewIdentity,traceId:string):Promise<void>{
   const row=await loadOwnerCorrectionDraft(env,owner,id);if(!row){await reply(env,event,"ไม่พบร่างหรือร่างหมดอายุ กรุณาเริ่มใหม่",traceId);return;}
   try{const before=JSON.parse(String(row.before_json)) as OwnerCorrectionSnapshot,after=JSON.parse(String(row.after_json)) as OwnerCorrectionSnapshot;
@@ -48,15 +59,19 @@ async function results(env:Env,event:LineEvent,owner:OwnerReviewIdentity,query:s
   await flex(env,event,buildOwnerCorrectionResults(shown,query,next),traceId);
 }
 export async function handleOwnerCorrectionText(env:Env,event:LineEvent,traceId:string):Promise<boolean>{
-  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true"||event.message?.type!=="text")return false;
-  const text=(event.message.text||"").trim(),owner=await identity(env,event);
+  if(event.message?.type!=="text")return false;
+  const enabled=env.OWNER_EXPENSE_CORRECTION_ENABLED==="true",text=(event.message.text||"").trim();
+  if(!enabled&&!["รายการแก้ไขรอตรวจ","สถานะการแก้ไข","แก้ไขค่าใช้จ่าย"].includes(text))return false;
+  const owner=await identity(env,event);
   if(text==="รายการแก้ไขรอตรวจ"||text==="สถานะการแก้ไข"){
     if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
-    const active=await loadOwnerCorrectionInput(env,owner);if(active)await clearOwnerCorrectionInput(env,owner,String(active.input_id));
+    if(!await statusSchemaReady(env)){await reply(env,event,"ยังตรวจสถานะไม่ได้ กรุณาติดต่อผู้ดูแล",traceId);return true;}
+    if(enabled){const active=await loadOwnerCorrectionInput(env,owner);if(active)await clearOwnerCorrectionInput(env,owner,String(active.input_id));}
     if(text==="รายการแก้ไขรอตรวจ")await manualReviews(env,event,owner,traceId);else await history(env,event,owner,traceId);return true;
   }
   if(text==="แก้ไขค่าใช้จ่าย"){
     if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
+    if(!enabled){await reply(env,event,"ขณะนี้พักการแก้ไขค่าใช้จ่าย กรุณาติดต่อผู้ดูแล",traceId);return true;}
     if(!await startOwnerCorrectionInput(env,owner,{mode:"SEARCH"})){await reply(env,event,"ยังเปิดการค้นหาไม่ได้ กรุณาลองใหม่",traceId);return true;}
     await reply(env,event,"พิมพ์ชื่อร้าน วันที่ชำระ เช่น 28/10/2569 หรือยอดเงินที่ต้องการค้นหา",traceId);return true;
   }
@@ -78,9 +93,11 @@ export async function handleOwnerCorrectionText(env:Env,event:LineEvent,traceId:
   await clearOwnerCorrectionInput(env,owner,inputId);await preview(env,event,id,owner,traceId);return true;
 }
 export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,traceId:string,ports:OwnerCorrectionPostbackPorts=postbackDefaults):Promise<boolean>{
-  if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return false;
   const q=new URLSearchParams(event.postback?.data||""),action=q.get("a")||"";if(!action.startsWith("owner_correction_"))return false;
   const owner=await identity(env,event);if(!owner){await reply(env,event,"เมนูนี้สำหรับเจ้าของที่ยืนยันตัวตนแล้ว",traceId);return true;}
+  const enabled=env.OWNER_EXPENSE_CORRECTION_ENABLED==="true";
+  if(!enabled&&!["owner_correction_manual_next","owner_correction_history_next","owner_correction_status"].includes(action)){await reply(env,event,"ขณะนี้พักการแก้ไขค่าใช้จ่าย กรุณาติดต่อผู้ดูแล",traceId);return true;}
+  if(["owner_correction_manual_next","owner_correction_history_next","owner_correction_status"].includes(action)&&!await statusSchemaReady(env)){await reply(env,event,"ยังตรวจสถานะไม่ได้ กรุณาติดต่อผู้ดูแล",traceId);return true;}
   if(action==="owner_correction_next"){
     const session=await loadOwnerCorrectionInput(env,owner),query=String(session?.search_query||"");
     if(!query){await reply(env,event,"การค้นหาหมดอายุ กรุณาพิมพ์ แก้ไขค่าใช้จ่าย",traceId);return true;}
@@ -96,7 +113,7 @@ export async function handleOwnerCorrectionPostback(env:Env,event:LineEvent,trac
   }
   if(action==="owner_correction_status"){
     const status=await ownerCorrectionStatus(env,owner,id),messages={DRAFT:"ร่างนี้ยังไม่ได้ยืนยัน รายการเดิมยังไม่เปลี่ยน",EXPIRED:"ร่างหมดอายุ กรุณาเปิดรายการใหม่",CANCELLED:"ยกเลิกร่างแล้ว รายการเดิมยังไม่เปลี่ยน",STALE:"ข้อมูลเปลี่ยนแล้ว กรุณาเปิดรายการใหม่",MANUAL_REVIEW:"รายการแก้ไขรอตรวจเพิ่มเติม ข้อมูลเดิมยังไม่เปลี่ยน",DRAFT_EDITED:"บันทึกการแก้ไขในร่างแล้ว โปรดตรวจสถานะและยืนยันรายการต้นฉบับ",SYNC_PENDING:"บันทึกแล้ว กำลังซิงก์และตรวจข้อมูลที่เกี่ยวข้อง",SYNC_FAILED:"บันทึกแล้ว แต่การซิงก์ยังไม่สำเร็จ ระบบต้องตรวจและลองต่อ",SYNC_REVIEW:"บันทึกแล้ว แต่ข้อมูลชีตต้องตรวจเพิ่มเติมก่อนซิงก์ กรุณาติดต่อผู้ดูแล",COMPLETED:"ซิงก์และตรวจข้อมูลที่เกี่ยวข้องเรียบร้อยแล้ว"} as const;
-    if(status==="MANUAL_REVIEW"||status==="STALE"){const review=await getOwnerCorrectionManualReview(env,owner,id);if(review){await flex(env,event,buildOwnerCorrectionManualReview(id,review.reason_code,status==="STALE"),traceId);return true;}}
+    if(enabled&&(status==="MANUAL_REVIEW"||status==="STALE")){const review=await getOwnerCorrectionManualReview(env,owner,id);if(review){await flex(env,event,buildOwnerCorrectionManualReview(id,review.reason_code,status==="STALE"),traceId);return true;}}
     await reply(env,event,status?messages[status]:"ไม่พบรายการหรือไม่มีสิทธิ์ตรวจสถานะ",traceId);return true;
   }
   if(action==="owner_correction_cancel"){

@@ -12,7 +12,7 @@ interface PlannedTarget{target:CategoryMetadataTarget;metadataId:number}
 type Result="READY"|"PENDING"|"REVIEW"|"STALE";
 const key=(target:CategoryMetadataTarget)=>`${target.key}\u0000${target.value}`;
 function match(planned:PlannedTarget[],actual:CategoryMetadataPlan[]):{missing:NewSheetRowMetadata[]}|null{
-  if(planned.length!==actual.length||planned.length<2||planned.length>3)return null;
+  if(planned.length!==actual.length||planned.length<2||planned.length>302)return null;
   const ids=new Set<number>(),keys=new Set<string>(),missing:NewSheetRowMetadata[]=[];
   for(const expected of planned){
     const target=expected?.target,id=expected?.metadataId;if(!target||!Number.isSafeInteger(id)||id<1||id>2147483647||ids.has(id)||keys.has(key(target)))return null;
@@ -39,7 +39,7 @@ export async function bootstrapStableOwnerCorrectionTargets(env:Env,owner:OwnerR
   const nowMs=ports.now();if(!Number.isFinite(nowMs)||before.status!=="CONFIRMED"||!Number.isSafeInteger(before.version)||before.version<1)return "STALE";
   const draft=await loadOwnerCorrectionDraft(env,owner,correctionId,nowMs);if(!draft||draft.before_json!==JSON.stringify(before))return "STALE";
   let observed:CategoryMetadataPlan[]|null;try{observed=await ports.inspect(env,before);}catch{return "REVIEW";}
-  if(!observed||observed.some(item=>item.kind==="CONFLICT"))return "REVIEW";
+  if(!observed||observed.length<2||observed.length>302||observed.some(item=>item.kind==="CONFLICT"))return "REVIEW";
   let saved=await env.DB.prepare(`SELECT snapshot_json,targets_json FROM expense_owner_correction_bootstrap WHERE expense_id=? AND expense_version=?`).bind(before.expenseId,before.version).first<{snapshot_json:string;targets_json:string}>();
   if(!saved&&observed.every(item=>item.kind==="EXISTING"))return "READY";
   if(!saved){
@@ -75,7 +75,12 @@ export async function bootstrapStableOwnerCorrectionTargets(env:Env,owner:OwnerR
       return "PENDING";
     }
   }
-  try{await ports.create(env,state.missing);}catch{/* Re-read; a lost response may have created all IDs. */}
+  // Keep each Sheets batch bounded. Persisted IDs make a lost response safe
+  // to re-observe; never dispatch later chunks after an uncertain response.
+  for(let offset=0;offset<state.missing.length;offset+=100){
+    if(!await loadOwnerCorrectionDraft(env,owner,correctionId,ports.now()))return "STALE";
+    try{await ports.create(env,state.missing.slice(offset,offset+100));}catch{break;}
+  }
   try{observed=await ports.inspect(env,before);}catch{return "REVIEW";}
   if(!observed)return "PENDING";state=match(planned,observed);if(!state)return "REVIEW";
   return state.missing.length?"PENDING":"READY";

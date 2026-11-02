@@ -52,6 +52,16 @@ test('feature-off behavior requires no fence migration and preserves the existin
     assert.equal(await withFence(h.env,'daily',async write=>{await write(async before=>{assert.equal(before,undefined);calls++});return 'ok'}),'ok');assert.equal(calls,1);
   }finally{h.close()}
 });
+test('turning owner input off does not release an uncertain write fence',async()=>{
+  const h=ownerOrderFixture(),now=Date.now();try{
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='true';
+    await assert.rejects(withFence(h.env,'daily',async write=>write(async before=>{await before();throw new SheetsMutationOutcomeUnknownError(Error('timeout'));}),()=>now));
+    h.env.OWNER_EXPENSE_CORRECTION_ENABLED='false';let calls=0;
+    const run=at=>withFence(h.env,'daily',async write=>write(async before=>{await before();calls++;}),()=>at);
+    await assert.rejects(run(now+15*60_000-1),/CORRECTION_DAILY_SHEET_BUSY/);assert.equal(calls,0);
+    await run(now+15*60_000+1);assert.equal(calls,1);
+  }finally{h.close()}
+});
 test('daily expense writers share the fence before reserving and writing rows',async()=>{
   const h=ownerOrderFixture(),oldRead=client.batchGetSheetValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
     Object.assign(h.env,{OWNER_EXPENSE_CORRECTION_ENABLED:'true',SHEET_EXPENSE_DAILY:'daily'});

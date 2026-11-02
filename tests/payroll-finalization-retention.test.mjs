@@ -38,8 +38,7 @@ test('a malformed finalization marker requires review before mutating payroll',a
 });
 test('changed source data prevents the stale recalculation from writing',async()=>{
  const h=fixture(finalized);try{
- const prepare=h.DB.prepare.bind(h.DB);
- h.DB.prepare=sql=>{const statement=prepare(sql);if(sql.startsWith('UPDATE attendance_daily SET work_minutes=')){const run=statement.run.bind(statement);statement.run=async()=>{h.sqlite.prepare(`UPDATE attendance_daily SET time_out='19:00',version=version+1 WHERE employee_id='X'`).run();return run();};}return statement;};
+ const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE attendance_daily SET time_out='19:00',version=version+1 WHERE employee_id='X'`).run();return batch(statements);};
  await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_SNAPSHOT_CHANGED_REVIEW_REQUIRED/);
  const row=h.sqlite.prepare(`SELECT time_out,finalized_at,version FROM attendance_daily WHERE employee_id='X'`).get();
  assert.deepEqual({...row},{time_out:'19:00',finalized_at:finalized,version:2});
@@ -49,11 +48,29 @@ test('changed source data prevents the stale recalculation from writing',async()
 test('a newly approved OT amount prevents calculation from an older OT snapshot',async()=>{
  const h=fixture(finalized);try{
  h.sqlite.prepare(`INSERT INTO ot_requests(ot_id,employee_id,work_date,reason,fixed_amount_satang,requested_by,owner_preapproved_at,created_at,updated_at) VALUES('ot','X',?,'fixture',10000,'fixture',?,?,?)`).run(date,finalized,finalized,finalized);
- const prepare=h.DB.prepare.bind(h.DB);
- h.DB.prepare=sql=>{const statement=prepare(sql);if(sql.startsWith('UPDATE attendance_daily SET work_minutes=')){const run=statement.run.bind(statement);statement.run=async()=>{h.sqlite.prepare(`UPDATE ot_requests SET status='APPROVED',owner_final_status='APPROVED',owner_final_amount_satang=10000 WHERE ot_id='ot'`).run();return run();};}return statement;};
+ const batch=h.DB.batch.bind(h.DB);h.DB.batch=async statements=>{h.sqlite.prepare(`UPDATE ot_requests SET status='APPROVED',owner_final_status='APPROVED',owner_final_amount_satang=10000 WHERE ot_id='ot'`).run();return batch(statements);};
  const before=read(h);
  await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/PAYROLL_SNAPSHOT_CHANGED_REVIEW_REQUIRED/);
  assert.deepEqual(read(h),before);
  assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM payroll_weekly`).get().n,0);
+ }finally{h.close();}
+});
+test('daily, weekly, and both outboxes roll back together when the batch fails',async()=>{
+ const h=fixture(finalized);try{
+ const before=read(h);h.DB.failAt=3;
+ await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/fixture batch failure/);
+ assert.deepEqual(read(h),before);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM payroll_weekly').get().n,0);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM sync_jobs').get().n,0);
+ }finally{h.close();}
+});
+test('a lost response after committing payroll leaves both sync outboxes recoverable',async()=>{
+ const h=fixture(finalized);try{
+ h.env.SHEETS_SYNC_ENABLED='false';h.DB.failAfterCommit=true;
+ await assert.rejects(recalculateDailyPayroll(h.env,'X',date),/fixture crash after commit/);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM payroll_weekly').get().n,1);
+ const jobs=h.sqlite.prepare(`SELECT entity_type,status FROM sync_jobs ORDER BY entity_type`).all().map(x=>({...x}));
+ assert.deepEqual(jobs,[{entity_type:'DAILY_PAYROLL',status:'PENDING'},{entity_type:'WEEKLY_PAYROLL',status:'PENDING'}]);
+ assert.equal(h.queue.length,0);
  }finally{h.close();}
 });

@@ -49,6 +49,8 @@ export interface Env {
   /** Private, append-only reporting mirror for owner withdrawals and returns. */
   SHEET_PERSONAL_USE_RAW?: string;
   SHEET_EXPENSE_DAILY: string;
+  DAILY_LEGACY_WRITER_GATE_ENABLED?: string;
+  EXPENSE_STABLE_PROJECTION_ENABLED?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;

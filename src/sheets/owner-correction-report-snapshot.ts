@@ -26,7 +26,7 @@ function day(value:unknown):string|null{
   const result=new Date(Date.UTC(1899,11,30)+n*86400000).toISOString().slice(0,10);return isIsoDate(result)?result:null;
 }
 
-/** Capture stable report evidence for a modern expense with at most one verifiable detail row. */
+/** Capture stable report evidence, including every independently verified detail row. */
 export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrectionSnapshot,dailyMetadataId:number,ports:Ports=defaults,view?:CorrectionReportView):Promise<CorrectionReportSnapshot|null>{
   if(env.SHEET_EXPENSE_DAILY!=="รายวัน"||env.SHEET_EXPENSE_RAW!=="V52_EXPENSE_RAW"||(env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ")!=="รายละเอียดการซื้อ"||!snapshot.expenseId||snapshot.status!=="CONFIRMED"||!Number.isSafeInteger(snapshot.amountSatang)||snapshot.amountSatang<=0||!Number.isSafeInteger(dailyMetadataId)||dailyMetadataId<1||!isIsoDate(snapshot.transactionDate))return null;
   if(view&&(!/^owner_correction_[A-Za-z0-9_-]{8,128}$/.test(view.correctionId)||view.title!==`__MP_REPORT_${view.correctionId}_${view.period.replace("-","")}`||view.period!==snapshot.transactionDate.slice(0,7)||!Number.isSafeInteger(view.sheetId)||view.sheetId<1||!Number.isSafeInteger(view.metadataId)||view.metadataId<1))return null;
@@ -52,8 +52,9 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   // held by the independent identity and report checks.
   if(legacy&&(metadata.rowIndex<4||metadata.rowIndex>=normalized[14]!.endRow!))return null;
   const clean=values[4]||[],raw=values[5]||[],details=values[6]||[],flowValues=values[8]||[],daily=values[9]||[],matchingClean=clean.filter(row=>row[1]===cleanId),matchingRaw=raw.filter(row=>row[0]===snapshot.expenseId),matchingDetails=details.filter(row=>row[1]===snapshot.expenseId);
-  if(matchingClean.length!==1||matchingRaw.length!==1||matchingDetails.length>1)return null;
-  if(matchingDetails.length===1){const item=matchingDetails[0]!,line=money(item[11]);if(typeof item[0]!=="string"||!item[0]||details.filter(value=>value[0]===item[0]).length!==1||line===null||line<=0||item[13]!==snapshot.amountSatang/100||item[14]!==snapshot.category||item[16]!=="CONFIRMED")return null;}
+  if(matchingClean.length!==1||matchingRaw.length!==1||matchingDetails.length>300)return null;
+  const detailCounts=new Map<unknown,number>();for(const row of details)detailCounts.set(row[0],(detailCounts.get(row[0])||0)+1);
+  for(const item of matchingDetails){const line=money(item[11]);if(typeof item[0]!=="string"||!item[0]||detailCounts.get(item[0])!==1||line===null||line<=0||item[13]!==snapshot.amountSatang/100||item[14]!==snapshot.category||item[16]!=="CONFIRMED")return null;}
   const c=matchingClean[0]!,r=matchingRaw[0]!;
   if(day(c[0])!==snapshot.transactionDate||c[2]!==snapshot.description||c[3]!==snapshot.amountSatang/100||c[4]!== (legacy?legacySourceWallet(snapshot.paymentKey,snapshot.sourceWallet):snapshot.sourceWallet)||c[5]!==snapshot.category||c[6]!== (legacy?"LEGACY":"V52_CONFIRMED")||day(r[1])!==snapshot.transactionDate||r[2]!==snapshot.description||r[3]!==snapshot.amountSatang/100||r[4]!==snapshot.paymentKey||r[5]!==snapshot.sourceWallet||r[6]!==snapshot.category||r[7]!=="CONFIRMED")return null;
   const [year,month,dayOfMonth]=snapshot.transactionDate.split("-").map(Number);let posting:ReturnType<typeof resolvePayment>;try{posting=resolvePayment(daily.slice(0,3),snapshot.paymentKey,year!,month!,dayOfMonth!);}catch{return null;}
@@ -75,7 +76,7 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   const otherRowsDigest=await ports.digest([clean.filter(item=>item[1]!==cleanId),raw.filter(item=>item[0]!==snapshot.expenseId),details.filter(item=>item[1]!==snapshot.expenseId),otherDaily]);
   // Keep document/order identity and receipt facts immutable while allowing
   // the explicitly reviewed raw fields and summary projections to change.
-  const targetEvidenceDigest=await ports.digest([[0,7,8,9,10,11,12,13,14,15,16].map(index=>r[index]??null),matchingDetails.map(item=>[0,1,2,4,5,6,7,8,9,10,11,16].map(index=>item[index]??null))]);
+  const targetEvidenceDigest=await ports.digest([[0,7,8,9,10,11,12,13,14,15,16].map(index=>r[index]??null),matchingDetails.slice().sort((a,b)=>String(a[0])<String(b[0])?-1:String(a[0])>String(b[0])?1:0).map(item=>[0,1,2,4,5,6,7,8,9,10,11,16].map(index=>item[index]??null))]);
   return {month:selected.slice(0,7),expenseId:snapshot.expenseId,date:snapshot.transactionDate,postingDate,description:snapshot.description,amountSatang:snapshot.amountSatang,paymentKey:snapshot.paymentKey,wallet:snapshot.sourceWallet,category:snapshot.category,total,categories:categories as number[],bankTotal,...(bankStatus?{bankStatus}:{}),otherRowsDigest,targetEvidenceDigest,formulaDigest,flowFormulaDigest,flowAlert,flow};
 }
 

@@ -46,7 +46,10 @@ export async function confirmOwnerCorrection(env:Env,owner:OwnerReviewIdentity,i
   const headers=await ports.headers(env,`${quote(env.SHEET_EXPENSE_DAILY)}!A1:W3`);if(await correctionPeriodHeaderDigest(headers)!==periods.headerDigest)return "STALE";
   try{if(correctionPostingDate(before,headers).slice(0,7)!==correctionPostingDate(after,headers).slice(0,7))return "MOVE_REVIEW";}catch{return "SHEET_REVIEW";}
   if(!await ports.dedupe(env,before,after))return "DUPLICATE";
-  const posting=await ports.posting(env,before.expenseId);if(posting.items.length>1)return "ALLOCATION";
+  const posting=await ports.posting(env,before.expenseId);
+  // Multiple receipt lines do not make a description, date or payment edit
+  // an allocation. Amount and category edits remain held until allocated.
+  if(posting.items.length>1&&(before.amountSatang!==after.amountSatang||before.category!==after.category))return "ALLOCATION";
   const linked=await ports.bootstrap(env,owner,id,before);if(linked==="PENDING")return "METADATA_PENDING";if(linked==="STALE")return "STALE";if(linked!=="READY")return "SHEET_REVIEW";
   const report=await ports.view(env,owner,id,before,before.transactionDate.slice(0,7));if(report.kind==="PENDING")return "REPORT_PENDING";if(report.kind==="STALE")return "STALE";if(report.kind!=="READY")return "SHEET_REVIEW";
   const prepared=await ports.plan(env,before,after,id,undefined,report.view);if(!prepared)return "SHEET_REVIEW";if("kind" in prepared)return "LEGACY_BANK_REVIEW";let plan=prepared;

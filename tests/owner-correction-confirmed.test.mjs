@@ -82,6 +82,14 @@ test('a card cutoff that moves the posting month is held before any sheet mutati
     assert.equal(await confirmOwnerCorrection(h.env,owner,id,1,'trace',h.ports),'MOVE_REVIEW');assert.equal(h.sqlite.prepare('SELECT payment_key FROM expense_events').get().payment_key,'transfer');assert.equal(h.enqueued.length,0);
   }finally{h.close()}
 });
+test('multiple receipt lines hold amount and category but permit unrelated fields to reach verification',async()=>{
+  for(const [field,value,held] of [['category','transport',true],['amountSatang','2100',true],['description','Driver updated',false],['transactionDate','2026-10-27',false],['payment',{paymentKey:'cash',sourceWallet:'CASH_DRAWER'},false]]){
+    const h=await setup();try{
+      const id=await createOwnerCorrectionDraft(h.env,owner,h.before,field,value);await grantSyntheticOpenPeriods(h,id);h.ports.posting=async()=>({items:[{},{}]});let commits=0;h.ports.commit=async()=>{commits++;return null};
+      assert.equal(await confirmOwnerCorrection(h.env,owner,id,1,'trace',h.ports),held?'ALLOCATION':'STALE',field);assert.equal(commits,held?0:1);assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sync_jobs').get().n,0);
+    }finally{h.close()}
+  }
+});
 test('LINE displays the final old/new comparison and only the final owner action starts the durable job',async()=>{
   const h=await setup();try{
     const services={periods:h.ports.periods,decision:async()=>{throw Error('not needed')},confirmed:(env,actor,id,version,trace)=>confirmOwnerCorrection(env,actor,id,version,trace,h.ports)};

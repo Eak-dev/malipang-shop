@@ -88,3 +88,11 @@ test('one verified receipt line keeps its original evidence while its category c
   next.values[6][0][6]='evidence changed';const altered=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,altered),false);
   next.values[6].push(detail(changed));assert.equal(await captureOwnerCorrectionReport(next.env,changed,42,next.ports),null);
 });
+test('multiple distinct receipt lines preserve all evidence for unrelated corrections',async()=>{
+  const changed={...before,description:'Driver updated'},old=fixture(),next=fixture(changed);
+  const detail=(id,line)=>{const row=Array(17).fill(null);Object.assign(row,{0:id,1:before.expenseId,2:'doc_qa',4:'vendor',6:`synthetic item ${id}`,11:line,13:2000,14:'general',16:'CONFIRMED'});return row;};
+  const first=detail('item_1',800),second=detail('item_2',1200);old.values[6].push(first,second);next.values[6].push(second,first);
+  const a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.ok(a);assert.ok(b);assert.equal(ownerCorrectionReportMatches(a,b),true);
+  next.values[6][0][6]='evidence changed';const altered=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,altered),false);
+  next.values[6][0][0]='item_1';assert.equal(await captureOwnerCorrectionReport(next.env,changed,42,next.ports),null);
+});

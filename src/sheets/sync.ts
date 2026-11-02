@@ -6,6 +6,7 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {processOwnerCorrectionRuntime} from "./owner-correction-runtime";
+import {CorrectionDailyFenceBusyError} from "./owner-correction-daily-write-fence";
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
@@ -126,8 +127,9 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
   if(job.entityType==="EXPENSE_CORRECTION"){
     if(env.OWNER_EXPENSE_CORRECTION_ENABLED!=="true")return "IGNORED";
-    const outcome=await processOwnerCorrectionRuntime(env,{expenseId:job.entityKey,version:job.entityVersion});
-    return outcome==="COMPLETED"?"PROCESSED":outcome==="BUSY"?"BUSY":outcome==="REVIEW"?"REVIEW":"IGNORED";
+    try{const outcome=await processOwnerCorrectionRuntime(env,{expenseId:job.entityKey,version:job.entityVersion});
+      return outcome==="COMPLETED"?"PROCESSED":outcome==="BUSY"?"BUSY":outcome==="REVIEW"?"REVIEW":"IGNORED";
+    }catch(error){if(error instanceof CorrectionDailyFenceBusyError)return "BUSY";throw error;}
   }
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){
     if(job.entityType==="PERSONAL_USE")return personalUseClaimOutcome(env,job,claimNow);
@@ -210,6 +212,12 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
     return"PROCESSED";
   }catch(error){
+    if(error instanceof CorrectionDailyFenceBusyError&&job.entityType==="EXPENSE"){
+      // Contention is not a failed financial job. The raw mirror is
+      // idempotent; release this exact claim and requeue the daily step.
+      await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`)
+        .bind(new Date().toISOString(),job.entityKey,job.entityVersion,leaseToken).run();return "BUSY";
+    }
     const attemptRow=await env.DB.prepare(`SELECT attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=? AND lease_token=?`).bind(job.entityType,job.entityKey,job.entityVersion,leaseToken).first<{attempt_count:number}>(),attempt=Math.max(retryAttempt,Number(attemptRow?.attempt_count||1)),retryError=error instanceof Error?error:new Error(String(error));
     Object.defineProperty(retryError,"retryAttempt",{value:attempt,configurable:true});
     if(personalUse&&personalUseWriteOutcomeUncertain&&personalUseAmbiguityLeaseUntil&&retryError instanceof SheetsMutationOutcomeUnknownError){

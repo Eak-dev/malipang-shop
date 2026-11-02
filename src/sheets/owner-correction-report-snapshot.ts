@@ -7,6 +7,7 @@ import {legacySourceWallet,resolvePayment} from "./daily-expense";
 import {matchesOwnerCorrectionIdentity} from "./owner-correction-identity";
 import type {CorrectionReportView} from "./owner-correction-report-view";
 import {normalizeOwnerCorrectionFormula} from "./owner-correction-formula";
+import {ownerCorrectionReportGroup} from "./owner-correction-report-group";
 
 // Verified current report formulas; only extending daily range ends may vary.
 const formulaDigest="a0527cc06ec7543c6cdf87beff0fea5ed6d2ceeeaee966036e9ca10b86201f75";
@@ -80,13 +81,11 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   return {month:selected.slice(0,7),expenseId:snapshot.expenseId,date:snapshot.transactionDate,postingDate,description:snapshot.description,amountSatang:snapshot.amountSatang,paymentKey:snapshot.paymentKey,wallet:snapshot.sourceWallet,category:snapshot.category,total,categories:categories as number[],bankTotal,...(bankStatus?{bankStatus}:{}),otherRowsDigest,targetEvidenceDigest,formulaDigest,flowFormulaDigest,flowAlert,flow};
 }
 
-const groups:Record<string,number>={rent:0,staff:1,ingredients:2,fillings:3,packaging:4,utilities:5,gas:6,transport:7,equipment:8,marketing:9,general:10,bank_fee:10,cleaning:11};
-const reportGroup=(snapshot:CorrectionReportSnapshot)=>snapshot.date<"2026-08-01"&&snapshot.category==="bank_fee"?11:groups[snapshot.category];
 const close=(a:number,b:number)=>Number.isFinite(a)&&Number.isFinite(b)&&Math.abs(a-b)<0.005;
 /** A mismatch is held for review; this verifier never tries to repair the report. */
 export function ownerCorrectionReportMatches(before:CorrectionReportSnapshot,after:CorrectionReportSnapshot):boolean{
   if(!before||!after||!before.expenseId||before.expenseId!==after.expenseId||!before.paymentKey||!after.paymentKey||before.month!==after.month||before.formulaDigest!==formulaDigest||after.formulaDigest!==formulaDigest||before.flowFormulaDigest!==flowFormulaDigest||after.flowFormulaDigest!==flowFormulaDigest||before.flowAlert!==after.flowAlert||!(/^[0-9a-f]{64}$/.test(before.otherRowsDigest))||before.otherRowsDigest!==after.otherRowsDigest||!(/^[0-9a-f]{64}$/.test(before.targetEvidenceDigest))||before.targetEvidenceDigest!==after.targetEvidenceDigest||!isIsoDate(before.date)||!isIsoDate(after.date)||!isIsoDate(before.postingDate)||!isIsoDate(after.postingDate)||before.date.slice(0,7)!==before.month||after.date.slice(0,7)!==after.month||!Number.isSafeInteger(before.amountSatang)||before.amountSatang<=0||!Number.isSafeInteger(after.amountSatang)||after.amountSatang<=0||!Array.isArray(before.categories)||!Array.isArray(after.categories)||before.categories.length!==12||after.categories.length!==12||!Array.isArray(before.flow)||!Array.isArray(after.flow)||before.flow.length!==61||after.flow.length!==61)return false;
-  const oldGroup=reportGroup(before),newGroup=reportGroup(after);if(oldGroup===undefined||newGroup===undefined)return false;
+  const oldGroup=ownerCorrectionReportGroup(before.category,before.date),newGroup=ownerCorrectionReportGroup(after.category,after.date);if(oldGroup===undefined||newGroup===undefined)return false;
   const oldAmount=before.amountSatang/100,newAmount=after.amountSatang/100;
   if(!close(after.total-before.total,newAmount-oldAmount))return false;
   for(let i=0;i<12;i++){const expected=(i===newGroup?newAmount:0)-(i===oldGroup?oldAmount:0);if(!close(after.categories[i]!-before.categories[i]!,expected))return false;}

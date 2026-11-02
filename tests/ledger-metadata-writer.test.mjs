@@ -54,7 +54,7 @@ test('detail cancellation changes only Q and T, never A/B and evidence',()=>{
 });
 test('writer dispatches metadata DataFilter after fence and rejects unknown result',async()=>{
   auth.getGoogleAccessToken=async()=> 'synthetic';let dispatch=0,received;
-  const env={GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
+  const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
   globalThis.fetch=async(url,init)=>{received={url:String(url),body:JSON.parse(init.body)};return new Response(JSON.stringify({totalUpdatedRows:1,responses:[{}]}),{status:200})};
   const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4])};
   await client.writeValuesByMetadataPrototype(env,p,async()=>{dispatch++});
@@ -66,9 +66,12 @@ test('writer dispatches metadata DataFilter after fence and rejects unknown resu
 });
 test('a lost response or failed pre-dispatch fence never appears successful',async()=>{
   auth.getGoogleAccessToken=async()=> 'synthetic';const p={identity,witness,identityRows:rows,values:['exp_a',...Array(16).fill('fixture')],guard:guard(17,[4])};let calls=0;
-  const env={GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
+  const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'synthetic',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true'};
   globalThis.fetch=async()=>{calls++;return new Response('not-json')};
   await assert.rejects(client.writeValuesByMetadataPrototype({GOOGLE_SPREADSHEET_ID:'synthetic'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
+  await assert.rejects(client.writeValuesByMetadataPrototype({...env,RUNTIME_MODE:'production'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
+  await assert.rejects(client.writeValuesByMetadataPrototype({...env,SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'synthetic'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
+  await assert.rejects(client.writeValuesByMetadataPrototype({...env,GOOGLE_SPREADSHEET_ID:'production'},p,async()=>{}),{message:'LEDGER_METADATA_WRITER_DISABLED'});assert.equal(calls,0);
   const changed={...p,guard:guard(17,[4])};changed.guard.observed[4].formula='=1+1';
   await assert.rejects(client.writeValuesByMetadataPrototype(env,changed,async()=>{}),/PREIMAGE/);assert.equal(calls,0);
   await assert.rejects(client.writeValuesByMetadataPrototype(env,{...p,witness:{...witness,sheetId:99}},async()=>{}),/METADATA_INVALID/);assert.equal(calls,0);

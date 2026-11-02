@@ -20,6 +20,8 @@ export interface Env {
   SHEETS_LEDGER_IDENTITY_INSPECTION?: string;
   /** Reserved for isolated UAT only; never enable against production. */
   SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE?: string;
+  SHEETS_LEDGER_UAT_SPREADSHEET_ID?: string;
+  SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;

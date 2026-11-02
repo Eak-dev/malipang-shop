@@ -94,7 +94,7 @@ test('cash from shop bank stays in cash amount column and RAW retains both truth
 });
 
 test('cash-source support does not opt historical item rows into a summary rewrite',async()=>{
-  const env={SHEET_EXPENSE_DAILY:'รายวัน',DB:{prepare(sql){assert.match(sql,/SELECT entity_key,row_number FROM sheet_row_index/);return{bind(){return this;},async all(){return{results:[{entity_key:expense.expenseId+'|item_fixture',row_number:10}]};}};}}};
+  const env={SHEET_EXPENSE_DAILY:'รายวัน',DB:{prepare(sql){if(sql.includes('sqlite_master'))return{async first(){return null;}};assert.match(sql,/SELECT entity_key,row_number FROM sheet_row_index/);return{bind(){return this;},async all(){return{results:[{entity_key:expense.expenseId+'|item_fixture',row_number:10}]};}};}}};
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,{...expense,amountBaht:123},null,[]);
   assert.deepEqual(result.placements,[]);assert.equal(result.replacedLegacySummary,false);
 });

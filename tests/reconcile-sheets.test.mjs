@@ -29,6 +29,16 @@ test('reconcile selects weekly payroll rows using Thursday cycle keys',async()=>
   assert.deepEqual(weekly.args.slice(0,2),['2026-07-23','2026-07-30']);
 });
 
+test('reconcile excludes corrected expenses and uses the current expense version',async()=>{
+  const {expenseSqlite}=await import('./helpers/expense-sqlite.mjs'),h=expenseSqlite();try{
+    const insert=h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES(?,?,?,?,?,'cash','CASH_DRAWER','general','2026-10-28','CONFIRMED','now',?)`);
+    insert.run('exp_regular','msg_regular','fixture_staff','synthetic',10000,4);insert.run('exp_corrected','msg_corrected','fixture_staff','synthetic',20000,3);
+    h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('corrected_job','EXPENSE_CORRECTION','exp_corrected',3,'trace','COMPLETED',1,'now')`).run();
+    const result=await reconcileSheets(h.env,{fromDate:'2026-10-28',toDate:'2026-10-28'}),jobs=h.queue.map(item=>item.body).filter(item=>item.entityType==='EXPENSE');
+    assert.equal(result.counts.EXPENSE,1);assert.deepEqual(jobs.map(({entityKey,entityVersion})=>({entityKey,entityVersion})),[{entityKey:'exp_regular',entityVersion:4}]);
+  }finally{h.close()}
+});
+
 test('large forced sheet batches are spread across minute windows',async()=>{
   const sent=[],bound=[];
   const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(){return[];}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};

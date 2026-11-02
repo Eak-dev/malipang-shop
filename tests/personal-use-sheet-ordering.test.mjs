@@ -52,7 +52,7 @@ function harness(){
   sqlite.prepare(`INSERT INTO owner_personal_transactions(personal_use_id,message_id,line_user_id,transaction_type,description,amount_satang,source_wallet,transaction_date,status,trace_id,submitted_by_employee_id,branch_id,reviewed_by_employee_id,approved_at,created_at,updated_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,'message_ordering_fixture','line_owner','PERSONAL_USE','sanitized ordering fixture',100,'SHOP_BANK','2026-09-06','CONFIRMED','trace_ordering','OWN001','B001','OWN001',now,now,now,2);
   sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`).run('sync_ordering_v2','PERSONAL_USE',id,2,'trace_ordering_v2',now,now);
   const DB=new SqliteD1(sqlite),queued=[];
-  const env={DB,SHEETS_SYNC_ENABLED:'true',SHEET_PERSONAL_USE_RAW:'V52_PERSONAL_USE_RAW',JOB_QUEUE:{async send(body,options={}){queued.push({body,...options});},async sendBatch(messages){queued.push(...messages);}}};
+  const env={DB,APP_ENV:'production',SHEETS_SYNC_ENABLED:'true',SHEET_PERSONAL_USE_RAW:'V52_PERSONAL_USE_RAW',JOB_QUEUE:{async send(body,options={}){queued.push({body,...options});},async sendBatch(messages){queued.push(...messages);}}};
   return{sqlite,DB,env,queued,id,close(){sqlite.close();}};
 }
 

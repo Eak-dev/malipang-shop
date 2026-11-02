@@ -1,0 +1,20 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {inspectOwnerCorrectionReportDeduplication as inspect} from '../dist/sheets/owner-correction-report-inspection.js';
+const before={expenseId:'exp_qa_one',status:'CONFIRMED',transactionDate:'2026-10-28',amountSatang:200000},after={...before,amountSatang:250000};
+const row=['exp_qa_one','2026-10-28',null,2000,null,null,null,'CONFIRMED'];row[16]='ORDER';
+const hash='afaf2261f5e34ea65ce876ef731e34c1b30555cf9dbd6be97c7ab91863102754';
+test('live report preflight checks full reads, formula fingerprint and stable snapshots',async()=>{
+  const env={SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW'};let formula="formula 'รายวัน'!U5:U3421",rows=[row],calls=0;
+  const ports={formula:async()=>[[[formula]]],values:async()=>{calls++;return structuredClone(rows)},digest:async()=>hash};
+  assert.equal(await inspect(env,before,after,ports),true);assert.equal(calls,2);
+  formula+=` EXCLUDE ${before.expenseId}`;assert.equal(await inspect(env,before,after,ports),false);formula="formula 'รายวัน'!U5:U3421";
+  formula="formula 'รายวัน'!U5:U3420";assert.equal(await inspect(env,before,after,ports),false);formula="formula 'รายวัน'!U5:U3421";
+  assert.equal(await inspect({...env,SHEET_EXPENSE_RAW:'other'},before,after,ports),false);
+  ports.digest=async()=> 'unexpected';assert.equal(await inspect(env,before,after,ports),false);ports.digest=async()=>hash;
+  ports.formula=async()=>[];assert.equal(await inspect(env,before,after,ports),false);ports.formula=async()=>[[[formula]]];
+  let formulaReads=0;ports.formula=async()=>[[[formulaReads++?'changed':formula]]];assert.equal(await inspect(env,before,after,ports),false);ports.formula=async()=>[[[formula]]];
+  const duplicate=[...row];duplicate[0]='other';duplicate[3]=2500;rows=[row,duplicate];assert.equal(await inspect(env,before,after,ports),false);rows=[row];
+  calls=0;ports.values=async()=>{calls++;return calls===1?[row]:[]};assert.equal(await inspect(env,before,after,ports),false);
+  ports.values=async()=>{throw Error('unavailable')};await assert.rejects(inspect(env,before,after,ports),/unavailable/);
+});

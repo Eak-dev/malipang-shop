@@ -31,12 +31,137 @@ async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,b
   if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
+export interface MetadataColumnWrite {metadataId:number;columnIndex:number;value:string|number|boolean}
+/** Null entries are intentionally skipped by the Sheets values API. */
+export function buildMetadataColumnWriteRequest(writes:MetadataColumnWrite[]):unknown{
+  const seen=new Set<number>();
+  const data=writes.map(write=>{
+    if(!Number.isSafeInteger(write.metadataId)||write.metadataId<1||!Number.isInteger(write.columnIndex)||write.columnIndex<0||write.columnIndex>25||seen.has(write.metadataId))throw new Error("INVALID_METADATA_COLUMN_WRITE");
+    seen.add(write.metadataId);
+    const cells=Array<null|string|number|boolean>(write.columnIndex).fill(null);cells.push(write.value);
+    return {dataFilter:{developerMetadataLookup:{metadataId:write.metadataId}},majorDimension:"ROWS",values:[cells]};
+  });
+  return {valueInputOption:"RAW",data};
+}
+/** Use unique row metadata rather than a stale A1 row number for category-only writes. */
+export async function batchWriteMetadataColumns(env:Env,writes:MetadataColumnWrite[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{
+  if(!writes.length)return;
+  const body=buildMetadataColumnWriteRequest(writes);
+  const result=await sheetsFetch(env,"/values:batchUpdateByDataFilter",{method:"POST",body:JSON.stringify(body)},true,beforeMutationDispatch).then(r=>r.json()) as {totalUpdatedRows?:number;totalUpdatedCells?:number};
+  if(result.totalUpdatedRows!==writes.length||result.totalUpdatedCells!==writes.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_COLUMN_WRITE_COUNT_MISMATCH"));
+}
+export interface MetadataRowPatch{metadataId:number;cells:Array<{columnIndex:number;value:string|number|boolean}>}
+/** Explicit cells only: null skips a cell, empty string clears it. */
+export function buildMetadataRowPatchRequest(patches:MetadataRowPatch[],allowedColumns:number[]):unknown{
+  const allowed=new Set(allowedColumns),seen=new Set<number>();
+  if(!allowed.size||allowed.size!==allowedColumns.length||allowedColumns.some(index=>!Number.isInteger(index)||index<0||index>25))throw new Error("INVALID_METADATA_ALLOWED_COLUMNS");
+  const data=patches.map(patch=>{
+    if(!Number.isSafeInteger(patch.metadataId)||patch.metadataId<1||seen.has(patch.metadataId)||!patch.cells.length)throw new Error("INVALID_METADATA_ROW_PATCH");
+    seen.add(patch.metadataId);const cols=new Set<number>();
+    for(const cell of patch.cells){if(!allowed.has(cell.columnIndex)||cols.has(cell.columnIndex)||!["string","number","boolean"].includes(typeof cell.value)||(typeof cell.value==="number"&&!Number.isFinite(cell.value)))throw new Error("INVALID_METADATA_PATCH_CELL");cols.add(cell.columnIndex);}
+    const values:Array<null|string|number|boolean>=Array(Math.max(...cols)+1).fill(null);
+    for(const cell of patch.cells)values[cell.columnIndex]=cell.value;
+    return {dataFilter:{developerMetadataLookup:{metadataId:patch.metadataId}},majorDimension:"ROWS",values:[values]};
+  });
+  return {valueInputOption:"RAW",data};
+}
+export function metadataPatchResponseComplete(patches:MetadataRowPatch[],result:unknown):boolean{
+  if(!result||typeof result!=="object")return false;
+  const responses=(result as {responses?:Array<{dataFilter?:{developerMetadataLookup?:{metadataId?:number}};updatedRows?:number}>}).responses;
+  if(!Array.isArray(responses)||responses.length!==patches.length)return false;
+  const expected=new Set(patches.map(patch=>patch.metadataId)),seen=new Set<number>();
+  if(expected.size!==patches.length)return false;
+  for(const response of responses){const id=response.dataFilter?.developerMetadataLookup?.metadataId;if(!Number.isSafeInteger(id)||!expected.has(Number(id))||seen.has(Number(id))||response.updatedRows!==1)return false;seen.add(Number(id));}
+  return seen.size===expected.size;
+}
+/** Ambiguous responses are not automatically replayed; caller retains its lease. */
+export async function batchPatchMetadataRows(env:Env,patches:MetadataRowPatch[],allowedColumns:number[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{
+  if(!patches.length)return;
+  const body=buildMetadataRowPatchRequest(patches,allowedColumns);
+  const response=await sheetsFetch(env,"/values:batchUpdateByDataFilter",{method:"POST",body:JSON.stringify(body)},true,beforeMutationDispatch);
+  let result:unknown;try{result=await response.json();}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(!metadataPatchResponseComplete(patches,result))throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_ROW_PATCH_RESPONSE_MISMATCH"));
+}
+export interface SheetRowMetadata {metadataId:number;metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
+export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number;metadataId?:number}
+/** A deleted metadata ID must be checked directly; key searches cannot prove absence. */
+export async function getSheetRowMetadataById(env:Env,id:number):Promise<SheetRowMetadata|null>{
+  if(!Number.isSafeInteger(id)||id<1)throw new Error("INVALID_METADATA_ID");
+  let response:Response;try{response=await sheetsFetch(env,`/developerMetadata/${id}`,{method:"GET"});}catch(error){if(error instanceof SheetsHttpError&&error.status===404)return null;throw error;}
+  const metadata=await response.json() as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}};
+  const range=metadata.location?.dimensionRange;
+  if(metadata.metadataId!==id||!metadata.metadataKey||!metadata.metadataValue||!range||!Number.isSafeInteger(range.sheetId)||Number(range.sheetId)<0||range.dimension!=="ROWS"||!Number.isSafeInteger(range.startIndex)||Number(range.startIndex)<0||range.endIndex!==Number(range.startIndex)+1)throw new Error("INVALID_ROW_METADATA");
+  return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(range.sheetId),rowIndex:Number(range.startIndex)};
+}
+export interface SheetIdentityMetadata{metadataId:number;metadataKey:string;metadataValue:string;sheetId:number}
+/** Verify a metadata marker attached to a whole sheet, not a row. */
+export async function getSheetIdentityMetadataById(env:Env,id:number):Promise<SheetIdentityMetadata|null>{
+  if(!Number.isSafeInteger(id)||id<1)throw new Error("INVALID_METADATA_ID");
+  let response:Response;try{response=await sheetsFetch(env,`/developerMetadata/${id}`,{method:"GET"});}catch(error){if(error instanceof SheetsHttpError&&error.status===404)return null;throw error;}
+  const metadata=await response.json() as {metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{sheetId?:number;dimensionRange?:unknown}};
+  if(metadata.metadataId!==id||!metadata.metadataKey||!metadata.metadataValue||!Number.isSafeInteger(metadata.location?.sheetId)||Number(metadata.location?.sheetId)<0||metadata.location?.dimensionRange!==undefined)throw new Error("INVALID_SHEET_METADATA");
+  return {metadataId:id,metadataKey:metadata.metadataKey,metadataValue:metadata.metadataValue,sheetId:Number(metadata.location!.sheetId)};
+}
+/** Create associations only after the caller has reverified each row identity. */
+export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<SheetRowMetadata[]>{
+  if(!rows.length)return [];
+  const identities=new Set<string>(),locations=new Set<string>(),ids=new Set<number>();
+  const requests=rows.map(row=>{
+    const identity=`${row.metadataKey}\u0000${row.metadataValue}`,location=`${row.sheetId}\u0000${row.rowIndex}\u0000${row.metadataKey}`;
+    if(!row.metadataKey||!row.metadataValue||!Number.isSafeInteger(row.sheetId)||row.sheetId<0||!Number.isSafeInteger(row.rowIndex)||row.rowIndex<0||identities.has(identity)||locations.has(location)||(row.metadataId!==undefined&&(!Number.isSafeInteger(row.metadataId)||row.metadataId<1||row.metadataId>2147483647||ids.has(row.metadataId))))throw new Error("INVALID_METADATA_CREATE");
+    identities.add(identity);locations.add(location);
+    if(row.metadataId!==undefined)ids.add(row.metadataId);
+    return {createDeveloperMetadata:{developerMetadata:{...(row.metadataId===undefined?{}:{metadataId:row.metadataId}),metadataKey:row.metadataKey,metadataValue:row.metadataValue,visibility:"DOCUMENT",location:{dimensionRange:{sheetId:row.sheetId,dimension:"ROWS",startIndex:row.rowIndex,endIndex:row.rowIndex+1}}}}};
+  });
+  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);
+  // Once dispatched, a truncated or invalid response cannot prove whether the
+  // metadata was created. The caller must preserve its fence and re-observe.
+  let result:{replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}}>};
+  try{result=await response.json() as typeof result;}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
+  if(!result||typeof result!=="object"||result.replies?.length!==rows.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_COUNT_MISMATCH"));
+  return rows.map((row,index)=>{
+    const metadata=result.replies?.[index]?.createDeveloperMetadata?.developerMetadata,range=metadata?.location?.dimensionRange,id=Number(metadata?.metadataId);
+    if(!Number.isSafeInteger(id)||id<1||(row.metadataId!==undefined&&id!==row.metadataId)||metadata?.metadataKey!==row.metadataKey||metadata.metadataValue!==row.metadataValue||range?.sheetId!==row.sheetId||range.dimension!=="ROWS"||range.startIndex!==row.rowIndex||range.endIndex!==row.rowIndex+1)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_IDENTITY_MISMATCH"));
+    return {...row,metadataId:id};
+  });
+}
+/** Search document-visible row metadata; malformed or duplicate associations fail closed. */
+export async function searchSheetRowMetadata(env:Env,metadataKey:string):Promise<SheetRowMetadata[]>{
+  if(!metadataKey.trim())throw new Error("INVALID_METADATA_KEY");
+  const result=await sheetsFetch(env,"/developerMetadata:search",{method:"POST",body:JSON.stringify({dataFilters:[{developerMetadataLookup:{metadataKey,visibility:"DOCUMENT"}}]})}).then(r=>r.json()) as {matchedDeveloperMetadata?:Array<{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}>} ;
+  const ids=new Set<number>();
+  return (result.matchedDeveloperMetadata||[]).map(item=>{
+    const m=item.developerMetadata,d=m?.location?.dimensionRange,id=Number(m?.metadataId),sheetId=Number(d?.sheetId),start=Number(d?.startIndex),end=Number(d?.endIndex);
+    if(!Number.isSafeInteger(id)||id<1||ids.has(id)||m?.metadataKey!==metadataKey||!m.metadataValue||!Number.isSafeInteger(sheetId)||sheetId<0||d?.dimension!=="ROWS"||!Number.isSafeInteger(start)||start<0||end!==start+1)throw new Error("INVALID_ROW_METADATA");
+    ids.add(id);return {metadataId:id,metadataKey,metadataValue:m.metadataValue,sheetId,rowIndex:start};
+  });
+}
+/** Read each specific metadata ID exactly once; missing or ambiguous IDs fail closed. */
+export async function readSheetRowsByMetadata(env:Env,metadataIds:number[]):Promise<Map<number,unknown[]>>{
+  if(!metadataIds.length)return new Map();
+  const wanted=new Set(metadataIds);if(wanted.size!==metadataIds.length||metadataIds.some(id=>!Number.isSafeInteger(id)||id<1))throw new Error("INVALID_METADATA_IDS");
+  const dataFilters=metadataIds.map(metadataId=>({developerMetadataLookup:{metadataId}}));
+  const result=await sheetsFetch(env,"/values:batchGetByDataFilter",{method:"POST",body:JSON.stringify({dataFilters,majorDimension:"ROWS",valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"})}).then(r=>r.json()) as {valueRanges?:Array<{valueRange?:{values?:unknown[][]};dataFilters?:Array<{developerMetadataLookup?:{metadataId?:number}}>}>};
+  const rows=new Map<number,unknown[]>();
+  for(const match of result.valueRanges||[]){
+    const ids=(match.dataFilters||[]).map(filter=>filter.developerMetadataLookup?.metadataId);
+    if(ids.length!==1||!Number.isSafeInteger(ids[0])||!wanted.has(Number(ids[0]))||rows.has(Number(ids[0]))||(match.valueRange?.values?.length||0)>1)throw new Error("AMBIGUOUS_METADATA_ROW");
+    rows.set(Number(ids[0]),match.valueRange?.values?.[0]||[]);
+  }
+  if(rows.size!==wanted.size)throw new Error("MISSING_METADATA_ROW");
+  return rows;
+}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
-export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true);}
-export async function batchUpdateSpreadsheet(env:Env,requests:unknown[]):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true);}
+export async function batchClearValues(env:Env,ranges:string[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true,beforeMutationDispatch);}
+export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);}
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
 export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+}
+/** Numeric date serials are required when comparing accounting periods independent of locale. */
+export async function batchGetSheetSerialValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+  if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"SERIAL_NUMBER"});for(const range of ranges)query.append("ranges",range);
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
@@ -44,11 +169,27 @@ export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promis
   const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
+export interface SheetProtectedRange{protectedRangeId?:number;description?:string;range?:{sheetId?:number;startRowIndex?:number;endRowIndex?:number;startColumnIndex?:number;endColumnIndex?:number};warningOnly?:boolean;requestingUserCanEdit?:boolean;unprotectedRanges?:unknown[];editors?:{users?:string[];groups?:string[];domainUsersCanEdit?:boolean}}
+/** Read-only protection metadata. Missing editor information is not proof of protection. */
+export async function getSheetProtectedRanges(env:Env,title:string):Promise<{sheetId:number;ranges:SheetProtectedRange[]}>{
+  const fields="sheets(properties(sheetId,title),protectedRanges(protectedRangeId,description,range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))";
+  const data=await sheetsFetch(env,`?fields=${encodeURIComponent(fields)}`,{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string};protectedRanges?:SheetProtectedRange[]}>};
+  const found=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);if(found.length!==1||!Number.isSafeInteger(found[0]?.properties?.sheetId)||Number(found[0]?.properties?.sheetId)<0)throw new Error("CORRECTION_PROTECTION_SHEET_INVALID");
+  return {sheetId:Number(found[0]!.properties!.sheetId),ranges:found[0]!.protectedRanges||[]};
+}
 export async function getSheetId(env:Env,title:string):Promise<number>{
   const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string}}>};
   const found=(data.sheets||[]).find(sheet=>sheet.properties?.title===title)?.properties?.sheetId;
   if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
   return Number(found);
+}
+export interface BasicSheetProperties{sheetId:number;title:string;hidden:boolean}
+/** Includes hidden tabs, and rejects duplicate or malformed sheet identities. */
+export async function getAllSheetProperties(env:Env):Promise<BasicSheetProperties[]>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title,hidden)",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties?:{sheetId?:number;title?:string;hidden?:boolean}}>};
+  const ids=new Set<number>(),titles=new Set<string>();return(data.sheets||[]).map(item=>{const p=item.properties,id=Number(p?.sheetId),title=p?.title;
+    if(!p||!Number.isSafeInteger(id)||id<0||typeof title!=="string"||!title||ids.has(id)||titles.has(title)||(p.hidden!==undefined&&typeof p.hidden!=="boolean"))throw new Error("INVALID_SHEET_PROPERTIES");
+    ids.add(id);titles.add(title);return{sheetId:id,title,hidden:p.hidden===true};});
 }
 export async function bootstrapSheets(env:Env):Promise<void>{
   const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));

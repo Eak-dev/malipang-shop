@@ -20,8 +20,15 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import { recoverVerifiedOwnerCorrection } from "./owner-correction-recovery";
+import { ownerCorrectionManualReviewSummary } from "../expense/owner-correction-manual-review";
+import { listOwnerCorrectionReviewQueue } from "./owner-correction-review-queue";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
+async function correctionReviewSchemaReady(env:Env,kind:"summary"|"manual"|"sync"):Promise<boolean>{
+  const names=kind==="summary"?["expense_owner_correction_manual_reviews"]:kind==="manual"?["expense_owner_correction_manual_reviews","expense_owner_corrections"]:["expense_owner_correction_sync","expense_owner_corrections","sync_jobs"];
+  const row=await env.DB.prepare(`SELECT COUNT(*) AS count FROM sqlite_master WHERE type='table' AND name IN (${names.map(()=>"?").join(",")})`).bind(...names).first<{count:number}>();return Number(row?.count||0)===names.length;
+}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
@@ -33,6 +40,15 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
+    if(request.method==="GET"&&url.pathname==="/admin/owner-correction/review-summary"){
+      if(!await correctionReviewSchemaReady(env,"summary"))return Response.json({ok:false,error:"CORRECTION_SCHEMA_UNAVAILABLE"},{status:503});
+      return Response.json({ok:true,reasons:await ownerCorrectionManualReviewSummary(env)});
+    }
+    if(request.method==="GET"&&url.pathname==="/admin/owner-correction/review-queue"){
+      const kind=url.searchParams.get("kind")||"sync";if(kind!=="sync"&&kind!=="manual")return Response.json({ok:false,error:"INVALID_CORRECTION_REVIEW_KIND"},{status:400});
+      if(!await correctionReviewSchemaReady(env,kind))return Response.json({ok:false,error:"CORRECTION_SCHEMA_UNAVAILABLE"},{status:503});
+      return Response.json({ok:true,kind,...await listOwnerCorrectionReviewQueue(env,kind,url.searchParams.get("cursor")||"")});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
@@ -70,6 +86,11 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});}
+    if(request.method==="POST"&&url.pathname==="/admin/owner-correction/recover"){
+      const body=await request.json().catch(()=>({})) as{correctionId?:unknown;reason?:unknown};
+      const result=await recoverVerifiedOwnerCorrection(env,typeof body.correctionId==="string"?body.correctionId:"",typeof body.reason==="string"?body.reason:"");
+      return Response.json({ok:result==="ENQUEUED",result},{status:result==="ENQUEUED"?200:409});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
       const purpose=typeof body.purpose==="string"?body.purpose:undefined;

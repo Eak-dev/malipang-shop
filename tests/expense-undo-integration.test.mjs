@@ -153,9 +153,9 @@ test('SQLite: new Undo version updates only its mapped mirrors; partial sink fai
   const originalWrite=sheetsClient.batchWriteValues,originalClear=sheetsClient.batchClearValues;
   Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
   for(const [sheet,key,rowNumber] of [['V52_EXPENSE_RAW','exp_fixture',2],['daily_fixture','exp_fixture',10],['details_fixture','exp_fixture|item_fixture',20],['daily_fixture','exp_other',11],['details_fixture','exp_other|item_other',21]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,key,rowNumber);
-  sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};
+  sheetsClient.batchWriteValues=async(_env,data,before)=>{if(before)await before();writes.push(...data);};
   let failOnce=true;
-  sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);if(failOnce){failOnce=false;throw new Error('fixture timeout after clear');}};
+  sheetsClient.batchClearValues=async(_env,ranges,before)=>{clears.push(...ranges);if(failOnce){failOnce=false;throw new Error('fixture timeout after clear');}if(before)await before();};
   try{
     await h.undo();const job=undoMessages(h)[0];
     await assert.rejects(syncJob(h.env,job),/fixture timeout after clear/);

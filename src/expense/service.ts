@@ -19,6 +19,7 @@ import { confirmExpenseAtomically } from "./confirm";
 import { inspectReceiptCandidates,receiptReferenceKey,storedReceiptFacts } from "./receipt-identity";
 import { maybeRespondOwnerOrderReview } from "./online-order-review-service";
 import { clearOwnerReviewInput,onlineOrderReviewInsert } from "./online-order-review-repository";
+import {clearOwnerCorrectionInput,loadOwnerCorrectionInput} from "./owner-correction-repository";
 import type { PurchaseVisionAttempt } from "../types";
 
 type ExpenseRow=Record<string,unknown>;
@@ -440,7 +441,10 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   const q=new URLSearchParams(event.postback?.data||""),action=q.get("a")||"",id=q.get("id")||"",to=event.source.userId||"",traceId=`postback_${id||"unknown"}`;
   if(!actor.canSubmitExpense){await respondText(env,event,"You are not authorized to manage expenses.",traceId);return;}
   const expense=id?await findExpense(env,id,to):null;if(!expense){await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
-  if(accessActor&&"role" in accessActor&&accessActor.role==="OWNER")await clearOwnerReviewInput(env,{employeeId:actor.employeeId,lineUserId:to});
+  if(accessActor&&"role" in accessActor&&accessActor.role==="OWNER"){
+    const owner={employeeId:actor.employeeId,lineUserId:to};await clearOwnerReviewInput(env,owner);
+    if(env.OWNER_EXPENSE_CORRECTION_ENABLED==="true"){const input=await loadOwnerCorrectionInput(env,owner);if(input)await clearOwnerCorrectionInput(env,owner,String(input.input_id));}
+  }
 
   if(action==="expense_confirm"){
     if(expense.status==="CANCELLED"){await showCurrent(env,event,expense,traceId);return;}
@@ -463,7 +467,11 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   }
   if(action==="expense_undo"){
     const owner=actorValues(accessActor||actor),version=await undoConfirmedExpense(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
-    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
+    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}
+    else{
+      const corrected=await env.DB.prepare(`SELECT 1 AS present FROM sync_jobs WHERE entity_type='EXPENSE_CORRECTION' AND entity_key=? LIMIT 1`).bind(id).first<{present:number}>();
+      await respondText(env,event,corrected?"รายการนี้เคยแก้ไขผ่านระบบ จึงพักการยกเลิกไว้เพื่อตรวจความตรงกับชีตก่อน กรุณาติดต่อผู้ดูแลค่ะ":"This item is already cancelled or cannot be undone.",traceId);
+    }return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
   if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}

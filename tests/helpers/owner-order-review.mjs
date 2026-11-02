@@ -14,7 +14,7 @@ export function ownerOrderFixture(){
   h.sqlite.prepare(`INSERT INTO line_identity_bindings(binding_id,provider,external_user_id,employee_id,status,verified_at,verified_by,reason,created_at,updated_at) VALUES(?,'LINE',?,?,'VERIFIED',?,'fixture','synthetic',?,?)`).run('binding_'+id,line,id,now,now,now);
  }
  let seq=0;
- h.env={...h.env,EXPENSE_ENABLED:'true',RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'synthetic-token',EXTERNAL_API_TIMEOUT_MS:'1000',JOB_QUEUE:{async send(job){h.queue.push(job);},async sendBatch(jobs){h.queue.push(...jobs);}}};
+ h.env={...h.env,APP_ENV:'production',EXPENSE_ENABLED:'true',RUNTIME_MODE:'production',LINE_CHANNEL_ACCESS_TOKEN:'synthetic-token',EXTERNAL_API_TIMEOUT_MS:'1000',JOB_QUEUE:{async send(job){h.queue.push(job);},async sendBatch(jobs){h.queue.push(...jobs);}}};
  const event=(line='fixture_owner',extra={})=>({type:'message',timestamp:Date.parse(now),source:{type:'user',userId:line},replyToken:'synthetic_reply_'+(++seq),webhookEventId:'synthetic_event_'+seq,...extra});
  const actor=(line='fixture_owner')=>getStaffActorByLineId(h.env,line);
  const capture=async(run,{failReply=false}={})=>{

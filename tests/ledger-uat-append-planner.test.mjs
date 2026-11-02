@@ -32,3 +32,7 @@ test('append refuses a full 10000-row grid that would exceed readback limit',()=
   const s=snapshot();s.rows=Array.from({length:10000},()=>Array.from({length:20},blank));s.rows[0][0].entered='Expense_ID';s.rowCount=10000;
   assert.throws(()=>make(s),/GRID_INVALID/);
 });
+test('append refuses an oversized complete grid even below row limit',()=>{
+  const s=snapshot();s.rows=Array.from({length:2500},()=>Array.from({length:20},blank));s.rows[0][0].entered='Expense_ID';s.rowCount=2500;
+  assert.throws(()=>make(s),/GRID_INVALID/);
+});

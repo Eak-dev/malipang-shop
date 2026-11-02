@@ -41,7 +41,7 @@ export function buildLedgerUatAppendRequests(env:Env,sheetName:string,identity:L
   if(!sheetName||sheetName!==expectedSheet||!identity.entityId||identity.entityId.trim()!==identity.entityId||identity.itemId!==undefined||!Number.isSafeInteger(identity.sheetId)||identity.sheetId<0||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647||values.length!==size||values[0]!==identity.entityId)throw Error('LEDGER_UAT_APPEND_INVALID');
   // The following insertion grows the grid, which must remain readable under
   // the UAT reader's 10,000-row bound for mandatory postimage verification.
-  if(!snapshot||snapshot.sheetId!==identity.sheetId||!Number.isSafeInteger(snapshot.rowCount)||snapshot.rowCount<1||snapshot.rowCount>=10000||!Number.isSafeInteger(snapshot.columnCount)||snapshot.columnCount<size||snapshot.columnCount>64||snapshot.rows.length!==snapshot.rowCount||snapshot.hasProtectedRanges!==false||snapshot.hasMerges!==false)throw Error('LEDGER_UAT_APPEND_GRID_INVALID');
+  if(!snapshot||snapshot.sheetId!==identity.sheetId||!Number.isSafeInteger(snapshot.rowCount)||snapshot.rowCount<1||snapshot.rowCount>=10000||!Number.isSafeInteger(snapshot.columnCount)||snapshot.columnCount<size||snapshot.columnCount>64||(snapshot.rowCount+1)*snapshot.columnCount>50000||snapshot.rows.length!==snapshot.rowCount||snapshot.hasProtectedRanges!==false||snapshot.hasMerges!==false)throw Error('LEDGER_UAT_APPEND_GRID_INVALID');
   let last=-1;
   for(let r=0;r<snapshot.rowCount;r++){
     const row=snapshot.rows[r];if(!row||row.length!==snapshot.columnCount)throw Error('LEDGER_UAT_APPEND_GRID_INVALID');

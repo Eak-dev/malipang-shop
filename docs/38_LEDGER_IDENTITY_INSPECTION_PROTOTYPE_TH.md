@@ -1,6 +1,6 @@
 # Prototype: ตรวจรหัสรายการใน RAW และรายละเอียด (ยังไม่ใช่ระบบซิงก์ใหม่)
 
-`buildLedgerUatAppendRequests` เป็นตัวทดลองสร้าง request สำหรับ EXPENSE/PERSONAL_USE บน UAT เท่านั้น โดยเลือกตำแหน่งต่อท้ายจาก snapshot ทั้งกริดและรวมการแทรกแถว ค่า และ metadata ใน batch เดียว ยังไม่มีผู้เรียกส่ง request และ snapshot ที่ผู้เรียกส่งเข้ามาไม่ใช่หลักฐานว่าไม่มีคนแก้พร้อมกัน ต้องมี durable intent, full-grid reader ที่เชื่อถือได้, source proof, provider readback, วิธีจัดการผลลัพธ์ไม่แน่ชัด และ cutover ที่กัน writer เก่าและการแก้พร้อมกันก่อนพิจารณาใช้งานจริง ห้าม retry เมื่อไม่ทราบผลเพียงเพราะหมดเวลา
+`buildLedgerUatAppendRequests` เป็นตัวทดลองสร้าง request สำหรับ EXPENSE/PERSONAL_USE บน UAT เท่านั้น โดยเลือกตำแหน่งต่อท้ายจาก snapshot ทั้งกริดและรวมการแทรกแถว ค่า และ metadata ใน batch เดียว มี reader ที่อ่านจาก Sheets โดยจำกัดขนาด 50,000 เซลล์รวมแถวใหม่ แต่ยังไม่มีผู้เรียกส่ง request และ snapshot ไม่ใช่หลักฐานว่าไม่มีคนแก้พร้อมกัน ต้องมี durable intent, การพิสูจน์การแยกสภาพแวดล้อม, source proof, provider readback, วิธีจัดการผลลัพธ์ไม่แน่ชัด และ cutover ที่กัน writer เก่าและการแก้พร้อมกันก่อนพิจารณาใช้งานจริง ห้าม retry เมื่อไม่ทราบผลเพียงเพราะหมดเวลา
 
 สถานะ: ทดลองเท่านั้น ปิดโดยค่าเริ่มต้น ห้ามใช้เป็นหลักฐานสำหรับ deploy หรือบอกว่างานนี้แก้แถวผิดใน production แล้ว
 

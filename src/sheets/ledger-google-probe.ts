@@ -16,7 +16,7 @@ function witnessOf(data:unknown):LedgerMetadataWitness{
   const m=obj(data),r=obj(obj(m.location).dimensionRange);
   return {metadataId:integer(m.metadataId),metadataKey:String(m.metadataKey??''),sheetId:integer(r.sheetId),dimension:r.dimension as 'ROWS',startIndex:integer(r.startIndex),endIndex:integer(r.endIndex),visibility:m.visibility as 'DOCUMENT'};
 }
-function cellOf(data:unknown):LedgerCellState{
+export function parseLedgerUatCell(data:unknown):LedgerCellState{
   const c=obj(data),v=c.userEnteredValue===undefined?{}:obj(c.userEnteredValue),keys=Object.keys(v);
   if(keys.length>1||keys.some(k=>!['stringValue','numberValue','boolValue','formulaValue'].includes(k)))throw Error('LEDGER_UAT_CELL_INVALID');
   let entered:string|number|boolean|null=null,formula:string|null=null;
@@ -46,8 +46,8 @@ export function parseLedgerGoogleSnapshot(data:unknown,sheetName:string,identity
   const identityRows:unknown[][]=Array.from({length:count},()=>[]);let observed:LedgerCellState[]|undefined;
   for(let r=0;r<rows.length;r++){
     const row=obj(rows[r]),cells=row.values===undefined?[]:array(row.values);if(cells.length>size)throw Error('LEDGER_UAT_GRID_INVALID');
-    const id=cellOf(cells[0]??{});if(id.formula!==null)throw Error('LEDGER_UAT_ID_FORMULA');identityRows[r]=[id.entered];
-    if(r===witness.startIndex)observed=Array.from({length:size},(_,i)=>cellOf(cells[i]??{}));
+    const id=parseLedgerUatCell(cells[0]??{});if(id.formula!==null)throw Error('LEDGER_UAT_ID_FORMULA');identityRows[r]=[id.entered];
+    if(r===witness.startIndex)observed=Array.from({length:size},(_,i)=>parseLedgerUatCell(cells[i]??{}));
   }
   if(!observed)observed=Array.from({length:size},blank);
   verifyLedgerMetadataWitness(identity,witness,identityRows);

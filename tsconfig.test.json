@@ -36,6 +36,7 @@
     "src/sheets/ledger-stable-projector.ts",
     "src/sheets/ledger-google-probe.ts",
     "src/sheets/ledger-uat-append-planner.ts",
+    "src/sheets/ledger-uat-append-reader.ts",
     "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",

@@ -43,6 +43,9 @@
     "src/vision/failure-reason.ts",
     "src/line/multilingual.ts",
     "src/shared/**/*.ts",
-    "src/cloudflare.d.ts"
+    "src/cloudflare.d.ts",
+    "src/sheets/daily-row-observer.ts",
+    "src/sheets/daily-row-enrollment.ts",
+    "src/sheets/daily-row-attestation-inspector.ts"
   ]
 }

@@ -1,0 +1,25 @@
+import type {Env} from '../types';
+import {inspectSignedExistingRow,type InspectorEnv} from '../sheets/daily-row-attestation-inspector';
+import type {EnrollmentApproval} from '../sheets/daily-row-enrollment';
+import {readBoundedJson} from '../shared/async';
+
+const MAX_BYTES=32768;
+async function bodyWithinLimit(request:Request):Promise<unknown>{
+  return readBoundedJson(request,MAX_BYTES,5000,'Inspector request body');
+}
+function response(result:'HELD'|'CONSISTENT_READ_ONLY'):Response{
+  return Response.json({ok:true,result,releasePermitted:false},{headers:{'cache-control':'no-store'}});
+}
+/** Only observes. Signed evidence alone is not a fence or authority to release. */
+export async function inspectDailyRowRequest(request:Request,env:Env):Promise<Response>{
+  if(env.DAILY_ROW_INSPECTOR_ENABLED!=='true')return new Response('Not found',{status:404,headers:{'cache-control':'no-store'}});
+  try{
+    const input=await bodyWithinLimit(request);
+    if(!input||typeof input!=='object'||Array.isArray(input))return response('HELD');
+    const {approval,signature}=input as {approval?:unknown;signature?:unknown};
+    if(!approval||typeof approval!=='object'||Array.isArray(approval)||typeof signature!=='string'||!/^[A-Za-z0-9+/]{86}==$/.test(signature))return response('HELD');
+    const binary=atob(signature);if(binary.length!==64||btoa(binary)!==signature)return response('HELD');
+    const configured:InspectorEnv={...env,DAILY_ROW_REVIEWER_ID:env.DAILY_ROW_REVIEWER_ID||'',DAILY_ROW_REVIEWER_ED25519_PUBLIC_KEY_BASE64:env.DAILY_ROW_REVIEWER_ED25519_PUBLIC_KEY_BASE64||'',DAILY_ROW_SHEET_ID:env.DAILY_ROW_SHEET_ID||'',DAILY_ROW_APPROVED_PERIOD:env.DAILY_ROW_APPROVED_PERIOD||''};
+    return response(await inspectSignedExistingRow(configured,approval as EnrollmentApproval,Uint8Array.from(binary,c=>c.charCodeAt(0))));
+  }catch{return response('HELD');}
+}

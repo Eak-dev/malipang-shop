@@ -167,6 +167,23 @@ test('admin correction rejects changed wage selection before creating any correc
   }finally{h.close();}
 });
 
+test('admin correction rechecks live wage even when a legacy daily row exists without a wage snapshot',async()=>{
+  const h=harness();
+  try{
+    // Recreate the legacy fixture with a nullable historical wage field.
+    const schema=h.sqlite.prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name='attendance_daily'`).get().sql;
+    assert.match(schema,/daily_wage_satang INTEGER NOT NULL DEFAULT 0/);
+    h.sqlite.exec('DROP TABLE attendance_daily');
+    h.sqlite.exec(schema.replace('daily_wage_satang INTEGER NOT NULL DEFAULT 0','daily_wage_satang INTEGER DEFAULT 0').replace('daily_wage_snapshot_satang INTEGER NOT NULL DEFAULT 0','daily_wage_snapshot_satang INTEGER DEFAULT 0'));
+    h.sqlite.prepare(`INSERT INTO attendance_daily(employee_id,work_date,scheduled_in,scheduled_out,grace_min,late_deduction_satang,early_deduction_satang,time_in,pay_status,review_flag,version,updated_at,daily_wage_satang,daily_wage_snapshot_satang) VALUES('FIX001','2026-01-01','08:00','17:00',5,0,0,'08:00','REVIEW',1,1,'2026-01-01T00:00:00Z',NULL,NULL)`).run();
+    h.DB.afterFirst=async(sql)=>{if(sql.startsWith('SELECT wage_id,daily_wage_satang')){h.DB.afterFirst=null;h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','FIX001',60000,'2025-01-01',NULL,'TEST','',1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`).run();}};
+    await assert.rejects(correctAttendance(h.env,correction),/ATTENDANCE_CORRECTION_STATE_CHANGED_OR_VERSION_CONFLICT/);
+    assert.deepEqual({...h.sqlite.prepare(`SELECT time_in,time_out,version FROM attendance_daily WHERE employee_id='FIX001'`).get()},{time_in:'08:00',time_out:null,version:1});
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM attendance_events`).get().n,0);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) n FROM sync_jobs`).get().n,0);
+  }finally{h.close();}
+});
+
 test('admin correction fails closed if its next daily or weekly outbox version is already occupied',async()=>{
   for(const entityType of ['DAILY_PAYROLL','WEEKLY_PAYROLL']){
     const h=harness();

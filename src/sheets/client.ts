@@ -21,7 +21,7 @@ export function parseRetryAfterSeconds(value:string|null,nowMs=Date.now()):numbe
   const dateMs=Date.parse(value);return Number.isFinite(dateMs)?Math.max(0,Math.ceil((dateMs-nowMs)/1000)):undefined;
 }
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<Response>{
+export async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<Response>{
   const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet

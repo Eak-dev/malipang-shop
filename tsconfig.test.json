@@ -43,6 +43,7 @@
     "src/vision/failure-reason.ts",
     "src/line/multilingual.ts",
     "src/shared/**/*.ts",
-    "src/cloudflare.d.ts"
+    "src/cloudflare.d.ts",
+    "src/sheets/daily-row-observer.ts"
   ]
 }

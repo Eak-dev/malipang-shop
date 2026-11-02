@@ -23,6 +23,7 @@ export async function operationsSummary(env:Env,now=Date.now()){
       (SELECT COUNT(*) FROM failed_jobs WHERE status='OPEN' AND job_key LIKE 'LINE_NOTIFICATION:%') pending_notifications,
       (SELECT COUNT(*) FROM failed_jobs WHERE status='OPEN' AND job_key LIKE 'LINE_NOTIFICATION:%' AND error='LINE_PUSH_QUOTA_EXHAUSTED') quota_blocked_notifications,
       (SELECT COUNT(*) FROM sync_jobs WHERE status IN ('PENDING','FAILED','PROCESSING')) pending_sync,
+      (SELECT COUNT(*) FROM sync_jobs WHERE status='REVIEW') review_sync,
       (SELECT COUNT(*) FROM sync_jobs WHERE status='PROCESSING' AND lease_until<=?) expired_sync_leases,
       (SELECT COUNT(*) FROM metrics WHERE name='line_reply_failure' AND created_at>=? AND created_at<=?) reply_failures,
       (SELECT COUNT(*) FROM metrics WHERE name='line_response_fallback_failure' AND created_at>=? AND created_at<=?) response_fallback_failures`).bind(at,since,at,since,at).first<Row>(),
@@ -54,13 +55,14 @@ export async function operationsSummary(env:Env,now=Date.now()){
   const actions:string[]=[];
   if(failures.recentFailedEvents||failures.overdueEvents)actions.push("INSPECT_INBOUND_WITHOUT_BLIND_REPLAY");
   if(failures.openFailedJobs||number(effects?.expired_sync_leases))actions.push("INSPECT_SIDE_EFFECT_OUTBOXES");
+  if(number(effects?.review_sync))actions.push("REVIEW_HELD_SHEET_SYNC_WITHOUT_REPLAY");
   if(number(effects?.quota_blocked_notifications))actions.push("CHECK_LINE_PUSH_CAPACITY_BEFORE_MANUAL_RECOVERY");
   if(number(effects?.response_fallback_failures))actions.push("INSPECT_UNDELIVERED_RESPONSES");
   if(steps.some(s=>s.status==="FAILED"||s.status==="STALE"))actions.push("INSPECT_SCHEDULED_STEPS");
   if(orders.total)actions.push("REVIEW_HELD_ONLINE_ORDERS_IN_OWNER_LINE");
-  const attention=failures.recentFailedEvents>0||failures.overdueEvents>0||failures.openFailedJobs>0||number(effects?.expired_sync_leases)>0||number(effects?.response_fallback_failures)>0||steps.some(s=>s.status==="FAILED"||s.status==="STALE");
+  const attention=failures.recentFailedEvents>0||failures.overdueEvents>0||failures.openFailedJobs>0||number(effects?.expired_sync_leases)>0||number(effects?.review_sync)>0||number(effects?.response_fallback_failures)>0||steps.some(s=>s.status==="FAILED"||s.status==="STALE");
   return{ok:true,checkedAt:at,window:{from:since,to:at,hours:24},status:attention?"ATTENTION":steps.some(s=>s.status==="UNKNOWN")?"UNKNOWN":"OK",
     inbound:{recentEvents:number(inbound?.recent_events),...failures},
-    sideEffects:{pendingSyncJobs:number(effects?.pending_sync),expiredSyncLeases:number(effects?.expired_sync_leases),pendingNotifications:number(effects?.pending_notifications),quotaBlockedNotifications:number(effects?.quota_blocked_notifications),replyFailures:number(effects?.reply_failures),responseFallbackFailures:number(effects?.response_fallback_failures)},
+    sideEffects:{pendingSyncJobs:number(effects?.pending_sync),reviewSyncJobs:number(effects?.review_sync),expiredSyncLeases:number(effects?.expired_sync_leases),pendingNotifications:number(effects?.pending_notifications),quotaBlockedNotifications:number(effects?.quota_blocked_notifications),replyFailures:number(effects?.reply_failures),responseFallbackFailures:number(effects?.response_fallback_failures)},
     scheduled:{staleAfterMinutes:15,steps},latency:timings,onlineOrders:orders,actions};
 }

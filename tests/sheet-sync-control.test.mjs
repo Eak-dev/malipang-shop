@@ -5,12 +5,12 @@ import {claimSheetSyncJob} from '../dist/sheets/sync.js';
 
 const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_lease',entityVersion:1,traceId:'lease_test'};
 
-test('recovery ignores delayed jobs until eligible and only recovers expired leases',()=>{
+test('recovery ignores delayed jobs and never re-enqueues processing leases',()=>{
   const now='2026-07-23T12:10:00.000Z',stale='2026-07-23T12:05:00.000Z';
   assert.equal(isRecoverableSheetJob({status:'PENDING',updated_at:'2026-07-23T12:00:00.000Z',next_attempt_at:'2026-07-23T12:11:00.000Z',lease_until:null},now,stale),false);
   assert.equal(isRecoverableSheetJob({status:'FAILED',updated_at:'2026-07-23T12:00:00.000Z',next_attempt_at:'2026-07-23T12:09:00.000Z',lease_until:null},now,stale),true);
   assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T11:00:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:11:00.000Z'},now,stale),false);
-  assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T12:09:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:09:59.000Z'},now,stale),true);
+  assert.equal(isRecoverableSheetJob({status:'PROCESSING',updated_at:'2026-07-23T12:09:00.000Z',next_attempt_at:null,lease_until:'2026-07-23T12:09:59.000Z'},now,stale),false);
 });
 
 test('cron recovery does not enqueue a job whose queue delay is still active',async()=>{
@@ -19,7 +19,7 @@ test('cron recovery does not enqueue a job whose queue delay is still active',as
     {entity_type:'EXPENSE',entity_key:'delayed',entity_version:1,trace_id:'t1',status:'PENDING',updated_at:old,next_attempt_at:future,lease_until:null},
     {entity_type:'EXPENSE',entity_key:'ready',entity_version:1,trace_id:'t2',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null}
   ];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){assert.match(sql,/next_attempt_at/);return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){if(sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW'))return{results:[]};assert.match(sql,/next_attempt_at/);return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   assert.equal(await recoverPendingSheetJobs(env,300),1);
   assert.equal(sent.length,1);
   assert.equal(sent[0].body.entityKey,'ready');
@@ -32,7 +32,7 @@ test('cron recovery does not re-enqueue a sync job with an open terminal DLQ rec
     {entity_type:'EXPENSE',entity_key:'recoverable',entity_version:1,trace_id:'postback_exp_recoverable',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:0}
   ];
   const queries=[];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){queries.push(sql);return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){queries.push(sql);return{bind(){return this;},async all(){return{results:sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW')?[]:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   assert.equal(await recoverPendingSheetJobs(env,300),1);
   assert.equal(sent.length,1);
   assert.equal(sent[0].body.entityKey,'recoverable');
@@ -42,13 +42,12 @@ test('cron recovery does not re-enqueue a sync job with an open terminal DLQ rec
   assert.ok(select.indexOf("AND (?=1 OR NOT EXISTS")<select.indexOf('ORDER BY s.updated_at LIMIT 200'));
 });
 
-test('manual recovery can explicitly retry a terminal Sheets DLQ job',async()=>{
+test('legacy manual override does not retry a terminal Sheets DLQ job',async()=>{
   const old=new Date(Date.now()-600_000).toISOString(),sent=[];
   const rows=[{entity_type:'EXPENSE',entity_key:'terminal',entity_version:1,trace_id:'postback_exp_terminal',status:'FAILED',updated_at:old,next_attempt_at:old,lease_until:null,terminal_dlq_open:1}];
-  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(){return{bind(){return this;},async all(){return{results:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
-  assert.equal(await recoverPendingSheetJobs(env,300,true),1);
-  assert.equal(sent.length,1);
-  assert.equal(sent[0].body.entityKey,'terminal');
+  const env={SHEETS_SYNC_ENABLED:'true',DB:{prepare(sql){return{bind(){return this;},async all(){return{results:sql.includes('SHEET_SYNC_EXPIRED_OWNER_REVIEW')?[]:rows};},async run(){return{meta:{changes:1}};}};}},JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  assert.equal(await recoverPendingSheetJobs(env,300,true),0);
+  assert.equal(sent.length,0);
 });
 
 test('only one concurrent worker can claim the same sync job lease',async()=>{
@@ -59,6 +58,7 @@ test('only one concurrent worker can claim the same sync job lease',async()=>{
       bind(...values){args=values;return this;},
       async run(){
         if(sql.startsWith('INSERT INTO sync_jobs'))return{meta:{changes:0}};
+        if(sql.startsWith("UPDATE sync_jobs SET status='REVIEW'"))return{meta:{changes:0}};
         assert.match(sql,/lease_token/);
         assert.doesNotMatch(sql,/status!='COMPLETED'/);
         const now=args[0],eligible=(state.status==='PENDING'||state.status==='FAILED')&&(!state.nextAttemptAt||state.nextAttemptAt<=now)||(state.status==='PROCESSING'&&state.leaseUntil!=null&&state.leaseUntil<=now);
@@ -67,7 +67,7 @@ test('only one concurrent worker can claim the same sync job lease',async()=>{
         return{meta:{changes:1}};
       }
     };
-  }}};
+  },async batch(statements){const results=[];for(const statement of statements)results.push(await statement.run());return results;}}};
   const now=Date.parse('2026-07-23T12:00:00.000Z');
   const claims=await Promise.all([claimSheetSyncJob(env,job,now),claimSheetSyncJob(env,job,now)]);
   assert.equal(claims.filter(Boolean).length,1);

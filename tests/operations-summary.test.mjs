@@ -84,3 +84,16 @@ test('a response fallback failure is visible even when no notification outbox co
   assert.ok(r.actions.includes('INSPECT_UNDELIVERED_RESPONSES'));assert.doesNotMatch(JSON.stringify(r),new RegExp(secret));assert.equal(h.queue.length,0);
  }finally{h.close();}
 });
+test('a persistent Sheet review hold is visible after terminal evidence is resolved without exposing identity or replaying',async()=>{
+ const h=ownerOrderFixture();try{
+  healthy(h);
+  h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,last_error) VALUES(?, 'EXPENSE', ?, 1, ?, 'REVIEW', 2, ?, ?)`).run('job_review',secret,secret,new Date(now).toISOString(),'SHEET_SYNC_TERMINAL_DLQ_REVIEW_REQUIRED');
+  const before=h.sqlite.prepare('SELECT total_changes() n').get().n;
+  const r=await operationsSummary(h.env,now);
+  assert.equal(r.inbound.openFailedJobs,0);assert.equal(r.sideEffects.pendingSyncJobs,0);
+  assert.equal(r.sideEffects.reviewSyncJobs,1);assert.equal(r.status,'ATTENTION');
+  assert.ok(r.actions.includes('REVIEW_HELD_SHEET_SYNC_WITHOUT_REPLAY'));
+  assert.doesNotMatch(JSON.stringify(r),new RegExp(secret));
+  assert.equal(h.queue.length,0);assert.equal(h.sqlite.prepare('SELECT total_changes() n').get().n,before);
+ }finally{h.close();}
+});

@@ -39,7 +39,7 @@ export async function approvedOtSatangForDay(env:Env,employeeId:string,workDate:
   return Number(row?.amount||0);
 }
 
-export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string,version:number,now:string):D1PreparedStatement{
+export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string,version:number,now:string,eventGateId?:string):D1PreparedStatement{
   const{weekStart,weekEnd,payDate}=payrollPeriodFor(workDate);
   return env.DB.prepare(`INSERT INTO payroll_weekly(
     employee_id,week_start,pay_sunday,pay_date,work_days,confirmed_amount_satang,pending_amount_satang,status,version,updated_at,
@@ -51,13 +51,13 @@ export function weeklyPayrollStatement(env:Env,employeeId:string,workDate:string
     ?,?,COALESCE(SUM(daily_wage_snapshot_satang),0),COALESCE(SUM(late_deduction_applied_satang),0),
     COALESCE(SUM(missing_punch_deduction_satang),0),COALESCE(SUM(ot_approved_satang),0),COALESCE(SUM(other_adjustment_satang),0),
     COALESCE(SUM(confirmed_wage_satang),0),COALESCE(SUM(CASE WHEN pay_status='REVIEW' THEN 1 ELSE 0 END),0)
-  FROM attendance_daily WHERE employee_id=? AND work_date BETWEEN ? AND ?
+  FROM attendance_daily WHERE employee_id=? AND work_date BETWEEN ? AND ? ${eventGateId?"HAVING EXISTS(SELECT 1 FROM attendance_events WHERE event_id=?)":""}
   ON CONFLICT(employee_id,week_start) DO UPDATE SET
     pay_sunday=excluded.pay_sunday,pay_date=excluded.pay_date,work_days=excluded.work_days,confirmed_amount_satang=excluded.confirmed_amount_satang,pending_amount_satang=excluded.pending_amount_satang,
     status=excluded.status,version=payroll_weekly.version+1,updated_at=excluded.updated_at,base_wage_satang=excluded.base_wage_satang,
     late_deduction_total_satang=excluded.late_deduction_total_satang,missing_punch_deduction_total_satang=excluded.missing_punch_deduction_total_satang,
     ot_total_satang=excluded.ot_total_satang,other_adjustment_total_satang=excluded.other_adjustment_total_satang,net_pay_satang=excluded.net_pay_satang,
-    pending_review_count=excluded.pending_review_count`).bind(employeeId,weekStart,weekEnd,payDate,version,now,employeeId,weekStart,weekEnd);
+    pending_review_count=excluded.pending_review_count`).bind(employeeId,weekStart,weekEnd,payDate,version,now,employeeId,weekStart,weekEnd,...(eventGateId?[eventGateId]:[]));
 }
 
 export async function refreshWeeklyPayroll(env:Env,employeeId:string,workDate:string,version:number,now=new Date().toISOString()):Promise<number>{

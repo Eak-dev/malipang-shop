@@ -6,6 +6,9 @@ import {readdirSync,readFileSync} from 'node:fs';
 
 const require=createRequire(import.meta.url);
 const sheetsClient=require('../dist/sheets/client.js');
+const originalFormulaRead=sheetsClient.batchGetSheetFormulaValues;
+test.beforeEach(()=>{sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];});
+test.afterEach(()=>{sheetsClient.batchGetSheetFormulaValues=originalFormulaRead;});
 const {SheetsHttpError,SheetsMutationOutcomeUnknownError,isAmbiguousSheetsMutationStatus}=sheetsClient;
 const {GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS,PERSONAL_USE_AMBIGUITY_MARGIN_MS,claimSheetSyncJob,syncJob}=require('../dist/sheets/sync.js');
 const {reconcileSheets}=require('../dist/admin/reconcile-sheets.js');
@@ -22,7 +25,7 @@ class SqliteD1Statement{
   bind(...args){this.args=args;return this;}
   async first(){const row=this.owner.sqlite.prepare(this.sql).get(...this.args)??null;if(this.owner.afterFirst)await this.owner.afterFirst(this.sql,this.args,row);return row;}
   async all(){return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
-  async run(){const result=this.owner.sqlite.prepare(this.sql).run(...this.args);return{meta:{changes:Number(result.changes)}};}
+  async run(){if(/^\s*SELECT\b/i.test(this.sql))return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};const result=this.owner.sqlite.prepare(this.sql).run(...this.args);return{meta:{changes:Number(result.changes)}};}
 }
 
 class SqliteD1{
@@ -63,6 +66,178 @@ function cancelAtVersionThree(h,{enqueue=true}={}){
 }
 function syncRows(h){return plain(h.sqlite.prepare(`SELECT entity_version,status,attempt_count FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(h.id));}
 function expireLease(h,version){h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=?`).run(h.id,version);}
+const sheetEntityTypes=['PERSONAL_USE','EXPENSE','ATTENDANCE_EVENT','DAILY_PAYROLL','WEEKLY_PAYROLL','WAGE_HISTORY','SHIFT_SCHEDULE','OT_REQUEST','SYSTEM_LOG'];
+
+test('occupied or partial personal-use row fails closed without writing',async()=>{
+  const h=harness(),writes=[];
+  try{
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['other_personal_id']],[['other_personal_id','PERSONAL_USE']]];
+    await withSheetWriter(async(_env,data)=>writes.push(data),async()=>{
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+    });
+    assert.equal(writes.length,0);
+    assert.deepEqual(plain(h.sqlite.prepare('SELECT status,last_error FROM sync_jobs WHERE entity_key=?').get(h.id)),{status:'REVIEW',last_error:'PERSONAL_USE_SHEET_ROW_COLLISION'});
+  }finally{h.close();}
+});
+
+test('collision is visible in failed jobs and forced reconcile cannot reset the review hold',async()=>{
+  const h=harness(),calls={acks:0,retries:0};
+  try{
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['other_personal_id']],[['other_personal_id','PERSONAL_USE']]];
+    await withSheetWriter(async()=>assert.fail('collision must not write'),async()=>{
+      const message={body:job(h.id,2),attempts:1,ack(){calls.acks++},retry(){calls.retries++}};
+      await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
+      assert.equal(calls.acks,1);assert.equal(calls.retries,0);
+      assert.deepEqual(plain(h.sqlite.prepare('SELECT status,error FROM failed_jobs').get()),{status:'OPEN',error:'SHEETS_SYNC_REVIEW_REQUIRED'});
+      const {enqueueSheetSyncBatch}=require('../dist/db/repositories.js');
+      await enqueueSheetSyncBatch(h.env,[job(h.id,2)],true);
+      assert.equal(h.sqlite.prepare('SELECT status FROM sync_jobs WHERE entity_key=?').get(h.id).status,'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+    });
+  }finally{h.close();}
+});
+
+test('an unresolved review holds later versions of each sheet entity type',async()=>{
+  for(const entityType of sheetEntityTypes){
+    const h=harness(),writes=[];
+    try{
+      h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
+      const insert=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,?,0,?,?,NULL,NULL)`);
+      const now='2026-09-06T00:00:00.000Z';
+      insert.run('review_v2',entityType,h.id,2,'trace','REVIEW',now,null);
+      const later={kind:'SHEETS_SYNC',entityType,entityKey:h.id,entityVersion:3,traceId:'trace_v3'};
+      await withSheetWriter(async(_env,data)=>writes.push(data),async()=>{
+        assert.equal(await syncJob(h.env,later),'REVIEW');
+        assert.equal(await syncJob(h.env,later),'REVIEW');
+      });
+      assert.equal(writes.length,0);
+      assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error,attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=3`).get(entityType,h.id)),{status:'REVIEW',last_error:'SHEET_SYNC_ENTITY_REVIEW_HOLD',attempt_count:0});
+      assert.equal(typeof await claimSheetSyncJob(h.env,{...later,entityKey:'unrelated_fixture'}),'string');
+    }finally{h.close();}
+  }
+});
+
+test('recovery and forced enqueue quarantine expired sheet writers and surface review',async()=>{
+  const {enqueueSheetSyncBatch}=require('../dist/db/repositories.js');
+  for(const entityType of sheetEntityTypes){
+    const h=harness();
+    try{
+      h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
+      const old={kind:'SHEETS_SYNC',entityType,entityKey:h.id,entityVersion:2,traceId:'trace_expired'};
+      const next={...old,entityVersion:3,traceId:'trace_next'};
+      assert.equal(typeof await claimSheetSyncJob(h.env,old),'string');
+      h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type=?`).run(entityType);
+      await enqueueSheetSyncBatch(h.env,[old],true);
+      assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type=?`).get(entityType).status,'PROCESSING');
+      assert.equal(await claimSheetSyncJob(h.env,old),null);
+      assert.equal(await claimSheetSyncJob(h.env,next),null);
+      assert.equal(typeof await claimSheetSyncJob(h.env,{...next,entityKey:'unrelated_fixture'}),'string');
+      await recoverPendingSheetJobs(h.env,0);
+      const held=plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type=? AND entity_version=2`).get(entityType));
+      assert.deepEqual(held,{status:'REVIEW',last_error:'SHEET_SYNC_EXPIRED_OWNER_REVIEW'});
+      assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN' AND error='SHEETS_SYNC_REVIEW_REQUIRED'`).get().count,1);
+      assert.equal(await syncJob(h.env,next),'REVIEW');
+      await enqueueSheetSyncBatch(h.env,[old],true);
+      assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type=? AND entity_version=2`).get(entityType).status,'REVIEW');
+    }finally{h.close();}
+  }
+});
+
+test('recovery finds eligible work beyond 200 older active, null-lease and delayed jobs',async()=>{
+  const h=harness();
+  try{
+    h.sqlite.prepare(`DELETE FROM sync_jobs`).run();
+    const insert=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,'EXPENSE',?,1,?,?,0,?,?,?,?)`);
+    for(let i=0;i<220;i++){
+      insert.run(`active_${i}`,`active_${i}`,`trace_active_${i}`,'PROCESSING','2000-01-01T00:00:00.000Z',null,'2999-01-01T00:00:00.000Z','fixture');
+      insert.run(`delayed_${i}`,`delayed_${i}`,`trace_delayed_${i}`,'PENDING','2000-01-01T00:00:00.000Z','2999-01-01T00:00:00.000Z',null,null);
+    }
+    insert.run('null_lease','null_lease','trace_null','PROCESSING','2000-01-01T00:00:00.000Z',null,null,'fixture');
+    insert.run('eligible','eligible','trace_eligible','PENDING','2001-01-01T00:00:00.000Z','2001-01-01T00:00:00.000Z',null,null);
+    assert.equal(await recoverPendingSheetJobs(h.env,0),1);
+    assert.deepEqual(h.queued.map(message=>message.body.entityKey),['eligible']);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_key='null_lease'`).get()),{status:'REVIEW',last_error:'SHEET_SYNC_EXPIRED_OWNER_REVIEW'});
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE trace_id='trace_null' AND status='OPEN'`).get().count,1);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM sync_jobs WHERE entity_key LIKE 'active_%' AND status='PROCESSING'`).get().count,220);
+  }finally{h.close();}
+});
+
+test('disabled generic enqueue persists unique outbox entries and recovers them after re-enable',async()=>{
+  const h=harness(),{enqueueSheetSyncBatchDetailed}=require('../dist/db/repositories.js');
+  try{
+    h.sqlite.prepare(`DELETE FROM sync_jobs`).run();h.env.SHEETS_SYNC_ENABLED='false';
+    const wage={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage'};
+    const daily={kind:'SHEETS_SYNC',entityType:'DAILY_PAYROLL',entityKey:'staff_fixture|2026-09-06',entityVersion:2,traceId:'trace_daily'};
+    const result=await enqueueSheetSyncBatchDetailed(h.env,[wage,daily,wage]);
+    assert.deepEqual(result,{enqueued:0,held:0,disabled:2});
+    await enqueueSheetSyncBatchDetailed(h.env,[wage,daily]);
+    assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM sync_jobs`).get().count,2);
+    assert.equal(h.queued.length,0);
+    h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z'`).run();h.env.SHEETS_SYNC_ENABLED='true';
+    assert.equal(await recoverPendingSheetJobs(h.env,0),2);
+    assert.deepEqual(new Set(h.queued.map(message=>message.body.entityType)),new Set(['WAGE_HISTORY','DAILY_PAYROLL']));
+  }finally{h.close();}
+});
+
+test('ambiguous wage-history write holds subsequent versions without another write',async()=>{
+  const h=harness(),writes=[];
+  const now='2026-09-06T00:00:00.000Z';
+  try{
+    h.env.SHEET_WAGE_HISTORY='wage_fixture';
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('staff_fixture','Fixture','user_fixture','08:00','17:00','ACTIVE',?)`).run(now);
+    h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','staff_fixture',50000,'2026-09-01',NULL,'TEST','',1,?,?)`).run(now,now);
+    const first={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage_v1'};
+    await withSheetWriter(async(_env,data)=>{writes.push(data);throw new SheetsMutationOutcomeUnknownError(new Error('response lost after apply'));},async()=>{
+      assert.equal(await syncJob(h.env,first),'REVIEW');
+      assert.equal(await syncJob(h.env,{...first,entityVersion:2,traceId:'trace_wage_v2'}),'REVIEW');
+      await recoverPendingSheetJobs(h.env,0);
+      assert.equal(await syncJob(h.env,first),'REVIEW');
+    });
+    assert.equal(writes.length,1);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type='WAGE_HISTORY' AND entity_key='wage_fixture' AND entity_version=1`).get()),{status:'REVIEW',last_error:'SHEETS_MUTATION_OUTCOME_UNKNOWN'});
+  }finally{h.close();}
+});
+
+test('a writer completing after quarantine cannot report success or clear the review hold',async()=>{
+  const h=harness(),started=deferred(),release=deferred(),now='2026-09-06T00:00:00.000Z';
+  try{
+    h.env.SHEET_WAGE_HISTORY='wage_fixture';
+    h.sqlite.prepare(`INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,status,updated_at) VALUES('staff_fixture','Fixture','user_fixture','08:00','17:00','ACTIVE',?)`).run(now);
+    h.sqlite.prepare(`INSERT INTO employee_wage_history VALUES('wage_fixture','staff_fixture',50000,'2026-09-01',NULL,'TEST','',1,?,?)`).run(now,now);
+    const first={kind:'SHEETS_SYNC',entityType:'WAGE_HISTORY',entityKey:'wage_fixture',entityVersion:1,traceId:'trace_wage_v1'};
+    await withSheetWriter(async()=>{started.resolve();await release.promise;},async()=>{
+      const writing=syncJob(h.env,first);await started.promise;
+      h.sqlite.prepare(`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z' WHERE entity_type='WAGE_HISTORY' AND entity_key='wage_fixture'`).run();
+      await recoverPendingSheetJobs(h.env,0);
+      release.resolve();
+      assert.equal(await writing,'REVIEW');
+      assert.equal(await syncJob(h.env,{...first,entityVersion:2}),'REVIEW');
+      assert.equal(h.sqlite.prepare(`SELECT status FROM sync_jobs WHERE entity_type='WAGE_HISTORY' AND entity_version=1`).get().status,'REVIEW');
+    });
+  }finally{release.resolve();h.close();}
+});
+
+test('personal-use row is safe only for a blank row or the same identity',async()=>{
+  const h=harness();
+  try{
+    const {assertPersonalUseSheetRowSafe}=require('../dist/sheets/sync.js');
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];
+    await assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[h.id]],[[h.id,'PERSONAL_USE']]];
+    await assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[h.id]],[[h.id,'=SUM(1,1)']]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[['','=1+1']]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[],[h.id]],[[]]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[]];
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/READBACK_INCOMPLETE/);
+    h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('V52_PERSONAL_USE_RAW','other_id',2);
+    await assert.rejects(assertPersonalUseSheetRowSafe(h.env,'V52_PERSONAL_USE_RAW',2,h.id),/D1_ROW_COLLISION/);
+  }finally{h.close();}
+});
 async function withSheetWriter(write,run){const original=sheetsClient.batchWriteValues;sheetsClient.batchWriteValues=async(env,data,beforeMutationDispatch)=>{if(beforeMutationDispatch)await beforeMutationDispatch();return write(env,data);};try{return await run();}finally{sheetsClient.batchWriteValues=original;}}
 async function withSheetsTransport(fetchImpl,run,authImpl=async()=>"test-token"){const originalFetch=globalThis.fetch,originalAuth=googleAuth.getGoogleAccessToken;googleAuth.getGoogleAccessToken=authImpl;globalThis.fetch=fetchImpl;try{return await run();}finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalAuth;}}
 async function withConsoleErrorMuted(run){const original=console.error;console.error=()=>{};try{return await run();}finally{console.error=original;}}
@@ -163,24 +338,21 @@ test('queue replaces a busy PERSONAL_USE delivery without exhausting retry or DL
   }finally{h.close();}
 });
 
-test('an ambiguous same-version redelivery is replaced without spending the remaining DLQ budget',async()=>{
+test('an ambiguous same-version delivery is acknowledged and remains in review',async()=>{
   const h=harness(),firstCalls={acks:0,retries:[]},redeliveryCalls={acks:0,retries:[]};
   try{
     const firstMessage={body:job(h.id,2),attempts:1,ack(){firstCalls.acks+=1;},retry(options){firstCalls.retries.push(options);}};
     await withSheetWriter(async()=>{throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets mutation',15000));},async()=>{
       await withConsoleErrorMuted(()=>worker.queue({queue:'malipang-jobs',messages:[firstMessage]},h.env,{}));
     });
-    assert.equal(firstCalls.acks,0);
-    assert.equal(firstCalls.retries.length,1);
-    assert.ok(firstCalls.retries[0].delaySeconds>=30&&firstCalls.retries[0].delaySeconds<=37,'the first ambiguous failure uses bounded transient jitter');
+    assert.equal(firstCalls.acks,1);
+    assert.deepEqual(firstCalls.retries,[]);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
     const message={body:job(h.id,2),attempts:5,ack(){redeliveryCalls.acks+=1;},retry(options){redeliveryCalls.retries.push(options);}};
     await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
     assert.equal(redeliveryCalls.acks,1);
     assert.deepEqual(redeliveryCalls.retries,[]);
-    assert.equal(h.queued.length,1);
-    assert.equal(h.queued[0].delaySeconds,30);
-    assert.deepEqual(h.queued[0].body,job(h.id,2));
+    assert.equal(h.queued.length,0);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
   }finally{h.close();}
 });
@@ -239,26 +411,25 @@ test('client timeout before a late remote write keeps the newer projection fence
       }
       sheet.row=values;sheet.writes.push(version);
     },async()=>{
-      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after 15000ms/);
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
       await oldRequestStarted.promise;
       const ambiguous=plain(h.sqlite.prepare(`SELECT status,lease_until,lease_token,next_attempt_at,last_error FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
-      assert.equal(ambiguous.status,'PROCESSING');
+      assert.equal(ambiguous.status,'REVIEW');
       assert.equal(typeof ambiguous.lease_token,'string');
-      assert.equal(ambiguous.next_attempt_at,ambiguous.lease_until);
+      assert.equal(ambiguous.next_attempt_at,null);
       assert.match(ambiguous.last_error,/^SHEETS_MUTATION_OUTCOME_UNKNOWN:/);
       assert.ok(Date.parse(ambiguous.lease_until)-Date.now()>GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS,'the renewed lease must outlive the provider processing bound');
       cancelAtVersionThree(h);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY','the newer writer must remain fenced while the old remote mutation can still apply');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
       releaseOldRemoteWrite.resolve();
       await oldRemoteWriteApplied.promise;
       assert.deepEqual(sheet.writes,[2]);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY','remote application alone does not prove that the ambiguous request can no longer write');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
       expireLease(h,2);
-      assert.ok(await recoverPendingSheetJobs(h.env,0)>=1);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
-      assert.equal(await syncJob(h.env,job(h.id,2)),'IGNORED');
-      assert.deepEqual(sheet.writes,[2,3]);
-      assert.deepEqual(sheet.row?.slice(6,7).concat(sheet.row?.slice(14)),['CANCELLED',3]);
+      await recoverPendingSheetJobs(h.env,0);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
+      assert.deepEqual(sheet.writes,[2]);
     });
   }finally{releaseOldRemoteWrite.resolve();h.close();}
 });
@@ -274,15 +445,15 @@ test('network disconnect after remote acceptance retains the same per-entity fen
       }
       sheet.row=values;sheet.writes.push(version);
     },async()=>{
-      await assert.rejects(syncJob(h.env,job(h.id,2)),/outcome unknown.*network connection lost/);
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
       cancelAtVersionThree(h);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
       releaseRemoteWrite.resolve();await remoteWriteApplied.promise;
       assert.deepEqual(sheet.writes,[2]);
       expireLease(h,2);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
-      assert.deepEqual(sheet.writes,[2,3]);
-      assert.equal(sheet.row[14],3);
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
+      assert.deepEqual(sheet.writes,[2]);
+      assert.equal(sheet.row[14],2);
     });
   }finally{releaseRemoteWrite.resolve();h.close();}
 });
@@ -291,7 +462,7 @@ test('ambiguity fence includes a configured client timeout before the provider b
   const h=harness(),clientTimeoutMs=20*60*1000,started=Date.now();h.env.EXTERNAL_API_TIMEOUT_MS=String(clientTimeoutMs);
   try{
     await withSheetWriter(async()=>{throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets mutation',clientTimeoutMs));},async()=>{
-      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out/);
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
     });
     const lease=String(h.sqlite.prepare(`SELECT lease_until FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id).lease_until);
     assert.ok(Date.parse(lease)-started>=clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS);
@@ -332,9 +503,9 @@ test('lease expiry during cold OAuth prevents mutation dispatch after ownership 
       releaseAuth.resolve();
       assert.equal(await syncing,'BUSY');
       assert.equal(sheetDispatches,0,'the expired writer must not reach fetch');
-      assert.equal(await syncJob(h.env,job(h.id,2)),'PROCESSED','a fresh owner can retry immediately after the expired lease');
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
     },async()=>{authStarted.resolve();await releaseAuth.promise;return'test-token';});
-    assert.equal(sheetDispatches,1);
+    assert.equal(sheetDispatches,0);
   }finally{releaseAuth.resolve();h.close();}
 });
 
@@ -422,7 +593,7 @@ test('Sheets mutation transport wraps timeout, disconnect and 5xx but leaves def
   });
 });
 
-test('timeout after an applied Sheet write retries idempotently into the same mapped row',async()=>{
+test('timeout after an applied Sheet write stays in review after lease expiry',async()=>{
   const h=harness(),attemptedRanges=[],sheet={row:null};
   let attempts=0;
   try{
@@ -432,26 +603,26 @@ test('timeout after an applied Sheet write retries idempotently into the same ma
       sheet.row=[...data[0].values[0]];
       if(attempts===1)throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets timed out after write',15000));
     },async()=>{
-      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after write/);
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
       const ambiguous=plain(h.sqlite.prepare(`SELECT status,attempt_count,next_attempt_at,lease_until,lease_token,last_error FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=2`).get(h.id));
-      assert.equal(ambiguous.status,'PROCESSING');
+      assert.equal(ambiguous.status,'REVIEW');
       assert.equal(ambiguous.attempt_count,1);
-      assert.equal(ambiguous.next_attempt_at,ambiguous.lease_until);
+      assert.equal(ambiguous.next_attempt_at,null);
       assert.equal(typeof ambiguous.lease_token,'string');
       assert.match(ambiguous.last_error,/^SHEETS_MUTATION_OUTCOME_UNKNOWN:/);
       expireLease(h,2);
-      assert.equal(await syncJob(h.env,job(h.id,2),2),'PROCESSED');
+      assert.equal(await syncJob(h.env,job(h.id,2),2),'REVIEW');
     });
-    assert.equal(attempts,2);
+    assert.equal(attempts,1);
     assert.equal(new Set(attemptedRanges).size,1);
     assert.equal(sheet.row[6],'CONFIRMED');
     assert.equal(sheet.row[14],2);
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM sheet_row_index WHERE sheet_name='V52_PERSONAL_USE_RAW' AND entity_key=?`).get(h.id).count,1);
-    assert.deepEqual(syncRows(h),[{entity_version:2,status:'COMPLETED',attempt_count:2}]);
+    assert.deepEqual(syncRows(h),[{entity_version:2,status:'REVIEW',attempt_count:1}]);
   }finally{h.close();}
 });
 
-test('timeout retry from an older version cannot overwrite a newer committed projection',async()=>{
+test('timeout of an older version keeps the newer version in review',async()=>{
   const h=harness(),sheet={row:null,writes:[]};
   let first=true;
   try{
@@ -460,16 +631,16 @@ test('timeout retry from an older version cannot overwrite a newer committed pro
       sheet.row=[...values];sheet.writes.push(Number(values[14]));
       if(first){first=false;throw new SheetsMutationOutcomeUnknownError(new OperationTimeoutError('Google Sheets timed out after applied write',15000));}
     },async()=>{
-      await assert.rejects(syncJob(h.env,job(h.id,2)),/timed out after applied write/);
+      assert.equal(await syncJob(h.env,job(h.id,2)),'REVIEW');
       cancelAtVersionThree(h);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'BUSY');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
       expireLease(h,2);
-      assert.equal(await syncJob(h.env,job(h.id,3)),'PROCESSED');
-      assert.equal(await syncJob(h.env,job(h.id,2),2),'IGNORED');
+      assert.equal(await syncJob(h.env,job(h.id,3)),'REVIEW');
+      assert.equal(await syncJob(h.env,job(h.id,2),2),'REVIEW');
     });
-    assert.deepEqual(sheet.writes,[2,3]);
-    assert.equal(sheet.row[6],'CANCELLED');
-    assert.equal(sheet.row[14],3);
+    assert.deepEqual(sheet.writes,[2]);
+    assert.equal(sheet.row[6],'CONFIRMED');
+    assert.equal(sheet.row[14],2);
   }finally{h.close();}
 });
 
@@ -488,11 +659,15 @@ test('reconcile interleaving queues the authoritative version and converges afte
       assert.equal(result.counts.PERSONAL_USE,1);
       assert.ok(result.enqueued>=1,'reconcile may also enqueue seeded migration fixtures from other entity types');
       const reconciled=h.queued.find(message=>message.body?.entityType==='PERSONAL_USE')?.body;
-      assert.equal(reconciled?.entityVersion,3);
-      assert.equal(await syncJob(h.env,reconciled),'BUSY');
+      assert.equal(reconciled,undefined,'reconcile must report the held version instead of dispatching it');
+      assert.ok(result.held>=1);
       releaseOlderWrite.resolve();
       assert.equal(await older,'PROCESSED');
-      assert.equal(await syncJob(h.env,reconciled),'PROCESSED');
+      h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=3`).run(h.id);
+      await recoverPendingSheetJobs(h.env,0);
+      const recovered=h.queued.find(message=>message.body?.entityType==='PERSONAL_USE')?.body;
+      assert.equal(recovered?.entityVersion,3);
+      assert.equal(await syncJob(h.env,recovered),'PROCESSED');
     });
     assert.deepEqual(sheet.writes,[2,3]);
     assert.equal(sheet.row[6],'CANCELLED');
@@ -500,15 +675,38 @@ test('reconcile interleaving queues the authoritative version and converges afte
   }finally{releaseOlderWrite.resolve();h.close();}
 });
 
-test('non-PERSONAL_USE versions retain independent claim behavior',async()=>{
+test('reconcile uses actual confirmed expense versions and reports held rows',async()=>{
+  const h=harness(),now='2026-09-06T00:00:00.000Z';
+  try{
+    const insert=h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES(?,?,?,'sanitized',100,'cash','CASH_DRAWER','ingredients','2026-09-06','CONFIRMED','trace_fixture',?,?)`);
+    for(const [id,version] of [['exp_v2',2],['exp_v3',3],['exp_review',3],['exp_processing',3]])insert.run(id,`message_${id}`,'user_fixture',now,version);
+    const insertJob=h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES(?,'EXPENSE',?,2,'trace_fixture',?,1,?,'2099-01-01T00:00:00.000Z','fixture')`);
+    insertJob.run('review_fixture','exp_review','REVIEW',now);
+    insertJob.run('processing_fixture','exp_processing','PROCESSING',now);
+    const result=await reconcileSheets(h.env,{fromDate:'2026-09-06',toDate:'2026-09-06',limitPerType:100});
+    assert.equal(result.counts.EXPENSE,4);
+    assert.equal(result.held,2);
+    assert.equal(result.disabled,0);
+    assert.equal(result.enqueued+result.held,Object.values(result.counts).reduce((a,b)=>a+b,0));
+    const sent=h.queued.map(m=>m.body).filter(j=>j?.entityType==='EXPENSE');
+    assert.deepEqual(sent.map(j=>[j.entityKey,j.entityVersion]),[['exp_v2',2],['exp_v3',3]]);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT entity_key,entity_version,status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key IN ('exp_processing','exp_review') AND entity_version=3 ORDER BY entity_key`).all()),[{entity_key:'exp_processing',entity_version:3,status:'PENDING'},{entity_key:'exp_review',entity_version:3,status:'PENDING'}]);
+    h.env.SHEETS_SYNC_ENABLED='false';
+    const disabled=await reconcileSheets(h.env,{fromDate:'2026-09-06',toDate:'2026-09-06',limitPerType:100});
+    assert.equal(disabled.enqueued,0);assert.equal(disabled.held,2);
+    assert.equal(disabled.disabled+disabled.held,Object.values(disabled.counts).reduce((a,b)=>a+b,0));
+  }finally{h.close();}
+});
+
+test('EXPENSE versions cannot process simultaneously',async()=>{
   const h=harness();
   try{
     const older={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'expense_ordering_fixture',entityVersion:1,traceId:'trace_expense_v1'};
     const newer={...older,entityVersion:2,traceId:'trace_expense_v2'};
     assert.equal(typeof await claimSheetSyncJob(h.env,older),'string');
-    assert.equal(typeof await claimSheetSyncJob(h.env,newer),'string');
+    assert.equal(await claimSheetSyncJob(h.env,newer),null);
     const rows=plain(h.sqlite.prepare(`SELECT entity_version,status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? ORDER BY entity_version`).all(older.entityKey));
-    assert.deepEqual(rows,[{entity_version:1,status:'PROCESSING'},{entity_version:2,status:'PROCESSING'}]);
+    assert.deepEqual(rows,[{entity_version:1,status:'PROCESSING'},{entity_version:2,status:'PENDING'}]);
   }finally{h.close();}
 });
 
@@ -519,5 +717,47 @@ test('PERSONAL_USE serialization is scoped per entity rather than global',async(
     h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`).run('sync_ordering_second_v2','PERSONAL_USE',secondId,2,'trace_ordering_second_v2','2026-09-06T00:00:00.000Z','2026-09-06T00:00:00.000Z');
     assert.equal(typeof await claimSheetSyncJob(h.env,job(h.id,2)),'string');
     assert.equal(typeof await claimSheetSyncJob(h.env,job(secondId,2)),'string');
+  }finally{h.close();}
+});
+
+
+test('expense raw identity guard fails closed for stale, occupied, duplicate and formula rows',async()=>{
+  const h=harness(),sheet='V52_EXPENSE_RAW',id='expense_guard_fixture';
+  try{
+    const {assertExpenseRawSheetRowSafe:check}=require('../dist/sheets/sync.js');
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[]];
+    await check(h.env,sheet,2,id,true);
+    await assert.rejects(check(h.env,sheet,2,id,false),/MAPPED_ROW_MISSING/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[id,'2026-10-04']]];
+    await check(h.env,sheet,2,id,false);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['different_id']],[[ 'different_id','2026-10-04']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/ROW_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[],[['','unexpected value']]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/ROW_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[id,'=1+1']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/FORMULA_CONFLICT/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id],[],[id]],[[id,'text']]];
+    await assert.rejects(check(h.env,sheet,2,id,false),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[],[id]],[[]]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/IDENTITY_COLLISION/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[[id]],[[]]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/INCONSISTENT_READBACK/);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[]];
+    await assert.rejects(check(h.env,sheet,2,id,true),/READBACK_INCOMPLETE/);
+    h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,'other_id',2);
+    await assert.rejects(check(h.env,sheet,2,id,false),/D1_ROW_COLLISION/);
+  }finally{h.close();}
+});
+
+test('expense raw collision is held before any sheet write or daily cancellation',async()=>{
+  const h=harness(),id='expense_guard_collision',writes=[],now='2026-10-04T00:00:00.000Z';
+  try{
+    h.env.SHEET_EXPENSE_RAW='V52_EXPENSE_RAW';h.env.SHEET_EXPENSE_DAILY='daily_fixture';
+    h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES(?,?,?,'synthetic',100,'cash','CASH_DRAWER','ingredients','2026-10-04','CANCELLED','trace_fixture',?,1)`).run(id,'message_expense_guard','user_expense_guard',now);
+    sheetsClient.batchGetSheetFormulaValues=async()=>[[['unrelated_id']],[['unrelated_id','2026-10-04']]];
+    const request={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:1,traceId:'trace_expense_guard'};
+    await withSheetWriter(async(_env,data)=>writes.push(data),async()=>assert.equal(await syncJob(h.env,request),'REVIEW'));
+    assert.equal(writes.length,0);
+    assert.deepEqual(plain(h.sqlite.prepare(`SELECT status,last_error FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=?`).get(id)),{status:'REVIEW',last_error:'EXPENSE_RAW_ROW_COLLISION'});
   }finally{h.close();}
 });

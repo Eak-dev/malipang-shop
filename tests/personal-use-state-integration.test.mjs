@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {handlePersonalUsePostback} from '../dist/personal-use/service.js';
+import {recoverPendingSheetJobs} from '../dist/db/repositories.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:'B001',employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{canSubmitExpense:true}};
 const migration=name=>readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
@@ -159,6 +160,35 @@ test('SQLite integration: audit, row version and outbox roll back together on ba
     assert.deepEqual(actions(h.sqlite,id),['CREATE_DRAFT']);
     assert.deepEqual(outbox(h.sqlite,id),[]);
     assert.equal(sheetJobs(h.queue).length,0);
+  }finally{h.close();}
+});
+
+test('disabled sync preserves confirm and undo outbox atomically for later recovery',async()=>{
+  const h=harness();
+  try{
+    const id=seedPersonal(h.sqlite,{id:'disabled_outbox'});h.env.SHEETS_SYNC_ENABLED='false';
+    await handlePersonalUsePostback(h.env,postback(id,'personal_use_confirm'),owner);
+    await handlePersonalUsePostback(h.env,postback(id,'personal_use_undo'),owner);
+    assert.deepEqual(row(h.sqlite,id),{status:'CANCELLED',version:3});
+    assert.deepEqual(outbox(h.sqlite,id),[{entity_version:2,status:'PENDING'},{entity_version:3,status:'PENDING'}]);
+    assert.equal(sheetJobs(h.queue).length,0);
+    assert.equal(await recoverPendingSheetJobs(h.env,0),0);
+    h.sqlite.prepare(`UPDATE sync_jobs SET updated_at='2000-01-01T00:00:00.000Z',next_attempt_at='2000-01-01T00:00:00.000Z' WHERE entity_key=?`).run(id);
+    h.env.SHEETS_SYNC_ENABLED='true';
+    assert.equal(await recoverPendingSheetJobs(h.env,0),2);
+    assert.deepEqual(sheetJobs(h.queue).map(job=>job.entityVersion).sort(),[2,3]);
+  }finally{h.close();}
+});
+
+test('disabled sync still rolls back confirm when durable outbox insertion fails',async()=>{
+  const h=harness();
+  try{
+    const id=seedPersonal(h.sqlite,{id:'disabled_outbox_failure'});h.env.SHEETS_SYNC_ENABLED='false';
+    h.sqlite.exec(`CREATE TRIGGER reject_personal_sync BEFORE INSERT ON sync_jobs WHEN NEW.entity_type='PERSONAL_USE' BEGIN SELECT RAISE(ABORT,'forced integration failure'); END;`);
+    await assert.rejects(handlePersonalUsePostback(h.env,postback(id,'personal_use_confirm'),owner),/forced integration failure/);
+    assert.deepEqual(row(h.sqlite,id),{status:'WAITING_CONFIRM',version:1});
+    assert.deepEqual(actions(h.sqlite,id),['CREATE_DRAFT']);
+    assert.deepEqual(outbox(h.sqlite,id),[]);
   }finally{h.close();}
 });
 

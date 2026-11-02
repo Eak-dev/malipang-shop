@@ -5,6 +5,9 @@ interface UndoInput{
   expenseId:string;lineUserId:string;traceId:string;
   actorEmployeeId:string|null;branchId:string|null;
 }
+export class ExpenseSyncBusyError extends Error{
+  constructor(){super("EXPENSE_SYNC_REVIEW_OR_PROCESSING");this.name="ExpenseSyncBusyError";}
+}
 
 /**
  * Reserve the transition with a private audit token inside one D1 transaction.
@@ -19,8 +22,10 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
       SELECT ?,?,'UNDO',expense_id,?,'',json_object('status',status,'version',version),
         json_object('status','CANCELLED','version',MAX(version,COALESCE((SELECT MAX(entity_version) FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=expense_events.expense_id),0))+1),?
-      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'`)
-      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId),
+      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
+        AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=expense_events.expense_id AND j.status IN ('PROCESSING','REVIEW'))
+        AND NOT EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND (f.state='IN_FLIGHT' OR (f.state='OWNED' AND f.lease_until>?)))`)
+      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน',now),
     env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=?,
         version=(SELECT json_extract(after_json,'$.version') FROM expense_audit_log WHERE audit_id=?)
       WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
@@ -33,7 +38,7 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
           WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version'))`)
       .bind(now,input.expenseId,auditId)
   ];
-  if(env.SHEETS_SYNC_ENABLED==="true")statements.push(
+  statements.push(
     env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token)
       SELECT ?,'EXPENSE',e.expense_id,e.version,?,'PENDING',0,?,?,NULL,NULL
       FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
@@ -43,7 +48,13 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
   statements.push(env.DB.prepare(`SELECT e.version FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
     WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`).bind(auditId));
   const results=await env.DB.batch<{version:number}>(statements);
-  if(Number(results[1]?.meta.changes||0)!==1)return null;
+  if(Number(results[1]?.meta.changes||0)!==1){
+    // Do not claim a busy item is already cancelled. An unresolved provider
+    // outcome requires review; an active projection must finish before Undo.
+    const blocked=await env.DB.prepare(`SELECT 1 AS present FROM expense_events e WHERE e.expense_id=? AND e.line_user_id=? AND e.status='CONFIRMED' AND (EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.status IN ('PROCESSING','REVIEW')) OR EXISTS(SELECT 1 FROM owner_correction_daily_write_fences f WHERE f.sheet_name=? AND (f.state='IN_FLIGHT' OR (f.state='OWNED' AND f.lease_until>?))))`).bind(input.expenseId,input.lineUserId,env.SHEET_EXPENSE_DAILY||'รายวัน',now).first<{present:number}>();
+    if(blocked)throw new ExpenseSyncBusyError();
+    return null;
+  }
   const version=Number(results[results.length-1]?.results?.[0]?.version);
   if(!Number.isSafeInteger(version)||version<1)throw new Error("Expense Undo committed without a valid sync version");
   return version;

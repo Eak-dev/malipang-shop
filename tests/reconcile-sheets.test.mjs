@@ -6,7 +6,7 @@ test('reconcile recreates all report job types from D1',async()=>{
   const sent=[];
   const db={
     prepare(sql){return{bind(){return this;},async all(){if(sql.includes('attendance_events'))return{results:[{entity_key:'att_1',version:1}],meta:{}};if(sql.includes('attendance_daily'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('payroll_weekly'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('expense_events'))return{results:[{entity_key:'exp_1',version:1}],meta:{}};if(sql.includes('owner_personal_transactions'))return{results:[{entity_key:'personal_1',version:1}],meta:{}};return{results:[],meta:{}};}};},
-    async batch(statements){return statements.map(()=>({meta:{changes:1}}));}
+    async batch(statements){return statements.map(()=>({results:[{held:0}],meta:{changes:1}}));}
   };
   const sentMessages=[];
   const env={DB:db,SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async send(){},async sendBatch(messages){sentMessages.push(...messages);sent.push(...messages.map(message=>message.body));}}};
@@ -31,7 +31,7 @@ test('reconcile selects weekly payroll rows using Thursday cycle keys',async()=>
 
 test('large forced sheet batches are spread across minute windows',async()=>{
   const sent=[],bound=[];
-  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(){return[];}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(statements){return statements.map(()=>({results:[{held:0}],meta:{changes:1}}));}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   const {enqueueSheetSyncBatch}=await import('../dist/db/repositories.js');
   const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${index}`,entityVersion:1,traceId:'reconcile_test'}));
   assert.equal(await enqueueSheetSyncBatch(env,jobs,true),45);
@@ -40,5 +40,6 @@ test('large forced sheet batches are spread across minute windows',async()=>{
   assert.equal(sent[40].delaySeconds,60);
   assert.equal(sent[44].delaySeconds,60);
   assert.match(bound[0].sql,/next_attempt_at/);
-  assert.equal(Date.parse(bound[40].args[6])-Date.parse(bound[0].args[6]),60_000,'persisted eligibility must match queue delay');
+  const writes=bound.filter(item=>item.sql.startsWith('INSERT INTO sync_jobs'));
+  assert.equal(Date.parse(writes[40].args[6])-Date.parse(writes[0].args[6]),60_000,'persisted eligibility must match queue delay');
 });

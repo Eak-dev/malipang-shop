@@ -3,9 +3,16 @@ import assert from 'node:assert/strict';
 import {parsePersonalUseText} from '../dist/personal-use/text-parser.js';
 import {handlePersonalUsePostback,handlePersonalUseText} from '../dist/personal-use/service.js';
 import {buildPersonalUseRawSheetValues} from '../dist/sheets/sync.js';
-import {legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites} from '../dist/sheets/owner-month-close.js';
+import {legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap} from '../dist/sheets/owner-month-close.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:'B001',employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{canSubmitExpense:true}};
+test('bootstrap preserves redesigned dashboard and rejects partial layout markers',()=>{
+  assert.equal(shouldSkipLegacyOwnerMonthCloseBootstrap('01  ยอดขายและรายรับ','รายละเอียดและรายการอ้างอิงด้านล่าง'),true);
+  assert.equal(shouldSkipLegacyOwnerMonthCloseBootstrap('คำตัดสินปิดเดือน','ของใช้ร้าน/ทั่วไป'),false);
+  assert.equal(shouldSkipLegacyOwnerMonthCloseBootstrap(undefined,undefined),false);
+  assert.throws(()=>shouldSkipLegacyOwnerMonthCloseBootstrap('01  ยอดขายและรายรับ',''),/MARKER_CONFLICT/);
+  assert.throws(()=>shouldSkipLegacyOwnerMonthCloseBootstrap('ยอดขายสรุปแบบใหม่','รายการแบบใหม่'),/UNKNOWN_LAYOUT/);
+});
 function harness(){
   const state={items:new Map(),queue:[],audits:[],batches:[]};
   const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){

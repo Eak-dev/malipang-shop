@@ -32,9 +32,10 @@ export async function handleAttendance(env:Env,event:LineEvent,employee:Employee
   const result=await response.json() as AttendanceCommitResult;
   const notification={traceId,purpose:"ATTENDANCE_RESULT" as const,identitySuffix:"attendance-result"};
   if(result.punchType==="COMPLETE"){await respondTextToLineEvent(env,event,buildAttendanceReply(employee,result),notification);return true;}
+  if(result.punchType==="DUPLICATE"&&(result.sourceEmployeeId!==employee.employeeId||!Number.isSafeInteger(result.dailyVersion)||Number(result.dailyVersion)<1||!Number.isSafeInteger(result.weeklyVersion)||Number(result.weeklyVersion)<1)){await respondTextToLineEvent(env,event,buildAttendanceReply(employee,result),notification);return true;}
   const jobs=[
     {kind:"SHEETS_SYNC" as const,entityType:"ATTENDANCE_EVENT" as const,entityKey:result.eventId,entityVersion:result.version,traceId},
-    {kind:"SHEETS_SYNC" as const,entityType:"DAILY_PAYROLL" as const,entityKey:`${employee.employeeId}|${result.workDate}`,entityVersion:result.version,traceId},
+    {kind:"SHEETS_SYNC" as const,entityType:"DAILY_PAYROLL" as const,entityKey:`${employee.employeeId}|${result.workDate}`,entityVersion:result.dailyVersion??result.version,traceId},
     {kind:"SHEETS_SYNC" as const,entityType:"WEEKLY_PAYROLL" as const,entityKey:weeklyPayrollSyncEntityKey(employee.employeeId,result.workDate),entityVersion:weeklyPayrollSyncVersion(result),traceId}
   ];
   for(const job of jobs)await enqueueSheetSync(env,job);

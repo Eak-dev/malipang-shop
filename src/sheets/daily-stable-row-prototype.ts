@@ -1,6 +1,6 @@
 import {findMonthBlocks} from './daily-expense';
 import {planStableDailyExpenseRow,stableDailyExpenseKey,type StableDailyRowRequest} from './daily-stable-row-plan';
-import {buildStableEmptyRowAppend,buildStableMonthExpansion,buildStableRowMetadataWrite,expectedHelperFormulae,hasExpectedMonthlySubtotal,type MetadataValueRange,type StableRowValues} from './daily-stable-row-writes';
+import {buildStableEmptyRowAppend,buildStableMonthExpansion,buildStableRowMetadataWrite,isAcceptedHelperFormula,hasExpectedMonthlySubtotal,type MetadataValueRange,type StableRowValues} from './daily-stable-row-writes';
 
 /**
  * Shadow-only orchestration. No production adapter is provided: there is no
@@ -97,9 +97,11 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
       if(Number(candidate[1])===request.postingMonth&&typeof balance==='number'&&Number.isFinite(balance)){expectedBalance=balance;break;}
     }
     if(expectedBalance===undefined)return review('PREVIOUS_BALANCE_UNVERIFIED');
+    const targetFormula=(fresh.body[target-1]??[])[9];
+    if(targetFormula===`=J${target-1}-I${target}`){const previous=beforeEffective.body[target-2]??[];if(typeof previous[9]!=='number'||!Number.isFinite(previous[9]))return review('PREVIOUS_BALANCE_UNVERIFIED');}
     if(plan.status==='FOUND'){
-      const helper=expectedHelperFormulae(monthBlock.headerRow,target),row=fresh.body[target-1]??[],visible=beforeEffective.body[target-1]??[];
-      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(row[index]!==helper[name])return review('PREIMAGE_HELPER_UNVERIFIED');
+      const row=fresh.body[target-1]??[],previous=fresh.body[target-2]??[],visible=beforeEffective.body[target-1]??[];
+      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(!isAcceptedHelperFormula(monthBlock.headerRow,target,request.postingMonth,name,row[index],previous))return review('PREIMAGE_HELPER_UNVERIFIED');
       const cash=[5,6,7].reduce((sum,index)=>sum+Number(row[index]||0),0),card=[10,11,12,13,14,15,16].reduce((sum,index)=>sum+Number(row[index]||0),0),day=Number(row[2]);
       const date=(Date.UTC(values.postingYear,request.postingMonth-1,day)-Date.UTC(1899,11,30))/86400000;
       if(visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-(expectedBalance-cash))>0.001||Math.abs(visible[18]-(expectedBalance-cash-card))>0.001||visible[20]!==date)return review('PREIMAGE_HELPER_VALUE_UNVERIFIED');
@@ -143,9 +145,10 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     const postMetadata=await port.lookupMetadata(key);
     if(postMetadata.length!==1||postMetadata[0]!.row!==post.observedRow||postMetadata[0]!.metadataId!==expectedMetadataId)return review('POSTIMAGE_METADATA_UNVERIFIED');
     {
-      const helper=expectedHelperFormulae(monthBlock.headerRow,post.observedRow),row=after.body[post.observedRow-1]??[];
-      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(row[index]!==helper[name])return review('POSTIMAGE_HELPER_UNVERIFIED');
+      const row=after.body[post.observedRow-1]??[],previous=after.body[post.observedRow-2]??[];
+      for(const [index,name] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const)if(!isAcceptedHelperFormula(monthBlock.headerRow,post.observedRow,request.postingMonth,name,row[index],previous))return review('POSTIMAGE_HELPER_UNVERIFIED');
       const effective=await port.readEffectiveSnapshot(),visible=effective.body[post.observedRow-1]??[];
+      if(row[9]===`=J${post.observedRow-1}-I${post.observedRow}`){const prev=effective.body[post.observedRow-2]??[];if(typeof prev[9]!=='number'||!Number.isFinite(prev[9]))return review('POSTIMAGE_PRIOR_BALANCE_UNVERIFIED');}
       const cash=['F','G','H'].includes(values.amountColumn)?values.amountBaht:0, card=cash?0:values.amountBaht;
       let postBalance:number|undefined=expectedBalance;
       if(plan.status==='FOUND'&&post.observedRow!==plan.observedRow){

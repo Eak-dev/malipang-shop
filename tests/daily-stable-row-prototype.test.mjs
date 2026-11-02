@@ -60,6 +60,12 @@ test('shadow append writes one row, ID and missing formulas after the last entry
   assert.equal(p.rows[2][8],'=SUM(F3:H3)');assert.equal(p.dispatch,1);
 });
 
+test('an existing sequential J helper is preserved when its preceding same-month balance is valid',async()=>{
+  const next=blank();next[9]='=J2-I3';const p=portFor([header(),previous(),next,total()]);
+  assert.deepEqual(await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values),{status:'VERIFIED'});
+  assert.equal(p.rows[2][9],'=J2-I3');
+});
+
 test('metadata update follows a whole-row move after the last lookup',async()=>{
   const a=previous(),other=blank();other[1]=10;other[2]=7;other[3]='Other';other[7]=1;
   const p=portFor([header(),a,other,total()]);p.metadata=[{key:a[23],id:742,anchor:a}];p.moveBeforeWrite=true;

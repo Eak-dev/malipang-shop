@@ -1,5 +1,5 @@
 import { findMonthBlocks } from './daily-expense';
-import { expectedHelperFormulae } from './daily-stable-row-writes';
+import { isAcceptedHelperFormula } from './daily-stable-row-writes';
 
 /**
  * Planning only: a row number returned here is an observation, never durable
@@ -80,7 +80,6 @@ export function planStableDailyExpenseRow(body: readonly (readonly unknown[])[],
   const candidate=body[next-1] ?? [];
   if (INPUT_COLUMNS.some(index=>!blank(cell(candidate,index)))) return {status:'REVIEW', reason:'APPEND_ROW_NOT_EMPTY'};
   const formulaColumns = [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']] as const;
-  const accepted=expectedHelperFormulae(block.headerRow,next);
-  if(formulaColumns.some(([index,name])=>!blank(cell(candidate,index))&&cell(candidate,index)!==accepted[name]))return {status:'REVIEW',reason:'APPEND_HELPER_FORMULA_UNVERIFIED'};
+  if(formulaColumns.some(([index,name])=>!blank(cell(candidate,index))&&!isAcceptedHelperFormula(block.headerRow,next,request.postingMonth,name,cell(candidate,index),body[next-2]??[])))return {status:'REVIEW',reason:'APPEND_HELPER_FORMULA_UNVERIFIED'};
   return {status:'APPEND', observedRow:next, formulaColumnsMissing:formulaColumns.filter(([index])=>blank(cell(candidate,index))).map(([,column])=>column)};
 }

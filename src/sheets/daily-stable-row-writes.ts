@@ -53,6 +53,13 @@ export function expectedHelperFormulae(header:number,row:number):Record<string,s
   };
 }
 
+/** Existing sequential J formulas are safe only with a same-month previous
+ * row. The caller must additionally verify that row's effective J is numeric. */
+export function isAcceptedHelperFormula(header:number,row:number,month:number,name:string,value:unknown,previous:readonly unknown[]):boolean{
+  const generated=expectedHelperFormulae(header,row)[name];if(value===generated)return true;
+  return name==='J'&&row>header+1&&value===`=J${row-1}-I${row}`&&Number(previous[1])===month&&previous[9]!==null&&previous[9]!==undefined&&previous[9]!=='';
+}
+
 /** Build a narrow write for an independently verified blank row, in one batch. */
 export function buildStableEmptyRowAppend(sheetId:number,headerRow:number,row:number,stableKey:string,values:StableRowValues,missingFormulaColumns:string[],blockMonth:number,metadataId:number):Array<Record<string,unknown>> {
   if(!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(headerRow)||headerRow<1||!Number.isSafeInteger(row)||row<=headerRow)throw new Error('INVALID_MONTH_LAYOUT');

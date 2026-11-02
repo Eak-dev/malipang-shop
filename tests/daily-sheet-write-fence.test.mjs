@@ -79,6 +79,17 @@ test('new daily rows reject occupied input cells, empty-display formulas and inc
  }finally{client.batchGetSheetValues=oldRead;client.batchGetSheetFormulaValues=oldFormula;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;}
 });
 
+test('cancellation does not read or mutate Sheets when the daily row identity is unverified',async()=>{
+ const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),{clearCancelledExpenseFromDaily}=require('../dist/sheets/daily-expense.js');
+ const oldRead=client.batchGetSheetFormulaValues,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;
+ try{for(const mapped of [false,true]){const h=expenseSqlite();try{
+  h.env.SHEET_EXPENSE_DAILY='daily';if(mapped)h.sqlite.prepare("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('daily','cancelled',10)").run();
+  let touched=false;client.batchGetSheetFormulaValues=async()=>{touched=true;return[[['identical']]];};client.batchClearValues=async()=>{touched=true;};client.batchWriteValues=async()=>{touched=true;};
+  if(mapped){await assert.rejects(clearCancelledExpenseFromDaily(h.env,'cancelled'),/DAILY_CANCEL_IDENTITY_UNVERIFIED/);assert.equal(h.sqlite.prepare("SELECT row_number FROM sheet_row_index WHERE entity_key='cancelled'").get().row_number,10);}else assert.deepEqual(await clearCancelledExpenseFromDaily(h.env,'cancelled'),[]);
+  assert.equal(touched,false);
+ }finally{h.close();}}}finally{client.batchGetSheetFormulaValues=oldRead;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;}
+});
+
 test('capacity expansion advances state and index together and rolls back on failure',async()=>{
  const {createRequire}=await import('node:module');const require=createRequire(import.meta.url),{mapDailyCapacityExpansion}=require('../dist/sheets/daily-expense.js');
  for(const failAt of [null,0,1,2,3,4,5,6]){const h=expenseSqlite();try{

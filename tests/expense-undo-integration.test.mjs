@@ -182,34 +182,16 @@ test('SQLite: disabled Undo rolls back when outbox creation fails',async()=>{
   finally{h.close();}
 });
 
-test('SQLite: new Undo version updates only its mapped mirrors; partial sink failure is retry-safe',async()=>{
+test('SQLite: cancellation holds even an identical mapped row without clearing it',async()=>{
   const h=harness(),writes=[],clears=[];
   const originalWrite=sheetsClient.batchWriteValues,originalClear=sheetsClient.batchClearValues,originalRead=sheetsClient.batchGetSheetFormulaValues;
   Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
-  for(const [sheet,key,rowNumber] of [['V52_EXPENSE_RAW','exp_fixture',2],['daily_fixture','exp_fixture',10],['details_fixture','exp_fixture|item_fixture',20],['daily_fixture','exp_other',11],['details_fixture','exp_other|item_other',21]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,key,rowNumber);
-  sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};
-  const expected=Array(22).fill('');Object.assign(expected,{0:1,1:1,2:'sanitized fixture',5:1,20:'ingredients',21:'ทอน/หน้าร้าน'});
-  sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[expected]]);
-  let failOnce=true;
-  sheetsClient.batchClearValues=async(_env,ranges,before)=>{clears.push(...ranges);if(failOnce){failOnce=false;throw new Error('fixture timeout before clear');}if(before)await before();};
-  try{
-    await h.undo();const job=undoMessages(h)[0];
-    await assert.rejects(syncJob(h.env,job),/fixture timeout before clear/);
-    assert.equal(row(h).status,'CANCELLED');assert.equal(audits(h).length,1);
-    assert.equal(jobs(h).at(-1).status,'FAILED');
-    h.sqlite.prepare("UPDATE sync_jobs SET next_attempt_at='2026-01-01T00:00:00.000Z' WHERE entity_version=3").run();
-    assert.equal(await syncJob(h.env,job),'PROCESSED');
-    const finishedWrites=writes.length,finishedClears=clears.length;
-    assert.equal(await syncJob(h.env,job),'IGNORED');
-    assert.equal(await syncJob(h.env,{...job,entityVersion:2}),'IGNORED');
-    assert.equal(writes.length,finishedWrites);assert.equal(clears.length,finishedClears);
-    assert.deepEqual(writes.filter(x=>x.range.includes('V52_EXPENSE_RAW')).map(x=>x.values[0][7]),['CANCELLED','CANCELLED']);
-    assert.deepEqual(writes.filter(x=>x.range==="'details_fixture'!Q20").map(x=>x.values),[[['CANCELLED']]]);
-    assert.deepEqual([...new Set(clears)],["'daily_fixture'!B10:D10","'daily_fixture'!F10:H10","'daily_fixture'!K10:Q10","'daily_fixture'!V10:W10"]);
-    assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE sheet_name='daily_fixture' AND entity_key='exp_fixture'").get().n,0);
-    assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE entity_key IN ('exp_other','exp_other|item_other')").get().n,2);
-    assert.equal(audits(h).length,1);assert.equal(row(h).version,3);
-  }finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
+  for(const [sheet,key,rowNumber] of [['V52_EXPENSE_RAW','exp_fixture',2],['daily_fixture','exp_fixture',10],['details_fixture','exp_fixture|item_fixture',20]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,key,rowNumber);
+  sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);};
+  const identical=Array(22).fill('');Object.assign(identical,{0:1,1:1,2:'sanitized fixture',5:1,20:'ingredients',21:'ทอน/หน้าร้าน'});
+  sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[identical]]);
+  try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(await syncJob(h.env,job),'REVIEW');assert.deepEqual(clears,[]);assert.equal(writes.filter(x=>x.range.includes('V52_EXPENSE_RAW')).length,1);assert.equal(writes.filter(x=>x.range.includes('details_fixture')).length,0);assert.equal(h.sqlite.prepare("SELECT COUNT(*) n FROM sheet_row_index WHERE sheet_name='daily_fixture' AND entity_key='exp_fixture'").get().n,1);assert.equal(jobs(h).at(-1).status,'REVIEW');assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'DAILY_CANCEL_IDENTITY_UNVERIFIED'});}
+  finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
 });
 
 test('cancel never clears another transaction when the numeric daily mapping is stale',async()=>{
@@ -223,14 +205,12 @@ test('cancel never clears another transaction when the numeric daily mapping is 
   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
 });
 
-test('an applied daily clear with lost response is held for review and never silently retried',async()=>{
-  const h=harness(),clears=[];Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
-  for(const [sheet,key,rowNumber] of [['V52_EXPENSE_RAW','exp_fixture',2],['daily_fixture','exp_fixture',10]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,key,rowNumber);
+test('cancellation with no daily mapping completes without a daily sheet mutation',async()=>{
+  const h=harness(),writes=[],clears=[];Object.assign(h.env,{SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_EXPENSE_DAILY:'daily_fixture',SHEET_PURCHASE_DETAILS:'details_fixture'});
+  for(const [sheet,key,rowNumber] of [['V52_EXPENSE_RAW','exp_fixture',2],['details_fixture','exp_fixture|item_fixture',20]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run(sheet,key,rowNumber);
   const originalWrite=sheetsClient.batchWriteValues,originalClear=sheetsClient.batchClearValues,originalRead=sheetsClient.batchGetSheetFormulaValues;
-  const expected=Array(22).fill('');Object.assign(expected,{0:1,1:1,2:'sanitized fixture',5:1,20:'ingredients',21:'ทอน/หน้าร้าน'});let applied=false;
-  sheetsClient.batchWriteValues=async()=>{};sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[applied?[]:expected]]);
-  sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);applied=true;throw new sheetsClient.SheetsMutationOutcomeUnknownError(new Error('lost response'));};
-  try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(applied,true);assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(clears.length,4);assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE entity_key='exp_fixture' AND entity_version=3").get()},{status:'REVIEW',last_error:'DAILY_CANCEL_OUTCOME_UNKNOWN'});}
+  sheetsClient.batchWriteValues=async(_env,data)=>{writes.push(...data);};sheetsClient.batchGetSheetFormulaValues=async(_env,ranges)=>readRawOrDaily(ranges,[[],[]]);sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);};
+  try{await h.undo();const job=undoMessages(h)[0];assert.equal(await syncJob(h.env,job),'PROCESSED');assert.equal(await syncJob(h.env,job),'IGNORED');assert.deepEqual(clears,[]);assert.deepEqual(writes.filter(x=>x.range==="'details_fixture'!Q20").map(x=>x.values),[[['CANCELLED']]]);}
   finally{sheetsClient.batchWriteValues=originalWrite;sheetsClient.batchClearValues=originalClear;sheetsClient.batchGetSheetFormulaValues=originalRead;h.close();}
 });
 

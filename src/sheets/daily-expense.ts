@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { batchClearValues,batchGetSheetValues,batchGetSheetFormulaValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId,SheetsMutationOutcomeUnknownError } from "./client";
+import { batchClearValues,batchGetSheetValues,batchGetSheetFormulaValues,batchUpdateSpreadsheet,batchWriteValues,getSheetId } from "./client";
 import {withCorrectionDailyWriteFence,type GuardedDailyMutation,type DailyFenceExpenseSnapshot} from "./owner-correction-daily-write-fence";
 
 export class DailyCancelReviewRequired extends Error{
@@ -273,27 +273,11 @@ export async function writeConfirmedExpenseToDaily(env:Env,record:DailyExpenseRe
 }
 
 export async function clearCancelledExpenseFromDaily(env:Env,expenseId:string):Promise<number[]>{
-  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async write=>{
+  return withCorrectionDailyWriteFence(env,env.SHEET_EXPENSE_DAILY,async()=>{
   const mapped=await mappedRowsForExpense(env,expenseId);if(!mapped.length)return[];
-  // Old mappings can point at a different transaction after manual row edits.
-  // An expense ID is not stored in the daily sheet itself, so clear only one
-  // summary row when the current sheet contents still match the D1 record.
-  // Historical itemized mappings require an explicit identity review.
-  if(mapped.length!==1||mapped[0]!.entityKey!==expenseId)throw new DailyCancelReviewRequired();
-  const expense=await env.DB.prepare(`SELECT expense_id,transaction_date,description,amount_satang,payment_key,source_wallet,category,status FROM expense_events WHERE expense_id=?`).bind(expenseId).first<{expense_id:string;transaction_date:string;description:string;amount_satang:number;payment_key:string;source_wallet:string;category:string;status:string}>();
-  if(!expense||expense.status!=="CANCELLED")throw new DailyCancelReviewRequired();
-  const row=mapped[0]!.row,reads=await batchGetSheetFormulaValues(env,[sheetRange(env.SHEET_EXPENSE_DAILY,"A1:W3"),sheetRange(env.SHEET_EXPENSE_DAILY,`B${row}:W${row}`)]);
-  if(reads.length!==2||!reads[1]?.[0])throw new DailyCancelReviewRequired();
-  const values=reads[1]![0]!,date=parseTransactionDate(expense.transaction_date),payment=resolvePayment(reads[0]||[],expense.payment_key,date.year,date.month,date.day);
-  const amountColumns=[4,5,6,9,10,11,12,13,14,15],expectedOffset=payment.amountColumn.charCodeAt(0)-"B".charCodeAt(0);
-  const amount=Number(expense.amount_satang)/100;
-  const valid=Number(values[0])===payment.postingMonth&&Number(values[1])===payment.postingDay&&String(values[2]??"").trim()===expense.description.trim()
-    &&amountColumns.every(i=>i===expectedOffset?Number(values[i])===amount:(values[i]===undefined||values[i]===null||values[i]===""))
-    &&String(values[20]??"").trim()===expense.category.trim()&&String(values[21]??"").trim()===legacySourceWallet(expense.payment_key,expense.source_wallet);
-  if(!valid)throw new DailyCancelReviewRequired();
-  try{await write(before=>batchClearValues(env,mapped.flatMap(item=>dailyInputRanges(env.SHEET_EXPENSE_DAILY,item.row)),before));}
-  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new DailyCancelReviewRequired("DAILY_CANCEL_OUTCOME_UNKNOWN");throw error;}
-  await env.DB.prepare(`DELETE FROM sheet_row_index WHERE sheet_name=? AND (entity_key=? OR substr(entity_key,1,length(?)+1)=? || '|')`).bind(env.SHEET_EXPENSE_DAILY,expenseId,expenseId,expenseId).run();
-  return mapped.map(item=>item.row);
+  // Even identical date, description, amount and category can belong to two
+  // transactions. A numeric index and a value match are not a durable ID.
+  // Hold every mapped cancellation until row identity has independent proof.
+  throw new DailyCancelReviewRequired("DAILY_CANCEL_IDENTITY_UNVERIFIED");
   });
 }

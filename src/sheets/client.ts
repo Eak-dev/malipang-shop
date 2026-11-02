@@ -83,7 +83,7 @@ export async function batchPatchMetadataRows(env:Env,patches:MetadataRowPatch[],
   if(!metadataPatchResponseComplete(patches,result))throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_ROW_PATCH_RESPONSE_MISMATCH"));
 }
 export interface SheetRowMetadata {metadataId:number;metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
-export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number}
+export interface NewSheetRowMetadata {metadataKey:string;metadataValue:string;sheetId:number;rowIndex:number;metadataId?:number}
 /** A deleted metadata ID must be checked directly; key searches cannot prove absence. */
 export async function getSheetRowMetadataById(env:Env,id:number):Promise<SheetRowMetadata|null>{
   if(!Number.isSafeInteger(id)||id<1)throw new Error("INVALID_METADATA_ID");
@@ -96,18 +96,19 @@ export async function getSheetRowMetadataById(env:Env,id:number):Promise<SheetRo
 /** Create associations only after the caller has reverified each row identity. */
 export async function createSheetRowMetadata(env:Env,rows:NewSheetRowMetadata[]):Promise<SheetRowMetadata[]>{
   if(!rows.length)return [];
-  const identities=new Set<string>(),locations=new Set<string>();
+  const identities=new Set<string>(),locations=new Set<string>(),ids=new Set<number>();
   const requests=rows.map(row=>{
     const identity=`${row.metadataKey}\u0000${row.metadataValue}`,location=`${row.sheetId}\u0000${row.rowIndex}\u0000${row.metadataKey}`;
-    if(!row.metadataKey||!row.metadataValue||!Number.isSafeInteger(row.sheetId)||row.sheetId<0||!Number.isSafeInteger(row.rowIndex)||row.rowIndex<0||identities.has(identity)||locations.has(location))throw new Error("INVALID_METADATA_CREATE");
+    if(!row.metadataKey||!row.metadataValue||!Number.isSafeInteger(row.sheetId)||row.sheetId<0||!Number.isSafeInteger(row.rowIndex)||row.rowIndex<0||identities.has(identity)||locations.has(location)||(row.metadataId!==undefined&&(!Number.isSafeInteger(row.metadataId)||row.metadataId<1||row.metadataId>2147483647||ids.has(row.metadataId))))throw new Error("INVALID_METADATA_CREATE");
     identities.add(identity);locations.add(location);
-    return {createDeveloperMetadata:{developerMetadata:{metadataKey:row.metadataKey,metadataValue:row.metadataValue,visibility:"DOCUMENT",location:{dimensionRange:{sheetId:row.sheetId,dimension:"ROWS",startIndex:row.rowIndex,endIndex:row.rowIndex+1}}}}};
+    if(row.metadataId!==undefined)ids.add(row.metadataId);
+    return {createDeveloperMetadata:{developerMetadata:{...(row.metadataId===undefined?{}:{metadataId:row.metadataId}),metadataKey:row.metadataKey,metadataValue:row.metadataValue,visibility:"DOCUMENT",location:{dimensionRange:{sheetId:row.sheetId,dimension:"ROWS",startIndex:row.rowIndex,endIndex:row.rowIndex+1}}}}};
   });
   const result=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true).then(r=>r.json()) as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:number;metadataKey?:string;metadataValue?:string;location?:{dimensionRange?:{sheetId?:number;dimension?:string;startIndex?:number;endIndex?:number}}}}}>};
   if(result.replies?.length!==rows.length)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_COUNT_MISMATCH"));
   return rows.map((row,index)=>{
     const metadata=result.replies?.[index]?.createDeveloperMetadata?.developerMetadata,range=metadata?.location?.dimensionRange,id=Number(metadata?.metadataId);
-    if(!Number.isSafeInteger(id)||id<1||metadata?.metadataKey!==row.metadataKey||metadata.metadataValue!==row.metadataValue||range?.sheetId!==row.sheetId||range.dimension!=="ROWS"||range.startIndex!==row.rowIndex||range.endIndex!==row.rowIndex+1)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_IDENTITY_MISMATCH"));
+    if(!Number.isSafeInteger(id)||id<1||(row.metadataId!==undefined&&id!==row.metadataId)||metadata?.metadataKey!==row.metadataKey||metadata.metadataValue!==row.metadataValue||range?.sheetId!==row.sheetId||range.dimension!=="ROWS"||range.startIndex!==row.rowIndex||range.endIndex!==row.rowIndex+1)throw new SheetsMutationOutcomeUnknownError(new Error("METADATA_CREATE_IDENTITY_MISMATCH"));
     return {...row,metadataId:id};
   });
 }

@@ -5,7 +5,7 @@ import {createSheetRowMetadata,getSheetId,getSheetValues,searchSheetRowMetadata,
 import {resolvePayment} from "./daily-expense";
 import {loadExpenseDailyPosting,type LoadedExpenseDailyPosting} from "./sync";
 import {planOwnerCorrectionBootstrap} from "./owner-correction-bootstrap";
-import {planCategoryMetadata,type CategoryExistingMetadata,type CategoryMetadataTarget} from "./owner-correction-metadata";
+import {planCategoryMetadata,type CategoryExistingMetadata,type CategoryMetadataTarget,type CategoryMetadataPlan} from "./owner-correction-metadata";
 import type {OwnerCorrectionIdentity} from "./owner-correction-identity";
 import type {CorrectionSyncPlan} from "./owner-correction-sync-plan";
 
@@ -49,9 +49,15 @@ export async function inspectOwnerCorrectionExistingTargets(env:Env,expected:Own
   const first=await read(),second=await read();return first&&second&&JSON.stringify(first)===JSON.stringify(second)?first:null;
 }
 
+/** Stable read-only metadata plan; no association is created by this check. */
+export async function inspectOwnerCorrectionBootstrapPlan(env:Env,expected:OwnerCorrectionSnapshot,ports:CorrectionBootstrapPorts=defaults):Promise<CategoryMetadataPlan[]|null>{
+  const read=async()=>{const current=await snapshot(env,expected,ports);return planCategoryMetadata(current.targets,current.existing);};
+  const first=await read(),second=await read();return JSON.stringify(first)===JSON.stringify(second)&&first.every(item=>item.kind!=="CONFLICT")?first:null;
+}
+
 /**
- * Associates only a uniquely matched, twice-verified expense. An ambiguous
- * create response is never retried blindly: the next call re-reads metadata.
+ * Legacy test helper. Do not use for runtime retries: generated IDs do not
+ * fence an outstanding request. Runtime uses persisted, explicit IDs instead.
  */
 export async function bootstrapOwnerCorrectionTargets(env:Env,expected:OwnerCorrectionSnapshot,ports:CorrectionBootstrapPorts=defaults):Promise<Array<{target:CategoryMetadataTarget;metadataId:number}>>{
   const before=await snapshot(env,expected,ports),plan=planCategoryMetadata(before.targets,before.existing);

@@ -9,7 +9,7 @@ import {matchesOwnerCorrectionIdentity} from "./owner-correction-identity";
 // The formulas were read from the private report test copy. Any drift fails closed.
 const formulaDigest="5aa6fbf7b33d26783d2ff0fc58fa385131bc110f5b961416a08d9fe4afb3d203";
 const flowFormulaDigest="7477383cebb25e383af88b6bb10564bbde0c79a1c898baccf8acc83c588b445f";
-const formulaRanges=["'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5","'35_EXPENSE_FLOW_CHECK'!B5:G65"];
+const formulaRanges=["'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5","'35_EXPENSE_FLOW_CHECK'!B5:G65","'รายวัน'!A:W"];
 const valueRanges=["'04_OWNER_MONTH_CLOSE'!C2","'04_OWNER_MONTH_CLOSE'!B12","'04_OWNER_MONTH_CLOSE'!C24:C35","'04_OWNER_MONTH_CLOSE'!L14","'97_EXPENSE_CLEAN'!A2:H4500","'V52_EXPENSE_RAW'!A2:Q","'รายละเอียดการซื้อ'!A2:Q","'35_EXPENSE_FLOW_CHECK'!A2","'35_EXPENSE_FLOW_CHECK'!A5:G65","'รายวัน'!A:W"];
 interface Ports{formulas:typeof batchGetSheetFormulaValues;values:typeof batchGetSheetSerialValues;digest:(value:unknown)=>Promise<string>;metadata:(env:Env,id:number)=>Promise<SheetRowMetadata|null>;sheetId:(env:Env,name:string)=>Promise<number>}
 interface FlowRow{date:string;dailyAmount:number|null;cleanAmount:number|null;difference:number|null;status:string;dailyCount:number|null;cleanCount:number|null}
@@ -28,8 +28,8 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   if(env.SHEET_EXPENSE_DAILY!=="รายวัน"||env.SHEET_EXPENSE_RAW!=="V52_EXPENSE_RAW"||(env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ")!=="รายละเอียดการซื้อ"||!snapshot.expenseId||snapshot.status!=="CONFIRMED"||!Number.isSafeInteger(snapshot.amountSatang)||snapshot.amountSatang<=0||!Number.isSafeInteger(dailyMetadataId)||dailyMetadataId<1||!isIsoDate(snapshot.transactionDate)||snapshot.transactionDate<"2026-09-01")return null;
   const read=async()=>Promise.all([ports.formulas(env,formulaRanges),ports.values(env,valueRanges),ports.metadata(env,dailyMetadataId),ports.sheetId(env,env.SHEET_EXPENSE_DAILY)]),first=await read(),second=await read();
   if(JSON.stringify(first)!==JSON.stringify(second))return null;
-  const [formulaValues,values,metadata,dailySheetId]=first;if(formulaValues.length!==7||values.length!==10||!metadata||metadata.metadataId!==dailyMetadataId||metadata.metadataKey!=="malipang_expense_daily"||metadata.metadataValue!==snapshot.expenseId||metadata.sheetId!==dailySheetId)return null;
-  const formulas=formulaValues.slice(0,4).flatMap(rows=>rows.map(row=>row[0])),flowFormulas=formulaValues.slice(4).flatMap(rows=>rows.flatMap(row=>row));
+  const [formulaValues,values,metadata,dailySheetId]=first;if(formulaValues.length!==8||values.length!==10||!metadata||metadata.metadataId!==dailyMetadataId||metadata.metadataKey!=="malipang_expense_daily"||metadata.metadataValue!==snapshot.expenseId||metadata.sheetId!==dailySheetId)return null;
+  const formulas=formulaValues.slice(0,4).flatMap(rows=>rows.map(row=>row[0])),flowFormulas=formulaValues.slice(4,7).flatMap(rows=>rows.flatMap(row=>row)),dailyFormulas=formulaValues[7]||[];
   if(formulas.length!==15||formulas.some(value=>typeof value!=="string")||formulas.some(value=>(value as string).includes(snapshot.expenseId))||await ports.digest(formulas)!==formulaDigest)return null;
   if(flowFormulas.length!==368||flowFormulas.some(value=>typeof value!=="string")||await ports.digest(flowFormulas)!==flowFormulaDigest)return null;
   const selected=day(values[0]?.[0]?.[0]),total=money(values[1]?.[0]?.[0]),categories=(values[2]||[]).map(row=>money(row[0])),bankTotal=money(values[3]?.[0]?.[0]);
@@ -48,7 +48,13 @@ export async function captureOwnerCorrectionReport(env:Env,snapshot:OwnerCorrect
   const flowAlert=values[7]?.[0]?.[0];if(typeof flowAlert!=="string"||flowValues.length!==61)return null;
   const flow:FlowRow[]=[];for(const [index,entry] of flowValues.entries()){const date=day(entry[0]),expectedDate=new Date(Date.UTC(2026,10,1)+index*86400000).toISOString().slice(0,10);if(date!==expectedDate)return null;flow.push({date,dailyAmount:money(entry[1]),cleanAmount:money(entry[2]),difference:money(entry[3]),status:typeof entry[4]==="string"?entry[4]:"",dailyCount:money(entry[5]),cleanCount:money(entry[6])});}
   if(new Set(flow.map(entry=>entry.date)).size!==61)return null;
-  const otherRowsDigest=await ports.digest([clean.filter(item=>item[1]!==snapshot.expenseId),raw.filter(item=>item[0]!==snapshot.expenseId),details.filter(item=>item[1]!==snapshot.expenseId),daily.filter((_item,index)=>index!==metadata.rowIndex)]);
+  // Keep other people's inputs and every formula unchanged, but do not hash
+  // calculated results as inputs: a valid amount edit recalculates totals.
+  const otherDaily=Array.from({length:Math.max(daily.length,dailyFormulas.length)},(_,index)=>({item:daily[index]||[],index})).filter(({index})=>index!==metadata.rowIndex).map(({item,index})=>{
+    const rowFormulas=dailyFormulas[index]||[],length=Math.max(item.length,rowFormulas.length);
+    return Array.from({length},(_,col)=>typeof rowFormulas[col]==="string"&&(rowFormulas[col] as string).startsWith("=")?["FORMULA",rowFormulas[col]]:["VALUE",item[col]??null]);
+  });
+  const otherRowsDigest=await ports.digest([clean.filter(item=>item[1]!==snapshot.expenseId),raw.filter(item=>item[0]!==snapshot.expenseId),details.filter(item=>item[1]!==snapshot.expenseId),otherDaily]);
   // Keep document/order identity and receipt facts immutable while allowing
   // the explicitly reviewed raw fields and summary projections to change.
   const targetEvidenceDigest=await ports.digest([[0,7,8,9,10,11,12,13,14,15,16].map(index=>r[index]??null),matchingDetails.map(item=>[0,1,2,4,5,6,7,8,9,10,11,16].map(index=>item[index]??null))]);

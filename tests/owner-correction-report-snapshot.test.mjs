@@ -15,7 +15,7 @@ function fixture(snapshot=before){
   Object.assign(dailyRow,{1:monthNumber,2:dayNumber,3:snapshot.description,[amountColumn]:amount,8:amount,17:0,20:serial(snapshot.transactionDate),21:snapshot.category,22:snapshot.sourceWallet==='SHOP_BANK'?'บัญชีร้าน':'ทอน/หน้าร้าน'});daily[7]=dailyRow;
   const flow=Array.from({length:61},(_,i)=>{const date=new Date(Date.UTC(2026,10,1)+i*86400000).toISOString().slice(0,10),active=date===snapshot.transactionDate,n=active?amount:0,count=active?1:0;return [serial(date),n,n,0,active?'ยอดรวมตรง — ยังต้องตรวจรายการ':'ยังไม่พบรายการ / ยังไม่ยืนยัน',count,count];});
   const values=[[[serial(`${snapshot.transactionDate.slice(0,7)}-01`)]],[[amount]],categories.map(n=>[n]),[[snapshot.sourceWallet==='SHOP_BANK'?amount:0]],clean,raw,[],[['alert']],flow,daily];
-  const formulas=[[['formula_0']],Array.from({length:12},(_,i)=>[`formula_${i+1}`]),[['formula_13']],[['formula_14']],[['flow_0']],[['flow_1']],Array.from({length:61},(_,i)=>Array.from({length:6},(_,j)=>`flow_${i}_${j}`))];
+  const formulas=[[['formula_0']],Array.from({length:12},(_,i)=>[`formula_${i+1}`]),[['formula_13']],[['formula_14']],[['flow_0']],[['flow_1']],Array.from({length:61},(_,i)=>Array.from({length:6},(_,j)=>`flow_${i}_${j}`)),structuredClone(daily)];
   const ports={formulas:async()=>structuredClone(formulas),values:async()=>structuredClone(values),metadata:async()=>({metadataId:42,metadataKey:'malipang_expense_daily',metadataValue:snapshot.expenseId,sheetId:1,rowIndex:7}),sheetId:async()=>1,digest:async value=>Array.isArray(value)&&typeof value[0]==='string'&&value.length===15?knownFormula:Array.isArray(value)&&value.length===368?knownFlow:createHash('sha256').update(JSON.stringify(value)).digest('hex')};
   return {env:{SHEET_EXPENSE_DAILY:'รายวัน',SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_PURCHASE_DETAILS:'รายละเอียดการซื้อ'},values,formulas,ports};
 }
@@ -37,6 +37,14 @@ test('report comparison verifies totals, category allocation, wallet and all oth
 test('report comparison validates amount and funding changes without guessing category',async()=>{
   const old=fixture(),next=fixture({...before,amountSatang:210000,sourceWallet:'CASH_DRAWER',paymentKey:'cash'}),a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,{...before,amountSatang:210000,sourceWallet:'CASH_DRAWER',paymentKey:'cash'},42,next.ports);
   assert.equal(ownerCorrectionReportMatches(a,b),true);assert.equal(ownerCorrectionReportMatches(a,{...b,category:'unclassified'}),false);
+});
+
+test('daily totals may recalculate but other inputs and formula definitions may not change',async()=>{
+  const changed={...before,amountSatang:210000},old=fixture(),next=fixture(changed);
+  old.values[9][10]=Array(8).fill(null);old.values[9][10][7]=2000;next.values[9][10]=Array(8).fill(null);next.values[9][10][7]=2100;
+  old.formulas[7][10]=Array(8).fill(null);next.formulas[7][10]=Array(8).fill(null);old.formulas[7][10][7]='=SUM(H5:H9)';next.formulas[7][10][7]='=SUM(H5:H9)';
+  const a=await captureOwnerCorrectionReport(old.env,before,42,old.ports),b=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,b),true);
+  next.formulas[7][10][7]='=SUM(H4:H9)';const altered=await captureOwnerCorrectionReport(next.env,changed,42,next.ports);assert.equal(ownerCorrectionReportMatches(a,altered),false);
 });
 
 test('the flow check must reflect amount changes on both daily and clean rows',async()=>{

@@ -5,25 +5,27 @@ import {loadExpenseDailyPosting} from "../sheets/sync";
 import {prepareVerifiedSameMonthCorrectionPlan} from "../sheets/owner-correction-plan-service";
 import {inspectOwnerCorrectionCategoryProtection} from "../sheets/owner-correction-protection";
 import {inspectOwnerCorrectionReportDeduplication} from "../sheets/owner-correction-report-inspection";
+import {bootstrapStableOwnerCorrectionTargets} from "../sheets/owner-correction-stable-bootstrap";
 import {correctionPeriodHeaderDigest} from "./owner-correction-period-math";
 import {inspectOwnerCorrectionPeriods} from "./owner-correction-periods";
 import {commitOwnerCorrection,loadOwnerCorrectionDraft,ownerCorrectionStatus} from "./owner-correction-repository";
 import type {OwnerCorrectionSnapshot} from "./owner-correction";
 import type {OwnerReviewIdentity} from "./online-order-review-repository";
 
-export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"UNSUPPORTED";
+export type ConfirmedCorrectionResult="APPLIED"|"STALE"|"PERIOD_REVIEW"|"PROTECTION"|"DUPLICATE"|"ALLOCATION"|"SHEET_REVIEW"|"METADATA_PENDING"|"UNSUPPORTED";
 export interface ConfirmedCorrectionPorts{
   periods:typeof inspectOwnerCorrectionPeriods;
   headers:typeof getSheetValues;
   protection:typeof inspectOwnerCorrectionCategoryProtection;
   dedupe:typeof inspectOwnerCorrectionReportDeduplication;
   posting:typeof loadExpenseDailyPosting;
+  bootstrap:typeof bootstrapStableOwnerCorrectionTargets;
   plan:typeof prepareVerifiedSameMonthCorrectionPlan;
   commit:typeof commitOwnerCorrection;
   enqueue:typeof enqueueSheetSync;
   status:typeof ownerCorrectionStatus;
 }
-const defaults:ConfirmedCorrectionPorts={periods:inspectOwnerCorrectionPeriods,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection,dedupe:inspectOwnerCorrectionReportDeduplication,posting:loadExpenseDailyPosting,plan:prepareVerifiedSameMonthCorrectionPlan,commit:commitOwnerCorrection,enqueue:enqueueSheetSync,status:ownerCorrectionStatus};
+const defaults:ConfirmedCorrectionPorts={periods:inspectOwnerCorrectionPeriods,headers:getSheetValues,protection:inspectOwnerCorrectionCategoryProtection,dedupe:inspectOwnerCorrectionReportDeduplication,posting:loadExpenseDailyPosting,bootstrap:bootstrapStableOwnerCorrectionTargets,plan:prepareVerifiedSameMonthCorrectionPlan,commit:commitOwnerCorrection,enqueue:enqueueSheetSync,status:ownerCorrectionStatus};
 const quote=(value:string)=>`'${value.replace(/'/g,"''")}'`;
 
 /** Prepare and commit only independently verified category edits in the same month. */
@@ -40,6 +42,7 @@ export async function confirmOwnerCorrection(env:Env,owner:OwnerReviewIdentity,i
   const headers=await ports.headers(env,`${quote(env.SHEET_EXPENSE_DAILY)}!A1:W3`);if(await correctionPeriodHeaderDigest(headers)!==periods.headerDigest)return "STALE";
   if(!await ports.dedupe(env,before,after))return "DUPLICATE";
   const posting=await ports.posting(env,before.expenseId);if(posting.items.length>1)return "ALLOCATION";
+  const linked=await ports.bootstrap(env,owner,id,before);if(linked==="PENDING")return "METADATA_PENDING";if(linked==="STALE")return "STALE";if(linked!=="READY")return "SHEET_REVIEW";
   const plan=await ports.plan(env,before,after,id);if(!plan)return "SHEET_REVIEW";
   const rechecked=await ports.periods(env,owner,id);
   if(!rechecked||rechecked.headerDigest!==periods.headerDigest)return "STALE";if(rechecked.periods.some(item=>item.decision!=="OPEN"))return "PERIOD_REVIEW";

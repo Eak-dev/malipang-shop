@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {handleExpensePostback} from '../dist/expense/service.js';
+import {undoConfirmedExpense} from '../dist/expense/undo.js';
 import {claimSheetSyncJob,syncJob} from '../dist/sheets/sync.js';
 import {recoverPendingSheetJobs} from '../dist/db/repositories.js';
 const sheetsClient=createRequire(import.meta.url)('../dist/sheets/client.js');
@@ -55,6 +56,24 @@ const row=h=>({...h.sqlite.prepare("SELECT status,version,amount_satang,payment_
 const jobs=h=>h.sqlite.prepare("SELECT entity_version,status FROM sync_jobs WHERE entity_key='exp_fixture' ORDER BY entity_version").all().map(x=>({...x}));
 const audits=h=>h.sqlite.prepare("SELECT action,before_json,after_json FROM expense_audit_log WHERE expense_id='exp_fixture'").all().map(x=>({...x}));
 const undoMessages=h=>h.messages.map(x=>x.body).filter(x=>x.entityType==='EXPENSE');
+
+test('SQLite: Undo does not change business state while the same expense has active or unresolved sync',async()=>{
+  for(const status of ['PROCESSING','REVIEW']){const h=harness();try{
+    h.sqlite.prepare("UPDATE sync_jobs SET status=? WHERE entity_key='exp_fixture' AND entity_version=2").run(status);
+    await assert.rejects(undoConfirmedExpense(h.env,{expenseId:'exp_fixture',lineUserId:'line_fixture',traceId:'synthetic',actorEmployeeId:'fixture',branchId:null}),/EXPENSE_SYNC_REVIEW_OR_PROCESSING/);
+    assert.equal(row(h).status,'CONFIRMED');assert.equal(audits(h).length,0);assert.equal(jobs(h).length,2);
+    h.sqlite.prepare("UPDATE sync_jobs SET status='COMPLETED' WHERE entity_key='exp_fixture' AND entity_version=2").run();
+    assert.equal(await undoConfirmedExpense(h.env,{expenseId:'exp_fixture',lineUserId:'line_fixture',traceId:'synthetic',actorEmployeeId:'fixture',branchId:null}),3);
+  }finally{h.close();}}
+});
+
+test('SQLite: Undo is held while a daily-sheet dispatch outcome is uncertain',async()=>{
+ const h=harness();try{
+  h.sqlite.prepare("INSERT INTO owner_correction_daily_write_fences(sheet_name,lease_token,lease_until,state,dispatch_id,not_before,updated_at) VALUES('รายวัน','fixture','2099-01-01T00:00:00Z','IN_FLIGHT','dispatch','2099-01-01T00:00:00Z','now')").run();
+  await assert.rejects(undoConfirmedExpense(h.env,{expenseId:'exp_fixture',lineUserId:'line_fixture',traceId:'synthetic',actorEmployeeId:'fixture',branchId:null}),/EXPENSE_SYNC_REVIEW_OR_PROCESSING/);
+  assert.equal(row(h).status,'CONFIRMED');assert.equal(audits(h).length,0);
+ }finally{h.close();}
+});
 
 test('SQLite: Undo survives an existing COMPLETED version 2 without altering its history',async()=>{
   const h=harness();
@@ -157,10 +176,10 @@ test('SQLite: new Undo version updates only its mapped mirrors; partial sink fai
   const expected=Array(22).fill('');Object.assign(expected,{0:1,1:1,2:'sanitized fixture',5:1,20:'ingredients',21:'ทอน/หน้าร้าน'});
   sheetsClient.batchGetSheetFormulaValues=async()=>[[],[expected]];
   let failOnce=true;
-  sheetsClient.batchClearValues=async(_env,ranges)=>{clears.push(...ranges);if(failOnce){failOnce=false;throw new Error('fixture timeout after clear');}};
+  sheetsClient.batchClearValues=async(_env,ranges,before)=>{clears.push(...ranges);if(failOnce){failOnce=false;throw new Error('fixture timeout before clear');}if(before)await before();};
   try{
     await h.undo();const job=undoMessages(h)[0];
-    await assert.rejects(syncJob(h.env,job),/fixture timeout after clear/);
+    await assert.rejects(syncJob(h.env,job),/fixture timeout before clear/);
     assert.equal(row(h).status,'CANCELLED');assert.equal(audits(h).length,1);
     assert.equal(jobs(h).at(-1).status,'FAILED');
     h.sqlite.prepare("UPDATE sync_jobs SET next_attempt_at='2026-01-01T00:00:00.000Z' WHERE entity_version=3").run();

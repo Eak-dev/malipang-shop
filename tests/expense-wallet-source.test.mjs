@@ -4,6 +4,7 @@ import {expensePaymentOptions,paymentOptionForPair,paymentOptionForPayment,payme
 import {buildExpensePaymentFlex,buildExpensePaymentConfirmationFlex,buildExpenseSourceFlex,buildExpenseSavedFlex,collectFlexActionLabels,paymentForWallet,paymentWallet} from '../dist/expense/flex.js';
 import {buildDailyExpenseEntries,buildDailySheetWritePlan,legacySourceWallet,resolvePayment,writeConfirmedExpenseWithDocumentItemsToDaily} from '../dist/sheets/daily-expense.js';
 import {buildExpenseRawSheetValues} from '../dist/sheets/sync.js';
+import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 
 const expense={expenseId:'exp_wallet_fixture',description:'Supply purchase',amountSatang:12300,paymentKey:'cash',sourceWallet:'SHOP_BANK',category:'ingredients',transactionDate:'2026-10-13',status:'WAITING_CONFIRM'};
 const actions=message=>message.contents.footer.contents.filter(x=>x.action?.type==='postback');
@@ -94,7 +95,10 @@ test('cash from shop bank stays in cash amount column and RAW retains both truth
 });
 
 test('cash-source support does not opt historical item rows into a summary rewrite',async()=>{
-  const env={SHEET_EXPENSE_DAILY:'รายวัน',DB:{prepare(sql){assert.match(sql,/SELECT entity_key,row_number FROM sheet_row_index/);return{bind(){return this;},async all(){return{results:[{entity_key:expense.expenseId+'|item_fixture',row_number:10}]};}};}}};
-  const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,{...expense,amountBaht:123},null,[]);
-  assert.deepEqual(result.placements,[]);assert.equal(result.replacedLegacySummary,false);
+  const h=expenseSqlite();try{
+    h.env.SHEET_EXPENSE_DAILY='รายวัน';
+    h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('รายวัน',expense.expenseId+'|item_fixture',10);
+    const result=await writeConfirmedExpenseWithDocumentItemsToDaily(h.env,{...expense,amountBaht:123},null,[]);
+    assert.deepEqual(result.placements,[]);assert.equal(result.replacedLegacySummary,false);
+  }finally{h.close();}
 });

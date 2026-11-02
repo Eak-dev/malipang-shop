@@ -1,6 +1,7 @@
 import type { Env,SheetsSyncJob } from "../types";
 import { batchWriteValues,batchGetSheetFormulaValues,SheetsMutationOutcomeUnknownError } from "./client";
 import { safeRecordMetric } from "../db/repositories";
+import { CorrectionDailyFenceBusyError } from "./owner-correction-daily-write-fence";
 import { clearCancelledExpenseFromDaily,writeConfirmedExpenseToDaily,writeConfirmedExpenseWithDocumentItemsToDaily,DailyCancelReviewRequired,type DailyExpenseDocumentItem } from "./daily-expense";
 import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetails,type PurchaseDetailDocument,type PurchaseDetailRecord } from "./purchase-details";
 import { queueRetryDelaySeconds } from "../shared/retry";
@@ -37,7 +38,7 @@ export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<
     const itemRows=await env.DB.prepare(`SELECT item_id,document_id,expense_id,seller_key,product_code,description,quantity,unit,unit_price_satang,discount_satang,line_total_satang FROM expense_document_items WHERE expense_id=? AND document_id=? ORDER BY created_at ASC,item_id ASC`).bind(expenseId,document.documentId).all<Record<string,unknown>>();
     items=(itemRows.results||[]).map(item=>({itemId:String(item.item_id),documentId:String(item.document_id),expenseId:item.expense_id==null?null:String(item.expense_id),sellerKey:String(item.seller_key||""),productCode:String(item.product_code||""),description:String(item.description||""),quantity:item.quantity==null?null:Number(item.quantity),unit:String(item.unit||""),unitPriceSatang:item.unit_price_satang==null?null:Number(item.unit_price_satang),discountSatang:item.discount_satang==null?null:Number(item.discount_satang),lineTotalSatang:item.line_total_satang==null?null:Number(item.line_total_satang)}));
   }
-  const record={expenseId:String(expense.expense_id),transactionDate:String(expense.transaction_date),description:String(expense.description),amountBaht:baht(expense.amount_satang),paymentKey:String(expense.payment_key),sourceWallet:String(expense.source_wallet),category:String(expense.category),branchId:String(expense.branch_id||""),status:String(expense.status)==="CANCELLED"?"CANCELLED":"CONFIRMED",createdAt:String(expense.created_at||""),updatedAt:String(expense.updated_at||expense.created_at||"")} satisfies PurchaseDetailRecord;
+  const record={expenseId:String(expense.expense_id),transactionDate:String(expense.transaction_date),description:String(expense.description),amountBaht:baht(expense.amount_satang),paymentKey:String(expense.payment_key),sourceWallet:String(expense.source_wallet),category:String(expense.category),version:Number(expense.version),branchId:String(expense.branch_id||""),status:String(expense.status)==="CANCELLED"?"CANCELLED":"CONFIRMED",createdAt:String(expense.created_at||""),updatedAt:String(expense.updated_at||expense.created_at||"")} satisfies PurchaseDetailRecord;
   return{expense,summaryDocument,document,items,record};
 }
 export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"SUMMARY";rowCount:number;detailRowCount:number;replacedLegacySummary:boolean}>{
@@ -162,6 +163,10 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       const r=await env.DB.prepare(`SELECT o.*,e.staff_name FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=?`).bind(job.entityKey).first<Record<string,unknown>>();if(!r)throw new Error(`OT request not found: ${job.entityKey}`);sheet=env.SHEET_OT_REQUESTS;values=[r.ot_id,r.work_date,r.employee_id,r.staff_name,r.reason,r.planned_start,r.planned_end,baht(r.fixed_amount_satang),r.requested_by,r.owner_preapproved_at,r.employee_confirm_status,r.employee_confirmed_at,r.owner_final_status,baht(r.owner_final_amount_satang),r.owner_final_at,r.actual_ot_minutes,r.status,r.note,r.version,r.updated_at];
     }else if(job.entityType==="EXPENSE"){
       const loaded=await loadExpenseDailyPosting(env,job.entityKey);expense=loaded.expense;expenseDocument=loaded.document;expenseItems=loaded.items;expenseRecord=loaded.record;sheet=env.SHEET_EXPENSE_RAW;values=buildExpenseRawSheetValues(expense,loaded.summaryDocument);
+      const currentVersion=Number(expense.version);
+      if(!Number.isSafeInteger(currentVersion)||currentVersion<1)throw new Error("EXPENSE_INVALID_VERSION");
+      if(currentVersion>job.entityVersion){if(!await completeOwnedSheetSyncJob(env,job,leaseToken))return "BUSY";return "IGNORED";}
+      if(currentVersion<job.entityVersion)throw new Error("EXPENSE_SYNC_VERSION_AHEAD");
     }else if(job.entityType==="PERSONAL_USE"){
       personalUse=await loadPersonalUseProjection(env,job.entityKey);
       const currentVersion=Number(personalUse.version);
@@ -213,6 +218,11 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
     return"PROCESSED";
   }catch(error){
+    if(error instanceof CorrectionDailyFenceBusyError&&job.entityType==="EXPENSE"){
+      const released=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
+      if(Number(released.meta.changes||0)!==1)throw new Error("SHEET_FENCE_CLAIM_LOST");
+      return "BUSY";
+    }
     if(error instanceof DailyCancelReviewRequired||error instanceof PersonalUseRowReviewRequired){
       const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),error.message,job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
       if(Number(held.meta.changes||0)!==1)throw new Error("SHEET_REVIEW_STATE_LOST");

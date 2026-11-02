@@ -44,3 +44,18 @@ test('a moved capacity marker is held before changing row mappings',async()=>{
     await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/capacity marker moved/);assert.equal(inserts,0);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM sheet_row_index').get().n,0);
   }finally{client.batchGetSheetValues=oldRead;client.batchUpdateSpreadsheet=oldUpdate;h.close()}
 });
+test('an uncertain row insertion resumes from its marker and shifts adjacent mappings once',async()=>{
+  const h=ownerOrderFixture(),oldRead=client.batchGetSheetValues,oldUpdate=client.batchUpdateSpreadsheet,oldId=client.getSheetId,oldClear=client.batchClearValues,oldWrite=client.batchWriteValues;try{
+    Object.assign(h.env,{OWNER_EXPENSE_CORRECTION_ENABLED:'true',SHEET_EXPENSE_DAILY:'daily'});
+    for(const [key,row] of [['exp_old_a',9],['exp_old_b',10]])h.sqlite.prepare('INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES(?,?,?)').run('daily',key,row);
+    const body=Array.from({length:12},()=>[]),headers=[[],Array(8).fill(null),[]];body[5]=[null,10,null,'รายรับทั้งหมดในบัญชี'];body[6]=[null,10,1,'Occupied'];body[7]=['รวม',10];headers[1][7]='เงินโอน';
+    client.batchGetSheetValues=async()=>[structuredClone(body),structuredClone(headers)];client.getSheetId=async()=>1;let inserts=0,fail=true;
+    client.batchUpdateSpreadsheet=async(_env,requests,before)=>{await before();inserts++;const value=requests.at(-1).updateCells.rows[0].values[0].userEnteredValue.stringValue;body.splice(7,0,[value]);if(fail){fail=false;throw new client.SheetsMutationOutcomeUnknownError(Error('synthetic timeout'))}};
+    client.batchClearValues=async(_env,ranges,before)=>{await before();for(const range of ranges){const m=/!A(\d+)$/.exec(range);if(m)body[Number(m[1])-1][0]=''}};
+    client.batchWriteValues=async(_env,_writes,before)=>{await before()};
+    const record={expenseId:'exp_synthetic_new',transactionDate:'2026-10-28',description:'Synthetic',amountBaht:100,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'general'};
+    await assert.rejects(writeConfirmedExpenseToDaily(h.env,record),/outcome unknown/);assert.equal(inserts,1);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'PREPARED');assert.deepEqual(rows(h).map(row=>row.row_number),[9,10]);
+    h.sqlite.prepare("UPDATE owner_correction_daily_write_fences SET lease_until='2000-01-01T00:00:00.000Z',not_before='2000-01-01T00:00:00.000Z'").run();
+    const placed=await writeConfirmedExpenseToDaily(h.env,record);assert.equal(placed.row,8);assert.equal(inserts,1);assert.equal(h.sqlite.prepare('SELECT state FROM daily_sheet_capacity_expansions').get().state,'COMPLETED');assert.deepEqual(rows(h).map(row=>row.row_number),[10,11,8]);
+  }finally{client.batchGetSheetValues=oldRead;client.batchUpdateSpreadsheet=oldUpdate;client.getSheetId=oldId;client.batchClearValues=oldClear;client.batchWriteValues=oldWrite;h.close()}
+});

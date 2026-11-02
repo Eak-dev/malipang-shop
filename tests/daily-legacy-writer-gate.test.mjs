@@ -22,6 +22,9 @@ test('held expense queue work is durably recorded before REVIEW without a Google
 test('gate never reclaims a processing job or resets an existing review',async()=>{
   const h=setup();try{h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,lease_token) VALUES('f','EXPENSE','exp_fixture',1,'fixture','PROCESSING','now','owned')").run();assert.equal(await syncJob(h.env,job),'TERMINAL_HOLD');assert.equal(h.sqlite.prepare('SELECT lease_token FROM sync_jobs').get().lease_token,'owned');h.sqlite.prepare("UPDATE sync_jobs SET status='REVIEW',last_error='independent hold'").run();assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(h.sqlite.prepare('SELECT last_error FROM sync_jobs').get().last_error,'independent hold');}finally{h.close();}
 });
+test('gate preserves the original failure reason for an already failed outbox',async()=>{
+  const h=setup();try{h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,last_error) VALUES('f','EXPENSE','exp_fixture',1,'fixture','FAILED','now','original failure')").run();assert.equal(await syncJob(h.env,job),'REVIEW');assert.equal(h.sqlite.prepare("SELECT last_error FROM sync_jobs WHERE job_id='f'").get().last_error,'original failure');}finally{h.close();}
+});
 test('outbox transaction failure keeps existing pending work; lost acknowledgement keeps REVIEW',async()=>{
   for(const lostAck of [false,true]){const h=setup();try{
     h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('f','EXPENSE','exp_fixture',1,'fixture','PENDING','now')").run();

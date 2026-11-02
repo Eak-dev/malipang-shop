@@ -20,7 +20,7 @@ export async function holdLegacyExpenseJob(env:Env,job:SheetsSyncJob):Promise<'R
   if(job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE')throw new Error('DAILY_LEGACY_GATE_JOB_INVALID');
   const now=new Date().toISOString();
   const insert=env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,'EXPENSE',?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityKey,job.entityVersion,job.traceId,now,now);
-  const hold=env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='DAILY_LEGACY_CUTOVER_HOLD' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED')`).bind(now,job.entityKey,job.entityVersion);
+  const hold=env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=CASE WHEN status='FAILED' AND last_error IS NOT NULL THEN last_error ELSE 'DAILY_LEGACY_CUTOVER_HOLD' END WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status IN ('PENDING','FAILED')`).bind(now,job.entityKey,job.entityVersion);
   const inspect=env.DB.prepare(`SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?`).bind(job.entityKey,job.entityVersion);
   const result=await env.DB.batch<{status:string}>([insert,hold,inspect]);
   const status=result[2]?.results?.[0]?.status;

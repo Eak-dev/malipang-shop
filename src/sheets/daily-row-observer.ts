@@ -2,6 +2,8 @@ import type { Env } from '../types';
 import { sheetsFetch } from './client';
 import { findMonthBlocks, resolvePayment } from './daily-expense';
 import { sha256Hex } from '../shared/ids';
+import { readBoundedJson } from '../shared/async';
+import { numberEnv } from '../shared/env';
 
 /** Read-only evidence for the still-unwired verified daily posting path.
  * It is NOT an authorization to write, a Sheets CAS, or a substitute for the
@@ -27,16 +29,6 @@ const MAX_RESPONSE_BYTES=4*1024*1024;
 /** This module only uses read-only Sheets operations, including metadata
  * search POST. Never ingest an unbounded upstream error body. */
 const readSheet=(env:Env,path:string,init:RequestInit)=>sheetsFetch(env,path,init,false,undefined,true);
-/** Sheets may return a large metadata collection. Do not buffer unbounded
- * responses in the Worker; an oversized/incomplete read is not evidence. */
-async function boundedJson(res:Response):Promise<unknown>{
- if(!res.body)throw new Error('EMPTY_SHEETS_RESPONSE');
- const reader=res.body.getReader(),parts:Uint8Array[]=[];let length=0;
- try{while(true){const part=await reader.read();if(part.done)break;length+=part.value.byteLength;if(length>MAX_RESPONSE_BYTES){await reader.cancel().catch(()=>{});throw new Error('SHEETS_RESPONSE_TOO_LARGE');}parts.push(part.value);}}
- finally{reader.releaseLock();}
- const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.byteLength;}
- return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;
-}
 const INPUT_COLS=[1,2,3,5,6,7,10,11,12,13,14,15,16,21,22];
 const FORMULA_COLS=[8,9,17,18,20];
 const LITERAL_COLS=Array.from({length:25},(_,i)=>i).filter(i=>!FORMULA_COLS.includes(i));
@@ -104,6 +96,7 @@ function parseMetadata(value:unknown):Marker|null{
  * Missing/duplicate responses, metadata or invalid shapes fail closed. */
 export async function readDailyEvidence(env:Env,w:DailyExpectation):Promise<DailyEvidence|null>{try{
  if(w.sheetTitle!==env.SHEET_EXPENSE_DAILY||!env.GOOGLE_SERVICE_ACCOUNT_EMAIL||w.serviceAccount.trim().toLowerCase()!==env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim().toLowerCase()||!Number.isSafeInteger(w.rowNumber)||w.rowNumber<6||!Number.isSafeInteger(w.metadataId)||w.metadataId<1)return null;
+ const boundedJson=(res:Response)=>readBoundedJson(res,MAX_RESPONSE_BYTES,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets observation body');
  const fields='sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges(range,warningOnly,requestingUserCanEdit,unprotectedRanges,editors(users,groups,domainUsersCanEdit)))';
  const base=await boundedJson(await readSheet(env,`?fields=${encodeURIComponent(fields)}`,{method:'GET'})) as Spreadsheet;
  const ss=(base.sheets||[]).filter(s=>s.properties?.title===w.sheetTitle);if(ss.length!==1)return null;const sheet=ss[0]!,count=Number(sheet.properties?.gridProperties?.rowCount);if(!Number.isSafeInteger(count)||count<w.rowNumber||count>10000)return null;

@@ -1,20 +1,11 @@
 import type {Env} from '../types';
 import {inspectSignedExistingRow,type InspectorEnv} from '../sheets/daily-row-attestation-inspector';
 import type {EnrollmentApproval} from '../sheets/daily-row-enrollment';
+import {readBoundedJson} from '../shared/async';
 
 const MAX_BYTES=32768;
 async function bodyWithinLimit(request:Request):Promise<unknown>{
-  if(!request.body)throw new Error('missing body');
-  const reader=request.body.getReader(),chunks:Uint8Array[]=[];let size=0;
-  try{
-    while(true){
-      const part=await reader.read();if(part.done)break;
-      size+=part.value.byteLength;if(size>MAX_BYTES){await reader.cancel().catch(()=>{});throw new Error('body too large');}
-      chunks.push(part.value);
-    }
-  }finally{reader.releaseLock();}
-  const bytes=new Uint8Array(size);let offset=0;for(const part of chunks){bytes.set(part,offset);offset+=part.byteLength;}
-  return JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(bytes)) as unknown;
+  return readBoundedJson(request,MAX_BYTES,5000,'Inspector request body');
 }
 function response(result:'HELD'|'CONSISTENT_READ_ONLY'):Response{
   return Response.json({ok:true,result,releasePermitted:false},{headers:{'cache-control':'no-store'}});

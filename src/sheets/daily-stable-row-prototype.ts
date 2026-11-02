@@ -32,6 +32,17 @@ export interface StablePrototypePort {
 }
 export type StablePrototypeResult={status:'VERIFIED'}|{status:'REVIEW';reason:string}|{status:'OUTCOME_UNKNOWN'};
 const review=(reason:string):StablePrototypeResult=>({status:'REVIEW',reason});
+function validSubtotalValues(body:unknown[][],headerRow:number,totalRow:number,month:number):boolean{
+  const total=body[totalRow-1]??[],header=body[headerRow-1]??[],sums=Array<number>(25).fill(0),columns=[4,5,6,7,10,11,12,13,14,15,16];
+  if(typeof header[4]!=='number'||!Number.isFinite(header[4]))return false;
+  for(let row=headerRow+1;row<totalRow;row++){
+    const item=body[row-1]??[];if(Number(item[1])!==month)continue;
+    for(const col of columns){const value=item[col];if(value===undefined||value===null||value==='')continue;if(typeof value!=='number'||!Number.isFinite(value))return false;sums[col]=sums[col]!+value;}
+  }
+  const cash=sums[5]!+sums[6]!+sums[7]!,card=[10,11,12,13,14,15,16].reduce((sum,col)=>sum+sums[col]!,0),expected:Record<number,number>={8:cash,9:header[4]-cash,17:card,18:header[4]-cash-card};
+  for(const col of columns)expected[col]=sums[col]!;
+  return Object.entries(expected).every(([col,value])=>typeof total[Number(col)]==='number'&&Number.isFinite(total[Number(col)] as number)&&Math.abs((total[Number(col)] as number)-value)<0.001);
+}
 
 export async function runStableDailyPrototype(mode:string,enabled:boolean,port:StablePrototypePort,request:StableDailyRowRequest,values:StableRowValues):Promise<StablePrototypeResult>{
   if(mode!=='shadow'||!enabled)return review('PROTOTYPE_DISABLED');
@@ -61,7 +72,7 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
     if(nextMetadata.length!==1||nextMetadata[0]!.row!==metadata[0]!.row||nextMetadata[0]!.metadataId!==metadata[0]!.metadataId)return review('ROW_METADATA_CHANGED_BEFORE_DISPATCH');
   }
   const monthBlock=block[0]!;
-  if(plan.status==='CAPACITY_REQUIRED'&&!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
+  if(!hasExpectedMonthlySubtotal(fresh.body[monthBlock.totalRow-1]??[],monthBlock.headerRow,monthBlock.totalRow))return review('SUBTOTAL_PREIMAGE_UNVERIFIED');
   let expectedBalance:number|undefined;
   let subtotalBefore:unknown[]|undefined;
   {
@@ -80,10 +91,9 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
       const date=(Date.UTC(values.postingYear,request.postingMonth-1,day)-Date.UTC(1899,11,30))/86400000;
       if(visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-(expectedBalance-cash))>0.001||Math.abs(visible[18]-(expectedBalance-cash-card))>0.001||visible[20]!==date)return review('PREIMAGE_HELPER_VALUE_UNVERIFIED');
     }
-    if(plan.status==='CAPACITY_REQUIRED'){
-      subtotalBefore=beforeEffective.body[monthBlock.totalRow-1];
-      if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
-    }
+    subtotalBefore=beforeEffective.body[monthBlock.totalRow-1];
+    if(!subtotalBefore||[4,5,6,7,8,9,10,11,12,13,14,15,16,17,18].some(index=>typeof subtotalBefore![index]!=='number'||!Number.isFinite(subtotalBefore![index] as number)))return review('SUBTOTAL_VALUES_UNVERIFIED');
+    if(!validSubtotalValues(beforeEffective.body,monthBlock.headerRow,monthBlock.totalRow,request.postingMonth))return review('SUBTOTAL_VALUES_UNVERIFIED');
   }
   if(request.verifyOnly){
     if(plan.status!=='FOUND'||!request.expectedPrevious)return review('VERIFY_ONLY_IDENTITY_MISSING');
@@ -132,14 +142,13 @@ export async function runStableDailyPrototype(mode:string,enabled:boolean,port:S
       const expectedJ=postBalance!-cash;
       const expectedDate=(Date.UTC(values.postingYear,values.month-1,values.day)-Date.UTC(1899,11,30))/86400000;
       if(effective.sheetId!==fresh.sheetId||await port.readSheetYear()!==values.postingYear||visible[8]!==cash||visible[17]!==card||typeof visible[9]!=='number'||typeof visible[18]!=='number'||!Number.isFinite(visible[9])||!Number.isFinite(visible[18])||Math.abs(visible[9]-expectedJ)>0.001||Math.abs(visible[18]-(expectedJ-card))>0.001||visible[20]!==expectedDate)return review('POSTIMAGE_HELPER_VALUE_UNVERIFIED');
-      if(plan.status==='CAPACITY_REQUIRED'){
-        const blocks=findMonthBlocks(after.body).filter(item=>item.month===request.postingMonth);
-        if(blocks.length!==1||blocks[0]!.totalRow!==monthBlock.totalRow+1||!hasExpectedMonthlySubtotal(after.body[blocks[0]!.totalRow-1]??[],monthBlock.headerRow,blocks[0]!.totalRow))return review('POSTIMAGE_SUBTOTAL_FORMULA_UNVERIFIED');
-        const total=effective.body[blocks[0]!.totalRow-1]??[];
-        for(const index of [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]){
-          const expectedDelta=index===amountColumn?values.amountBaht:index===8?cash:index===9?-cash:index===17?card:index===18?-cash-card:0;
-          if(typeof total[index]!=='number'||!Number.isFinite(total[index] as number)||Math.abs((total[index] as number)-(subtotalBefore![index] as number)-expectedDelta)>0.001)return review('POSTIMAGE_SUBTOTAL_VALUE_UNVERIFIED');
-        }
+      const blocks=findMonthBlocks(after.body).filter(item=>item.month===request.postingMonth),expectedTotalRow=monthBlock.totalRow+(plan.status==='CAPACITY_REQUIRED'?1:0);
+      if(blocks.length!==1||blocks[0]!.totalRow!==expectedTotalRow||!hasExpectedMonthlySubtotal(after.body[blocks[0]!.totalRow-1]??[],monthBlock.headerRow,blocks[0]!.totalRow))return review('POSTIMAGE_SUBTOTAL_FORMULA_UNVERIFIED');
+      const total=effective.body[blocks[0]!.totalRow-1]??[],old=plan.status==='FOUND'?fresh.body[plan.observedRow-1]??[]:[];
+      const oldCash=[5,6,7].reduce((sum,index)=>sum+Number(old[index]||0),0),oldCard=[10,11,12,13,14,15,16].reduce((sum,index)=>sum+Number(old[index]||0),0),cashDelta=cash-oldCash,cardDelta=card-oldCard;
+      for(const index of [4,5,6,7,8,9,10,11,12,13,14,15,16,17,18]){
+        const expectedDelta=[5,6,7,10,11,12,13,14,15,16].includes(index)?(index===amountColumn?values.amountBaht:0)-Number(old[index]||0):index===8?cashDelta:index===9?-cashDelta:index===17?cardDelta:index===18?-cashDelta-cardDelta:0;
+        if(typeof total[index]!=='number'||!Number.isFinite(total[index] as number)||Math.abs((total[index] as number)-(subtotalBefore![index] as number)-expectedDelta)>0.001)return review('POSTIMAGE_SUBTOTAL_VALUE_UNVERIFIED');
       }
     }
     await port.requireExclusiveWriters();

@@ -5,17 +5,21 @@ import {stableDailyExpenseKey} from '../dist/sheets/daily-stable-row-plan.js';
 import {expectedHelperFormulae} from '../dist/sheets/daily-stable-row-writes.js';
 
 const blank=()=>Array(25).fill(null);
-const header=()=>{const row=blank();row[1]=10;row[3]='รายรับทั้งหมดในบัญชี';return row;};
+const header=()=>{const row=blank();row[1]=10;row[3]='รายรับทั้งหมดในบัญชี';row[4]=50000;return row;};
 const total=()=>{const row=blank();row[0]='รวม';row[1]=10;return row;};
 const previous=()=>{const row=blank();row[1]=10;row[2]=26;row[3]='Previous';row[7]=930;row[21]='marketing';row[22]='บัญชีร้าน';row[23]=stableDailyExpenseKey('exp_a');const f=expectedHelperFormulae(1,2);for(const [i,k] of [[8,'I'],[9,'J'],[17,'R'],[18,'S'],[20,'U']])row[i]=f[k];return row;};
 const values={postingYear:2026,month:10,day:26,description:'New description',amountColumn:'H',amountBaht:930,category:'marketing',sourceWallet:'บัญชีร้าน'};
 
 function portFor(rows){
+  const last=rows.findIndex(row=>row[0]==='รวม');if(last>0&&rows[last][7]===null){
+    const t=last+1;for(const [name,index] of [['E',4],['F',5],['G',6],['H',7],['K',10],['L',11],['M',12],['N',13],['O',14],['P',15],['Q',16]])rows[last][index]=`=SUMIF($B$2:$B$${t-1},$B${t},${name}2:${name}${t-1})`;
+    rows[last][8]=`=SUM(F${t}:H${t})`;rows[last][9]=`=$E$1-I${t}`;rows[last][17]=`=SUM(K${t}:Q${t})`;rows[last][18]=`=J${t}-R${t}`;
+  }
   const p={rows,metadata:[],intents:new Map(),dispatch:0,moveBeforeWrite:false};
   p.requireExclusiveWriters=async()=>{};
   p.readSheetYear=async()=>2026;
   p.readFormulaSnapshot=async()=>({sheetId:123,body:p.rows.map(row=>[...row])});
-  p.readEffectiveSnapshot=async()=>{let balance=50000;return {sheetId:123,body:p.rows.map(row=>{const out=[...row];out[8]=Number(row[5]||0)+Number(row[6]||0)+Number(row[7]||0);out[9]=balance-out[8];balance=out[9];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+Number(row[i]||0),0);out[18]=out[9]-out[17];out[20]=46321;return out;})};};
+  p.readEffectiveSnapshot=async()=>{let balance=50000;const totals=Array(25).fill(0);return {sheetId:123,body:p.rows.map(row=>{const out=[...row];if(row[0]==='รวม'){for(const i of [4,5,6,7,10,11,12,13,14,15,16])out[i]=totals[i];out[8]=totals[5]+totals[6]+totals[7];out[9]=50000-out[8];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+totals[i],0);out[18]=out[9]-out[17];return out;}if(row[3]!=='รายรับทั้งหมดในบัญชี')for(const i of [4,5,6,7,10,11,12,13,14,15,16])totals[i]+=typeof row[i]==='number'?row[i]:0;out[8]=Number(row[5]||0)+Number(row[6]||0)+Number(row[7]||0);out[9]=balance-out[8];balance=out[9];out[17]=[10,11,12,13,14,15,16].reduce((sum,i)=>sum+Number(row[i]||0),0);out[18]=out[9]-out[17];out[20]=46321;return out;})};};
   p.lookupMetadata=async key=>p.metadata.filter(m=>m.key===key).map(m=>({metadataId:m.id,row:p.rows.indexOf(m.anchor)+1}));
   p.reserveMetadataId=async key=>{if(p.intents.has(key))throw new Error('prior attempt requires review');const id=900+p.metadata.length;p.intents.set(key,{id,state:'IN_FLIGHT'});return id;};
   p.beginMetadataUpdate=async(key,id)=>{if(p.intents.has(key))return false;p.intents.set(key,{id,state:'IN_FLIGHT'});return true;};
@@ -66,8 +70,20 @@ test('duplicate ID and unverified subtotal stop before dispatch',async()=>{
   const a=previous(),p=portFor([header(),a,[...a],total()]);
   assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_a',postingMonth:10,allowCreate:false,expectedPrevious:[...a]},values)).reason,'DUPLICATE_STABLE_ID');
   const q=portFor([header(),previous(),total()]);
+  q.rows[2][7]='=SUM(H2:H2)';
   assert.equal((await runStableDailyPrototype('shadow',true,q,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_PREIMAGE_UNVERIFIED');
   assert.equal(p.dispatch+q.dispatch,0);
+});
+
+test('subtotal with a truncated range is held even when a blank row exists',async()=>{
+  const p=portFor([header(),previous(),blank(),total()]);p.rows[3][7]='=SUMIF($B$2:$B$2,$B4,H2:H2)';
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_PREIMAGE_UNVERIFIED');assert.equal(p.dispatch,0);
+});
+
+test('subtotal formula with incorrect effective total is held before mutation',async()=>{
+  const p=portFor([header(),previous(),blank(),total()]),original=p.readEffectiveSnapshot;
+  p.readEffectiveSnapshot=async()=>{const result=await original();result.body[3][7]=1;return result;};
+  assert.equal((await runStableDailyPrototype('shadow',true,p,{expenseId:'exp_new',postingMonth:10,allowCreate:true},values)).reason,'SUBTOTAL_VALUES_UNVERIFIED');assert.equal(p.dispatch,0);
 });
 
 test('unknown dispatch outcome is held and not retried',async()=>{

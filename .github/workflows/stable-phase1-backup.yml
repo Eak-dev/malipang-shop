@@ -33,7 +33,7 @@ jobs:
           gz="$RUNNER_TEMP/phase1-before.sql.gz"
           downloaded="$RUNNER_TEMP/phase1-downloaded.sql.gz"
           key="d1/stable-phase1/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
-          npx wrangler d1 export malipang-v5-2 --remote --output="$sql" --skip-confirmation
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
           gzip -c "$sql" > "$gz"
           gzip -t "$gz"
           npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote

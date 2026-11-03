@@ -47,6 +47,8 @@
     "src/sheets/personal-projection-runtime-journal.ts",
     "src/sheets/personal-legacy-writer-gate.ts",
     "src/sheets/personal-historical-source-proof.ts",
+    "src/sheets/personal-historical-marker-classifier.ts",
+    "src/sheets/personal-historical-marker-inspection.ts",
     "src/sheets/personal-historical-enrollment-fence.ts",
     "src/sheets/personal-historical-resume-guard.ts",
     "src/sheets/sheet-scope-isolation.ts",

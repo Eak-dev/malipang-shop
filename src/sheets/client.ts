@@ -124,6 +124,17 @@ export async function getPersonalIdentityProductionMetadata(env:Env,metadataId:n
   assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('PERSONAL_IDENTITY_READER_INVALID');
   try{return await identityInspectionGet(env,`/developerMetadata/${metadataId}?fields=metadataId,metadataKey,visibility,location`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
 }
+/** Read-only search for exactly one metadata ID. Unlike GET-by-ID, a successful
+ * search can represent zero matches. Never accept errors as absence. */
+export async function searchPersonalProductionMetadataById(env:Env,metadataId:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('PERSONAL_METADATA_SEARCH_INVALID');
+  try{
+    const token=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
+    const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}/developerMetadata:search`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({dataFilters:[{developerMetadataLookup:{metadataId}}]})},timeout,'Sheets personal metadata search');
+    if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw Error('unavailable');}
+    return await readBoundedJson(response,65536,timeout,'Sheets personal metadata search');
+  }catch{throw Error('PERSONAL_METADATA_SEARCH_UNAVAILABLE');}
+}
 export async function getPersonalIdentityProductionGrid(env:Env):Promise<unknown>{
   assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:O10000`;
   const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});

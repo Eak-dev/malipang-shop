@@ -1,22 +1,31 @@
 import type {Env,SheetsSyncJob} from '../types';
-import {ExpenseProjectionRuntimeJournal,type ExpenseGenerationLease,type ExpenseProjectionContext} from './expense-projection-runtime-journal';
+import {badgeRetentionIntegrity,ExpenseProjectionRuntimeJournal,type ExpenseGenerationLease,type ExpenseProjectionContext} from './expense-projection-runtime-journal';
 
 export type DailyEditStatus='AVAILABLE'|'NOTICE'|'SYNCING'|'REVIEW'|'UNKNOWN';
 function enabled(env:Env):boolean{return env.RUNTIME_MODE==='production'&&env.DAILY_EDIT_COORDINATION_ENABLED==='true'&&env.EXPENSE_GENERATION_WORKER_ENABLED==='true'&&env.EXPENSE_STABLE_PROJECTION_ENABLED==='true'&&env.DAILY_LEGACY_WRITER_GATE_ENABLED==='true'&&!!env.GOOGLE_SPREADSHEET_ID&&!!env.SHEET_EXPENSE_DAILY;}
 /** This status is a cooperative signal, not a Google Sheets lock. It exposes
  * no workbook ID, expense values, lease tokens, or personal data. */
-export async function readDailyEditStatus(env:Env):Promise<DailyEditStatus>{
+export async function readDailyEditStatus(env:Env,allowUnregisteredBadge=false,allowBadgeInFlight=false):Promise<DailyEditStatus>{
   if(!enabled(env))return 'UNKNOWN';
   try{
+    const badgeFields=env.DAILY_BADGE_WRITER_ENABLED==='true'?`,(SELECT state FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=w.spreadsheet_id) AS badge_state,CASE WHEN EXISTS(SELECT 1 FROM daily_notice_dispatch_intents i WHERE i.spreadsheet_id=w.spreadsheet_id AND i.sheet_name=w.sheet_name AND i.state IN ('IN_FLIGHT','REVIEW')) THEN 1 ELSE 0 END AS unresolved`:'';
     const row=await env.DB.prepare(`SELECT w.state,CASE WHEN w.deadline IS NOT NULL AND julianday(w.deadline)<=julianday('now') THEN 1 ELSE 0 END AS expired,
-      CASE WHEN julianday(w.updated_at) IS NULL OR julianday(w.updated_at)<julianday('now','-120 seconds') OR julianday(w.updated_at)>julianday('now','+5 seconds') OR (w.state<>'AVAILABLE' AND julianday(w.deadline) IS NULL) THEN 0 ELSE 1 END AS fresh FROM daily_edit_coordination w
+      CASE WHEN julianday(w.updated_at) IS NULL OR julianday(w.updated_at)<julianday('now','-120 seconds') OR julianday(w.updated_at)>julianday('now','+5 seconds') OR (w.state<>'AVAILABLE' AND julianday(w.deadline) IS NULL) THEN 0 ELSE 1 END AS fresh ${badgeFields} FROM daily_edit_coordination w
       JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=w.spreadsheet_id AND g.sheet_name=w.sheet_name AND g.state='HOLD'
       JOIN expense_projection_cutovers c ON c.spreadsheet_id=g.spreadsheet_id AND c.sheet_name=g.sheet_name AND c.state='ACTIVE' AND c.generation=g.generation
       WHERE w.spreadsheet_id=? AND w.sheet_name=? AND (w.state='AVAILABLE' OR w.cutover_generation=c.generation)
-      AND (w.state<>'AVAILABLE' OR NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=w.spreadsheet_id AND p.projection='DAILY' AND p.state IN ('IN_FLIGHT','REVIEW')))`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY).first<{state:DailyEditStatus;expired:number;fresh:number}>();
+      AND (w.state<>'AVAILABLE' OR NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=w.spreadsheet_id AND p.projection='DAILY' AND p.state IN ('IN_FLIGHT','REVIEW'))) ${env.DAILY_BADGE_WRITER_ENABLED==='true'?`AND ${badgeRetentionIntegrity}`:''}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY).first<{state:DailyEditStatus;expired:number;fresh:number;badge_state?:string;unresolved?:number}>();
     if(!row||!['AVAILABLE','NOTICE','SYNCING','REVIEW'].includes(row.state))return 'UNKNOWN';
     if(row.expired||row.state==='REVIEW')return 'REVIEW';
-    return row.fresh?row.state:'UNKNOWN';
+    if(!row.fresh)return 'UNKNOWN';
+    if(env.DAILY_BADGE_WRITER_ENABLED==='true'){
+      if(row.unresolved)return 'REVIEW';
+      if(!row.badge_state)return allowUnregisteredBadge?row.state:'UNKNOWN';
+      if(row.badge_state==='REVIEW')return 'REVIEW';
+      if(row.badge_state==='RESTORED'||row.badge_state==='IN_FLIGHT'&&row.state==='AVAILABLE'&&!allowBadgeInFlight)return 'UNKNOWN';
+      if(row.badge_state!=='READY'&&row.badge_state!=='IN_FLIGHT')return 'UNKNOWN';
+    }
+    return row.state;
   }catch{return 'UNKNOWN';}
 }
 /** The page starts UNKNOWN and must receive fresh, uncached heartbeats. A

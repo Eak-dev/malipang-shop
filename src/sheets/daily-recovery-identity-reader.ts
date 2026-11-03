@@ -4,6 +4,9 @@ import {fetchWithTimeout,readBoundedJson} from '../shared/async';
 import {numberEnv} from '../shared/env';
 import {findMonthBlocks} from './daily-expense';
 import {dailyLegacyRowKey,type DailyLegacyObserved} from './daily-legacy-enrollment-candidates';
+import {inspectDailyAppendSnapshot} from './daily-append-preflight';
+import {sheetScopesDistinct} from './sheet-scope-isolation';
+import type {StableDailyRowPlan} from './daily-stable-row-plan';
 
 // Read-only adaptation of #229 identity checks. Positions below are ephemeral
 // observations only; no row is stored and no provider mutation is possible.
@@ -29,11 +32,11 @@ async function rows(env:Env,info:{sheetId:number;rowCount:number},formulas=true)
  const quoted=env.SHEET_EXPENSE_DAILY.replace(/'/g,"''"),range=`'${quoted}'!A1:Y${info.rowCount}`,q=new URLSearchParams({ranges:range,valueRenderOption:formulas?'FORMULA':'UNFORMATTED_VALUE',dateTimeRenderOption:'SERIAL_NUMBER'});const o=await read(env,`/values:batchGet?${q}`) as {valueRanges?:Array<{range?:unknown;values?:unknown[][]}>};const data=o?.valueRanges;if(!Array.isArray(data)||data.length!==1||![range,`${env.SHEET_EXPENSE_DAILY}!A1:Y${info.rowCount}`].includes(String(data[0]?.range))||!Array.isArray(data[0]?.values)||data[0]!.values!.length>info.rowCount||data[0]!.values!.some(row=>!Array.isArray(row)||row.length>25))throw Error('DAILY_RECOVERY_SNAPSHOT_UNVERIFIED');return data[0]!.values!;
 }
 async function digest(value:unknown):Promise<string>{const bytes=new TextEncoder().encode(JSON.stringify(value));if(bytes.byteLength>65536)throw Error('DAILY_RECOVERY_EVIDENCE_TOO_LARGE');return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');}
-async function annotations(env:Env,sheetId:number,row:number,expected:readonly unknown[]):Promise<void>{
+async function annotations(env:Env,sheetId:number,row:number,expected:readonly unknown[],allowSparse=false):Promise<void>{
  const title=env.SHEET_EXPENSE_DAILY.replace(/'/g,"''"),q=new URLSearchParams({ranges:`'${title}'!A${row+1}:Y${row+1}`,fields:'spreadsheetId,sheets(properties(sheetId),merges,protectedRanges(range,unprotectedRanges),data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'}),o=await read(env,`?${q}`) as {spreadsheetId?:unknown;sheets?:Array<{properties?:{sheetId?:number};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>;data?:Array<{startRow?:number;startColumn?:number;rowData?:Array<{values?:Array<{userEnteredValue?:Record<string,unknown>;note?:unknown;dataValidation?:unknown}>}>}>}>};
- const sheets=o?.sheets?.filter(s=>s.properties?.sheetId===sheetId);if(o?.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||sheets?.length!==1||sheets[0]?.data?.length!==1)throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const sheet=sheets[0]!,d=sheet.data![0]!;if((d.startRow??0)!==row||(d.startColumn??0)!==0||d.rowData?.length!==1||!Array.isArray(d.rowData[0]?.values)||d.rowData[0]!.values!.length<24||d.rowData[0]!.values!.length>25)throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const cells=d.rowData[0]!.values!;
+ const sheets=o?.sheets?.filter(s=>s.properties?.sheetId===sheetId);if(o?.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||sheets?.length!==1||sheets[0]?.data?.length!==1)throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const sheet=sheets[0]!,d=sheet.data![0]!;if((d.startRow??0)!==row||(d.startColumn??0)!==0||d.rowData!==undefined&&(!Array.isArray(d.rowData)||d.rowData.length>1||d.rowData.length===1&&(!d.rowData[0]||typeof d.rowData[0]!=='object'))||!allowSparse&&(d.rowData?.length!==1||!Array.isArray(d.rowData[0]?.values)||d.rowData[0]!.values!.length<24))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const values=d.rowData?.[0]?.values;if(values!==undefined&&(!Array.isArray(values)||values.length>25||values.some(v=>!v||typeof v!=='object'||Array.isArray(v))))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const cells=Array.from({length:25},(_,i)=>values?.[i]??{});
  for(const c of cells)if(c?.note!==undefined&&c.note!==null&&c.note!==''||c?.dataValidation!==undefined)throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');
- for(const i of inputs){const v=cells[i]?.userEnteredValue;let actual:unknown=null;if(v){const keys=Object.keys(v);if(keys.length!==1||!['stringValue','numberValue','formulaValue','boolValue'].includes(keys[0]!))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');actual=v[keys[0]!];}if(!same(actual,expected[i]))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');}
+ for(const i of allowSparse?Array.from({length:25},(_,n)=>n):inputs){const v=cells[i]?.userEnteredValue;let actual:unknown=null;if(v){const keys=Object.keys(v);if(keys.length!==1||!['stringValue','numberValue','formulaValue','boolValue'].includes(keys[0]!))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');actual=v[keys[0]!];}if(!same(actual,expected[i]))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');}
  const intersects=(r:Record<string,unknown>):boolean=>{if(r.sheetId!==undefined&&r.sheetId!==sheetId)throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');const sr=r.startRowIndex??0,er=r.endRowIndex??Number.MAX_SAFE_INTEGER,sc=r.startColumnIndex??0,ec=r.endColumnIndex??Number.MAX_SAFE_INTEGER;if(![sr,er,sc,ec].every(v=>Number.isSafeInteger(v)&&Number(v)>=0)||Number(sr)>=Number(er)||Number(sc)>=Number(ec))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');return Number(sr)<=row&&Number(er)>row&&Number(sc)<25&&Number(ec)>0;};
  for(const m of sheet.merges??[])if(intersects(m))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');for(const p of sheet.protectedRanges??[]){if(!p.range||p.unprotectedRanges!==undefined||intersects(p.range))throw Error('DAILY_RECOVERY_ANNOTATIONS_UNVERIFIED');}
 }
@@ -55,6 +58,25 @@ export async function readDailyLegacyInventory(env:Env,month:number):Promise<{sh
  for(let n=1;n<=a.rowCount;n++){if(n>block.headerRow&&n<block.totalRow||boundaries.has(n))continue;const r=effective[n-1]??[];if(Number(r[1])===month&&amounts.some(i=>!blank(r[i])&&(typeof r[i]!=='number'||r[i]!==0)))throw Error('DAILY_LEGACY_OUTSIDE_MONTH_BLOCK');}
  const observed:DailyLegacyObserved[]=[];for(let n=block.headerRow+1;n<block.totalRow;n++){const f=formula[n-1]??[],e=effective[n-1]??[],unsafe=inputs.some(i=>typeof f[i]==='string'&&String(f[i]).startsWith('=')||!same(f[i],e[i])),row={observedRow:n,blockMonth:month,values:e,unsafe};if(amounts.some(i=>!blank(e[i])&&(typeof e[i]!=='number'||e[i]!==0))&&!dailyLegacyRowKey(row))throw Error('DAILY_LEGACY_MALFORMED_FINANCIAL_ROW');observed.push(row);}
  const bytes=new TextEncoder().encode(JSON.stringify([a,formula,effective]));if(bytes.byteLength>8*1024*1024)throw Error('DAILY_LEGACY_INVENTORY_UNVERIFIED');const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');return{sheetId:a.sheetId,sheetYear:Number(year),headers:formula.slice(0,3),observed,fingerprint};
+}
+
+/** Read-only Google preflight. It returns an ephemeral proposal, never a
+ * reservation or authority to mutate Google. Double reads are not CAS. */
+export async function readDailyAppendPreflight(env:Env,expenseId:string,year:number,month:number):Promise<StableDailyRowPlan>{
+ const enabled=()=>env.RUNTIME_MODE==='production'&&env.DAILY_APPEND_PREFLIGHT_ENABLED==='true'&&!!env.GOOGLE_SPREADSHEET_ID&&sheetScopesDistinct(env);
+ if(!enabled())throw Error('DAILY_APPEND_PREFLIGHT_DISABLED');
+ const book=env.GOOGLE_SPREADSHEET_ID,title=env.SHEET_EXPENSE_DAILY,db=env.DB;
+ try{
+  const a=await grid(env),formula=await rows(env,a),effective=await rows(env,a,false),plan=inspectDailyAppendSnapshot({formula,effective,rowCount:a.rowCount,expenseId,year,month});
+  if(plan.status==='APPEND')await annotations(env,a.sheetId,plan.observedRow-1,formula[plan.observedRow-1]??[],true);
+  else if(plan.status==='CAPACITY_REQUIRED')await annotations(env,a.sheetId,plan.observedTotalRow-1,formula[plan.observedTotalRow-1]??[],true);
+  const b=await grid(env),formula2=await rows(env,b),effective2=await rows(env,b,false);
+  if(!enabled()||env.GOOGLE_SPREADSHEET_ID!==book||env.SHEET_EXPENSE_DAILY!==title||env.DB!==db||a.sheetId!==b.sheetId||a.rowCount!==b.rowCount||JSON.stringify(formula)!==JSON.stringify(formula2)||JSON.stringify(effective)!==JSON.stringify(effective2))throw Error('changed');
+  if(plan.status==='APPEND')await annotations(env,b.sheetId,plan.observedRow-1,formula2[plan.observedRow-1]??[],true);
+  else if(plan.status==='CAPACITY_REQUIRED')await annotations(env,b.sheetId,plan.observedTotalRow-1,formula2[plan.observedTotalRow-1]??[],true);
+  if(!enabled()||env.GOOGLE_SPREADSHEET_ID!==book||env.SHEET_EXPENSE_DAILY!==title||env.DB!==db)throw Error('changed');
+  return plan;
+ }catch{return{status:'REVIEW',reason:'PROVIDER_SNAPSHOT_UNVERIFIED'};}
 }
 /** MATCHES_RECORDED_INPUTS is only a comparison; the caller must independently
  * prove production enrollment, writer drainage and the desired postimage. */

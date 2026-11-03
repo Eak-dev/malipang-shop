@@ -1,0 +1,76 @@
+import type {Env} from '../types';
+import {discoverPersonalProjectionGenerations} from './personal-projection-generation-observer';
+import {historicalResumeGuard} from './personal-historical-resume-guard';
+
+export interface PersonalGenerationKey{spreadsheetId:string;generation:string;personalId:string;version:number;revision:number}
+function check(env:Env):void{
+  if(env.RUNTIME_MODE!=='production'||env.PERSONAL_GENERATION_SCHEDULER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID)throw Error('PERSONAL_GENERATION_QUEUE_DISABLED');
+}
+// This is a discovery/claim precondition, not a Google Sheets lock and not a
+// replacement for the canonical per-projection fence immediately before send.
+function eligible(env:Env,alias:string,matchRevision=true):string{return `EXISTS(SELECT 1 FROM owner_personal_transactions e
+  JOIN personal_projection_source_revisions r ON r.personal_use_id=e.personal_use_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND r.revision=${alias}.source_revision`:''}
+  JOIN personal_projection_admissions a ON a.personal_use_id=e.personal_use_id
+  JOIN personal_projection_cutovers c ON c.spreadsheet_id=${alias}.spreadsheet_id AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=${alias}.cutover_generation
+  JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
+  WHERE e.personal_use_id=${alias}.personal_use_id AND e.status='CONFIRMED' AND typeof(e.version)='integer' AND e.version BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND e.version=${alias}.source_version`:''}
+  AND ((a.sequence>c.admission_watermark AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.sheet_name=? AND i.entity_key=e.personal_use_id)) OR ${historicalResumeGuard(env,'e','c')})
+  AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=${alias}.spreadsheet_id AND seen.personal_use_id=e.personal_use_id AND seen.source_revision>r.revision)
+  AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=${alias}.spreadsheet_id AND seen.personal_use_id=e.personal_use_id AND seen.source_revision>r.revision)
+  AND NOT EXISTS(SELECT 1 FROM personal_projection_runtime_intents p WHERE p.spreadsheet_id=${alias}.spreadsheet_id AND p.personal_use_id=e.personal_use_id AND p.state IN ('IN_FLIGHT','REVIEW'))
+  AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs prior WHERE prior.spreadsheet_id=${alias}.spreadsheet_id AND prior.personal_use_id=e.personal_use_id AND prior.state IN ('IN_FLIGHT','REVIEW')))`;}
+function eligibilityArgs(env:Env):string[]{return[(env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW'),(env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW')];}
+
+/** Cron entry point. It only creates durable D1 work; it never sends a queue
+ * message or writes Sheets. The new consumer and provider path do not exist. */
+export async function runPersonalGenerationScheduler(env:Env):Promise<void>{
+  check(env);await discoverPersonalProjectionGenerations(env,100);
+  const expired=env.DB.prepare(`UPDATE personal_projection_generation_jobs SET state='REVIEW',reason='LEASE_EXPIRED_OUTCOME_UNKNOWN',lease_token=NULL,lease_until=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND state='IN_FLIGHT' AND lease_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(env.GOOGLE_SPREADSHEET_ID);
+  // A previously superseded revision becoming current again is evidence of a
+  // rollback or lost tracking. Never silently leave it buried as completed.
+  const rollback=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_REVISION_ROLLBACK_OR_MISSING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='SUPERSEDED' AND NOT EXISTS(SELECT 1 FROM owner_personal_transactions e JOIN personal_projection_source_revisions r ON r.personal_use_id=e.personal_use_id WHERE e.personal_use_id=q.personal_use_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID);
+  // PENDING has never been claimed, and there is no transition back to it.
+  // Its CAS update races safely with claim: only one can change PENDING.
+  const supersede=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='SUPERSEDED',reason='SOURCE_ADVANCED_BEFORE_CLAIM',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible(env,'q',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=q.personal_use_id AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
+  const stale=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_OR_FENCE_CHANGED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND NOT ${eligible(env,'q')}`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
+  const materialize=env.DB.prepare(`INSERT INTO personal_projection_generation_jobs(spreadsheet_id,cutover_generation,personal_use_id,source_version,source_revision,state,reason,created_at,updated_at)
+    WITH candidates AS (SELECT o.*,${eligible(env,'o')} AS exact_ok,(${eligible(env,'o',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=o.personal_use_id AND r.revision>o.source_revision)) AS current_ok
+      FROM personal_projection_generation_observations o JOIN personal_projection_cutovers c ON c.spreadsheet_id=o.spreadsheet_id AND c.generation=o.cutover_generation AND c.sheet_name=? AND c.state='ACTIVE'
+      WHERE o.spreadsheet_id=? AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs q WHERE q.spreadsheet_id=o.spreadsheet_id AND q.cutover_generation=o.cutover_generation AND q.personal_use_id=o.personal_use_id AND q.source_version=o.source_version AND q.source_revision=o.source_revision)
+      ORDER BY o.discovered_at,o.personal_use_id LIMIT 100)
+    SELECT o.spreadsheet_id,o.cutover_generation,o.personal_use_id,o.source_version,o.source_revision,
+      CASE WHEN o.state='REVIEW' THEN 'REVIEW' WHEN o.exact_ok THEN 'PENDING' WHEN o.current_ok THEN 'SUPERSEDED' ELSE 'REVIEW' END,
+      CASE WHEN o.state='REVIEW' THEN COALESCE(o.reason,'OBSERVATION_REVIEW') WHEN o.exact_ok THEN NULL WHEN o.current_ok THEN 'SOURCE_ADVANCED_BEFORE_QUEUE' ELSE 'SOURCE_OR_FENCE_CHANGED' END,
+      strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM candidates o WHERE 1
+    ON CONFLICT(spreadsheet_id,cutover_generation,personal_use_id,source_version,source_revision) DO NOTHING`).bind(...eligibilityArgs(env),...eligibilityArgs(env),(env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW'),env.GOOGLE_SPREADSHEET_ID);
+  // Batch rollback prevents marking a lease expired without applying the rest
+  // of that tick. A lost acknowledgement leaves the durable rows authoritative.
+  await env.DB.batch([expired,rollback,supersede,stale,materialize]);
+}
+
+/** Foundation for a future consumer; not connected to cron or a queue route.
+ * A claim alone is never authority to mutate Sheets or mark any job complete. */
+export async function claimPersonalGeneration(env:Env,key:PersonalGenerationKey):Promise<string|null>{
+  check(env);if(env.PERSONAL_GENERATION_WORKER_ENABLED!=='true'||key.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!/^[-A-Za-z0-9_]{8,128}$/.test(key.generation)||!/^personal_[-A-Za-z0-9_]{1,128}$/.test(key.personalId)||!Number.isSafeInteger(key.version)||key.version<1||!Number.isSafeInteger(key.revision)||key.revision<1)throw Error('PERSONAL_GENERATION_WORKER_DISABLED');
+  const token=crypto.randomUUID();
+  const result=await env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='IN_FLIGHT',lease_token=?,lease_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    WHERE q.spreadsheet_id=? AND q.cutover_generation=? AND q.personal_use_id=? AND q.source_version=? AND q.source_revision=? AND q.state='PENDING' AND ${eligible(env,'q')}`).bind(token,key.spreadsheetId,key.generation,key.personalId,key.version,key.revision,...eligibilityArgs(env)).run();
+  return Number(result.meta.changes||0)===1?token:null;
+}
+
+/** Default-off consumer path. Until all trusted provider adapters and a
+ * generation-aware completion/reconciliation protocol exist, a claimed job
+ * is durably held for review and no provider is called. A lost D1 response is
+ * not retried as a write: the scheduler later holds an expired lease. */
+export async function runPersonalGenerationConsumer(env:Env):Promise<boolean>{
+  check(env);if(env.PERSONAL_GENERATION_WORKER_ENABLED!=='true')throw Error('PERSONAL_GENERATION_WORKER_DISABLED');
+  const q=await env.DB.prepare(`SELECT q.spreadsheet_id AS spreadsheetId,q.cutover_generation AS generation,q.personal_use_id AS personalId,q.source_version AS version,q.source_revision AS revision FROM personal_projection_generation_jobs q WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible(env,'q')} ORDER BY q.updated_at,q.personal_use_id LIMIT 1`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env)).first<PersonalGenerationKey>();
+  if(!q)return false;
+  if(!/^[-A-Za-z0-9_]{8,128}$/.test(q.generation)||!/^personal_[-A-Za-z0-9_]{1,128}$/.test(q.personalId)||!Number.isSafeInteger(q.version)||q.version<1||!Number.isSafeInteger(q.revision)||q.revision<1){
+    const r=await env.DB.prepare(`UPDATE personal_projection_generation_jobs SET state='REVIEW',reason='INVALID_GENERATION_IDENTITY',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND cutover_generation=? AND personal_use_id=? AND source_version=? AND source_revision=? AND state='PENDING'`).bind(q.spreadsheetId,q.generation,q.personalId,q.version,q.revision).run();
+    if(Number(r.meta.changes||0)!==1)throw Error('PERSONAL_GENERATION_HOLD_UNCERTAIN');return true;
+  }
+  const token=await claimPersonalGeneration(env,q);if(!token)return false;
+  const result=await env.DB.prepare(`UPDATE personal_projection_generation_jobs SET state='REVIEW',reason='PROVIDER_ADAPTERS_NOT_READY',lease_token=NULL,lease_until=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND cutover_generation=? AND personal_use_id=? AND source_version=? AND source_revision=? AND state='IN_FLIGHT' AND lease_token=?`).bind(q.spreadsheetId,q.generation,q.personalId,q.version,q.revision,token).run();
+  if(Number(result.meta.changes||0)!==1)throw Error('PERSONAL_GENERATION_HOLD_UNCERTAIN');return true;
+}

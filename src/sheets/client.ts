@@ -4,11 +4,15 @@ import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
 import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
-import {RAW_PROJECTION_HEADERS} from './raw-projection';
 import {buildExpenseRawProductionAppendRequests,type LedgerUatAppendSnapshot} from './ledger-uat-append-planner';
 import type {RawSourceProof} from './raw-source-proof';
 import {FullRawAppendIntent} from './full-raw-append-intent';
-import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
+import {PersonalRawEnrollment} from './personal-raw-enrollment';
+import {PersonalHistoricalEnrollment} from './personal-historical-enrollment';
+import {HistoricalMarkerRemediation,type HistoricalMarkerKind,type HistoricalMarkerPayload} from '../admin/personal-historical-marker-remediation';
+import type {HistoricalMarkerObservation} from './personal-historical-marker-classifier';
+import {legacyPersonalWriterOpen} from './personal-legacy-writer-gate';
+import type {planPersonalRawEnrollment} from './personal-raw-enrollment-plan';
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -114,6 +118,86 @@ export async function getRawIdentityProductionGrid(env:Env):Promise<unknown>{
   const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
 }
+/** Default-off read-only personal-use probe; no free-form provider paths. */
+function assertPersonalIdentityProductionReader(env:Env):void{
+  if(env.RUNTIME_MODE!=='production'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW)throw Error('PERSONAL_IDENTITY_READER_DISABLED');
+}
+export async function getPersonalIdentityProductionMetadata(env:Env,metadataId:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('PERSONAL_IDENTITY_READER_INVALID');
+  try{return await identityInspectionGet(env,`/developerMetadata/${metadataId}?fields=metadataId,metadataKey,visibility,location`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+/** Read-only search for exactly one metadata ID. Unlike GET-by-ID, a successful
+ * search can represent zero matches. Never accept errors as absence. */
+export async function searchPersonalProductionMetadataById(env:Env,metadataId:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('PERSONAL_METADATA_SEARCH_INVALID');
+  try{
+    const token=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
+    const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}/developerMetadata:search`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'content-type':'application/json'},body:JSON.stringify({dataFilters:[{developerMetadataLookup:{metadataId}}]})},timeout,'Sheets personal metadata search');
+    if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw Error('unavailable');}
+    return await readBoundedJson(response,65536,timeout,'Sheets personal metadata search');
+  }catch{throw Error('PERSONAL_METADATA_SEARCH_UNAVAILABLE');}
+}
+export async function getPersonalIdentityProductionGrid(env:Env):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:O10000`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+/** Bounded read-only DETAIL inventory; never a write authorization. */
+export async function getDetailProductionInventory(env:Env):Promise<unknown>{
+  if(env.RUNTIME_MODE!=='production'||env.DETAIL_IDENTITY_READER_ENABLED!=='true'||env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PURCHASE_DETAILS)throw Error('DETAIL_READER_DISABLED');
+  const range=`'${env.SHEET_PURCHASE_DETAILS.replace(/'/g,"''")}'!A1:T2500`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('DETAIL_READER_UNAVAILABLE');}
+}
+export async function getPersonalProductionGridProperties(env:Env):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getPersonalProductionCompleteGrid(env:Env,rows:number,columns:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(rows)||rows<1||rows>=10000||!Number.isSafeInteger(columns)||columns<15||columns>64||(rows+1)*columns>50000)throw Error('PERSONAL_IDENTITY_READER_INVALID');
+  let n=columns,col='';while(n>0){n--;col=String.fromCharCode(65+n%26)+col;n=Math.floor(n/26);}
+  const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:${col}${rows}`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+/** Internal one-shot metadata mutation; no runtime route calls this. */
+export async function sendPersonalEnrollmentMutation(env:Env,source:RawSourceProof,metadataId:number,token:string,sheetId:number,plan:ReturnType<typeof planPersonalRawEnrollment>,intent:PersonalRawEnrollment):Promise<void>{
+  if(env.PERSONAL_ENROLLMENT_ENABLED!=='true')throw Error('PERSONAL_ENROLLMENT_DISABLED');const expected=JSON.stringify(plan);let response:Response;
+  try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[plan]})},true,async()=>{if(!await PersonalRawEnrollment.authorizeTransport(intent,env,source,metadataId,token,sheetId,expected))throw Error('PERSONAL_ENROLLMENT_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('PERSONAL_ENROLLMENT_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('PERSONAL_ENROLLMENT_PREFLIGHT_UNAVAILABLE');}
+  try{const data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets personal enrollment response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}}}>};
+    const m=data?.replies?.[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,wanted=plan.createDeveloperMetadata.developerMetadata.location.dimensionRange;
+    if(!Array.isArray(data?.replies)||data.replies.length!==1||m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==sheetId||r.dimension!=='ROWS'||r.startIndex!==wanted.startIndex||r.endIndex!==wanted.endIndex)throw Error('invalid');
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('PERSONAL_ENROLLMENT_RESPONSE_UNKNOWN'));}
+}
+/** Historical transport is one-shot and only callable with a branded intent
+ * whose fresh source, provider snapshot, and D1 lock still match. */
+export async function sendHistoricalPersonalEnrollmentMutation(env:Env,metadataId:number,sheetId:number,plan:ReturnType<typeof planPersonalRawEnrollment>,intent:PersonalHistoricalEnrollment):Promise<string>{
+  if(env.PERSONAL_HISTORICAL_WRITER_ENABLED!=='true')throw Error('HISTORICAL_ENROLLMENT_DISABLED');const expected=JSON.stringify(plan);let response:Response;
+  try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[plan]})},true,async()=>{if(!await PersonalHistoricalEnrollment.authorizeTransport(intent,env,expected))throw Error('HISTORICAL_ENROLLMENT_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_ENROLLMENT_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('HISTORICAL_ENROLLMENT_PREFLIGHT_UNAVAILABLE');}
+  try{const data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets historical enrollment response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}}}>};
+    const m=data?.replies?.[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,wanted=plan.createDeveloperMetadata.developerMetadata.location.dimensionRange;
+    if(!Array.isArray(data?.replies)||data.replies.length!==1||m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==sheetId||r.dimension!=='ROWS'||r.startIndex!==wanted.startIndex||r.endIndex!==wanted.endIndex)throw Error('invalid');
+    const bytes=new TextEncoder().encode(JSON.stringify(['historical-provider-ack-v1',metadataId,m.metadataKey,m.visibility,r.sheetId,r.dimension,r.startIndex,r.endIndex]));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_ENROLLMENT_RESPONSE_UNKNOWN'));}
+}
+/** Internal one-shot transport; only a private branded action can claim it. */
+export async function sendHistoricalMarkerMutation(env:Env,kind:HistoricalMarkerKind,metadataId:number,payload:HistoricalMarkerPayload,marker:HistoricalMarkerObservation,intent:HistoricalMarkerRemediation):Promise<void>{
+  if(kind!=='ATTACH_ABSENT'||env.PERSONAL_HISTORICAL_MARKER_REMEDIATION_ENABLED!=='true'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('HISTORICAL_MARKER_DISABLED');const expected=JSON.stringify(payload);let response:Response;
+  try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[payload]})},true,async()=>{if(!await HistoricalMarkerRemediation.authorizeTransport(intent,env,expected))throw Error('HISTORICAL_MARKER_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_MARKER_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('HISTORICAL_MARKER_PREFLIGHT_UNAVAILABLE');}
+  try{
+    const body=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets marker response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}};deleteDeveloperMetadata?:{deletedDeveloperMetadata?:Array<{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}>}}>};
+    if(!Array.isArray(body?.replies)||body.replies.length!==1)throw Error('invalid');
+    if(kind==='ATTACH_ABSENT'){
+      if(!('createDeveloperMetadata' in payload)||marker.kind!=='ABSENT')throw Error('invalid');const m=body.replies[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,w=payload.createDeveloperMetadata.developerMetadata.location.dimensionRange;
+      if(m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==w.sheetId||r.dimension!==w.dimension||r.startIndex!==w.startIndex||r.endIndex!==w.endIndex)throw Error('invalid');
+    }else{
+      if(!('deleteDeveloperMetadata' in payload)||marker.kind!=='PRESENT')throw Error('invalid');const deleted=body.replies[0]?.deleteDeveloperMetadata?.deletedDeveloperMetadata;if(!Array.isArray(deleted)||deleted.length!==1)throw Error('invalid');const m=deleted[0],r=m?.location?.dimensionRange;
+      if(m?.metadataId!==metadataId||m.metadataKey!==marker.metadataKey||m.visibility!==marker.visibility||r?.sheetId!==marker.sheetId||r.dimension!==marker.dimension||r.startIndex!==marker.startIndex||r.endIndex!==marker.endIndex)throw Error('invalid');
+    }
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_MARKER_RESPONSE_UNKNOWN'));}
+}
 /** Bounded, typed properties/grid reads used for planning RAW append. */
 export async function getRawProductionGridProperties(env:Env):Promise<unknown>{
   assertRawIdentityProductionReader(env);const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1`;
@@ -160,32 +244,14 @@ export async function getSheetId(env:Env,title:string):Promise<number>{
   if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
   return Number(found);
 }
-export async function bootstrapSheets(env:Env):Promise<void>{
-  const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));
-  const definitions=[
-    [env.SHEET_ATTENDANCE_RAW,["Event_ID","Received_At","Work_Date","Employee_ID","Staff_Name","Punch_Type","Official_Time","LINE_Time","Diff_Min","Status","Confidence","Image_Key","Note","Validation_Code","Message_ID","Trace_ID","Version","Attendance_Source","Photo_DateTime","GPS_Lat","GPS_Lng","Distance_M","Clock_Evidence","Clock_Confidence","Overlay_Raw_Text","Image_SHA256"]],
-    [env.SHEET_DAILY_PAYROLL,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Time_In","Time_Out","Work_Hours","Late_Min","Early_Out_Min","Daily_Wage_Baht","Confirmed_Wage_Baht","Pending_Review_Wage_Baht","Pay_Status","Review_Flag","Version","Wage_Source_ID","Daily_Wage_Snapshot_Baht","Late_Deduction_Baht","Missing_Punch_Type","Missing_Punch_Deduction_Baht","OT_Approved_Baht","Other_Adjustment_Baht","Net_Pay_Baht","Payroll_Policy_Code","Finalized_At"]],
-    [env.SHEET_WEEKLY_PAYROLL,["Pay_Date","Period_Start","Employee_ID","Staff_Name","Work_Days","Amount_To_Pay_Baht","Pending_Review_Baht","Status","Version","Base_Wage_Total_Baht","Late_Deduction_Total_Baht","Missing_Punch_Deduction_Total_Baht","OT_Total_Baht","Other_Adjustment_Total_Baht","Net_Pay_Baht","Pending_Review_Count","Period_End"]],
-    [env.SHEET_WAGE_HISTORY,["Wage_ID","Employee_ID","Staff_Name","Daily_Wage_Baht","Effective_From","Effective_To","Source","Note","Version","Created_At","Updated_At"]],
-    [env.SHEET_SHIFT_SCHEDULE,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Daily_Wage_Snapshot_Baht","Wage_Source_ID","Status","Note","Version","Updated_At"]],
-    [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
-    [env.SHEET_EXPENSE_RAW,RAW_PROJECTION_HEADERS.EXPENSE],
-    [env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW",RAW_PROJECTION_HEADERS.PERSONAL_USE],
-    [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",RAW_PROJECTION_HEADERS.PURCHASE_DETAILS],
-    [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
-  ] as const;
-  const requests=definitions.filter(([name])=>!existing.has(name)).map(([title])=>({addSheet:{properties:{title,gridProperties:{frozenRowCount:1}}}}));if(requests.length)await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});
-  // Never rewrite an existing sheet's headers: several operational tabs carry
-  // formulas, formatting and manually maintained labels.  New tabs get their
-  // complete header row at creation time.
-  const newDefinitions=definitions.filter(([name])=>!existing.has(name));
-  await batchWriteValues(env,newDefinitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
-  if(existing.has("04_OWNER_MONTH_CLOSE")){
-    const marker=await batchGetSheetFormulaValues(env,["'04_OWNER_MONTH_CLOSE'!A5","'04_OWNER_MONTH_CLOSE'!A34"]);
-    if(marker.length!==2)throw new Error("OWNER_MONTH_CLOSE_LAYOUT_READBACK_INCOMPLETE");
-    if(shouldSkipLegacyOwnerMonthCloseBootstrap(marker[0]?.[0]?.[0],marker[1]?.[0]?.[0]))return;
-    const cells=ownerMonthClosePersonalUseCells(env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW"),qualified=cells.map(cell=>`'04_OWNER_MONTH_CLOSE'!${cell.range}`),current=await batchGetSheetFormulaValues(env,qualified),writes=planOwnerMonthClosePersonalUseWrites(current,cells,legacyOwnerMonthClosePersonalUseCells());
-    await batchWriteUserEnteredValues(env,writes.map(cell=>({range:`'04_OWNER_MONTH_CLOSE'!${cell.range}`,values:[[cell.value]]})));
-  }
+/** Temporary read-only scope: administrators create missing tabs and verify
+ * headers manually. It never mutates existing sheets or the owner close page. */
+export async function bootstrapSheets(env:Env):Promise<{mode:'READ_ONLY';missingTabs:string[];headersVerified:false;requiresManualSetup:boolean}>{
+  if(!await legacyPersonalWriterOpen(env))throw new Error('PERSONAL_LEGACY_CUTOVER_HOLD');
+  const names=[env.SHEET_ATTENDANCE_RAW,env.SHEET_DAILY_PAYROLL,env.SHEET_WEEKLY_PAYROLL,env.SHEET_WAGE_HISTORY,env.SHEET_SHIFT_SCHEDULE,env.SHEET_OT_REQUESTS,env.SHEET_EXPENSE_RAW,env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW',env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',env.SHEET_SYSTEM_LOG];
+  if(names.some(name=>typeof name!=='string'||!name)||new Set(names).size!==names.length)throw new Error('BOOTSTRAP_DEFINITIONS_INVALID');
+  let meta:{sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown}}>};try{meta=await identityInspectionGet(env,'?fields=sheets.properties(sheetId,title)') as typeof meta;}catch{throw new Error('BOOTSTRAP_INSPECTION_UNAVAILABLE');}
+  if(!Array.isArray(meta.sheets)||meta.sheets.some(s=>typeof s.properties?.title!=='string'||!Number.isSafeInteger(s.properties.sheetId)||Number(s.properties.sheetId)<0))throw new Error('BOOTSTRAP_METADATA_INVALID');
+  const existing=new Set(meta.sheets.map(s=>s.properties!.title as string)),ids=new Set(meta.sheets.map(s=>Number(s.properties!.sheetId)));if(existing.size!==meta.sheets.length||ids.size!==meta.sheets.length)throw new Error('BOOTSTRAP_METADATA_INVALID');
+  const missingTabs=names.filter(name=>!existing.has(name));return{mode:'READ_ONLY',missingTabs,headersVerified:false,requiresManualSetup:true};
 }
-function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

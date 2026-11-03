@@ -2,7 +2,7 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
-const {parseLedgerGoogleSnapshot,createLedgerGoogleUatProbe,createExpenseRawProductionProbe}=require('../dist/sheets/ledger-google-probe.js');
+const {parseLedgerGoogleSnapshot,createLedgerGoogleUatProbe,createExpenseRawProductionProbe,createPersonalRawProductionProbe}=require('../dist/sheets/ledger-google-probe.js');
 const auth=require('../dist/sheets/google-auth.js');
 const client=require('../dist/sheets/client.js');
 const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
@@ -66,4 +66,14 @@ test('candidate production reader is read-only and disabled until all flags are 
   const result=await createExpenseRawProductionProbe(candidate,'Ledger',identity,44).read();assert.equal(result.witness.metadataId,44);assert.equal(calls,3);
   assert.equal(urls[1].searchParams.get('ranges'),"'Ledger'!A1:Q10000");assert.equal(urls[0].searchParams.get('fields'),'metadataId,metadataKey,visibility,location');
   await assert.rejects(client.getRawIdentityProductionMetadata(candidate,'/other?fields=*'),/READER_INVALID/);assert.equal(calls,3);
+});
+test('personal production reader is scoped, authenticated, sanitized, and default-off',async()=>{
+  const personal={kind:'PERSONAL_USE',sheetId:7,entityId:'personal_1'},candidate={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_PERSONAL_USE_RAW:'Personal',PERSONAL_IDENTITY_READER_ENABLED:'true',PERSONAL_STABLE_PROJECTION_ENABLED:'true'};
+  const meta=()=>({metadataId:44,metadataKey:'P',visibility:'DOCUMENT',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:2,endIndex:3}}});
+  const grid=()=>({sheets:[{properties:{sheetId:7,title:'Personal',gridProperties:{rowCount:4,columnCount:15}},data:[{rowData:[{values:RAW_PROJECTION_HEADERS.PERSONAL_USE.map(cell)},{},{values:[cell('personal_1')]}],rowMetadata:[{},{},{developerMetadata:[meta()]}]}]}]});
+  let urls=[];auth.getGoogleAccessToken=async()=> 'synthetic-token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));return new Response(JSON.stringify(urls.length===2?grid():meta()));};
+  await assert.rejects(createPersonalRawProductionProbe({...candidate,PERSONAL_IDENTITY_READER_ENABLED:undefined},'Personal',personal,44).read(),/READER_DISABLED/);assert.equal(urls.length,0);
+  assert.throws(()=>createPersonalRawProductionProbe(candidate,'Other',personal,44),/PROBE_INVALID/);assert.throws(()=>createPersonalRawProductionProbe(candidate,'Personal',{...personal,kind:'EXPENSE'},44),/PROBE_INVALID/);
+  assert.equal((await createPersonalRawProductionProbe(candidate,'Personal',personal,44).read()).witness.metadataId,44);assert.equal(urls[1].searchParams.get('ranges'),"'Personal'!A1:O10000");assert.equal(urls[0].searchParams.get('fields'),'metadataId,metadataKey,visibility,location');
+  await assert.rejects(client.getPersonalIdentityProductionMetadata(candidate,'/other?fields=*'),/READER_INVALID/);globalThis.fetch=async()=>new Response('{secret invalid JSON');await assert.rejects(createPersonalRawProductionProbe(candidate,'Personal',personal,44).read(),e=>e.message==='PERSONAL_IDENTITY_READER_UNAVAILABLE'&&!e.message.includes('secret'));
 });

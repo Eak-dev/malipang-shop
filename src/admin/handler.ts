@@ -20,16 +20,120 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
-import {holdDailyRecoveryIntent,inspectDailyRecovery,recordDailyRecoveryHold} from "./daily-recovery";
+import {advanceDailyWitness,dailyWitnessRecoveryStatus,holdDailyRecoveryIntent,inspectDailyRecovery,recordDailyRecoveryHold} from "./daily-recovery";
+import {dailyReviewedReleaseStatus,inspectDailyReviewedRelease,resolveDailyReviewedRelease} from "./daily-reviewed-release";
 import {readBoundedJson} from "../shared/async";
+import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
+import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
+
+import {PersonalHistoricalEnrollment} from '../sheets/personal-historical-enrollment';
+import {inspectHistoricalMarker} from '../sheets/personal-historical-marker-inspection';
+async function readRecoveryRequest(request:Request):Promise<unknown>{try{return await readBoundedJson(request,4096,5000,'Recovery request');}catch{throw Error('RECOVERY_REQUEST_INVALID');}}
+
+
+import {inspectHistoricalMarkerAdmin,approveHistoricalMarkerRemediation,executeHistoricalMarkerRemediation,historicalMarkerRemediationStatus,quarantineHistoricalMarkerRemediation,cancelHistoricalMarkerRemediation} from './personal-historical-marker-remediation';
+import {inspectPersonalMarkerReviewedRecovery,approvePersonalMarkerReviewedRecovery,resolvePersonalMarkerReviewedRecovery,personalMarkerReviewedRecoveryStatus,cancelPersonalMarkerReviewedRecovery} from './personal-marker-reviewed-recovery';
+
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
-  const url=new URL(request.url);if(!authorized(request,env))return new Response("Unauthorized",{status:401,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
+  const url=new URL(request.url),sensitiveRecovery=url.pathname.startsWith("/admin/daily-recovery/")||url.pathname.startsWith("/admin/personal-historical-")||url.pathname.startsWith("/admin/personal-enrollment-recovery/");if(!authorized(request,env))return new Response("Unauthorized",{status:401,...(sensitiveRecovery?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
   try{
-    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/inspect"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown};return Response.json({ok:true,...await inspectDailyRecovery(env,body.windowToken)},{headers:{"cache-control":"no-store, max-age=0"}});}
-    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/keep-review"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await recordDailyRecoveryHold(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
-    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/hold-in-flight"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await holdDailyRecoveryIntent(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+
+
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/inspect"){const body=await readRecoveryRequest(request) as {windowToken?:unknown};return Response.json({ok:true,...await inspectDailyRecovery(env,body.windowToken)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/keep-review"){const body=await readRecoveryRequest(request) as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await recordDailyRecoveryHold(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/hold-in-flight"){const body=await readRecoveryRequest(request) as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await holdDailyRecoveryIntent(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&env.DAILY_WITNESS_RECOVERY_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/advance-witness"){const body=await readRecoveryRequest(request) as {windowToken?:unknown;actionId?:unknown;evidenceDigest?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown};return Response.json({ok:true,...await advanceDailyWitness(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&env.DAILY_WITNESS_RECOVERY_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/witness-status"){const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await dailyWitnessRecoveryStatus(env,body.actionId)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&env.DAILY_REVIEWED_RELEASE_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/inspect-release"){const body=await readRecoveryRequest(request) as {witnessActionId?:unknown};return Response.json({ok:true,...await inspectDailyReviewedRelease(env,body.witnessActionId)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&env.DAILY_REVIEWED_RELEASE_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/release-status"){const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await dailyReviewedReleaseStatus(env,body.actionId)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&env.DAILY_REVIEWED_RELEASE_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/release"){const body=await readRecoveryRequest(request) as {witnessActionId?:unknown;actionId?:unknown;evidenceDigest?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown};return Response.json({ok:true,...await resolveDailyReviewedRelease(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/marker-inspect'){
+      if(env.PERSONAL_HISTORICAL_RECOVERY_ENABLED!=='true')return Response.json({ok:false,error:'HISTORICAL_RECOVERY_DISABLED'},{status:503,headers:{'cache-control':'no-store'}});
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown};if(typeof body.personalUseId!=='string')return Response.json({ok:false,error:'HISTORICAL_RECOVERY_INVALID'},{status:400,headers:{'cache-control':'no-store'}});
+      const result=await inspectHistoricalMarker(env,body.personalUseId);return Response.json({ok:result.observation!=='EVIDENCE_UNAVAILABLE',...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/start'){
+      if(env.PERSONAL_HISTORICAL_ADMIN_DISPATCH_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RECOVERY_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RESUME_ENABLED!=='true')return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_DISABLED'},{status:503,headers:{'cache-control':'no-store'}});
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown;month?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};
+      try{const intent=await PersonalHistoricalEnrollment.prepare(env,body),result=await intent.dispatchOnce();return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});}
+      catch(error){if(error instanceof Error&&error.message==='HISTORICAL_RESERVATION_OUTCOME_UNKNOWN')return Response.json({ok:false,state:'OUTCOME_UNKNOWN'},{status:202,headers:{'cache-control':'no-store'}});return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_UNAVAILABLE'},{status:409,headers:{'cache-control':'no-store'}});}
+
+    }
+
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-inspect'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await inspectPersonalMarkerReviewedRecovery(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-approve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof approvePersonalMarkerReviewedRecovery>[1];const result=await approvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-resolve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof resolvePersonalMarkerReviewedRecovery>[1];const result=await resolvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-status'){
+      const body=await readRecoveryRequest(request) as {recoveryActionId?:unknown};return Response.json({ok:true,...await personalMarkerReviewedRecoveryStatus(env,body.recoveryActionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-cancel'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof cancelPersonalMarkerReviewedRecovery>[1];const result=await cancelPersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/inspect'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectHistoricalMarkerAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/approve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof approveHistoricalMarkerRemediation>[1];const result=await approveHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/execute'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof executeHistoricalMarkerRemediation>[1];const result=await executeHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/status'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await historicalMarkerRemediationStatus(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/quarantine'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};const result=await quarantineHistoricalMarkerRemediation(env,body.actionId);return Response.json({ok:result.state==='REVIEW',...result},{status:result.state==='REVIEW'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/cancel'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof cancelHistoricalMarkerRemediation>[1];const result=await cancelHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/status'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown};return Response.json({ok:true,...await personalHistoricalEnrollmentStatus(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/inspect'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectPersonalHistoricalRecoveryAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/quarantine'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown;reason?:unknown};const result=await quarantinePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='REVIEW',...result},{status:result.state==='REVIEW'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/approve'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown;evidenceDigest?:unknown;reason?:unknown};const result=await approvePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/resolve'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};const result=await resolvePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/status'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await personalHistoricalRecoveryStatus(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/cancel'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown;reason?:unknown};const result=await cancelPersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/inspect"){
+      const body=await readRecoveryRequest(request) as{personalUseId?:unknown};const view=await inspectPersonalEnrollmentAdmin(env,body.personalUseId);return Response.json({ok:true,...view},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/approve"){
+      const body=await readRecoveryRequest(request) as{personalUseId?:unknown;evidenceDigest?:unknown;reason?:unknown};const result=await approvePersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/status"){
+      const body=await readRecoveryRequest(request) as{actionId?:unknown};const result=await personalEnrollmentRecoveryStatus(env,body.actionId);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/cancel"){
+      const body=await readRecoveryRequest(request) as{actionId?:unknown;reason?:unknown};const result=await cancelPersonalEnrollmentRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/resolve"){
+      const body=await readRecoveryRequest(request) as{actionId?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown};const result=await resolvePersonalEnrollmentRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }
@@ -38,7 +142,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
-    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
+    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){const result=await bootstrapSheets(env);return Response.json({ok:false,...result,setupComplete:false},{status:409,headers:{"cache-control":"no-store"}});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/sync-staff-statuses-from-sheet-scoped")return Response.json({ok:true,...await syncStaffStatusesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
@@ -99,6 +203,6 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate")return Response.json({ok:true,...await evaluateUploadedImage(env,request) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));
-    return new Response("Not found",{status:404,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
-  }catch(error){return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});}
+    return new Response("Not found",{status:404,...(sensitiveRecovery?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
+  }catch(error){if(sensitiveRecovery){const message=error instanceof Error?error.message:"",isRead=/\/(?:review-)?(inspect|status|marker-inspect|inspect-release|release-status|witness-status)$/.test(url.pathname),invalid=message==="RECOVERY_REQUEST_INVALID"||message.endsWith("_INVALID")||message.endsWith("_DISABLED");return Response.json(invalid||isRead?{ok:false,error:"RECOVERY_REQUEST_UNAVAILABLE"}:{ok:false,state:"OUTCOME_UNKNOWN"},{status:invalid||isRead?400:202,headers:{"cache-control":"no-store, max-age=0"}});}return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400});}
 }

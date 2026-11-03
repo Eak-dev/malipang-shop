@@ -70,6 +70,14 @@
     "src/sheets/raw-full-projection-shadow.ts",
     "src/sheets/full-raw-identity-intent.ts",
     "src/sheets/full-raw-append-intent.ts",
-    "src/sheets/legacy-raw-enrollment-audit.ts"
+    "src/sheets/legacy-raw-enrollment-audit.ts",
+    "src/sheets/personal-projection-runtime-journal.ts",
+    "src/sheets/personal-raw-identity-intent.ts",
+    "src/sheets/personal-raw-enrollment-plan.ts",
+    "src/sheets/personal-raw-enrollment.ts",
+    "src/sheets/personal-raw-enrollment-recovery.ts",
+    "src/admin/personal-enrollment-recovery.ts",
+    "src/sheets/personal-projection-generation-observer.ts",
+    "src/sheets/personal-projection-generation-queue.ts"
   ]
 }

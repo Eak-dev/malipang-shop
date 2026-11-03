@@ -3,10 +3,10 @@
 -- Reserved for a future independently verified production enrollment; this
 -- candidate provides no API to create or trust one as a recovery authorization.
 CREATE TABLE IF NOT EXISTS daily_recovery_identity_witnesses (
- spreadsheet_id TEXT NOT NULL,expense_id TEXT NOT NULL,metadata_id INTEGER NOT NULL,
- projected_version INTEGER NOT NULL,baseline_sha256 TEXT NOT NULL CHECK(length(baseline_sha256)=64),
+ spreadsheet_id TEXT NOT NULL,sheet_name TEXT NOT NULL,expense_id TEXT NOT NULL,metadata_id INTEGER NOT NULL,
+ projected_version INTEGER NOT NULL,projected_revision INTEGER NOT NULL CHECK(projected_revision>0),baseline_sha256 TEXT NOT NULL CHECK(length(baseline_sha256)=64),
  provenance TEXT NOT NULL CHECK(provenance='PRODUCTION_VERIFIED_WRITER'),
- created_at TEXT NOT NULL, PRIMARY KEY(spreadsheet_id,expense_id), UNIQUE(spreadsheet_id,metadata_id)
+ created_at TEXT NOT NULL, PRIMARY KEY(spreadsheet_id,sheet_name,expense_id,projected_revision)
 );
 CREATE TABLE IF NOT EXISTS daily_recovery_reviews (
  action_id TEXT PRIMARY KEY,spreadsheet_id TEXT NOT NULL,sheet_name TEXT NOT NULL,

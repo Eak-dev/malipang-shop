@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 
 export type ExpenseProjection='RAW'|'DAILY'|'DETAIL';
 export interface ExpenseProjectionContext{revision:number;generation:string;watermark:number}
@@ -64,7 +65,7 @@ export class ExpenseProjectionRuntimeJournal{
     JOIN expense_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=? AND c.admission_watermark=? AND a.sequence>c.admission_watermark
     JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
     JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}
+    WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity} AND ${sheetMetadataRegistryIntegrity}
     AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))${this.generationGuard()})`;}
   private args(c:ExpenseProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',...this.generationArgs()];}
   private valid(c:ExpenseProjectionContext):boolean{return Number.isSafeInteger(c.revision)&&c.revision>0&&c.revision<=9007199254740991&&typeof c.generation==='string'&&/^[A-Za-z0-9_-]{8,128}$/.test(c.generation)&&Number.isSafeInteger(c.watermark)&&c.watermark>=0;}
@@ -76,7 +77,7 @@ export class ExpenseProjectionRuntimeJournal{
       JOIN expense_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND a.sequence>c.admission_watermark
       JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
       JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}
+      WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity} AND ${sheetMetadataRegistryIntegrity}
       AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))${this.generationGuard()}`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',...this.generationArgs()).first<ExpenseProjectionContext>();
     return row&&this.valid(row)?row:null;
   }

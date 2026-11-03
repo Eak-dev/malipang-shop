@@ -1,5 +1,6 @@
 import type {Env} from '../types';
 import type {LedgerCellState,LedgerWriteIdentity} from './ledger-metadata-writer';
+import type {RawSourceProof} from './raw-source-proof';
 
 /** A complete, current, independently obtained UAT-only grid observation.
  * This type is not evidence of provenance, a lock, or an atomic precondition. */
@@ -36,6 +37,9 @@ function entered(value:unknown):Record<string,unknown>{
  */
 export function buildLedgerUatAppendRequests(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,values:readonly unknown[],snapshot:LedgerUatAppendSnapshot):unknown[]{
   if(env.RUNTIME_MODE!=='shadow'||env.SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE!=='true'||!env.SHEETS_LEDGER_UAT_SPREADSHEET_ID||!env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.SHEETS_LEDGER_UAT_SPREADSHEET_ID===env.SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID||env.GOOGLE_SPREADSHEET_ID!==env.SHEETS_LEDGER_UAT_SPREADSHEET_ID)throw Error('LEDGER_UAT_APPEND_DISABLED');
+  return planLedgerAppend(env,sheetName,identity,metadataId,values,snapshot);
+}
+function planLedgerAppend(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,values:readonly unknown[],snapshot:LedgerUatAppendSnapshot):unknown[]{
   if(identity.kind==='PURCHASE_DETAILS')throw Error('LEDGER_UAT_APPEND_DETAIL_UNAVAILABLE');
   const kind=identity.kind,size=widths[kind],expectedSheet=kind==='EXPENSE'?env.SHEET_EXPENSE_RAW:env.SHEET_PERSONAL_USE_RAW;
   if(!sheetName||sheetName!==expectedSheet||!identity.entityId||identity.entityId.trim()!==identity.entityId||identity.itemId!==undefined||!Number.isSafeInteger(identity.sheetId)||identity.sheetId<0||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647||values.length!==size||values[0]!==identity.entityId)throw Error('LEDGER_UAT_APPEND_INVALID');
@@ -56,4 +60,11 @@ export function buildLedgerUatAppendRequests(env:Env,sheetName:string,identity:L
     {updateCells:{start:{sheetId:identity.sheetId,rowIndex:index,columnIndex:0},rows:[{values:cells}],fields:'userEnteredValue,note,dataValidation'}},
     {createDeveloperMetadata:{developerMetadata:{metadataId,metadataKey:keys[kind],visibility:'DOCUMENT',location:{dimensionRange:{sheetId:identity.sheetId,dimension:'ROWS',startIndex:index,endIndex:index+1}}}}}
   ];
+}
+/** Candidate planning only. Source revision, durable sheet-wide exclusion,
+ * operation intent and postread must be checked by the eventual dispatcher. */
+export function buildExpenseRawProductionAppendRequests(env:Env,source:RawSourceProof,identity:LedgerWriteIdentity,metadataId:number,snapshot:LedgerUatAppendSnapshot):unknown[]{
+  if(env.RUNTIME_MODE!=='production'||env.RAW_FULL_IDENTITY_WRITER_ENABLED!=='true'||env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_EXPENSE_RAW||!env.SHEET_EXPENSE_DAILY)throw Error('RAW_APPEND_DISABLED');
+  if(!source||source.kind!=='EXPENSE'||identity.kind!=='EXPENSE'||source.entityId!==identity.entityId)throw Error('RAW_APPEND_SOURCE_INVALID');
+  return planLedgerAppend(env,env.SHEET_EXPENSE_RAW,identity,metadataId,source.values,snapshot);
 }

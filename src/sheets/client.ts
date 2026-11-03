@@ -110,6 +110,18 @@ export async function getRawIdentityProductionGrid(env:Env):Promise<unknown>{
   const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
 }
+/** Bounded, typed properties/grid reads used for planning RAW append. */
+export async function getRawProductionGridProperties(env:Env):Promise<unknown>{
+  assertRawIdentityProductionReader(env);const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getRawProductionCompleteGrid(env:Env,rows:number,columns:number):Promise<unknown>{
+  assertRawIdentityProductionReader(env);if(!Number.isSafeInteger(rows)||rows<1||rows>=10000||!Number.isSafeInteger(columns)||columns<17||columns>64||(rows+1)*columns>50000)throw Error('RAW_IDENTITY_READER_INVALID');
+  let n=columns,col='';while(n>0){n--;col=String.fromCharCode(65+n%26)+col;n=Math.floor(n/26);}
+  const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1:${col}${rows}`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
+}
 /** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
 export async function getSheetRowCount(env:Env,title:string):Promise<number>{
   const data=await identityInspectionGet(env,"?fields=sheets.properties(title,gridProperties(rowCount))") as{sheets?:Array<{properties?:{title?:string;gridProperties?:{rowCount?:number}}}>};

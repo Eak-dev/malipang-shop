@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const auth=require('../dist/sheets/google-auth.js');
-const {readLedgerUatAppendSnapshot:read}=require('../dist/sheets/ledger-uat-append-reader.js');
-const {buildLedgerUatAppendRequests:plan}=require('../dist/sheets/ledger-uat-append-planner.js');
+const {readLedgerUatAppendSnapshot:read,readExpenseRawProductionAppendSnapshot:readProduction}=require('../dist/sheets/ledger-uat-append-reader.js');
+const {buildLedgerUatAppendRequests:plan,buildExpenseRawProductionAppendRequests:planProduction}=require('../dist/sheets/ledger-uat-append-planner.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
 test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
 const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'uat',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'uat',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true',SHEET_EXPENSE_RAW:'Raw'};
@@ -31,4 +31,13 @@ test('oversized grid, ambiguous shape or wrong sheet holds',async()=>{
 test('production configuration is rejected before HTTP fetch',async()=>{
   let calls=0;globalThis.fetch=async()=>{calls++;throw Error('unexpected');};auth.getGoogleAccessToken=async()=> 'token';
   await assert.rejects(read({...env,GOOGLE_SPREADSHEET_ID:'production'},'Raw',7),/READER_DISABLED/);assert.equal(calls,0);
+});
+test('production candidate reads only configured RAW grid and plans without authorizing dispatch',async()=>{
+  let calls=0;const urls=[];auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));calls++;return new Response(JSON.stringify(calls===1?base():grid()));};
+  const prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_EXPENSE_RAW:'Raw',SHEET_EXPENSE_DAILY:'Daily',RAW_FULL_IDENTITY_WRITER_ENABLED:'true',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true'};
+  await assert.rejects(readProduction({...prod,RAW_FULL_IDENTITY_WRITER_ENABLED:undefined},7),/READER_DISABLED/);assert.equal(calls,0);
+  const snapshot=await readProduction(prod,7);assert.equal(urls[0].searchParams.get('ranges'),"'Raw'!A1");assert.equal(urls[1].searchParams.get('ranges'),"'Raw'!A1:T4");
+  const source={kind:'EXPENSE',entityId:'new',version:2,values:['new',...Array(16).fill('')],fingerprint:'a'.repeat(64)};
+  const requests=planProduction(prod,source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot);assert.equal(requests.length,3);assert.equal(requests[0].insertDimension.range.startIndex,3);
+  assert.throws(()=>planProduction({...prod,RAW_FULL_IDENTITY_WRITER_ENABLED:'false'},source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot),/DISABLED/);
 });

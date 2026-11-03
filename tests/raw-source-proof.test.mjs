@@ -12,6 +12,7 @@ const {projectRawFullShadow}=require('../dist/sheets/raw-full-projection-shadow.
 const auth=require('../dist/sheets/google-auth.js');
 const client=require('../dist/sheets/client.js');
 const {FullRawIdentityIntent}=require('../dist/sheets/full-raw-identity-intent.js');
+const {FullRawAppendIntent}=require('../dist/sheets/full-raw-append-intent.js');
 const {ExpenseProjectionRuntimeJournal}=require('../dist/sheets/expense-projection-runtime-journal.js');
 class Statement{constructor(db,sql){this.db=db;this.sql=sql;this.args=[]}bind(...args){this.args=args;return this}async first(){return this.db.prepare(this.sql).get(...this.args)??null}async run(){return{meta:{changes:Number(this.db.prepare(this.sql).run(...this.args).changes)}}}}
 class D1{constructor(db){this.db=db}prepare(sql){return new Statement(this.db,sql)}}
@@ -237,4 +238,57 @@ test('controller returns evidence only after readback, and holds both intents on
     else{assert.equal(result.status,'INNER_VERIFIED_OUTER_IN_FLIGHT');assert.match(result.evidenceDigest,/^[0-9a-f]{64}$/);assert.equal(await outer.verify('RAW',outerToken,context,result.evidenceDigest),true);}
     assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
   }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}}
+});
+async function installAppendFixture(f,proof,keepExisting=false){
+  const baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
+  const outer=await installIntentFixture(f,baseline);if(!keepExisting)f.db.exec('DELETE FROM full_raw_identity_intents');
+  f.env.RAW_APPEND_WRITER_ENABLED='true';const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:proof.entityId,entityVersion:proof.version,traceId:'synthetic'};
+  return {...outer,append:new FullRawAppendIntent(f.env,job,'lease_token_123456',outer.outerToken,outer.context)};
+}
+test('append reservation holds one RAW sheet, uses fixed metadata identity and never expires',async()=>{
+  const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
+    assert.equal(await append.acquire(proof,token),true);assert.equal(await append.reserve(proof,44,token),true);assert.equal(await append.beginDispatch(proof,44,token),true);
+    const claims=await Promise.all([append.claimProviderDispatch(proof,44,token),append.claimProviderDispatch(proof,44,token)]);assert.deepEqual(claims.sort(),[false,true]);
+    assert.equal(await append.hold(token),true);assert.equal(await append.claimProviderDispatch(proof,44,token),false);assert.equal(await append.acquire(proof,'second_token_123456'),false);
+    assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'REVIEW');assert.equal(f.db.prepare('SELECT state FROM full_raw_append_intents').get().state,'REVIEW');
+    for(const table of ['full_raw_sheet_locks','full_raw_append_intents'])assert.equal(f.db.prepare(`PRAGMA table_info(${table})`).all().some(r=>/row_number|row_index/.test(r.name)),false);
+  }finally{f.close();}
+});
+test('two different expense append intents cannot acquire the same RAW sheet',async()=>{
+  const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),first=await installAppendFixture(f,proof);
+    f.db.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,updated_at,version) VALUES('exp_second','msg_second','line','second',12000,'transfer','SHOP_BANK','ingredients','2026-10-01','CONFIRMED','then','now',1)`).run();
+    f.db.exec(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job2','EXPENSE','exp_second',1,'synthetic','PROCESSING',1,'now','9999-01-01T00:00:00.000Z','lease_token_654321')`);
+    const secondProof=await readRawSourceProof(f.env,'EXPENSE','exp_second',1),job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_second',entityVersion:1,traceId:'synthetic'},outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_654321');
+    const ctx=await outer.context();assert.ok(ctx);const outerToken=await outer.begin('RAW',ctx);assert.ok(outerToken);const second=new FullRawAppendIntent(f.env,job,'lease_token_654321',outerToken,ctx);
+    const results=await Promise.all([first.append.acquire(proof,'append_token_first_123'),second.acquire(secondProof,'append_token_second_123')]);assert.equal(results.filter(Boolean).length,1);assert.equal(f.db.prepare('SELECT count(*) n FROM full_raw_sheet_locks').get().n,1);
+  }finally{f.close();}
+});
+test('existing identity, changed source revision and disabled append stop reservation',async()=>{
+  for(const mode of ['existing','source_aba','flag']){const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof,mode==='existing'),token='append_token_123456';
+    if(mode==='flag')f.env.RAW_APPEND_WRITER_ENABLED='false';
+    if(mode==='flag'){await assert.rejects(append.acquire(proof,token),/DISABLED/);assert.equal(f.db.prepare('SELECT count(*) n FROM full_raw_sheet_locks').get().n,0);continue;}
+    assert.equal(await append.acquire(proof,token),true);
+    if(mode==='source_aba')f.db.exec(`UPDATE expense_events SET trace_id='changed'; UPDATE expense_events SET trace_id='trace-a'`);
+    assert.equal(await append.reserve(proof,44,token),false);assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'HELD');
+  }finally{f.close();}}
+});
+test('lost lock, reservation or dispatch acknowledgment never authorizes a later dispatch',async()=>{
+  for(const stage of ['lock','reservation','dispatch']){const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
+    if(stage!=='lock')assert.equal(await append.acquire(proof,token),true);
+    if(stage==='dispatch')assert.equal(await append.reserve(proof,44,token),true);
+    const target=stage==='lock'?'INSERT INTO full_raw_sheet_locks':stage==='reservation'?'INSERT INTO full_raw_append_intents':"UPDATE full_raw_append_intents SET state='IN_FLIGHT'";
+    const prepare=f.env.DB.prepare.bind(f.env.DB);f.env.DB.prepare=sql=>{const statement=prepare(sql);if(!sql.includes(target))return statement;return{bind(...args){const bound=statement.bind(...args);return{async run(){await bound.run();throw Error('synthetic lost acknowledgment');}}}};};
+    const operation=stage==='lock'?()=>append.acquire(proof,token):stage==='reservation'?()=>append.reserve(proof,44,token):()=>append.beginDispatch(proof,44,token);
+    await assert.rejects(operation(),/lost acknowledgment/);
+    assert.equal(await append.claimProviderDispatch(proof,44,token),false);
+    if(stage==='lock')assert.equal(await append.reserve(proof,44,token),false);
+    if(stage==='reservation')assert.equal(await append.beginDispatch(proof,44,token),false);
+    assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'HELD');
+    assert.equal(await append.holdAndFenceOuter(token),stage==='lock'?'REVIEW_LOCAL_STATE_UNCERTAIN':'REVIEW');
+    assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'REVIEW');
+  }finally{f.close();}}
 });

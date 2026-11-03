@@ -42,6 +42,7 @@
     "src/sheets/raw-recovery-inspection.ts",
     "src/sheets/raw-full-projection-shadow.ts",
     "src/sheets/full-raw-identity-intent.ts",
+    "src/sheets/full-raw-append-intent.ts",
     "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",

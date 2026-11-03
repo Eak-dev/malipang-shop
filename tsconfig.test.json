@@ -51,6 +51,7 @@
     "src/sheets/sheet-scope-isolation.ts",
     "src/sheets/personal-historical-enrollment.ts",
     "src/sheets/personal-historical-enrollment-integrity.ts",
+    "src/sheets/personal-historical-recovery-inspection.ts",
     "src/sheets/personal-raw-identity-intent.ts",
     "src/sheets/personal-raw-enrollment-plan.ts",
     "src/sheets/personal-raw-enrollment.ts",

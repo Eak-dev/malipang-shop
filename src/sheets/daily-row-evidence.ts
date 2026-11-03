@@ -7,6 +7,11 @@ import {verifyDailyRecoveryAccounting} from './daily-recovery-accounting';
 import {readRawSourceProof,rawSourceStillMatches} from './raw-source-proof';
 import {badgeRetentionIntegrity,expenseSourceEvidenceIntegrity} from './expense-projection-runtime-journal';
 import {dailyMetadataRegistryIntegrity} from './daily-metadata-registry-guard';
+import {ExpenseProjectionRuntimeJournal} from './expense-projection-runtime-journal';
+import {buildStableRowMetadataWrite} from './daily-stable-row-writes';
+import {getGoogleAccessToken} from './google-auth';
+import {fetchWithTimeout,readBoundedJson} from '../shared/async';
+import {numberEnv} from '../shared/env';
 
 const evidenceIntegrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('daily_row_evidence_no_delete','daily_row_evidence_no_replace','daily_row_evidence_transition'))=3";
 type RowEvidence={metadata_id:number;source_fingerprint:string;baseline_sha256:string;baseline_revision:number;preimage_digest:string;postimage_digest:string;posting_year:number;posting_month:number;posting_day:number;state:string};
@@ -53,3 +58,60 @@ export async function inspectDailyRowPostimage(env:Env,window:string):Promise<{o
  const bytes=new TextEncoder().encode(JSON.stringify(['daily-postimage-v1',item,source.fingerprint,s.formula,s.effective]));if(bytes.byteLength>8*1024*1024)return{observation:'UNVERIFIED',digest:null};const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');return{observation:'MATCHES_POSTIMAGE',digest};
  }catch{return{observation:'UNVERIFIED',digest:null};}
 }
+
+/** One-shot writer for a previously verified row. No caller supplies a row
+ * number or a payload. It remains inaccessible from the runtime router and
+ * the canonical DAILY fence remains disabled until cutover is complete. */
+const dailyWriterConstructorKey=Symbol('daily-existing-row-writer');
+export class DailyExistingRowWriter {
+ #attempted=false;
+ #env:Env;#binding:NoticeBinding;#noticeToken:string;#mutationToken:string;
+ private constructor(key:symbol,env:Env,binding:NoticeBinding,noticeToken:string,mutationToken:string){if(key!==dailyWriterConstructorKey)throw Error('DAILY_WRITER_INVALID');this.#env=env;this.#binding={...binding,job:{...binding.job},context:{...binding.context},generationLease:{...binding.generationLease}};this.#noticeToken=noticeToken;this.#mutationToken=mutationToken;Object.freeze(this);}
+ static create(env:Env,binding:NoticeBinding,noticeToken:string,mutationToken:string):DailyExistingRowWriter{return new DailyExistingRowWriter(dailyWriterConstructorKey,env,binding,noticeToken,mutationToken);}
+ async #plan():Promise<{metadataId:number;data:ReturnType<typeof buildStableRowMetadataWrite>;postimage:string;year:number;month:number;day:number;sourceFingerprint:string;baselineSha256:string;baselineRevision:number;baselineJson:string}|null>{
+  const env=this.#env,binding=this.#binding,noticeToken=this.#noticeToken,mutationToken=this.#mutationToken;
+  if(env.DAILY_EXISTING_ROW_WRITER_ENABLED!=='true')return null;
+  const badge=new DailySheetBadge(env),notice=badge.noticeIntentFence(binding,noticeToken),outer=new ExpenseProjectionRuntimeJournal(env,binding.job,binding.syncLease,binding.generationLease),dispatch=outer.dispatchFence('DAILY',binding.outerToken,binding.context);
+  const item=await env.DB.prepare(`SELECT metadata_id,source_fingerprint,baseline_sha256,baseline_revision,preimage_digest,postimage_digest,posting_year,posting_month,posting_day,state FROM daily_row_mutation_evidence WHERE spreadsheet_id=? AND sheet_name=? AND window_token=? AND mutation_operation_token=? AND notice_operation_token=? AND state='IN_FLIGHT' AND ${evidenceIntegrity} AND ${notice.sql} AND ${dispatch.sql}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.windowToken,mutationToken,noticeToken,...notice.args,...dispatch.args).first<RowEvidence>();
+  if(!item)return null;
+  const identity=await loadRecordedDailyIdentity(env,binding.job.entityKey,binding.job.entityVersion),source=await readRawSourceProof(env,'EXPENSE',binding.job.entityKey,binding.job.entityVersion);
+  if(!identity||identity.metadataId!==item.metadata_id||identity.baselineSha256!==item.baseline_sha256||identity.projectedRevision!==item.baseline_revision||source.fingerprint!==item.source_fingerprint)return null;
+  const snapshot=await readDailyRecoveryCandidate(env,identity.expenseId,identity.metadataId),row=snapshot.formula[snapshot.row-1]??[],target=deriveExistingDailyExpectedRow(source.values,snapshot.formula,snapshot.effective,snapshot.row);
+  if(await hashDailyRecoveryInputs(row)!==item.preimage_digest||await hashDailyRecoveryInputs(identity.baseline)!==item.preimage_digest||await hashDailyRecoveryInputs(target.desired)!==item.postimage_digest||target.year!==item.posting_year||target.month!==item.posting_month||target.day!==item.posting_day||!verifyDailyRecoveryAccounting(snapshot.formula,snapshot.effective,snapshot.row,Number(row[1]),Number((snapshot.effective[4]??[])[0]),Number(row[2]))||!await rawSourceStillMatches(env,source))return null;
+  const columns=[['F',5],['G',6],['H',7],['K',10],['L',11],['M',12],['N',13],['O',14],['P',15],['Q',16]] as const,amounts=columns.filter(([,i])=>typeof target.desired[i]==='number'&&Number(target.desired[i])>0);
+  if(amounts.length!==1||typeof target.desired[3]!=='string'||typeof target.desired[21]!=='string'||typeof target.desired[22]!=='string')return null;
+  const [amountColumn,index]=amounts[0]!,data=buildStableRowMetadataWrite(identity.metadataId,{postingYear:target.year,month:target.month,day:target.day,description:target.desired[3],amountColumn,amountBaht:Number(target.desired[index]),category:target.desired[21],sourceWallet:target.desired[22]});
+  const still=await env.DB.prepare(`SELECT 1 AS ok FROM daily_row_mutation_evidence WHERE spreadsheet_id=? AND sheet_name=? AND window_token=? AND mutation_operation_token=? AND state='IN_FLIGHT' AND source_fingerprint=? AND preimage_digest=? AND postimage_digest=? AND EXISTS(SELECT 1 FROM daily_stable_row_intents i JOIN daily_recovery_identity_witnesses w ON w.spreadsheet_id=i.spreadsheet_id AND w.sheet_name=i.sheet_name AND w.expense_id=i.expense_id AND w.metadata_id=i.metadata_id AND w.projected_version=i.projected_version AND w.projected_revision=i.projected_revision AND w.provenance='PRODUCTION_VERIFIED_WRITER' JOIN sheet_metadata_identity_registry g ON g.spreadsheet_id=w.spreadsheet_id AND g.sheet_name=w.sheet_name AND g.metadata_id=w.metadata_id AND g.entity_kind='EXPENSE' AND g.entity_id=w.expense_id WHERE i.spreadsheet_id=? AND w.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.metadata_id=? AND w.baseline_sha256=? AND i.projected_revision=? AND i.baseline_json=? AND ${dailyMetadataRegistryIntegrity}) AND ${evidenceIntegrity} AND ${notice.sql} AND ${dispatch.sql}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.windowToken,mutationToken,item.source_fingerprint,item.preimage_digest,item.postimage_digest,env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.job.entityKey,identity.metadataId,identity.baselineSha256,identity.projectedRevision,JSON.stringify(identity.baseline),...notice.args,...dispatch.args).first<{ok:number}>();
+  return still?{metadataId:identity.metadataId,data,postimage:item.postimage_digest,year:target.year,month:target.month,day:target.day,sourceFingerprint:source.fingerprint,baselineSha256:identity.baselineSha256,baselineRevision:identity.projectedRevision,baselineJson:JSON.stringify(identity.baseline)}:null;
+ }
+ /** An ambiguous response remains held; retry requires reviewed recovery. */
+ async dispatchOnce():Promise<'REVIEW'|'REVIEW_READBACK_MATCHED'|'OUTCOME_UNKNOWN'|'OUTCOME_UNKNOWN_HOLD_UNCONFIRMED'|'HOLD_UNCONFIRMED'|'ALREADY_ATTEMPTED'>{
+  if(this.#attempted)return 'ALREADY_ATTEMPTED';this.#attempted=true;
+  const env=this.#env,binding=this.#binding,noticeToken=this.#noticeToken,mutationToken=this.#mutationToken;check(env);if(env.DAILY_EXISTING_ROW_WRITER_ENABLED!=='true')throw Error('DAILY_EXISTING_ROW_WRITER_DISABLED');
+  let uncertain=false,began=false;
+  try{
+   const started=await beginDailyRowDispatch(env,binding,noticeToken,mutationToken);if(started==='OUTCOME_UNKNOWN')return 'OUTCOME_UNKNOWN';if(started!=='DISPATCH_INTENT_RECORDED')return 'REVIEW';began=true;
+   const initial=await this.#plan();if(!initial)return 'REVIEW';
+   const auth=await getGoogleAccessToken(env),again=await this.#plan();if(!again||JSON.stringify(again)!==JSON.stringify(initial))return 'REVIEW';
+   uncertain=true;const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}/values:batchUpdateByDataFilter`,{method:'POST',headers:{Authorization:`Bearer ${auth}`,'content-type':'application/json'},body:JSON.stringify({valueInputOption:'RAW',data:[again.data]})},timeout,'Daily metadata update');
+   if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw Error('DAILY_WRITE_UNKNOWN');}
+   const result=await readBoundedJson(response,65536,timeout,'Daily metadata update response') as {totalUpdatedRows?:unknown;responses?:unknown};if(result.totalUpdatedRows!==1||!Array.isArray(result.responses)||result.responses.length!==1)throw Error('DAILY_WRITE_UNKNOWN');
+   uncertain=false;
+   const post=await readDailyRecoveryCandidate(env,binding.job.entityKey,again.metadataId),row=post.formula[post.row-1]??[],source=await readRawSourceProof(env,'EXPENSE',binding.job.entityKey,binding.job.entityVersion);
+   if(source.fingerprint!==again.sourceFingerprint||!await rawSourceStillMatches(env,source)||await hashDailyRecoveryInputs(row)!==again.postimage||!verifyDailyRecoveryAccounting(post.formula,post.effective,post.row,again.month,again.year,again.day))return 'REVIEW';
+   const badge=new DailySheetBadge(env),notice=badge.noticeIntentFence(binding,noticeToken),outer=new ExpenseProjectionRuntimeJournal(env,binding.job,binding.syncLease,binding.generationLease),dispatch=outer.dispatchFence('DAILY',binding.outerToken,binding.context);
+   const final=await env.DB.prepare(`SELECT 1 AS ok FROM daily_row_mutation_evidence WHERE spreadsheet_id=? AND sheet_name=? AND window_token=? AND mutation_operation_token=? AND state='IN_FLIGHT' AND postimage_digest=? AND EXISTS(SELECT 1 FROM daily_stable_row_intents i JOIN daily_recovery_identity_witnesses w ON w.spreadsheet_id=i.spreadsheet_id AND w.sheet_name=i.sheet_name AND w.expense_id=i.expense_id AND w.metadata_id=i.metadata_id AND w.projected_version=i.projected_version AND w.projected_revision=i.projected_revision AND w.provenance='PRODUCTION_VERIFIED_WRITER' JOIN sheet_metadata_identity_registry g ON g.spreadsheet_id=w.spreadsheet_id AND g.sheet_name=w.sheet_name AND g.metadata_id=w.metadata_id AND g.entity_kind='EXPENSE' AND g.entity_id=w.expense_id WHERE i.spreadsheet_id=? AND w.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.metadata_id=? AND w.baseline_sha256=? AND i.projected_revision=? AND i.baseline_json=? AND ${dailyMetadataRegistryIntegrity}) AND ${evidenceIntegrity} AND ${notice.sql} AND ${dispatch.sql}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.windowToken,mutationToken,again.postimage,env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.job.entityKey,again.metadataId,again.baselineSha256,again.baselineRevision,again.baselineJson,...notice.args,...dispatch.args).first<{ok:number}>();
+   return final?'REVIEW_READBACK_MATCHED':'REVIEW';
+  }catch{return uncertain?'OUTCOME_UNKNOWN':'REVIEW';}
+  finally{
+   if(began){
+    let held=true;
+    try{const r=await env.DB.prepare("UPDATE daily_row_mutation_evidence SET state='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_name=? AND window_token=? AND mutation_operation_token=? AND state='IN_FLIGHT'").bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,binding.windowToken,mutationToken).run();if(Number(r.meta.changes||0)!==1)held=false;}catch{held=false;}
+    try{if(!await new DailySheetBadge(env).holdNotice(noticeToken))held=false;}catch{held=false;}
+    try{if(!await new ExpenseProjectionRuntimeJournal(env,binding.job,binding.syncLease,binding.generationLease).hold('DAILY',binding.outerToken))held=false;}catch{held=false;}
+    if(!held)return uncertain?'OUTCOME_UNKNOWN_HOLD_UNCONFIRMED':'HOLD_UNCONFIRMED';
+   }
+  }
+ }
+}
+Object.freeze(DailyExistingRowWriter);Object.freeze(DailyExistingRowWriter.prototype);

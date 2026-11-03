@@ -7,6 +7,27 @@ CREATE TABLE IF NOT EXISTS stable_workbook_claims (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+-- Keeps proof that an ID was already dispatched or verified, without a row
+-- number. A missing ID after dispatch is always a review, not a new append.
+CREATE TABLE IF NOT EXISTS stable_projection_writes (
+  spreadsheet_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL CHECK(entity_type IN ('PERSONAL_USE','EXPENSE')),
+  entity_id TEXT NOT NULL,
+  source_version INTEGER NOT NULL CHECK(source_version>0),
+  source_digest TEXT NOT NULL CHECK(length(source_digest)=64 AND source_digest NOT GLOB '*[^0-9a-f]*'),
+  operation_token TEXT NOT NULL,
+  state TEXT NOT NULL CHECK(state IN ('IN_FLIGHT','VERIFIED','REVIEW')),
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(spreadsheet_id,entity_type,entity_id)
+);
+CREATE TRIGGER IF NOT EXISTS stable_projection_no_delete BEFORE DELETE ON stable_projection_writes
+BEGIN SELECT RAISE(ABORT,'stable projection retained'); END;
+CREATE TRIGGER IF NOT EXISTS stable_projection_no_replace BEFORE INSERT ON stable_projection_writes
+WHEN EXISTS(SELECT 1 FROM stable_projection_writes old WHERE old.rowid=NEW.rowid OR (old.spreadsheet_id=NEW.spreadsheet_id AND old.entity_type=NEW.entity_type AND old.entity_id=NEW.entity_id))
+BEGIN SELECT RAISE(ABORT,'stable projection collision'); END;
+CREATE TRIGGER IF NOT EXISTS stable_projection_transition BEFORE UPDATE ON stable_projection_writes
+WHEN OLD.rowid IS NOT NEW.rowid OR OLD.spreadsheet_id IS NOT NEW.spreadsheet_id OR OLD.entity_type IS NOT NEW.entity_type OR OLD.entity_id IS NOT NEW.entity_id OR OLD.source_version IS NOT NEW.source_version OR OLD.source_digest IS NOT NEW.source_digest OR OLD.operation_token IS NOT NEW.operation_token OR OLD.state<>'IN_FLIGHT' OR NEW.state NOT IN ('VERIFIED','REVIEW')
+BEGIN SELECT RAISE(ABORT,'stable projection transition invalid'); END;
 
 -- At the approved cutover a single transaction snapshots all existing source
 -- identifiers, then activates this marker. Absence is not trusted beforehand.

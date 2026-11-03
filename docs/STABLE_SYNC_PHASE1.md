@@ -15,6 +15,10 @@ planner holds a full month;
 the workbook claim records an unresolved attempt without an expiry. A
 transactional cutover snapshot can distinguish source IDs already present
 from later inserts, and refuses activation with an incomplete snapshot.
+An unrouted personal-use writer now checks the source and current sheet,
+records a durable intent, writes once and verifies readback. Its local tests
+mock Google; an uncertain result retains the claim. Removing an ID after a
+verified write causes a review rather than a second append.
 These components do not by themselves authorize a Google write. In particular, every
 relevant writer must honor the claim, existing workers must be drained, and
 the cooperative editor pause is still required.

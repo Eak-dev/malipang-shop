@@ -50,6 +50,14 @@ export async function getSheetId(env:Env,title:string):Promise<number>{
   if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
   return Number(found);
 }
+/** Grid bounds are used to read every possible identity before appending. */
+export async function getSheetGridInfo(env:Env,title:string):Promise<{sheetId:number;rowCount:number;columnCount:number}>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))",{method:"GET"}).then(r=>r.json()) as {sheets?:Array<{properties?:{sheetId?:number;title?:string;gridProperties?:{rowCount?:number;columnCount?:number}}}>};
+  const found=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);
+  const p=found[0]?.properties,g=p?.gridProperties;
+  if(found.length!==1||!Number.isSafeInteger(p?.sheetId)||Number(p?.sheetId)<0||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||Number(g?.rowCount)<1||Number(g?.columnCount)<1)throw Error('SHEET_GRID_UNVERIFIED');
+  return {sheetId:Number(p?.sheetId),rowCount:Number(g?.rowCount),columnCount:Number(g?.columnCount)};
+}
 export async function bootstrapSheets(env:Env):Promise<void>{
   const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));
   const definitions=[

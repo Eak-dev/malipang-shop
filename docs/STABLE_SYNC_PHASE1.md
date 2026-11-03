@@ -10,7 +10,8 @@ Base: canonical main `7005538efe9a34a12e60a8bf7d027d0f8585bec8`.
 The previous experimental branch is retained separately.
 
 Current implementation is **not connected to production**: the daily-row
-planner can locate identifiers and identify capacity without storing a row;
+and ledger planners locate identifiers without storing a row, and the daily
+planner holds a full month;
 the workbook claim records an unresolved attempt without an expiry. A
 transactional cutover snapshot can distinguish source IDs already present
 from later inserts, and refuses activation with an incomplete snapshot.

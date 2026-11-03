@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS daily_recovery_reviews (
  source_observation TEXT NOT NULL CHECK(source_observation IN ('CURRENT_REVISION','CHANGED_OR_UNAVAILABLE')),
  provider_observation TEXT NOT NULL CHECK(provider_observation IN ('MATCHES_RECORDED_INPUTS','DIFFERS','UNVERIFIED')),
  badge_observation TEXT NOT NULL CHECK(badge_observation IN ('MATCHES_RECORDED','MATCHES_ORIGINAL','DIFFERS','UNVERIFIED')),
+ postimage_observation TEXT NOT NULL CHECK(postimage_observation IN ('MATCHES_POSTIMAGE','DIFFERS','UNVERIFIED')),
  principal TEXT NOT NULL CHECK(principal='ADMIN_TOKEN'),
  reason TEXT NOT NULL CHECK(reason IN ('EVIDENCE_INCOMPLETE','SOURCE_CHANGED','PROVIDER_MISMATCH','OTHER')),
  decision TEXT NOT NULL CHECK(decision IN ('KEEP_REVIEW','HOLD_IN_FLIGHT')),observed_at TEXT NOT NULL,created_at TEXT NOT NULL,

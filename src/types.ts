@@ -63,6 +63,7 @@ export interface Env {
   EXPENSE_STABLE_PROJECTION_ENABLED?: string;
   EXPENSE_GENERATION_SCHEDULER_ENABLED?: string;
   EXPENSE_GENERATION_WORKER_ENABLED?: string;
+  DAILY_EDIT_COORDINATION_ENABLED?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;

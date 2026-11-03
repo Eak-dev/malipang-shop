@@ -37,6 +37,7 @@
     "src/sheets/expense-projection-runtime-journal.ts",
     "src/sheets/expense-projection-generation-observer.ts",
     "src/sheets/expense-projection-generation-queue.ts",
+    "src/sheets/daily-edit-coordination.ts",
     "src/sheets/sync.ts",
     "src/attendance/service.ts",
     "src/attendance/messages.ts",

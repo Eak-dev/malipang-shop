@@ -84,10 +84,24 @@ export class ExpenseProjectionRuntimeJournal{
   }
   /** Reusable SQL predicate for an inner identity-intent UPDATE in the same
    * D1 statement. Copying only a prior JS boolean creates a race. */
-  dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
+  private projectionFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
     this.check(projection);if(!token||!this.valid(c))throw new Error('EXPENSE_PROJECTION_FENCE_INVALID');
     return {sql:`EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.source_version=? AND p.source_revision=? AND p.projection=? AND p.state='IN_FLIGHT' AND p.operation_token=? AND p.cutover_generation=? AND p.admission_watermark=? AND ${this.guard()}
       AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=p.spreadsheet_id AND q.expense_id=p.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>p.source_version OR q.source_revision<>p.source_revision OR q.projection<>p.projection)))`,args:[this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c)]};
+  }
+  dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
+    const fence=this.projectionFence(projection,token,c);
+    // Cooperative notices cannot prove human/editor exclusion. Until an
+    // independently reviewed verifier is available, DAILY provider writes
+    // must remain impossible even if every other lease matches.
+    return projection==='DAILY'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
+  }
+  /** Only publishes a D1 NOTICE; this cannot authorize a provider write. */
+  async requestDailyNotice(token:string,c:ExpenseProjectionContext,windowToken:string,seconds:number):Promise<boolean>{
+    if(this.env.DAILY_EDIT_COORDINATION_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!Number.isInteger(seconds)||seconds<15||seconds>60)throw Error('DAILY_EDIT_COORDINATION_DISABLED');
+    const fence=this.projectionFence('DAILY',token,c);
+    const result=await this.env.DB.prepare(`UPDATE daily_edit_coordination SET state='NOTICE',window_token=?,cutover_generation=?,notice_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||?||' seconds'),deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE' AND julianday(updated_at) BETWEEN julianday('now','-15 seconds') AND julianday('now','+5 seconds') AND ${fence.sql}`).bind(windowToken,c.generation,seconds,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,...fence.args).run();
+    return Number(result.meta.changes||0)===1;
   }
   async canDispatch(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):Promise<boolean>{
     this.check(projection);if(!token||!this.valid(c))return false;const fence=this.dispatchFence(projection,token,c);
@@ -96,7 +110,7 @@ export class ExpenseProjectionRuntimeJournal{
   /** The caller must perform independent provider identity and full postimage
    * verification first. A digest passed here is not proof by itself. */
   async verify(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext,evidenceDigest:string):Promise<boolean>{
-    this.check(projection);if(!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
+    this.check(projection);if(projection==='DAILY'||!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
     const result=await this.env.DB.prepare(`UPDATE expense_projection_runtime_intents SET state='VERIFIED',evidence_digest=?,updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND source_version=? AND source_revision=? AND projection=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=? AND ${this.guard()}
       AND (?<>'RAW' OR EXISTS(SELECT 1 FROM full_raw_identity_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.projected_version=? AND i.projected_revision=? AND i.source_version=? AND i.source_revision=? AND i.verified_outer_token=? AND i.verified_generation=? AND i.verified_evidence_digest=?
         AND CASE WHEN json_valid(i.baseline_json) THEN json_type(i.baseline_json)='object' AND (SELECT count(*) FROM json_each(i.baseline_json))=16 AND (SELECT count(DISTINCT key) FROM json_each(i.baseline_json))=16 AND NOT EXISTS(SELECT 1 FROM json_each(i.baseline_json) b WHERE CAST(b.key AS INTEGER)<1 OR CAST(b.key AS INTEGER)>16 OR CAST(CAST(b.key AS INTEGER) AS TEXT)<>b.key OR b.type<>'text' OR length(b.value)<>64 OR b.value GLOB '*[^0-9a-f]*') ELSE 0 END))

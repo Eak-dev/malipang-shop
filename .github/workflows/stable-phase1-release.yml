@@ -1,0 +1,113 @@
+name: Stable sync phase 1 production release
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact merged main commit SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate exact release
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN" && test -n "$MALIPANG_ADMIN_TOKEN" && test -n "$MALIPANG_WORKER_URL"
+          test "$(node -e 'const c=JSON.parse(require("fs").readFileSync("wrangler.jsonc","utf8"));process.stdout.write(c.vars.STABLE_PHASE1_ENABLED)')" = true
+          npm run check > "$RUNNER_TEMP/check.log" 2>&1 || { tail -100 "$RUNNER_TEMP/check.log"; exit 1; }
+          npx wrangler deploy --dry-run
+      - name: Fresh private backup and restored migration validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          sql="$RUNNER_TEMP/pre-release.sql"
+          gz="$RUNNER_TEMP/pre-release.sql.gz"
+          verify="$RUNNER_TEMP/pre-release-download.sql.gz"
+          key="d1/stable-phase1-release/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -c "$sql" > "$gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$verify" --remote
+          gzip -t "$verify"
+          test "$(sha256sum "$gz" | cut -d ' ' -f 1)" = "$(sha256sum "$verify" | cut -d ' ' -f 1)"
+          db="$RUNNER_TEMP/restored.sqlite"
+          gzip -dc "$verify" | sqlite3 -cmd 'PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;' "$db" > /dev/null
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+          counts="SELECT (SELECT count(*) FROM expense_events)||','||(SELECT count(*) FROM expense_documents)||','||(SELECT count(*) FROM expense_document_links)||','||(SELECT count(*) FROM expense_document_items)||','||(SELECT count(*) FROM owner_personal_transactions);"
+          before="$(sqlite3 "$db" "$counts")"
+          sqlite3 "$db" < migrations/0021_stable_workbook_claim.sql
+          sqlite3 "$db" < migrations/0021_stable_workbook_claim.sql
+          test "$before" = "$(sqlite3 "$db" "$counts")"
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+      - name: Pause delivery and drain existing writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues pause-delivery malipang-jobs
+          echo 'Delivery paused; do not resume automatically after an uncertain deployment.'
+          sleep 30
+          sql="SELECT (SELECT count(*) FROM sync_jobs WHERE status='PROCESSING')+(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING') n"
+          for i in $(seq 1 24); do
+            npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/drain.json"
+            if jq -e '.[0].success == true and .[0].results[0].n == 0' "$RUNNER_TEMP/drain.json" >/dev/null; then exit 0; fi
+            sleep 10
+          done
+          echo 'Existing jobs did not drain; delivery remains paused for inspection.' >&2
+          exit 1
+      - name: Apply schema and deploy guarded code
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 migrations apply malipang-v5-2 --remote --yes
+          npx wrangler deploy
+          npx wrangler versions list --json > "$RUNNER_TEMP/deployed-versions.json"
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/notice-readiness" | jq -e '.ok == true' >/dev/null
+          sleep 60
+      - name: Atomically enroll sources existing at cutover
+        shell: bash
+        run: |
+          set -euo pipefail
+          sql="INSERT INTO stable_pre_cutover_sources(entity_type,entity_id) SELECT 'EXPENSE',expense_id FROM expense_events; INSERT INTO stable_pre_cutover_sources(entity_type,entity_id) SELECT 'PERSONAL_USE',personal_use_id FROM owner_personal_transactions; UPDATE stable_sync_cutover SET state='ACTIVE',activated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE singleton=1 AND state='PREPARED'; SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid','$') END ok;"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/cutover.json"
+          jq -e 'all(.[]; .success == true) and .[-1].results[0].ok == 1' "$RUNNER_TEMP/cutover.json" >/dev/null
+          check="SELECT (SELECT count(*) FROM stable_sync_cutover WHERE singleton=1 AND state='ACTIVE') active,(SELECT count(*) FROM expense_events e WHERE NOT EXISTS(SELECT 1 FROM stable_pre_cutover_sources s WHERE s.entity_type='EXPENSE' AND s.entity_id=e.expense_id))+(SELECT count(*) FROM owner_personal_transactions p WHERE NOT EXISTS(SELECT 1 FROM stable_pre_cutover_sources s WHERE s.entity_type='PERSONAL_USE' AND s.entity_id=p.personal_use_id)) missing,(SELECT count(*) FROM stable_workbook_claims) claims"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$check" > "$RUNNER_TEMP/cutover-check.json"
+          jq -e '.[0].success == true and .[0].results[0].active == 1 and .[0].results[0].missing == 0 and .[0].results[0].claims == 0' "$RUNNER_TEMP/cutover-check.json" >/dev/null
+      - name: Resume delivery and check service
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues resume-delivery malipang-jobs
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          echo 'Release active. Verify the next naturally occurring business transaction and Sheets readback.'

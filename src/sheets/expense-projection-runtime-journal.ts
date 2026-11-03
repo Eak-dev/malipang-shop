@@ -1,6 +1,7 @@
 import type {Env,SheetsSyncJob} from '../types';
 import {sheetScopesDistinct} from './sheet-scope-isolation';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
+import {unresolvedNotice,requireDailyResolutionIntegrity} from './daily-resolution-guard';
 
 export type ExpenseProjection='RAW'|'DAILY'|'DETAIL';
 export interface ExpenseProjectionContext{revision:number;generation:string;watermark:number}
@@ -112,9 +113,10 @@ export class ExpenseProjectionRuntimeJournal{
   /** Only publishes a D1 NOTICE; this cannot authorize a provider write. */
   async requestDailyNotice(token:string,c:ExpenseProjectionContext,windowToken:string,seconds:number):Promise<boolean>{
     if(this.env.DAILY_EDIT_COORDINATION_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!Number.isInteger(seconds)||seconds<15||seconds>60)throw Error('DAILY_EDIT_COORDINATION_DISABLED');
+    if(this.env.DAILY_REVIEWED_RELEASE_ENABLED==='true'&&this.env.DAILY_BADGE_WRITER_ENABLED!=='true')return false;
     const fence=this.projectionFence('DAILY',token,c);
     const badgeEnabled=this.env.DAILY_BADGE_WRITER_ENABLED==='true';
-    const badgeFence=badgeEnabled?`AND ${badgeRetentionIntegrity} AND EXISTS(SELECT 1 FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND b.state='READY') AND NOT EXISTS(SELECT 1 FROM daily_notice_dispatch_intents i WHERE i.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND i.sheet_name=daily_edit_coordination.sheet_name AND i.state IN ('IN_FLIGHT','REVIEW'))`:'';
+    const badgeFence=badgeEnabled?`${requireDailyResolutionIntegrity(this.env)} AND ${badgeRetentionIntegrity} AND EXISTS(SELECT 1 FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND b.state='READY') AND NOT EXISTS(SELECT 1 FROM daily_notice_dispatch_intents i WHERE i.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND i.sheet_name=daily_edit_coordination.sheet_name AND i.state IN ('IN_FLIGHT','REVIEW') ${unresolvedNotice(this.env,'i')})`:'';
     const binding=badgeEnabled?',badge_expense_id=?,badge_source_version=?,badge_source_revision=?,badge_watermark=?,badge_outer_token=?,badge_sync_lease=?,badge_generation_lease=?,badge_notice_seconds=?':'';
     const bindingArgs=badgeEnabled?[this.job.entityKey,this.job.entityVersion,c.revision,c.watermark,token,this.lease,this.generationLease!.token,seconds]:[];
     const result=await this.env.DB.prepare(`UPDATE daily_edit_coordination SET state='NOTICE',window_token=?,cutover_generation=?,notice_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||?||' seconds'),deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')${binding} WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE' AND julianday(updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds') ${badgeFence} AND ${fence.sql}`).bind(windowToken,c.generation,seconds,...bindingArgs,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,...fence.args).run();

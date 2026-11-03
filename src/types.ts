@@ -79,6 +79,7 @@ export interface Env {
   DAILY_ROW_EVIDENCE_ENABLED?: string;
   DAILY_EXISTING_ROW_WRITER_ENABLED?: string;
   DAILY_WITNESS_RECOVERY_ENABLED?: string;
+  DAILY_REVIEWED_RELEASE_ENABLED?: string;
   DAILY_LEGACY_ENROLLMENT_PREFLIGHT_ENABLED?: string;
   DAILY_LEGACY_ENROLLMENT_AUDIT_ENABLED?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */

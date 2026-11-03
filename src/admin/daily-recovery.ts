@@ -8,6 +8,7 @@ import {inspectDailyRowPostimage,readDailyRowPostimageWitness} from '../sheets/d
 import {hashRecordedDailyBaseline} from '../sheets/daily-recorded-identity';
 import {dailyMetadataRegistryIntegrity} from '../sheets/daily-metadata-registry-guard';
 import {sheetScopesDistinct} from '../sheets/sheet-scope-isolation';
+import {requireDailyResolutionIntegrity,unresolvedNotice} from '../sheets/daily-resolution-guard';
 
 type Case={expense_id:string;source_version:number;source_revision:number;operation_token:string;outer_token:string;cutover_generation:string;state:string;badge_operation_token:string};
 type SourceObservation='CURRENT_REVISION'|'CHANGED_OR_UNAVAILABLE';
@@ -16,7 +17,7 @@ const recoveryAuditIntegrity="(SELECT count(*) FROM sqlite_master WHERE type='tr
 function enabled(env:Env):void{if(env.RUNTIME_MODE!=='production'||env.DAILY_RECOVERY_ADMIN_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_EXPENSE_DAILY)throw Error('DAILY_RECOVERY_DISABLED');}
 function windowId(v:unknown):string{if(typeof v!=='string'||!/^[-A-Za-z0-9_]{16,128}$/.test(v))throw Error('DAILY_RECOVERY_INVALID');return v;}
 async function hash(value:unknown):Promise<string>{const bytes=new TextEncoder().encode(JSON.stringify(value));if(bytes.length>131072)throw Error('DAILY_RECOVERY_UNAVAILABLE');return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');}
-async function lookup(env:Env,window:string):Promise<Case|null>{return env.DB.prepare(`SELECT expense_id,source_version,source_revision,operation_token,outer_token,cutover_generation,state,badge_operation_token FROM daily_notice_dispatch_intents WHERE spreadsheet_id=? AND sheet_name=? AND window_token=? AND state IN ('IN_FLIGHT','REVIEW') AND ${badgeRetentionIntegrity} AND ${recoveryAuditIntegrity}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,window).first<Case>();}
+async function lookup(env:Env,window:string):Promise<Case|null>{return env.DB.prepare(`SELECT i.expense_id,i.source_version,i.source_revision,i.operation_token,i.outer_token,i.cutover_generation,i.state,i.badge_operation_token FROM daily_notice_dispatch_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.window_token=? AND i.state IN ('IN_FLIGHT','REVIEW') ${unresolvedNotice(env,'i')} ${requireDailyResolutionIntegrity(env)} AND ${badgeRetentionIntegrity} AND ${recoveryAuditIntegrity}`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,window).first<Case>();}
 async function source(env:Env,item:Case):Promise<{observation:SourceObservation;fingerprint:string|null}>{
  try{const r=await env.DB.prepare(`SELECT r.revision,r.state,e.version FROM expense_events e JOIN expense_projection_source_revisions r ON r.expense_id=e.expense_id WHERE e.expense_id=? AND ${expenseSourceEvidenceIntegrity}`).bind(item.expense_id).first<{revision:number;state:string;version:number}>();if(!r||r.state!=='TRACKED'||r.revision!==item.source_revision||r.version!==item.source_version)return{observation:'CHANGED_OR_UNAVAILABLE',fingerprint:null};const p=await readRawSourceProof(env,'EXPENSE',item.expense_id,item.source_version);return{observation:'CURRENT_REVISION',fingerprint:p.fingerprint};}catch{return{observation:'CHANGED_OR_UNAVAILABLE',fingerprint:null};}
 }

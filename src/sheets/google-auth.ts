@@ -1,5 +1,5 @@
 import type { Env } from "../types";
-import { fetchWithTimeout,readBoundedJson } from "../shared/async";
+import { fetchWithTimeout,readBoundedJson,OperationTimeoutError } from "../shared/async";
 import { numberEnv } from "../shared/env";
 // A single bounded entry, keyed by the full credential identity. Cloudflare
 // can reuse one isolate across requests with different bindings or rotations.
@@ -7,8 +7,7 @@ import { numberEnv } from "../shared/env";
 let cache:{credentialFingerprint:string;token:string;expiresAt:number}|null=null;
 async function credentialFingerprint(email:string,privateKey:string):Promise<string>{
   if(typeof email!=='string'||!email||typeof privateKey!=='string'||!privateKey)throw new Error('Google OAuth credentials unavailable');
-  const bytes=new TextEncoder().encode(JSON.stringify([email,privateKey]));
-  const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return b64url(hash);
+  try{const bytes=new TextEncoder().encode(JSON.stringify([email,privateKey]));const hash=new Uint8Array(await crypto.subtle.digest('SHA-256',bytes));return b64url(hash);}catch{throw new Error('Google OAuth credentials unavailable');}
 }
 function decodeBase64(value:string):Uint8Array{const binary=atob(value.replace(/\s/g,""));return Uint8Array.from(binary,c=>c.charCodeAt(0));}
 function b64url(data:Uint8Array|string):string{const bytes=typeof data==="string"?new TextEncoder().encode(data):data;let binary="";for(const b of bytes)binary+=String.fromCharCode(b);return btoa(binary).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,"");}
@@ -17,9 +16,9 @@ export async function getGoogleAccessToken(env:Env):Promise<string>{
   const email=env.GOOGLE_SERVICE_ACCOUNT_EMAIL,privateKey=env.GOOGLE_PRIVATE_KEY_BASE64,fingerprint=await credentialFingerprint(email,privateKey);
   if(cache&&cache.credentialFingerprint===fingerprint&&cache.expiresAt>Date.now()+60000)return cache.token;
   const now=Math.floor(Date.now()/1000); const header=b64url(JSON.stringify({alg:"RS256",typ:"JWT"})); const claims=b64url(JSON.stringify({iss:email,scope:"https://www.googleapis.com/auth/spreadsheets",aud:"https://oauth2.googleapis.com/token",iat:now,exp:now+3600})); const input=`${header}.${claims}`;
-  const key=await importKey(privateKey); const sig=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(input)); const assertion=`${input}.${b64url(new Uint8Array(sig))}`;
+  let signature:ArrayBuffer;try{const key=await importKey(privateKey);signature=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(input));}catch{throw new Error('Google OAuth credentials invalid');}const assertion=`${input}.${b64url(new Uint8Array(signature))}`;
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
-  const requestedAt=Date.now(),res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion})},timeout,"Google OAuth");
+  const requestedAt=Date.now();let res:Response;try{res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion})},timeout,"Google OAuth");}catch(error){if(error instanceof OperationTimeoutError)throw new OperationTimeoutError('Google OAuth',timeout);throw new Error('Google OAuth request failed');}
   if(!res.ok){if(res.body)void res.body.cancel().catch(()=>{});throw new Error(`Google OAuth ${res.status}`);}
   let data:{access_token?:unknown;expires_in?:unknown};
   try{data=await readBoundedJson(res,65536,timeout,"Google OAuth body") as {access_token?:unknown;expires_in?:unknown};}catch{throw new Error("Google OAuth invalid or unreadable response");}

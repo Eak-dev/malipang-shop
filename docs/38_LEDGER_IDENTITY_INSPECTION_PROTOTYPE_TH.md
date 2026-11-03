@@ -36,6 +36,8 @@ Personal outer intent เป็นเพียงโครงป้องกั�
 
 Historical enrollment candidate สำหรับรายการส่วนตัวเดือนตุลาคมใช้ ID ที่ไม่ซ้ำ ตรวจค่า owned fields ทั้งหมด และจอง metadata/ล็อกแท็บร่วมใน D1 โดยไม่เก็บเลขแถว ก่อนส่ง metadata อ่านชีตและตรวจ source อีกครั้ง ส่งได้ครั้งเดียว และเก็บผลที่ไม่ชัดไว้ตรวจ ไม่ replay. Fast-path candidate ลง receipt, stable identity, audit และปลดล็อกใน D1 batch เดียวเฉพาะเมื่อ Google ตอบรับและอ่านกลับตรงครบ ส่วนผลที่ไม่ชัดใช้ quarantine และ admin recovery หลังเวลารอขั้นต่ำ โดยไม่ส่งซ้ำ การกลับมาซิงก์ revision ใหม่ยังปิดเป็นค่าเริ่มต้นและตรวจ verified identity กับ registry ไม่ใช้ row cache. Admin dispatch route candidate ปิดเป็นค่าเริ่มต้น ต้องผ่าน bearer authentication และเปิด flag แยก การกู้กรณี metadata ติดผิดแถวหรือไม่ปรากฏยังไม่ครบ ห้ามเปิด flag หรือ deploy ก่อนผ่านการตรวจสอบและวางแผน rollout; การยืนยันพักแก้ชีต ระบาย writer และรอ request เก่า เป็นคำยืนยันของผู้ดูแล ไม่ใช่การล็อก Google Sheets
 
+Admin marker inspection candidate อ่าน source และ Google ซ้ำเพื่อจำแนกว่าไม่พบ marker, marker อยู่ผิดแถว หรือหลักฐานไม่พอ ผลทุกกรณียังคง REVIEW ไม่เปิดเผยเลขแถว ไม่ลบหรือย้าย metadata และไม่ใช่สิทธิ์ให้เขียนซ้ำ การมองเห็น metadata ขึ้นอยู่กับสิทธิ์ของ Google project ด้วย
+
 Outer guard ปฏิเสธ source revision ที่ต่ำกว่า observation หรืองาน generation ที่เคยบันทึกไว้ใน workbook เดียวกันแม้คนละ generation แต่ไม่สามารถพิสูจน์ revision ที่ไม่เคยถูกสังเกตหรือหลักฐานที่ถูก restore หายไปทั้งหมดได้
 
 ยังต้องมีวิธี recovery ที่ตรวจ provider เมื่อผลไม่แน่ชัด และการเชื่อม writer กับ provider readback, enrollment, การกั้น writer เดิมและ editor ระหว่างเขียน รวมถึงทดสอบ D1/Google จริงก่อนเปิด route. ห้ามตีความว่ารายการ personal ซิงก์ครบจากการทดสอบนี้. สถานะ intent หรือ D1 lock ไม่ใช่ Google Sheets CAS และไม่ป้องกันเจ้าของไฟล์ที่ข้าม protection ได้

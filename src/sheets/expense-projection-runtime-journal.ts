@@ -96,12 +96,21 @@ export class ExpenseProjectionRuntimeJournal{
     // exist, DAILY writes remain impossible even when other leases match.
     return projection==='DAILY'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
   }
+  /** Verifies the exact NOTICE binding; never grants permission to write DAILY. */
+  noticeReceiptFence(token:string,c:ExpenseProjectionContext,windowToken:string):{sql:string;args:unknown[]}{
+    if(this.env.DAILY_BADGE_WRITER_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!this.generationLease)throw Error('DAILY_BADGE_DISABLED');
+    const f=this.projectionFence('DAILY',token,c);
+    return {sql:`(${f.sql} AND EXISTS(SELECT 1 FROM daily_edit_coordination w WHERE w.spreadsheet_id=? AND w.sheet_name=? AND w.state='NOTICE' AND w.window_token=? AND w.cutover_generation=? AND w.badge_expense_id=? AND w.badge_source_version=? AND w.badge_source_revision=? AND w.badge_watermark=? AND w.badge_outer_token=? AND w.badge_sync_lease=? AND w.badge_generation_lease=? AND w.badge_notice_seconds BETWEEN 15 AND 60 AND julianday(w.deadline)>julianday('now') AND julianday(w.updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds')))`,args:[...f.args,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,windowToken,c.generation,this.job.entityKey,this.job.entityVersion,c.revision,c.watermark,token,this.lease,this.generationLease.token]};
+  }
   /** Only publishes a D1 NOTICE; this cannot authorize a provider write. */
   async requestDailyNotice(token:string,c:ExpenseProjectionContext,windowToken:string,seconds:number):Promise<boolean>{
     if(this.env.DAILY_EDIT_COORDINATION_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!Number.isInteger(seconds)||seconds<15||seconds>60)throw Error('DAILY_EDIT_COORDINATION_DISABLED');
     const fence=this.projectionFence('DAILY',token,c);
-    const badgeFence=this.env.DAILY_BADGE_WRITER_ENABLED==='true'?"AND EXISTS(SELECT 1 FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND b.state='READY')":'';
-    const result=await this.env.DB.prepare(`UPDATE daily_edit_coordination SET state='NOTICE',window_token=?,cutover_generation=?,notice_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||?||' seconds'),deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE' AND julianday(updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds') ${badgeFence} AND ${fence.sql}`).bind(windowToken,c.generation,seconds,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,...fence.args).run();
+    const badgeEnabled=this.env.DAILY_BADGE_WRITER_ENABLED==='true';
+    const badgeFence=badgeEnabled?"AND EXISTS(SELECT 1 FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND b.state='READY')":'';
+    const binding=badgeEnabled?',badge_expense_id=?,badge_source_version=?,badge_source_revision=?,badge_watermark=?,badge_outer_token=?,badge_sync_lease=?,badge_generation_lease=?,badge_notice_seconds=?':'';
+    const bindingArgs=badgeEnabled?[this.job.entityKey,this.job.entityVersion,c.revision,c.watermark,token,this.lease,this.generationLease!.token,seconds]:[];
+    const result=await this.env.DB.prepare(`UPDATE daily_edit_coordination SET state='NOTICE',window_token=?,cutover_generation=?,notice_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||?||' seconds'),deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')${binding} WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE' AND julianday(updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds') ${badgeFence} AND ${fence.sql}`).bind(windowToken,c.generation,seconds,...bindingArgs,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,...fence.args).run();
     return Number(result.meta.changes||0)===1;
   }
   async canDispatch(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):Promise<boolean>{

@@ -11,8 +11,10 @@ The previous experimental branch is retained separately.
 
 Current implementation is **not connected to production**: the daily-row
 planner can locate identifiers and identify capacity without storing a row;
-the workbook claim records an unresolved attempt without an expiry. Neither
-is sufficient by itself to authorize a Google write. In particular, every
+the workbook claim records an unresolved attempt without an expiry. A
+transactional cutover snapshot can distinguish source IDs already present
+from later inserts, and refuses activation with an incomplete snapshot.
+These components do not by themselves authorize a Google write. In particular, every
 relevant writer must honor the claim, existing workers must be drained, and
 the cooperative editor pause is still required.
 

@@ -3,9 +3,9 @@ import type {Env} from '../types';
 /** A point-in-time check only. Callers still need a guarded write intent and
  * a final provider readback; this check is not a Google Sheets lock. */
 export async function stableWorkbookClaimOwned(env:Env,token:string):Promise<boolean>{
-  if(!env.GOOGLE_SPREADSHEET_ID||!token)return false;
-  const row=await env.DB.prepare("SELECT 1 AS ok FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(env.GOOGLE_SPREADSHEET_ID,token).first<{ok:number}>();
-  return row?.ok===1;
+  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book||!token)return false;
+  const row=await db.prepare("SELECT 1 AS ok FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(book,token).first<{ok:number}>();
+  return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&row?.ok===1;
 }
 
 /** A durable guard for one workbook operation. It does not itself stop a

@@ -99,10 +99,10 @@ export class ExpenseProjectionRuntimeJournal{
   }
   dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
     const fence=this.projectionFence(projection,token,c);
-    // The owner chose a cooperative pause, not a hard human lock. Until
-    // the in-Sheets signal and independently verified system-writer drain
-    // exist, DAILY writes remain impossible even when other leases match.
-    return projection==='DAILY'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
+    // DAILY awaits an independently verified writer drain and cooperative
+    // signal. DETAIL awaits a complete item-set/provider evidence journal.
+    // Neither may dispatch based on a caller-supplied digest alone.
+    return projection==='DAILY'||projection==='DETAIL'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
   }
   /** Verifies the exact NOTICE binding; never grants permission to write DAILY. */
   noticeReceiptFence(token:string,c:ExpenseProjectionContext,windowToken:string):{sql:string;args:unknown[]}{
@@ -129,7 +129,7 @@ export class ExpenseProjectionRuntimeJournal{
   /** The caller must perform independent provider identity and full postimage
    * verification first. A digest passed here is not proof by itself. */
   async verify(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext,evidenceDigest:string):Promise<boolean>{
-    this.check(projection);if(projection==='DAILY'||!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
+    this.check(projection);if(projection==='DAILY'||projection==='DETAIL'||!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
     const result=await this.env.DB.prepare(`UPDATE expense_projection_runtime_intents SET state='VERIFIED',evidence_digest=?,updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND source_version=? AND source_revision=? AND projection=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=? AND ${this.guard()}
       AND (?<>'RAW' OR EXISTS(SELECT 1 FROM full_raw_identity_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.projected_version=? AND i.projected_revision=? AND i.source_version=? AND i.source_revision=? AND i.verified_outer_token=? AND i.verified_generation=? AND i.verified_evidence_digest=?
         AND CASE WHEN json_valid(i.baseline_json) THEN json_type(i.baseline_json)='object' AND (SELECT count(*) FROM json_each(i.baseline_json))=16 AND (SELECT count(DISTINCT key) FROM json_each(i.baseline_json))=16 AND NOT EXISTS(SELECT 1 FROM json_each(i.baseline_json) b WHERE CAST(b.key AS INTEGER)<1 OR CAST(b.key AS INTEGER)>16 OR CAST(CAST(b.key AS INTEGER) AS TEXT)<>b.key OR b.type<>'text' OR length(b.value)<>64 OR b.value GLOB '*[^0-9a-f]*') ELSE 0 END))

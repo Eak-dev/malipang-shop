@@ -2,6 +2,8 @@ import type {Env} from '../types';
 import {getGoogleAccessToken} from './google-auth';
 import {fetchWithTimeout,readBoundedJson} from '../shared/async';
 import {numberEnv} from '../shared/env';
+import {findMonthBlocks} from './daily-expense';
+import {dailyLegacyRowKey,type DailyLegacyObserved} from './daily-legacy-enrollment-candidates';
 
 // Read-only adaptation of #229 identity checks. Positions below are ephemeral
 // observations only; no row is stored and no provider mutation is possible.
@@ -42,6 +44,17 @@ export async function readDailyRecoveryCandidate(env:Env,expenseId:string,metada
  if(env.RUNTIME_MODE!=='production'||env.DAILY_RECOVERY_ADMIN_ENABLED!=='true'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(expenseId)||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('DAILY_RECOVERY_DISABLED');
  const a=await grid(env),m=await metadata(env,metadataId),key=`MALIPANG_EXPENSE:${expenseId}`;if(m.sheetId!==a.sheetId||m.row>=a.rowCount)throw Error('DAILY_RECOVERY_UNVERIFIED');const formula=await rows(env,a),effective=await rows(env,a,false);await annotations(env,a.sheetId,m.row,formula[m.row]??[]);const m2=await metadata(env,metadataId),b=await grid(env);if(m2.sheetId!==m.sheetId||m2.row!==m.row||a.sheetId!==b.sheetId||a.rowCount!==b.rowCount)throw Error('DAILY_RECOVERY_UNVERIFIED');
  for(const body of [formula,effective]){const matches:number[]=[];for(let n=0;n<body.length;n++)if(body[n]?.[23]===key)matches.push(n);if(matches.length!==1||matches[0]!==m.row)throw Error('DAILY_RECOVERY_UNVERIFIED');}const f=formula[m.row]!,e=effective[m.row]!;if(inputs.some(i=>typeof f[i]==='string'&&String(f[i]).startsWith('=')||!same(f[i],e[i])))throw Error('DAILY_RECOVERY_UNVERIFIED');const present=amounts.map(i=>f[i]).filter(v=>!blank(v));if(present.some(v=>typeof v!=='number'||!Number.isFinite(v)||v<0)||present.filter(v=>Number(v)>0).length!==1)throw Error('DAILY_RECOVERY_UNVERIFIED');return{row:m.row+1,formula,effective};
+}
+/** Full bounded month inventory for read-only planning. Returned row numbers
+ * are ephemeral hints; a later enrollment must re-read under its own fence. */
+export async function readDailyLegacyInventory(env:Env,month:number):Promise<{sheetId:number;sheetYear:number;headers:unknown[][];observed:DailyLegacyObserved[];fingerprint:string}>{
+ if(env.RUNTIME_MODE!=='production'||env.DAILY_LEGACY_ENROLLMENT_PREFLIGHT_ENABLED!=='true'||!Number.isInteger(month)||month<1||month>12)throw Error('DAILY_LEGACY_PREFLIGHT_DISABLED');
+ const a=await grid(env),formula=await rows(env,a),effective=await rows(env,a,false),b=await grid(env);if(a.sheetId!==b.sheetId||a.rowCount!==b.rowCount)throw Error('DAILY_LEGACY_INVENTORY_UNVERIFIED');const year=(effective[4]??[])[0];if(!Number.isSafeInteger(year)||Number(year)<1900||Number(year)>9999)throw Error('DAILY_LEGACY_INVENTORY_UNVERIFIED');const blocks=findMonthBlocks(formula),target=blocks.filter(v=>v.month===month);if(target.length!==1)throw Error('DAILY_LEGACY_INVENTORY_UNVERIFIED');const block=target[0]!,boundaries=new Set(blocks.flatMap(v=>[v.headerRow,v.totalRow]));
+ // A financial row outside its month's physical block could otherwise be an
+ // ignored duplicate or disappear from SUMIF. Hold the entire inventory.
+ for(let n=1;n<=a.rowCount;n++){if(n>block.headerRow&&n<block.totalRow||boundaries.has(n))continue;const r=effective[n-1]??[];if(Number(r[1])===month&&amounts.some(i=>!blank(r[i])&&(typeof r[i]!=='number'||r[i]!==0)))throw Error('DAILY_LEGACY_OUTSIDE_MONTH_BLOCK');}
+ const observed:DailyLegacyObserved[]=[];for(let n=block.headerRow+1;n<block.totalRow;n++){const f=formula[n-1]??[],e=effective[n-1]??[],unsafe=inputs.some(i=>typeof f[i]==='string'&&String(f[i]).startsWith('=')||!same(f[i],e[i])),row={observedRow:n,blockMonth:month,values:e,unsafe};if(amounts.some(i=>!blank(e[i])&&(typeof e[i]!=='number'||e[i]!==0))&&!dailyLegacyRowKey(row))throw Error('DAILY_LEGACY_MALFORMED_FINANCIAL_ROW');observed.push(row);}
+ const bytes=new TextEncoder().encode(JSON.stringify([a,formula,effective]));if(bytes.byteLength>8*1024*1024)throw Error('DAILY_LEGACY_INVENTORY_UNVERIFIED');const fingerprint=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');return{sheetId:a.sheetId,sheetYear:Number(year),headers:formula.slice(0,3),observed,fingerprint};
 }
 /** MATCHES_RECORDED_INPUTS is only a comparison; the caller must independently
  * prove production enrollment, writer drainage and the desired postimage. */

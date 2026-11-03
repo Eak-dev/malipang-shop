@@ -19,7 +19,7 @@ function column(n:number):string{let result='';while(n>0){n--;result=String.from
 
 /** Isolated UAT reader, not a lock. Grid/identity may change after this read;
  * no production caller or mutation is authorized by the returned snapshot. */
-async function readLedgerAppendSnapshot(title:string,expectedSheetId:number,reader:{properties:()=>Promise<unknown>;grid:(rows:number,columns:number)=>Promise<unknown>}):Promise<LedgerUatAppendSnapshot>{
+export async function readLedgerAppendSnapshot(title:string,expectedSheetId:number,reader:{properties:()=>Promise<unknown>;grid:(rows:number,columns:number)=>Promise<unknown>}):Promise<LedgerUatAppendSnapshot>{
   if(!title||!Number.isSafeInteger(expectedSheetId)||expectedSheetId<0)throw Error('LEDGER_APPEND_READ_INVALID');
   const initial=sheetFrom(await reader.properties(),title),size=bounds(initial);
   if(size.sheetId!==expectedSheetId)throw Error('LEDGER_APPEND_SHEET_INVALID');

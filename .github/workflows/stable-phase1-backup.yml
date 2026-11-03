@@ -1,0 +1,60 @@
+name: Stable sync phase 1 backup validation
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+permissions:
+  contents: read
+concurrency:
+  group: stable-phase1-backup
+  cancel-in-progress: false
+jobs:
+  backup:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.head.ref == 'codex/stable-new-records-phase1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Create private backup and verify its download
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN"
+          umask 077
+          sql="$RUNNER_TEMP/phase1-before.sql"
+          gz="$RUNNER_TEMP/phase1-before.sql.gz"
+          downloaded="$RUNNER_TEMP/phase1-downloaded.sql.gz"
+          key="d1/stable-phase1/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -c "$sql" > "$gz"
+          gzip -t "$gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$downloaded" --remote
+          gzip -t "$downloaded"
+          test "$(sha256sum "$gz" | cut -d ' ' -f 1)" = "$(sha256sum "$downloaded" | cut -d ' ' -f 1)"
+          echo 'Private backup download checksum verified.'
+      - name: Restore and validate migration twice without changing live data
+        shell: bash
+        run: |
+          set -euo pipefail
+          db="$RUNNER_TEMP/phase1-restored.sqlite"
+          gzip -dc "$RUNNER_TEMP/phase1-downloaded.sql.gz" | sqlite3 -cmd "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;" "$db" > /dev/null
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+          counts="SELECT (SELECT count(*) FROM expense_events)||','||(SELECT count(*) FROM expense_documents)||','||(SELECT count(*) FROM expense_document_links)||','||(SELECT count(*) FROM expense_document_items)||','||(SELECT count(*) FROM owner_personal_transactions);"
+          before="$(sqlite3 "$db" "$counts")"
+          sqlite3 "$db" < migrations/0021_stable_workbook_claim.sql
+          sqlite3 "$db" < migrations/0021_stable_workbook_claim.sql
+          test "$before" = "$(sqlite3 "$db" "$counts")"
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+          test "$(sqlite3 "$db" "SELECT count(*) FROM stable_sync_cutover WHERE singleton=1 AND state='PREPARED'")" = 1
+          echo 'Local restore, migration retry, source counts and integrity verified.'

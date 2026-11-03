@@ -42,6 +42,7 @@
     "ATTENDANCE_ENABLED": "true",
     "EXPENSE_ENABLED": "true",
     "SHEETS_SYNC_ENABLED": "true",
+    "STABLE_PHASE1_ENABLED": "true",
     "R2_EVIDENCE_ENABLED": "true",
     "EVIDENCE_RETENTION_ENABLED": "false",
     "EVIDENCE_RETENTION_DAYS": "90",

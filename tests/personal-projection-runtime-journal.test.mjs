@@ -25,6 +25,9 @@ test('personal outer intent uses revision, cutover and lease, never a stored row
 test('edit-and-revert changes the guarded revision and prevents dispatch',async()=>{
   const f=fixture();try{const c=await f.journal.context(),token=await f.journal.begin(c);f.db.exec(`UPDATE owner_personal_transactions SET description='changed'; UPDATE owner_personal_transactions SET description='fixture'`);assert.equal(await f.journal.canDispatch(token,c),false);assert.equal(await f.journal.hold(token,c),true);}finally{f.close();}
 });
+test('older restored source revision is held when a newer observation exists in another generation',async()=>{
+  const f=fixture();try{const c=await f.journal.context(),token=await f.journal.begin(c);f.db.prepare(`INSERT INTO personal_projection_generation_observations VALUES('book','prior_generation','personal_fixture',2,?,'PENDING',NULL,'run',1,'now')`).run(c.revision+1);assert.equal(await f.journal.context(),null);assert.equal(await f.journal.canDispatch(token,c),false);}finally{f.close();}
+});
 test('missing trigger, new unique index, missing foreign-key enforcement, lease, gate and old mapping fail closed',async()=>{
   for(const sql of [`DROP TRIGGER personal_projection_before_update`,`CREATE UNIQUE INDEX future_personal_unique ON owner_personal_transactions(description)`,`PRAGMA foreign_keys=OFF`,`UPDATE sync_jobs SET lease_until='2000-01-01T00:00:00.000Z'`,`UPDATE personal_legacy_writer_gates SET state='OPEN'`,`UPDATE personal_projection_cutovers SET generation='changed_generation'`,`INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('personal','personal_fixture',4)`]){
     const f=fixture();try{const c=await f.journal.context(),token=await f.journal.begin(c);f.db.exec(sql);assert.equal(await f.journal.canDispatch(token,c),false);}finally{f.close();}

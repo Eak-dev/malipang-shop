@@ -31,6 +31,7 @@ export class PersonalProjectionRuntimeJournal{
     JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
     JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
+    AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
     AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
     AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW')))`;}
   private args(c:PersonalProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,...triggers];}
@@ -43,6 +44,7 @@ export class PersonalProjectionRuntimeJournal{
       JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
       JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
+      AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
       AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
       AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW'))`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),this.lease,this.job.entityKey,this.job.entityVersion,...triggers).first<PersonalProjectionContext>();return row&&this.valid(row)?row:null;
   }

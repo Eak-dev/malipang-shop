@@ -34,6 +34,8 @@ Personal outer intent เป็นเพียงโครงป้องกั�
 
 ยังไม่มี stable queue route จึงห้ามเปิด stable flag นี้ใน production เพราะจะพักงานส่วนตัว; gate หยุด Worker รุ่นเก่าที่ไม่ได้รหัสนี้หรือ request ที่ส่งไปแล้วไม่ได้ และยังมีช่องเวลาหลังตรวจ D1 ก่อนส่ง Google ต้องระบาย writer/requests ก่อน migration และ cutover. D1 row cache ที่ถูกจัดสรรก่อน gate ปิดอาจยังค้าง ต้องตรวจ ไม่ใช่หลักฐานตัวตน
 
+Historical enrollment candidate สำหรับรายการส่วนตัวเดือนตุลาคมใช้ ID ที่ไม่ซ้ำ ตรวจค่า owned fields ทั้งหมด และจอง metadata/ล็อกแท็บร่วมใน D1 โดยไม่เก็บเลขแถว ก่อนส่ง metadata อ่านชีตและตรวจ source อีกครั้ง ส่งได้ครั้งเดียว และเก็บผลที่ไม่ชัดไว้ตรวจ ไม่ replay. ขณะนี้ทุกผลรวมถึง readback ที่ตรงยังคง REVIEW และล็อกไว้ ยังไม่มี admin dispatch route, การปลดล็อกหรือ fast-path ที่พร้อมใช้งาน ห้ามเปิด flag หรือ deploy ส่วนนี้จนกว่าทางกู้และการเชื่อมรายการเดิมเข้ากับระบบซิงก์จะผ่านการตรวจสอบ; การยืนยันพักแก้ชีตและระบาย writer เป็นคำยืนยันของผู้ดูแล ไม่ใช่การล็อก Google Sheets
+
 Outer guard ปฏิเสธ source revision ที่ต่ำกว่า observation หรืองาน generation ที่เคยบันทึกไว้ใน workbook เดียวกันแม้คนละ generation แต่ไม่สามารถพิสูจน์ revision ที่ไม่เคยถูกสังเกตหรือหลักฐานที่ถูก restore หายไปทั้งหมดได้
 
 ยังต้องมีวิธี recovery ที่ตรวจ provider เมื่อผลไม่แน่ชัด และการเชื่อม writer กับ provider readback, enrollment, การกั้น writer เดิมและ editor ระหว่างเขียน รวมถึงทดสอบ D1/Google จริงก่อนเปิด route. ห้ามตีความว่ารายการ personal ซิงก์ครบจากการทดสอบนี้. สถานะ intent หรือ D1 lock ไม่ใช่ Google Sheets CAS และไม่ป้องกันเจ้าของไฟล์ที่ข้าม protection ได้

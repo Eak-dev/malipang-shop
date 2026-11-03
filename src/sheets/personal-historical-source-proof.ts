@@ -4,12 +4,13 @@ import {personalRecoverySourceIntegrity} from './personal-projection-runtime-jou
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 import {personalEnrollmentLockIntegrity} from './personal-raw-enrollment';
 import {isIsoDate} from '../shared/time';
+import {sheetScopesDistinct} from './sheet-scope-isolation';
 export type PersonalHistoricalSourceProof={source:RawSourceProof;revision:number;generation:string;watermark:number;admission:number;month:string};
 type Context={version:number;revision:number;generation:string;watermark:number;admission:number};
 /** Source proof for October records admitted before cutover. Does not query a
  * stored sheet row, authorize a write, or reopen a completed sync job. */
 export async function readPersonalHistoricalSourceProof(env:Env,entityId:string,month:string):Promise<PersonalHistoricalSourceProof>{
-  if(env.RUNTIME_MODE!=='production'||env.PERSONAL_HISTORICAL_IDENTITY_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(entityId)||!/^\d{4}-10$/.test(month))throw Error('PERSONAL_HISTORICAL_DISABLED');
+  if(!sheetScopesDistinct(env)||env.RUNTIME_MODE!=='production'||env.PERSONAL_HISTORICAL_IDENTITY_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(entityId)||!/^\d{4}-10$/.test(month))throw Error('PERSONAL_HISTORICAL_DISABLED');
   const context=()=>env.DB.prepare(`SELECT p.version,r.revision,c.generation,c.admission_watermark AS watermark,a.sequence AS admission FROM owner_personal_transactions p JOIN personal_projection_source_revisions r ON r.personal_use_id=p.personal_use_id AND r.state='TRACKED' JOIN personal_projection_admissions a ON a.personal_use_id=p.personal_use_id JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND a.sequence<=c.admission_watermark JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.generation=c.generation AND g.state='HOLD'
     WHERE p.personal_use_id=? AND p.status='CONFIRMED' AND p.transaction_date>=? AND p.transaction_date<? AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${personalRecoverySourceIntegrity} AND ${sheetMetadataRegistryIntegrity} AND ${personalEnrollmentLockIntegrity}
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND (seen.source_revision>r.revision OR seen.source_version>p.version OR (seen.state='REVIEW' AND NOT (COALESCE(seen.reason,'')='HISTORICAL_IDENTITY_UNVERIFIED' AND seen.cutover_generation=c.generation AND seen.source_version=p.version AND seen.source_revision=r.revision))))

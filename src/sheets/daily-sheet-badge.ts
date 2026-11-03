@@ -1,0 +1,92 @@
+import type {Env} from '../types';
+import {getGoogleAccessToken} from './google-auth';
+import {fetchWithTimeout,readBoundedJson} from '../shared/async';
+import {numberEnv} from '../shared/env';
+import {readDailyEditStatus,type DailyEditStatus} from './daily-edit-coordination';
+
+const names=['MLP_DAILY_STATUS','MLP_DAILY_STATUS_TIME'] as const;
+type Range={namedRangeId:string;name:string;sheetId:number;startRow:number;startCol:number};
+type Cell={value:unknown;format:unknown;note:unknown;validation:unknown;textRuns:unknown;chips:unknown};
+type Snapshot={sheetId:number;ranges:[Range,Range];cells:[Cell,Cell]};
+type Journal={sheet_id:number;state_range_id:string;time_range_id:string;state:string;preimage_json:string;expected_values_json:string};
+
+function check(env:Env):void{
+  if(env.RUNTIME_MODE!=='production'||env.DAILY_BADGE_WRITER_ENABLED!=='true'||env.DAILY_EDIT_COORDINATION_ENABLED!=='true'||env.EXPENSE_GENERATION_WORKER_ENABLED!=='true'||env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_EXPENSE_DAILY)throw Error('DAILY_BADGE_DISABLED');
+}
+function canonical(v:unknown,depth=0):unknown{
+  if(depth>24)throw Error('DAILY_BADGE_SNAPSHOT_INVALID');
+  if(v===null||typeof v==='string'||typeof v==='boolean'||typeof v==='number'&&Number.isFinite(v))return v;
+  if(Array.isArray(v))return v.map(x=>canonical(x,depth+1));
+  if(typeof v==='object'){const out:Record<string,unknown>={};for(const key of Object.keys(v as object).sort())out[key]=canonical((v as Record<string,unknown>)[key],depth+1);return out;}
+  throw Error('DAILY_BADGE_SNAPSHOT_INVALID');
+}
+function encode(v:unknown,max:number):string{const s=JSON.stringify(canonical(v));if(new TextEncoder().encode(s).byteLength>max)throw Error('DAILY_BADGE_SNAPSHOT_TOO_LARGE');return s;}
+function same(a:unknown,b:unknown):boolean{return encode(a,32768)===encode(b,32768);}
+function integer(v:unknown):v is number{return Number.isSafeInteger(v)&&Number(v)>=0;}
+function overlaps(a:{startRow:number;startCol:number},r:Record<string,unknown>):boolean{
+  if(r.sheetId!==undefined&&!integer(r.sheetId))throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  const sr=r.startRowIndex??0,sc=r.startColumnIndex??0,er=r.endRowIndex??Number.MAX_SAFE_INTEGER,ec=r.endColumnIndex??Number.MAX_SAFE_INTEGER;
+  if(!integer(sr)||!integer(sc)||!integer(er)||!integer(ec)||sr>=er||sc>=ec)throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  return a.startRow>=sr&&a.startRow<er&&a.startCol>=sc&&a.startCol<ec;
+}
+async function getJson(env:Env,path:string):Promise<unknown>{
+  const auth=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);
+  const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{headers:{Authorization:`Bearer ${auth}`}},timeout,'Daily badge read');
+  if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw Error('DAILY_BADGE_READ_UNAVAILABLE');}
+  return readBoundedJson(response,2*1024*1024,timeout,'Daily badge read');
+}
+async function structure(env:Env):Promise<{sheetId:number;ranges:[Range,Range]}> {
+  const query=new URLSearchParams({fields:'spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount,frozenColumnCount)),merges,protectedRanges)'});
+  const o=await getJson(env,`?${query}`) as {spreadsheetId?:unknown;namedRanges?:Array<{namedRangeId?:unknown;name?:unknown;range?:Record<string,unknown>}>;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown;frozenRowCount?:unknown}};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>}>};
+  if(o?.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!Array.isArray(o.sheets)||!Array.isArray(o.namedRanges))throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  const matches=o.sheets.filter(s=>s.properties?.title===env.SHEET_EXPENSE_DAILY);if(matches.length!==1||o.sheets.some(s=>names.includes(s.properties?.title as typeof names[number])))throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  const sheet=matches[0]!,p=sheet.properties!,grid=p.gridProperties;if(!integer(p.sheetId)||!grid||!integer(grid.rowCount)||!integer(grid.columnCount)||!integer(grid.frozenRowCount))throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  const ranges=names.map(name=>{const found=o.namedRanges!.filter(n=>n.name===name);if(found.length!==1)throw Error('DAILY_BADGE_STRUCTURE_INVALID');const n=found[0]!,r=n.range;if(typeof n.namedRangeId!=='string'||!/^[-A-Za-z0-9_]{1,128}$/.test(n.namedRangeId)||!r||r.sheetId!==p.sheetId)throw Error('DAILY_BADGE_STRUCTURE_INVALID');const row=r.startRowIndex??0,col=r.startColumnIndex??0;if(!integer(row)||!integer(col)||r.endRowIndex!==row+1||r.endColumnIndex!==col+1||row>=Number(grid.frozenRowCount)||row>=Number(grid.rowCount)||col>=Number(grid.columnCount))throw Error('DAILY_BADGE_STRUCTURE_INVALID');return{namedRangeId:n.namedRangeId,name,sheetId:p.sheetId as number,startRow:row,startCol:col};}) as [Range,Range];
+  if(ranges[0].namedRangeId===ranges[1].namedRangeId||ranges.some(r=>o.namedRanges!.filter(n=>n.namedRangeId===r.namedRangeId||typeof n.name==='string'&&n.name.toLowerCase()===r.name.toLowerCase()).length!==1)||ranges[0].startRow!==ranges[1].startRow||ranges[1].startCol!==ranges[0].startCol+1)throw Error('DAILY_BADGE_STRUCTURE_INVALID');
+  for(const range of ranges){for(const merge of sheet.merges||[])if(merge.sheetId!==undefined&&merge.sheetId!==p.sheetId||overlaps(range,merge))throw Error('DAILY_BADGE_STRUCTURE_INVALID');for(const protection of sheet.protectedRanges||[]){if(!protection.range||protection.range.sheetId!==undefined&&protection.range.sheetId!==p.sheetId||protection.unprotectedRanges!==undefined||overlaps(range,protection.range))throw Error('DAILY_BADGE_STRUCTURE_INVALID');}}
+  return{sheetId:p.sheetId as number,ranges};
+}
+async function snapshot(env:Env):Promise<Snapshot>{
+  const a=await structure(env),query=new URLSearchParams({fields:'spreadsheetId,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,note,dataValidation,textFormatRuns,chipRuns))))'});for(const name of names)query.append('ranges',name);
+  const o=await getJson(env,`?${query}`) as {spreadsheetId?:unknown;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown};data?:Array<{startRow?:unknown;startColumn?:unknown;rowData?:Array<{values?:Array<Record<string,unknown>>}>}>}>};
+  if(o.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!Array.isArray(o.sheets))throw Error('DAILY_BADGE_SNAPSHOT_INVALID');const sheets=o.sheets.filter(s=>s.properties?.sheetId===a.sheetId&&s.properties?.title===env.SHEET_EXPENSE_DAILY);if(sheets.length!==1||!Array.isArray(sheets[0]!.data)||sheets[0]!.data!.length!==2)throw Error('DAILY_BADGE_SNAPSHOT_INVALID');
+  const cells=a.ranges.map(r=>{const matches=sheets[0]!.data!.filter(d=>(d.startRow??0)===r.startRow&&(d.startColumn??0)===r.startCol);if(matches.length!==1||matches[0]!.rowData?.length!==1||matches[0]!.rowData![0]!.values?.length!==1)throw Error('DAILY_BADGE_SNAPSHOT_INVALID');const v=matches[0]!.rowData![0]!.values![0]!;return{value:v.userEnteredValue??null,format:v.userEnteredFormat??null,note:v.note??null,validation:v.dataValidation??null,textRuns:v.textFormatRuns??null,chips:v.chipRuns??null};}) as [Cell,Cell];
+  const b=await structure(env);if(!same(a,b))throw Error('DAILY_BADGE_IDENTITY_CHANGED');return{...a,cells};
+}
+function value(cell:Cell):unknown{if(cell.value===null)return null;if(typeof cell.value!=='object'||Array.isArray(cell.value))throw Error('DAILY_BADGE_CELL_INVALID');const o=cell.value as Record<string,unknown>;if(Object.keys(o).length!==1||typeof o.stringValue!=='string')throw Error('DAILY_BADGE_CELL_INVALID');return o.stringValue;}
+function staticFields(cell:Cell):unknown{return{format:cell.format,note:cell.note,validation:cell.validation,textRuns:cell.textRuns,chips:cell.chips};}
+function clean(cell:Cell):boolean{return cell.note===null&&cell.validation===null&&(cell.textRuns===null||same(cell.textRuns,[]))&&(cell.chips===null||same(cell.chips,[]));}
+function label(state:DailyEditStatus):string{if(state==='AVAILABLE')return 'ตรวจ';if(state==='NOTICE'||state==='SYNCING')return 'พัก';return 'ตรวจ';}
+function clock(now:Date):string{const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'2-digit',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(now),get=(type:string)=>p.find(x=>x.type===type)?.value;if(!get('year')||!get('month')||!get('day')||!get('hour')||!get('minute')||!get('second'))throw Error('DAILY_BADGE_CLOCK_INVALID');return `${get('year')}/${get('month')}/${get('day')}\n${get('hour')}:${get('minute')}:${get('second')}`;}
+const coordinationFence=`EXISTS(SELECT 1 FROM daily_edit_coordination w JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=w.spreadsheet_id AND g.sheet_name=w.sheet_name AND g.state='HOLD' JOIN expense_projection_cutovers c ON c.spreadsheet_id=g.spreadsheet_id AND c.sheet_name=g.sheet_name AND c.state='ACTIVE' AND c.generation=g.generation WHERE w.spreadsheet_id=? AND w.sheet_name=? AND w.state=? AND w.updated_at=? AND (w.state='AVAILABLE' OR w.cutover_generation=c.generation) AND julianday(w.updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds') AND (w.state IN ('AVAILABLE','REVIEW') OR julianday(w.deadline)>julianday('now')) AND (w.state<>'AVAILABLE' OR NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=w.spreadsheet_id AND p.projection='DAILY' AND p.state IN ('IN_FLIGHT','REVIEW'))))`;
+
+/** Default-off, no runtime route. Named ranges must already exist; this class
+ * never provisions or rebinds them and never stores cell coordinates. */
+export class DailySheetBadge{
+  constructor(private readonly env:Env){}
+  async register():Promise<boolean>{
+    check(this.env);if(await readDailyEditStatus(this.env)!=='AVAILABLE')return false;const s=await snapshot(this.env);if(!s.cells.every(c=>clean(c)&&value(c)===null))return false;
+    const before=encode(s.cells,32768),expected=encode([null,null],1024),coord=await this.env.DB.prepare("SELECT updated_at FROM daily_edit_coordination WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE'").bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY).first<{updated_at:string}>();if(!coord)return false;
+    const result=await this.env.DB.prepare(`INSERT INTO daily_sheet_badge_journal(spreadsheet_id,sheet_id,state_range_id,time_range_id,state,preimage_json,expected_values_json,updated_at) SELECT ?,?,?,?,'READY',?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${coordinationFence} ON CONFLICT(spreadsheet_id) DO NOTHING`).bind(this.env.GOOGLE_SPREADSHEET_ID,s.sheetId,s.ranges[0].namedRangeId,s.ranges[1].namedRangeId,before,expected,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,'AVAILABLE',coord.updated_at).run();return Number(result.meta.changes||0)===1;
+  }
+  async publish():Promise<boolean>{return this.change(false);}
+  async restore():Promise<boolean>{return this.change(true);}
+  private async review(token:string):Promise<void>{try{await this.env.DB.prepare("UPDATE daily_sheet_badge_journal SET state='REVIEW',operation_token=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND state='IN_FLIGHT' AND operation_token=?").bind(this.env.GOOGLE_SPREADSHEET_ID,token).run();}catch{/* Unknown remains IN_FLIGHT, never automatically replay. */}}
+  private async reviewReady(row:Journal):Promise<void>{try{await this.env.DB.prepare("UPDATE daily_sheet_badge_journal SET state='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_id=? AND state='READY' AND preimage_json=? AND expected_values_json=?").bind(this.env.GOOGLE_SPREADSHEET_ID,row.sheet_id,row.preimage_json,row.expected_values_json).run();}catch{/* Failed hold is not permission to retry. */}}
+  private async change(restore:boolean):Promise<boolean>{
+    check(this.env);const state=await readDailyEditStatus(this.env);if(state==='UNKNOWN'||restore&&state!=='AVAILABLE')return false;
+    const row=await this.env.DB.prepare("SELECT sheet_id,state_range_id,time_range_id,state,preimage_json,expected_values_json FROM daily_sheet_badge_journal WHERE spreadsheet_id=?").bind(this.env.GOOGLE_SPREADSHEET_ID).first<Journal>();if(!row||row.state!=='READY')return false;
+    let pre:Cell[],expected:unknown[],initial:Snapshot;try{pre=JSON.parse(row.preimage_json) as Cell[];expected=JSON.parse(row.expected_values_json) as unknown[];if(!Array.isArray(pre)||pre.length!==2||!Array.isArray(expected)||expected.length!==2||encode(pre,32768)!==row.preimage_json||encode(expected,1024)!==row.expected_values_json)throw Error('invalid');initial=await snapshot(this.env);if(initial.sheetId!==row.sheet_id||initial.ranges[0].namedRangeId!==row.state_range_id||initial.ranges[1].namedRangeId!==row.time_range_id||initial.cells.some((c,i)=>!clean(c)||!same(staticFields(c),staticFields(pre[i]!))||!same(value(c),expected[i])))throw Error('changed');}catch{await this.reviewReady(row);throw Error('DAILY_BADGE_REVIEW_REQUIRED');}
+    const coord=await this.env.DB.prepare('SELECT state,updated_at FROM daily_edit_coordination WHERE spreadsheet_id=? AND sheet_name=?').bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY).first<{state:string;updated_at:string}>();if(!coord||coord.state!==state)return false;
+    const token=crypto.randomUUID(),target=restore?[null,null]:[label(state),clock(new Date())],targetJson=encode(target,1024);
+    try{
+      const start=await this.env.DB.prepare(`UPDATE daily_sheet_badge_journal SET state='IN_FLIGHT',operation_token=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_id=? AND state='READY' AND state_range_id=? AND time_range_id=? AND preimage_json=? AND expected_values_json=? AND ${coordinationFence}`).bind(token,this.env.GOOGLE_SPREADSHEET_ID,row.sheet_id,row.state_range_id,row.time_range_id,row.preimage_json,row.expected_values_json,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,coord.state,coord.updated_at).run();if(Number(start.meta.changes||0)!==1)return false;
+      const auth=await getGoogleAccessToken(this.env),fresh=await snapshot(this.env);if(!same(initial,fresh)||await readDailyEditStatus(this.env)!==state)throw Error('DAILY_BADGE_PREIMAGE_CHANGED');
+      const fence=await this.env.DB.prepare(`SELECT 1 AS ok FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=? AND b.sheet_id=? AND b.state='IN_FLIGHT' AND b.operation_token=? AND ${coordinationFence}`).bind(this.env.GOOGLE_SPREADSHEET_ID,row.sheet_id,token,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,coord.state,coord.updated_at).first<{ok:number}>();if(!fence)throw Error('DAILY_BADGE_FENCE_LOST');
+      const timeout=numberEnv(this.env.EXTERNAL_API_TIMEOUT_MS,15000),body=JSON.stringify({valueInputOption:'RAW',data:names.map((range,i)=>({range,values:[[target[i]??'']]}))});
+      const response=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${this.env.GOOGLE_SPREADSHEET_ID}/values:batchUpdate`,{method:'POST',headers:{Authorization:`Bearer ${auth}`,'content-type':'application/json'},body},timeout,'Daily badge write');if(!response.ok){if(response.body)void response.body.cancel().catch(()=>{});throw Error('DAILY_BADGE_WRITE_UNKNOWN');}const output=await readBoundedJson(response,65536,timeout,'Daily badge write') as {totalUpdatedCells?:unknown;responses?:unknown};if(output.totalUpdatedCells!==2||!Array.isArray(output.responses)||output.responses.length!==2)throw Error('DAILY_BADGE_WRITE_UNKNOWN');
+      const post=await snapshot(this.env);if(post.sheetId!==row.sheet_id||post.ranges[0].namedRangeId!==row.state_range_id||post.ranges[1].namedRangeId!==row.time_range_id||post.cells.some((c,i)=>!same(staticFields(c),staticFields(pre[i]!))||!same(value(c),target[i])))throw Error('DAILY_BADGE_READBACK_CHANGED');
+      const done=await this.env.DB.prepare(`UPDATE daily_sheet_badge_journal SET state=?,operation_token=NULL,expected_values_json=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND sheet_id=? AND state='IN_FLIGHT' AND operation_token=? AND ${coordinationFence}`).bind(restore?'RESTORED':'READY',targetJson,this.env.GOOGLE_SPREADSHEET_ID,row.sheet_id,token,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,coord.state,coord.updated_at).run();if(Number(done.meta.changes||0)!==1)throw Error('DAILY_BADGE_FINALIZE_UNKNOWN');return true;
+    }catch{await this.review(token);throw Error('DAILY_BADGE_REVIEW_REQUIRED');}
+  }
+}

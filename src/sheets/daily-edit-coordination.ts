@@ -9,7 +9,7 @@ export async function readDailyEditStatus(env:Env):Promise<DailyEditStatus>{
   if(!enabled(env))return 'UNKNOWN';
   try{
     const row=await env.DB.prepare(`SELECT w.state,CASE WHEN w.deadline IS NOT NULL AND julianday(w.deadline)<=julianday('now') THEN 1 ELSE 0 END AS expired,
-      CASE WHEN julianday(w.updated_at) IS NULL OR julianday(w.updated_at)<julianday('now','-15 seconds') OR julianday(w.updated_at)>julianday('now','+5 seconds') OR (w.state<>'AVAILABLE' AND julianday(w.deadline) IS NULL) THEN 0 ELSE 1 END AS fresh FROM daily_edit_coordination w
+      CASE WHEN julianday(w.updated_at) IS NULL OR julianday(w.updated_at)<julianday('now','-120 seconds') OR julianday(w.updated_at)>julianday('now','+5 seconds') OR (w.state<>'AVAILABLE' AND julianday(w.deadline) IS NULL) THEN 0 ELSE 1 END AS fresh FROM daily_edit_coordination w
       JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=w.spreadsheet_id AND g.sheet_name=w.sheet_name AND g.state='HOLD'
       JOIN expense_projection_cutovers c ON c.spreadsheet_id=g.spreadsheet_id AND c.sheet_name=g.sheet_name AND c.state='ACTIVE' AND c.generation=g.generation
       WHERE w.spreadsheet_id=? AND w.sheet_name=? AND (w.state='AVAILABLE' OR w.cutover_generation=c.generation)

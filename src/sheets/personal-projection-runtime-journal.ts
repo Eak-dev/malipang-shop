@@ -72,6 +72,19 @@ export class PersonalProjectionRuntimeJournal{
   async canDispatch(token:string,c:PersonalProjectionContext):Promise<boolean>{
     const f=this.dispatchFence(token,c),r=await this.env.DB.prepare(`SELECT 1 AS ok WHERE ${f.sql}`).bind(...f.args).first<{ok:number}>();return !!r;
   }
+  /** This transition requires a trusted full provider readback recorded by the
+   * matching inner intent. It does not complete a job or authorize a retry. */
+  async verify(token:string,c:PersonalProjectionContext,evidenceDigest:string):Promise<boolean>{
+    this.check();if(!this.valid(c)||!/^[-A-Za-z0-9_]{16,128}$/.test(token)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
+    const f=this.dispatchFence(token,c);
+    const r=await this.env.DB.prepare(`UPDATE personal_projection_runtime_intents SET state='VERIFIED',evidence_digest=?,updated_at=? WHERE spreadsheet_id=? AND personal_use_id=? AND source_version=? AND source_revision=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=? AND ${f.sql}
+      AND EXISTS(SELECT 1 FROM personal_raw_identity_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.personal_use_id=? AND i.state='VERIFIED' AND i.projected_version=? AND i.projected_revision=? AND i.source_version=? AND i.source_revision=? AND i.verified_outer_token=? AND i.verified_generation=? AND i.verified_evidence_digest=?
+        AND NOT EXISTS(SELECT 1 FROM full_raw_identity_intents x WHERE x.spreadsheet_id=i.spreadsheet_id AND x.metadata_id=i.metadata_id)
+        AND NOT EXISTS(SELECT 1 FROM full_raw_append_intents x WHERE x.spreadsheet_id=i.spreadsheet_id AND x.metadata_id=i.metadata_id)
+        AND CASE WHEN json_valid(i.baseline_json) THEN json_type(i.baseline_json)='object' AND (SELECT count(*) FROM json_each(i.baseline_json))=14 AND (SELECT count(DISTINCT key) FROM json_each(i.baseline_json))=14 AND NOT EXISTS(SELECT 1 FROM json_each(i.baseline_json) b WHERE CAST(b.key AS INTEGER)<1 OR CAST(b.key AS INTEGER)>14 OR CAST(CAST(b.key AS INTEGER) AS TEXT)<>b.key OR b.type<>'text' OR length(b.value)<>64 OR b.value GLOB '*[^0-9a-f]*') ELSE 0 END)`)
+      .bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,token,c.generation,c.watermark,...f.args,this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),this.job.entityKey,this.job.entityVersion,c.revision,this.job.entityVersion,c.revision,token,c.generation,evidenceDigest).run();
+    return Number(r.meta.changes||0)===1;
+  }
   async hold(token:string,c:PersonalProjectionContext):Promise<boolean>{
     this.check();if(!/^[-A-Za-z0-9_]{16,128}$/.test(token)||!this.valid(c))return false;
     const r=await this.env.DB.prepare(`UPDATE personal_projection_runtime_intents SET state='REVIEW',updated_at=? WHERE spreadsheet_id=? AND personal_use_id=? AND source_version=? AND source_revision=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=?`).bind(new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,token,c.generation,c.watermark).run();return Number(r.meta.changes||0)===1;

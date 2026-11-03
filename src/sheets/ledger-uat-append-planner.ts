@@ -13,6 +13,7 @@ export interface LedgerUatAppendSnapshot{
   hasProtectedRanges:boolean;
   hasMerges:boolean;
   rowHasMetadata?:readonly boolean[];
+  rowMetadataIds?:readonly (readonly number[])[];
 }
 const widths={EXPENSE:17,PERSONAL_USE:15} as const;
 const keys={EXPENSE:'E',PERSONAL_USE:'P'} as const;

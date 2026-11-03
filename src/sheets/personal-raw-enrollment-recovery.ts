@@ -1,0 +1,18 @@
+import type {Env} from '../types';
+import {createPersonalRawProductionProbe} from './ledger-google-probe';
+import {rawProjectionValuesMatch,rawSourceStillMatches,type RawSourceProof} from './raw-source-proof';
+export type PersonalEnrollmentRecovery={status:'REVIEW';observation:'READBACK_MATCHED'|'READBACK_MISMATCH'|'EVIDENCE_UNAVAILABLE'};
+/** Read-only evidence for uncertain enrollment. This never releases a lock,
+ * retries a mutation, verifies an intent or returns a physical row number.
+ * A current match does not prove who made the change or provide Sheets CAS. */
+export async function inspectPersonalRawEnrollmentRecovery(env:Env,source:RawSourceProof,metadataId:number,sheetId:number):Promise<PersonalEnrollmentRecovery>{
+  const result=(observation:PersonalEnrollmentRecovery['observation']):PersonalEnrollmentRecovery=>({status:'REVIEW',observation});
+  try{
+    if(env.RUNTIME_MODE!=='production'||env.PERSONAL_ENROLLMENT_ENABLED!=='true'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!source||source.kind!=='PERSONAL_USE'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647||!Number.isSafeInteger(sheetId)||sheetId<0)return result('EVIDENCE_UNAVAILABLE');
+    const evidence=()=>env.DB.prepare(`SELECT i.source_revision,i.source_fingerprint,i.state AS identity_state,l.state AS lock_state,o.state AS outer_state FROM personal_raw_identity_intents i JOIN personal_raw_enrollment_locks l ON l.spreadsheet_id=i.spreadsheet_id AND l.sheet_name=i.sheet_name AND l.personal_use_id=i.personal_use_id AND l.metadata_id=i.metadata_id AND l.operation_token=i.operation_token AND l.outer_token=i.outer_token AND l.cutover_generation=i.cutover_generation JOIN personal_projection_runtime_intents o ON o.spreadsheet_id=i.spreadsheet_id AND o.personal_use_id=i.personal_use_id AND o.source_version=i.source_version AND o.source_revision=i.source_revision AND o.operation_token=i.outer_token AND o.cutover_generation=i.cutover_generation JOIN owner_personal_transactions p ON p.personal_use_id=i.personal_use_id AND p.version=i.source_version JOIN personal_projection_source_revisions r ON r.personal_use_id=p.personal_use_id AND r.revision=i.source_revision AND r.state='TRACKED' JOIN sheet_metadata_identity_registry g ON g.spreadsheet_id=i.spreadsheet_id AND g.metadata_id=i.metadata_id AND g.sheet_name=i.sheet_name AND g.entity_kind='PERSONAL_USE' AND g.entity_id=i.personal_use_id WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.personal_use_id=? AND i.metadata_id=? AND i.source_version=? AND i.source_fingerprint=? AND i.state IN ('IN_FLIGHT','REVIEW') AND l.state IN ('HELD','REVIEW') AND o.state IN ('IN_FLIGHT','REVIEW')`).bind(env.GOOGLE_SPREADSHEET_ID,env.SHEET_PERSONAL_USE_RAW,source.entityId,metadataId,source.version,source.fingerprint).first<Record<string,unknown>>();
+    const before=await evidence();if(!before||!await rawSourceStillMatches(env,source))return result('EVIDENCE_UNAVAILABLE');
+    const post=await createPersonalRawProductionProbe(env,env.SHEET_PERSONAL_USE_RAW,{kind:'PERSONAL_USE',sheetId,entityId:source.entityId},metadataId).read();
+    if(post.witness.metadataId!==metadataId||post.guard.observed.some(cell=>!cell||cell.note!==null||cell.hasValidation!==false)||!rawProjectionValuesMatch(source,post.guard.observed))return result('READBACK_MISMATCH');
+    const after=await evidence();if(!after||JSON.stringify(before)!==JSON.stringify(after)||!await rawSourceStillMatches(env,source))return result('EVIDENCE_UNAVAILABLE');return result('READBACK_MATCHED');
+  }catch{return result('EVIDENCE_UNAVAILABLE');}
+}

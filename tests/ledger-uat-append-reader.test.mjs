@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 const require=createRequire(import.meta.url);
 const auth=require('../dist/sheets/google-auth.js');
-const {readLedgerUatAppendSnapshot:read,readExpenseRawProductionAppendSnapshot:readProduction}=require('../dist/sheets/ledger-uat-append-reader.js');
+const {readLedgerUatAppendSnapshot:read,readExpenseRawProductionAppendSnapshot:readProduction,readPersonalRawProductionSnapshot:readPersonal}=require('../dist/sheets/ledger-uat-append-reader.js');
 const {buildLedgerUatAppendRequests:plan,buildExpenseRawProductionAppendRequests:planProduction}=require('../dist/sheets/ledger-uat-append-planner.js');
 const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
@@ -41,4 +41,13 @@ test('production candidate reads only configured RAW grid and plans without auth
   const source={kind:'EXPENSE',entityId:'new',version:2,values:['new',...Array(16).fill('')],fingerprint:'a'.repeat(64)};
   const requests=planProduction(prod,source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot);assert.equal(requests.length,3);assert.equal(requests[0].insertDimension.range.startIndex,3);
   assert.throws(()=>planProduction({...prod,RAW_FULL_IDENTITY_WRITER_ENABLED:'false'},source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot),/DISABLED/);
+});
+
+test('personal production snapshot is scoped to configured sheet and bounded',async()=>{
+  const pr={sheetId:7,title:'Personal',gridProperties:{rowCount:4,columnCount:15}},basePersonal={sheets:[{properties:pr}]},gridPersonal={sheets:[{properties:pr,data:[{rowData:[{values:RAW_PROJECTION_HEADERS.PERSONAL_USE.map(h=>({userEnteredValue:{stringValue:h}}))}]}]}]};let calls=0,urls=[];auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));return new Response(JSON.stringify(++calls===1?basePersonal:gridPersonal));};
+  const prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_PERSONAL_USE_RAW:'Personal',PERSONAL_IDENTITY_READER_ENABLED:'true',PERSONAL_STABLE_PROJECTION_ENABLED:'true'};await assert.rejects(readPersonal({...prod,PERSONAL_IDENTITY_READER_ENABLED:undefined},7),/DISABLED/);assert.equal(calls,0);const snapshot=await readPersonal(prod,7);assert.equal(snapshot.rows[0][0].entered,'Personal_Use_ID');assert.deepEqual(snapshot.rowHasMetadata,[false,false,false,false]);assert.match(urls[1].searchParams.get('fields'),/rowMetadata/);assert.equal(urls[0].searchParams.get('ranges'),"'Personal'!A1");assert.equal(urls[1].searchParams.get('ranges'),"'Personal'!A1:O4");
+});
+test('personal snapshot preserves sparse row metadata markers and rejects malformed shape',async()=>{
+  const pr={sheetId:7,title:'Personal',gridProperties:{rowCount:3,columnCount:15}},basePersonal={sheets:[{properties:pr}]},gridPersonal={sheets:[{properties:pr,data:[{rowData:[{values:RAW_PROJECTION_HEADERS.PERSONAL_USE.map(h=>({userEnteredValue:{stringValue:h}}))}],rowMetadata:[{}, {developerMetadata:[{metadataId:44}]}]}]}]},prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_PERSONAL_USE_RAW:'Personal',PERSONAL_IDENTITY_READER_ENABLED:'true',PERSONAL_STABLE_PROJECTION_ENABLED:'true'};
+  responses([basePersonal,gridPersonal]);assert.deepEqual((await readPersonal(prod,7)).rowHasMetadata,[false,true,false]);gridPersonal.sheets[0].data[0].rowMetadata[1]={developerMetadata:'invalid'};responses([basePersonal,gridPersonal]);await assert.rejects(readPersonal(prod,7),/READ_INVALID/);
 });

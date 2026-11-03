@@ -8,6 +8,8 @@ import {RAW_PROJECTION_HEADERS} from './raw-projection';
 import {buildExpenseRawProductionAppendRequests,type LedgerUatAppendSnapshot} from './ledger-uat-append-planner';
 import type {RawSourceProof} from './raw-source-proof';
 import {FullRawAppendIntent} from './full-raw-append-intent';
+import {PersonalRawEnrollment} from './personal-raw-enrollment';
+import type {planPersonalRawEnrollment} from './personal-raw-enrollment-plan';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -124,8 +126,29 @@ export async function getPersonalIdentityProductionMetadata(env:Env,metadataId:n
 }
 export async function getPersonalIdentityProductionGrid(env:Env):Promise<unknown>{
   assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:O10000`;
-  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
+  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getPersonalProductionGridProperties(env:Env):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getPersonalProductionCompleteGrid(env:Env,rows:number,columns:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(rows)||rows<1||rows>=10000||!Number.isSafeInteger(columns)||columns<15||columns>64||(rows+1)*columns>50000)throw Error('PERSONAL_IDENTITY_READER_INVALID');
+  let n=columns,col='';while(n>0){n--;col=String.fromCharCode(65+n%26)+col;n=Math.floor(n/26);}
+  const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:${col}${rows}`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+/** Internal one-shot metadata mutation; no runtime route calls this. */
+export async function sendPersonalEnrollmentMutation(env:Env,source:RawSourceProof,metadataId:number,token:string,sheetId:number,plan:ReturnType<typeof planPersonalRawEnrollment>,intent:PersonalRawEnrollment):Promise<void>{
+  if(env.PERSONAL_ENROLLMENT_ENABLED!=='true')throw Error('PERSONAL_ENROLLMENT_DISABLED');const expected=JSON.stringify(plan);let response:Response;
+  try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[plan]})},true,async()=>{if(!await PersonalRawEnrollment.authorizeTransport(intent,env,source,metadataId,token,sheetId,expected))throw Error('PERSONAL_ENROLLMENT_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('PERSONAL_ENROLLMENT_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('PERSONAL_ENROLLMENT_PREFLIGHT_UNAVAILABLE');}
+  try{const data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets personal enrollment response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}}}>};
+    const m=data?.replies?.[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,wanted=plan.createDeveloperMetadata.developerMetadata.location.dimensionRange;
+    if(!Array.isArray(data?.replies)||data.replies.length!==1||m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==sheetId||r.dimension!=='ROWS'||r.startIndex!==wanted.startIndex||r.endIndex!==wanted.endIndex)throw Error('invalid');
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('PERSONAL_ENROLLMENT_RESPONSE_UNKNOWN'));}
 }
 /** Bounded, typed properties/grid reads used for planning RAW append. */
 export async function getRawProductionGridProperties(env:Env):Promise<unknown>{

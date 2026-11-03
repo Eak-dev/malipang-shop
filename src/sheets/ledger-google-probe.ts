@@ -61,11 +61,12 @@ export function parseLedgerGoogleSnapshot(data:unknown,sheetName:string,identity
 }
 function objectHeaderCells(row:unknown):unknown[]{const r=obj(row);return r.values===undefined?[]:array(r.values);}
 
-function createLedgerGoogleProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,reader:{metadata:()=>Promise<unknown>;grid:()=>Promise<unknown>}):LedgerProjectionProbe{
+function createLedgerGoogleProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,reader:{metadata:()=>Promise<unknown>;grid:()=>Promise<unknown>},validateSnapshot?:(snapshot:unknown,witness:LedgerMetadataWitness)=>void):LedgerProjectionProbe{
   if(!sheetName||identity.kind==='PURCHASE_DETAILS'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('LEDGER_UAT_PROBE_INVALID');
   return {async read(){
     const before=witnessOf(await reader.metadata()),snapshot=await reader.grid(),after=witnessOf(await reader.metadata());
     if(JSON.stringify(before)!==JSON.stringify(after))throw Error('LEDGER_UAT_METADATA_MOVED');
+    if(validateSnapshot)validateSnapshot(snapshot,after);
     return parseLedgerGoogleSnapshot(snapshot,sheetName,identity,after);
   }};
 }
@@ -83,5 +84,10 @@ export function createExpenseRawProductionProbe(env:Env,sheetName:string,identit
 /** Point-in-time candidate reader only, never permission to write. */
 export function createPersonalRawProductionProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
   if(identity.kind!=='PERSONAL_USE'||!sheetName||sheetName!==env.SHEET_PERSONAL_USE_RAW)throw Error('PERSONAL_PRODUCTION_PROBE_INVALID');
-  return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getPersonalIdentityProductionMetadata(env,metadataId),grid:()=>getPersonalIdentityProductionGrid(env)});
+  return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getPersonalIdentityProductionMetadata(env,metadataId),grid:()=>getPersonalIdentityProductionGrid(env)},(snapshot,witness)=>{
+    const sheets=array(obj(snapshot).sheets).map(obj).filter(s=>obj(s.properties).title===sheetName);if(sheets.length!==1)throw Error('PERSONAL_METADATA_ROW_INVALID');
+    const blocks=array(sheets[0]!.data);if(blocks.length!==1)throw Error('PERSONAL_METADATA_ROW_INVALID');const block=obj(blocks[0]),rows=array(block.rowMetadata);
+    if(witness.startIndex>=rows.length)throw Error('PERSONAL_METADATA_ROW_INVALID');const matches=array(obj(rows[witness.startIndex]).developerMetadata);
+    if(matches.length!==1||JSON.stringify(witnessOf(matches[0]))!==JSON.stringify(witness))throw Error('PERSONAL_METADATA_ROW_INVALID');
+  });
 }

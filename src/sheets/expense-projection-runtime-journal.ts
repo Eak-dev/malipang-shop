@@ -4,6 +4,8 @@ export type ExpenseProjection='RAW'|'DAILY'|'DETAIL';
 export interface ExpenseProjectionContext{revision:number;generation:string;watermark:number}
 export interface ExpenseGenerationLease{generation:string;revision:number;token:string}
 const projections=new Set<ExpenseProjection>(['RAW','DAILY','DETAIL']);
+// Detect missing retention guards; names alone do not authenticate their SQL.
+export const badgeRetentionIntegrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('daily_notice_receipt_no_replace','daily_notice_receipt_no_update','daily_notice_receipt_no_delete','daily_notice_intent_no_replace','daily_notice_intent_transition','daily_notice_intent_no_delete','daily_badge_no_replace','daily_badge_transition','daily_badge_no_delete','daily_coordination_no_replace','daily_coordination_review_terminal','daily_coordination_window_immutable','daily_coordination_no_delete'))=13";
 // Presence catches accidental incomplete installation; it is not proof that
 // a privileged database editor has not replaced a trigger's SQL.
 const triggerIntegrity=`(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('expense_projection_event_before_update','expense_projection_event_before_insert','expense_projection_event_insert','expense_projection_event_update','expense_projection_event_delete','expense_projection_document_before_update','expense_projection_document_before_insert','expense_projection_document_insert','expense_projection_document_update','expense_projection_document_delete','expense_projection_link_before_update','expense_projection_link_before_insert','expense_projection_link_insert','expense_projection_link_update','expense_projection_link_delete','expense_projection_item_before_update','expense_projection_item_before_insert','expense_projection_item_insert','expense_projection_item_update','expense_projection_item_delete'))=20`;
@@ -31,6 +33,9 @@ const expectedPartialIndexes:Record<string,string>={
 const partialIndexIntegrity=Object.entries(expectedPartialIndexes).map(([name,sql])=>`EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='${name}' AND sql='${sql.replace(/'/g,"''")}')`).join(' AND ');
 const expectedForeignKeys:Record<string,Array<[string,string]>>={expense_document_links:[['expense_documents','document_id'],['expense_events','expense_id']],expense_document_items:[['expense_documents','document_id'],['expense_events','expense_id']]};
 const foreignKeyIntegrity=`(SELECT foreign_keys FROM pragma_foreign_keys)=1 AND `+Object.entries(expectedForeignKeys).map(([table,keys])=>`(SELECT count(*) FROM pragma_foreign_key_list('${table}'))=${keys.length} AND `+keys.map(([target,column])=>`EXISTS(SELECT 1 FROM pragma_foreign_key_list('${table}') WHERE "table"='${target}' AND "from"='${column}' AND upper(on_delete)='NO ACTION' AND upper(on_update)='NO ACTION')`).join(' AND ')).join(' AND ');
+
+// Same D1 schema checks used when interpreting source revision as evidence.
+export const expenseSourceEvidenceIntegrity=`${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}`;
 
 /** Production candidate, intentionally not wired to the queue yet. A D1
  * revision is not a Sheets lock: an operator must still exclude and drain old
@@ -84,10 +89,34 @@ export class ExpenseProjectionRuntimeJournal{
   }
   /** Reusable SQL predicate for an inner identity-intent UPDATE in the same
    * D1 statement. Copying only a prior JS boolean creates a race. */
-  dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
+  private projectionFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
     this.check(projection);if(!token||!this.valid(c))throw new Error('EXPENSE_PROJECTION_FENCE_INVALID');
     return {sql:`EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.source_version=? AND p.source_revision=? AND p.projection=? AND p.state='IN_FLIGHT' AND p.operation_token=? AND p.cutover_generation=? AND p.admission_watermark=? AND ${this.guard()}
       AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=p.spreadsheet_id AND q.expense_id=p.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>p.source_version OR q.source_revision<>p.source_revision OR q.projection<>p.projection)))`,args:[this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c)]};
+  }
+  dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
+    const fence=this.projectionFence(projection,token,c);
+    // The owner chose a cooperative pause, not a hard human lock. Until
+    // the in-Sheets signal and independently verified system-writer drain
+    // exist, DAILY writes remain impossible even when other leases match.
+    return projection==='DAILY'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
+  }
+  /** Verifies the exact NOTICE binding; never grants permission to write DAILY. */
+  noticeReceiptFence(token:string,c:ExpenseProjectionContext,windowToken:string):{sql:string;args:unknown[]}{
+    if(this.env.DAILY_BADGE_WRITER_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!this.generationLease)throw Error('DAILY_BADGE_DISABLED');
+    const f=this.projectionFence('DAILY',token,c);
+    return {sql:`(${f.sql} AND ${badgeRetentionIntegrity} AND EXISTS(SELECT 1 FROM daily_edit_coordination w WHERE w.spreadsheet_id=? AND w.sheet_name=? AND w.state='NOTICE' AND w.window_token=? AND w.cutover_generation=? AND w.badge_expense_id=? AND w.badge_source_version=? AND w.badge_source_revision=? AND w.badge_watermark=? AND w.badge_outer_token=? AND w.badge_sync_lease=? AND w.badge_generation_lease=? AND w.badge_notice_seconds BETWEEN 15 AND 60 AND julianday(w.deadline)>julianday('now') AND julianday(w.updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds')))`,args:[...f.args,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,windowToken,c.generation,this.job.entityKey,this.job.entityVersion,c.revision,c.watermark,token,this.lease,this.generationLease.token]};
+  }
+  /** Only publishes a D1 NOTICE; this cannot authorize a provider write. */
+  async requestDailyNotice(token:string,c:ExpenseProjectionContext,windowToken:string,seconds:number):Promise<boolean>{
+    if(this.env.DAILY_EDIT_COORDINATION_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!Number.isInteger(seconds)||seconds<15||seconds>60)throw Error('DAILY_EDIT_COORDINATION_DISABLED');
+    const fence=this.projectionFence('DAILY',token,c);
+    const badgeEnabled=this.env.DAILY_BADGE_WRITER_ENABLED==='true';
+    const badgeFence=badgeEnabled?`AND ${badgeRetentionIntegrity} AND EXISTS(SELECT 1 FROM daily_sheet_badge_journal b WHERE b.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND b.state='READY') AND NOT EXISTS(SELECT 1 FROM daily_notice_dispatch_intents i WHERE i.spreadsheet_id=daily_edit_coordination.spreadsheet_id AND i.sheet_name=daily_edit_coordination.sheet_name AND i.state IN ('IN_FLIGHT','REVIEW'))`:'';
+    const binding=badgeEnabled?',badge_expense_id=?,badge_source_version=?,badge_source_revision=?,badge_watermark=?,badge_outer_token=?,badge_sync_lease=?,badge_generation_lease=?,badge_notice_seconds=?':'';
+    const bindingArgs=badgeEnabled?[this.job.entityKey,this.job.entityVersion,c.revision,c.watermark,token,this.lease,this.generationLease!.token,seconds]:[];
+    const result=await this.env.DB.prepare(`UPDATE daily_edit_coordination SET state='NOTICE',window_token=?,cutover_generation=?,notice_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+'||?||' seconds'),deadline=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')${binding} WHERE spreadsheet_id=? AND sheet_name=? AND state='AVAILABLE' AND julianday(updated_at) BETWEEN julianday('now','-120 seconds') AND julianday('now','+5 seconds') ${badgeFence} AND ${fence.sql}`).bind(windowToken,c.generation,seconds,...bindingArgs,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,...fence.args).run();
+    return Number(result.meta.changes||0)===1;
   }
   async canDispatch(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):Promise<boolean>{
     this.check(projection);if(!token||!this.valid(c))return false;const fence=this.dispatchFence(projection,token,c);
@@ -96,7 +125,7 @@ export class ExpenseProjectionRuntimeJournal{
   /** The caller must perform independent provider identity and full postimage
    * verification first. A digest passed here is not proof by itself. */
   async verify(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext,evidenceDigest:string):Promise<boolean>{
-    this.check(projection);if(!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
+    this.check(projection);if(projection==='DAILY'||!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
     const result=await this.env.DB.prepare(`UPDATE expense_projection_runtime_intents SET state='VERIFIED',evidence_digest=?,updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND source_version=? AND source_revision=? AND projection=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=? AND ${this.guard()}
       AND (?<>'RAW' OR EXISTS(SELECT 1 FROM full_raw_identity_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.projected_version=? AND i.projected_revision=? AND i.source_version=? AND i.source_revision=? AND i.verified_outer_token=? AND i.verified_generation=? AND i.verified_evidence_digest=?
         AND CASE WHEN json_valid(i.baseline_json) THEN json_type(i.baseline_json)='object' AND (SELECT count(*) FROM json_each(i.baseline_json))=16 AND (SELECT count(DISTINCT key) FROM json_each(i.baseline_json))=16 AND NOT EXISTS(SELECT 1 FROM json_each(i.baseline_json) b WHERE CAST(b.key AS INTEGER)<1 OR CAST(b.key AS INTEGER)>16 OR CAST(CAST(b.key AS INTEGER) AS TEXT)<>b.key OR b.type<>'text' OR length(b.value)<>64 OR b.value GLOB '*[^0-9a-f]*') ELSE 0 END))

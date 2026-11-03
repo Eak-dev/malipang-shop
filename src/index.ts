@@ -9,6 +9,7 @@ import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staf
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
 import { runExpenseGenerationScheduler,runExpenseGenerationConsumer } from "./sheets/expense-projection-generation-queue";
+import { dailyEditStatusPage,readDailyEditStatus } from "./sheets/daily-edit-coordination";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -20,6 +21,8 @@ function queueMessageAttempt(message:Message<QueueJob>):number{
 export default{
   async fetch(request:Request,env:Env,ctx:ExecutionContext):Promise<Response>{
     const url=new URL(request.url),missing=missingRuntimeConfig(env);
+    if(request.method==='GET'&&env.DAILY_EDIT_COORDINATION_ENABLED==='true'&&url.pathname==='/daily-sync-status')return dailyEditStatusPage();
+    if(request.method==='GET'&&env.DAILY_EDIT_COORDINATION_ENABLED==='true'&&url.pathname==='/daily-sync-status/data'){const state=await readDailyEditStatus(env);return Response.json({state},{status:state==='UNKNOWN'?503:200,headers:{'cache-control':'no-store, max-age=0','x-content-type-options':'nosniff'}});}
     if(request.method==="GET"&&url.pathname==="/health")return Response.json({ok:missing.length===0,service:"malipang-backend-v5.2-solo",version:"5.2.0-rc.2",mode:env.RUNTIME_MODE,configured:missing.length===0,check:"configuration_only",readiness:"/admin/readiness",missing,now:new Date().toISOString()},{status:missing.length?503:200});
     if(missing.length)return Response.json({ok:false,error:"SERVICE_NOT_CONFIGURED",missing},{status:503});
     if(request.method==="POST"&&url.pathname==="/webhook/line")return handleLineWebhook(request,env,ctx);

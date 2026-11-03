@@ -1,0 +1,12 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {readRawSourceProof} from '../dist/sheets/raw-source-proof.js';
+import {RAW_PROJECTION_HEADERS} from '../dist/sheets/raw-projection.js';
+import {preflightDailyLegacyAutoEnrollment} from '../dist/sheets/daily-legacy-auto-preflight.js';
+const cell=v=>({entered:v??null,formula:null,note:null,hasValidation:false});
+async function setup(){const h=expenseSqlite();Object.assign(h.env,{RUNTIME_MODE:'production',DAILY_LEGACY_ENROLLMENT_PREFLIGHT_ENABLED:'true'});h.sqlite.exec("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_fixture','msg','fixture','Cookie',10000,'transfer','SHOP_BANK','ingredients','2026-10-26','CONFIRMED','now',1)");const source=await readRawSourceProof(h.env,'EXPENSE','exp_fixture',1),raw={sheetId:7,rowCount:2,columnCount:17,rows:[RAW_PROJECTION_HEADERS.EXPENSE.map(cell),source.values.map(v=>cell(v===''?null:v))],hasProtectedRanges:false,hasMerges:false},values=Array(25).fill(null);values[1]=10;values[2]=26;values[3]='Cookie';values[7]=100;values[21]='ingredients';values[22]='บัญชีร้าน';return{...h,source,raw,observed:[{observedRow:8,blockMonth:10,values}],headers:[[],[],[]]};}
+const run=h=>preflightDailyLegacyAutoEnrollment(h.env,[h.source],h.raw,h.observed,h.headers,2026);
+test('exact unique D1, RAW and daily values only reach preflight eligible',async()=>{const h=await setup();try{assert.deepEqual(await run(h),[{expenseId:'exp_fixture',status:'PREFLIGHT_ELIGIBLE',observedRow:8}]);}finally{h.close();}});
+test('duplicate or altered RAW, duplicate daily and source changes hold',async()=>{for(const mode of ['raw_duplicate','raw_changed','daily_duplicate','source_changed']){const h=await setup();try{if(mode==='raw_duplicate'){h.raw.rows.push(h.raw.rows[1]);h.raw.rowCount++;}if(mode==='raw_changed')h.raw.rows[1][3]=cell(1);if(mode==='daily_duplicate')h.observed.push({...h.observed[0],observedRow:9});if(mode==='source_changed')h.sqlite.exec("UPDATE expense_events SET description='changed' WHERE expense_id='exp_fixture'");assert.notEqual((await run(h))[0].status,'PREFLIGHT_ELIGIBLE',mode);}finally{h.close();}}});
+test('preflight flag off performs no matching',async()=>{const h=await setup();try{h.env.DAILY_LEGACY_ENROLLMENT_PREFLIGHT_ENABLED='false';await assert.rejects(run(h),/DISABLED/);}finally{h.close();}});

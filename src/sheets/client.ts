@@ -9,6 +9,8 @@ import type {RawSourceProof} from './raw-source-proof';
 import {FullRawAppendIntent} from './full-raw-append-intent';
 import {PersonalRawEnrollment} from './personal-raw-enrollment';
 import {PersonalHistoricalEnrollment} from './personal-historical-enrollment';
+import {HistoricalMarkerRemediation,type HistoricalMarkerKind,type HistoricalMarkerPayload} from '../admin/personal-historical-marker-remediation';
+import type {HistoricalMarkerObservation} from './personal-historical-marker-classifier';
 import {legacyPersonalWriterOpen} from './personal-legacy-writer-gate';
 import type {planPersonalRawEnrollment} from './personal-raw-enrollment-plan';
 export class SheetsHttpError extends Error{
@@ -171,6 +173,23 @@ export async function sendHistoricalPersonalEnrollmentMutation(env:Env,metadataI
     const m=data?.replies?.[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,wanted=plan.createDeveloperMetadata.developerMetadata.location.dimensionRange;
     if(!Array.isArray(data?.replies)||data.replies.length!==1||m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==sheetId||r.dimension!=='ROWS'||r.startIndex!==wanted.startIndex||r.endIndex!==wanted.endIndex)throw Error('invalid');
   }catch{throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_ENROLLMENT_RESPONSE_UNKNOWN'));}
+}
+/** Internal one-shot transport; only a private branded action can claim it. */
+export async function sendHistoricalMarkerMutation(env:Env,kind:HistoricalMarkerKind,metadataId:number,payload:HistoricalMarkerPayload,marker:HistoricalMarkerObservation,intent:HistoricalMarkerRemediation):Promise<void>{
+  if(kind!=='ATTACH_ABSENT'||env.PERSONAL_HISTORICAL_MARKER_REMEDIATION_ENABLED!=='true'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('HISTORICAL_MARKER_DISABLED');const expected=JSON.stringify(payload);let response:Response;
+  try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[payload]})},true,async()=>{if(!await HistoricalMarkerRemediation.authorizeTransport(intent,env,expected))throw Error('HISTORICAL_MARKER_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_MARKER_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('HISTORICAL_MARKER_PREFLIGHT_UNAVAILABLE');}
+  try{
+    const body=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets marker response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}};deleteDeveloperMetadata?:{deletedDeveloperMetadata?:Array<{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}>}}>};
+    if(!Array.isArray(body?.replies)||body.replies.length!==1)throw Error('invalid');
+    if(kind==='ATTACH_ABSENT'){
+      if(!('createDeveloperMetadata' in payload)||marker.kind!=='ABSENT')throw Error('invalid');const m=body.replies[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,w=payload.createDeveloperMetadata.developerMetadata.location.dimensionRange;
+      if(m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==w.sheetId||r.dimension!==w.dimension||r.startIndex!==w.startIndex||r.endIndex!==w.endIndex)throw Error('invalid');
+    }else{
+      if(!('deleteDeveloperMetadata' in payload)||marker.kind!=='PRESENT')throw Error('invalid');const deleted=body.replies[0]?.deleteDeveloperMetadata?.deletedDeveloperMetadata;if(!Array.isArray(deleted)||deleted.length!==1)throw Error('invalid');const m=deleted[0],r=m?.location?.dimensionRange;
+      if(m?.metadataId!==metadataId||m.metadataKey!==marker.metadataKey||m.visibility!==marker.visibility||r?.sheetId!==marker.sheetId||r.dimension!==marker.dimension||r.startIndex!==marker.startIndex||r.endIndex!==marker.endIndex)throw Error('invalid');
+    }
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_MARKER_RESPONSE_UNKNOWN'));}
 }
 /** Bounded, typed properties/grid reads used for planning RAW append. */
 export async function getRawProductionGridProperties(env:Env):Promise<unknown>{

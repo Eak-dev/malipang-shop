@@ -22,11 +22,30 @@ import { onlineOrderReviewSummary } from "../expense/online-order-review-reposit
 import { operationsSummary } from "../operations/summary";
 import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
 import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
+import {inspectHistoricalMarkerAdmin,approveHistoricalMarkerRemediation,executeHistoricalMarkerRemediation,historicalMarkerRemediationStatus,quarantineHistoricalMarkerRemediation,cancelHistoricalMarkerRemediation} from './personal-historical-marker-remediation';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/inspect'){
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectHistoricalMarkerAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/approve'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof approveHistoricalMarkerRemediation>[1];const result=await approveHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/execute'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof executeHistoricalMarkerRemediation>[1];const result=await executeHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/status'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown};return Response.json({ok:true,...await historicalMarkerRemediationStatus(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/quarantine'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown};const result=await quarantineHistoricalMarkerRemediation(env,body.actionId);return Response.json({ok:result.state==='REVIEW',...result},{status:result.state==='REVIEW'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/cancel'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof cancelHistoricalMarkerRemediation>[1];const result=await cancelHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
     if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/status'){
       const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await personalHistoricalEnrollmentStatus(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
     }

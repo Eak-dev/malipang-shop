@@ -20,8 +20,8 @@ function observationOf(data:unknown,id:number):HistoricalMarkerObservation{
 /** Internal read-only planning. The ephemeral plan includes a physical row;
  * never return or persist it. This does not prove a prior request has stopped
  * and does not itself authorize remediation. */
-export async function prepareHistoricalMarkerInspection(env:Env,entityId:string):Promise<{state:'REVIEW';observation:HistoricalMarkerClassification;evidenceDigest:string|null;plan:ReturnType<typeof planPersonalRawEnrollment>|null;metadataId:number|null}>{
-  const unavailable={state:'REVIEW' as const,observation:'EVIDENCE_UNAVAILABLE' as const,evidenceDigest:null,plan:null,metadataId:null};
+export async function prepareHistoricalMarkerInspection(env:Env,entityId:string):Promise<{state:'REVIEW';observation:HistoricalMarkerClassification;evidenceDigest:string|null;plan:ReturnType<typeof planPersonalRawEnrollment>|null;metadataId:number|null;marker:HistoricalMarkerObservation|null}>{
+  const unavailable={state:'REVIEW' as const,observation:'EVIDENCE_UNAVAILABLE' as const,evidenceDigest:null,plan:null,metadataId:null,marker:null};
   if(!sheetScopesDistinct(env)||env.RUNTIME_MODE!=='production'||env.PERSONAL_HISTORICAL_IDENTITY_ENABLED!=='true'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(entityId))return unavailable;
   try{
     const before=await readHistoricalRecoveryContext(env,entityId);if(!before||!Number.isSafeInteger(before.metadataId)||before.metadataId<1||!Number.isSafeInteger(before.sheetId)||before.sheetId<0||!/^\d{4}-10$/.test(before.month))return unavailable;
@@ -34,7 +34,7 @@ export async function prepareHistoricalMarkerInspection(env:Env,entityId:string)
     const after=await readHistoricalRecoveryContext(env,entityId);if(!sheetScopesDistinct(env)||!after||JSON.stringify(after)!==JSON.stringify(before)||!await rawSourceStillMatches(env,source))return unavailable;
     const wrongRow=last.kind==='PRESENT'?grid.rows[last.startIndex]:null;
     const data=new TextEncoder().encode(JSON.stringify(['historical-marker-inspection-v1',scope,entityId,before,last,result,wrongRow]));const evidenceDigest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',data)),n=>n.toString(16).padStart(2,'0')).join('');
-    return{state:'REVIEW',observation:result,evidenceDigest,plan,metadataId:before.metadataId};
+    return{state:'REVIEW',observation:result,evidenceDigest,plan,metadataId:before.metadataId,marker:last};
   }catch{return unavailable;}
 }
 export async function inspectHistoricalMarker(env:Env,entityId:string):Promise<{state:'REVIEW';observation:HistoricalMarkerClassification;evidenceDigest:string|null}>{const {state,observation,evidenceDigest}=await prepareHistoricalMarkerInspection(env,entityId);return{state,observation,evidenceDigest};}

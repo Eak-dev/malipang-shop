@@ -1,5 +1,5 @@
 import type {Env} from '../types';
-import {getLedgerUatSnapshotPart,getRawIdentityProductionMetadata,getRawIdentityProductionGrid} from './client';
+import {getLedgerUatSnapshotPart,getRawIdentityProductionMetadata,getRawIdentityProductionGrid,getPersonalIdentityProductionMetadata,getPersonalIdentityProductionGrid} from './client';
 import {verifyLedgerMetadataWitness,type LedgerCellState,type LedgerMetadataWitness,type LedgerWriteIdentity} from './ledger-metadata-writer';
 import type {LedgerProjectionProbe} from './ledger-stable-projector';
 import {RAW_PROJECTION_HEADERS} from './raw-projection';
@@ -79,4 +79,9 @@ export function createLedgerGoogleUatProbe(env:Env,sheetName:string,identity:Led
 export function createExpenseRawProductionProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
   if(identity.kind!=='EXPENSE'||!sheetName||sheetName!==env.SHEET_EXPENSE_RAW)throw Error('RAW_PRODUCTION_PROBE_INVALID');
   return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getRawIdentityProductionMetadata(env,metadataId),grid:()=>getRawIdentityProductionGrid(env)});
+}
+/** Point-in-time candidate reader only, never permission to write. */
+export function createPersonalRawProductionProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number):LedgerProjectionProbe{
+  if(identity.kind!=='PERSONAL_USE'||!sheetName||sheetName!==env.SHEET_PERSONAL_USE_RAW)throw Error('PERSONAL_PRODUCTION_PROBE_INVALID');
+  return createLedgerGoogleProbe(env,sheetName,identity,metadataId,{metadata:()=>getPersonalIdentityProductionMetadata(env,metadataId),grid:()=>getPersonalIdentityProductionGrid(env)});
 }

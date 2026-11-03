@@ -114,6 +114,19 @@ export async function getRawIdentityProductionGrid(env:Env):Promise<unknown>{
   const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
 }
+/** Default-off read-only personal-use probe; no free-form provider paths. */
+function assertPersonalIdentityProductionReader(env:Env):void{
+  if(env.RUNTIME_MODE!=='production'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW)throw Error('PERSONAL_IDENTITY_READER_DISABLED');
+}
+export async function getPersonalIdentityProductionMetadata(env:Env,metadataId:number):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);if(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('PERSONAL_IDENTITY_READER_INVALID');
+  try{return await identityInspectionGet(env,`/developerMetadata/${metadataId}?fields=metadataId,metadataKey,visibility,location`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
+export async function getPersonalIdentityProductionGrid(env:Env):Promise<unknown>{
+  assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1:O10000`;
+  const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
+}
 /** Bounded, typed properties/grid reads used for planning RAW append. */
 export async function getRawProductionGridProperties(env:Env):Promise<unknown>{
   assertRawIdentityProductionReader(env);const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1`;

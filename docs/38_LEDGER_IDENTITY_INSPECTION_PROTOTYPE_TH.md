@@ -14,6 +14,8 @@
 
 RAW identity reader/writer และ append planner ต้องเห็นหัวตารางครบตามลำดับทุกคอลัมน์ (expense 17 ช่อง, personal-use 15 ช่อง) ส่วน detail metadata witness ตรวจครบ 20 ช่อง หากมีการสลับหรือเปลี่ยนชื่อคอลัมน์ต้องหยุดตรวจ การอ่านหัวตารางในไฟล์จริงเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การล็อกการแก้ไขคอลัมน์; detail ยังไม่มี trusted reader หรือ production route
 
+มี candidate reader แบบปิดโดยค่าเริ่มต้นสำหรับ personal RAW ด้วย โดยจำกัด metadata ID และช่วงข้อมูลตามชื่อแท็บจาก configuration ตรวจ metadata ก่อนและหลังอ่านตาราง และตรวจหัวตาราง/identity เต็ม; ยังไม่ได้เชื่อม writer หรือ production route และผลอ่านเป็นหลักฐานเฉพาะขณะนั้น ไม่กันการเปลี่ยนข้อมูลภายหลัง
+
 `auditLegacyExpenseRawEnrollment` ใช้ตรวจว่าภาพข้อมูลที่ส่งเข้ามามี ID เดียวและค่า RAW ทั้งแถวตรง source หรือไม่ โดยไม่คืนเลขแถว ทุกผลเป็น REVIEW; `SINGLE_MATCH` บอกเพียงว่าตรงกับ snapshot ที่ caller ส่งมา ไม่ยืนยันว่าอ่านจาก Google จริงหรืออนุญาตผูก metadata. การลงทะเบียนแถวเก่าจริงยังไม่มีเส้นทางและต้องมีหลักฐาน identity, trusted read, durable intent และการกันการแก้พร้อมกัน
 
 มี migration candidate 0035 สำหรับ source revision/admission ของ PERSONAL_USE ใน D1 เดิม และปรับ INSERT ของ service เพื่อไม่เพิ่ม revision เมื่อ webhook เดิมส่งซ้ำ; migration 0037 เพิ่ม outer intent แบบปิดโดยค่าเริ่มต้น ตรวจ revision, admission, schema, lease, cutover และ gate โดยไม่จำเลขแถว และรองรับเฉพาะรายการ CONFIRMED; ยังไม่มี route หรือวิธีจัดการรายการ CANCELLED. ทั้งสอง migration ยังไม่ apply. Trigger ทำงานใน transaction ของรายการส่วนตัวและอาจทำให้ธุรกรรมล้มเพื่อรักษาหลักฐาน revision จึงต้องตรวจภาระและผลกระทบจริง, schema/index/foreign-key integrity รวมถึง drain source writer ระหว่างติดตั้งก่อนพิจารณา production. REPLACE/rowid บางกรณีอาจเพิ่ม revision อย่างอนุรักษ์นิยมแม้ข้อมูลธุรกิจไม่เปลี่ยน

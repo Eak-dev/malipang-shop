@@ -25,7 +25,7 @@ test('historical unknown outcome is quarantined and cannot become verified or re
   const h=expenseSqlite();try{
     h.sqlite.exec("INSERT INTO personal_raw_enrollment_locks VALUES('book','personal','personal_a',17,'HELD','operation_token','outer_token','generation_a','now')");
     insertIntent(h.sqlite);
-    h.sqlite.exec("UPDATE personal_historical_enrollment_intents SET state='REVIEW'; UPDATE personal_raw_enrollment_locks SET state='REVIEW'");
+    h.sqlite.exec("UPDATE personal_historical_enrollment_intents SET state='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'); UPDATE personal_raw_enrollment_locks SET state='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')");
     assert.throws(()=>h.sqlite.exec("UPDATE personal_historical_enrollment_intents SET state='VERIFIED'"),/HISTORICAL_RECOVERY_REQUIRED/);
     assert.throws(()=>h.sqlite.exec("DELETE FROM personal_raw_enrollment_locks"),/PERSONAL_ENROLLMENT_REVIEW_REQUIRED/);
     assert.throws(()=>h.sqlite.exec("INSERT INTO personal_raw_enrollment_locks VALUES('book','personal','personal_b',18,'HELD','other','other','generation_a','now')"),/PERSONAL_ENROLLMENT_REVIEW_REQUIRED|UNIQUE/);

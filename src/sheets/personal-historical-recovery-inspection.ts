@@ -7,6 +7,7 @@ import {personalRecoverySourceIntegrity} from './personal-projection-runtime-jou
 import {personalEnrollmentLockIntegrity} from './personal-raw-enrollment';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 import {isIsoDate} from '../shared/time';
+import {sheetScopesDistinct} from './sheet-scope-isolation';
 
 type Snapshot={metadataId:number;sheetId:number;version:number;revision:number;fingerprint:string;generation:string;watermark:number;admission:number;month:string;token:string;outerToken:string;baseline:string;intentState:string;lockState:string};
 export type HistoricalRecoveryInspection={state:'REVIEW';observation:'READBACK_MATCHED'|'READBACK_MISMATCH'|'EVIDENCE_UNAVAILABLE';evidenceDigest:string|null};
@@ -16,7 +17,7 @@ async function digest(value:unknown):Promise<string>{return Array.from(new Uint8
  * exposes provider values or makes a claim about editor exclusivity. */
 export async function inspectPersonalHistoricalRecovery(env:Env,entityId:string):Promise<HistoricalRecoveryInspection>{
   const unavailable:HistoricalRecoveryInspection={state:'REVIEW',observation:'EVIDENCE_UNAVAILABLE',evidenceDigest:null};
-  if(env.RUNTIME_MODE!=='production'||env.PERSONAL_HISTORICAL_IDENTITY_ENABLED!=='true'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(entityId))return unavailable;
+  if(!sheetScopesDistinct(env)||env.RUNTIME_MODE!=='production'||env.PERSONAL_HISTORICAL_IDENTITY_ENABLED!=='true'||env.PERSONAL_IDENTITY_READER_ENABLED!=='true'||env.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PERSONAL_USE_RAW||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(entityId))return unavailable;
   const snapshot=()=>env.DB.prepare(`SELECT i.metadata_id AS metadataId,i.sheet_id AS sheetId,i.source_version AS version,i.source_revision AS revision,i.source_fingerprint AS fingerprint,i.cutover_generation AS generation,i.admission_watermark AS watermark,i.admission_sequence AS admission,i.month,i.operation_token AS token,i.outer_token AS outerToken,i.baseline_json AS baseline,i.state AS intentState,l.state AS lockState
     FROM personal_historical_enrollment_intents i JOIN personal_raw_enrollment_locks l ON l.spreadsheet_id=i.spreadsheet_id AND l.sheet_name=i.sheet_name AND l.personal_use_id=i.personal_use_id AND l.metadata_id=i.metadata_id AND l.operation_token=i.operation_token AND l.outer_token=i.outer_token AND l.cutover_generation=i.cutover_generation AND l.state='REVIEW'
     JOIN owner_personal_transactions p ON p.personal_use_id=i.personal_use_id AND p.version=i.source_version AND p.status='CONFIRMED' AND substr(p.transaction_date,1,7)=i.month
@@ -38,7 +39,7 @@ export async function inspectPersonalHistoricalRecovery(env:Env,entityId:string)
     const post=await createPersonalRawProductionProbe(env,env.SHEET_PERSONAL_USE_RAW,{kind:'PERSONAL_USE',sheetId:before.sheetId,entityId},before.metadataId).read();
     if(post.witness.metadataId!==before.metadataId||post.guard.observed.some(cell=>!cell||cell.note!==null||cell.hasValidation!==false)||!rawProjectionValuesMatch(source,post.guard.observed))return{state:'REVIEW',observation:'READBACK_MISMATCH',evidenceDigest:null};
     const baseline:LedgerBaseline={};for(let i=1;i<15;i++)baseline[String(i)]=await digestLedgerCell(post.guard.observed[i]!.entered);if(JSON.stringify(baseline)!==before.baseline)return{state:'REVIEW',observation:'READBACK_MISMATCH',evidenceDigest:null};
-    const after=await snapshot();if(!after||JSON.stringify(before)!==JSON.stringify(after)||!await rawSourceStillMatches(env,source))return unavailable;
+    const after=await snapshot();if(!sheetScopesDistinct(env)||!after||JSON.stringify(before)!==JSON.stringify(after)||!await rawSourceStillMatches(env,source))return unavailable;
     return{state:'REVIEW',observation:'READBACK_MATCHED',evidenceDigest:await digest(['personal-historical-recovery-v1',env.GOOGLE_SPREADSHEET_ID,env.SHEET_PERSONAL_USE_RAW,entityId,before])};
   }catch{return unavailable;}
 }

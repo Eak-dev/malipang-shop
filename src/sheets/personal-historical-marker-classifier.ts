@@ -17,8 +17,10 @@ export function classifyHistoricalMarkerReview(source:RawSourceProof,sheetId:num
     // checks all 15 entered fields and rejects formulas/notes/validation and
     // any target-row metadata. The index remains local and is never returned.
     const planned=planPersonalRawEnrollment(source,sheetId,metadataId,snapshot),target=planned.createDeveloperMetadata.developerMetadata.location.dimensionRange.startIndex;
-    if(observation.kind==='ABSENT')return 'MARKER_ABSENT_REVIEW';
-    if(observation.kind!=='PRESENT'||observation.metadataKey!=='P'||observation.visibility!=='DOCUMENT'||observation.sheetId!==sheetId||observation.dimension!=='ROWS'||!Number.isSafeInteger(observation.startIndex)||observation.startIndex<1||observation.startIndex>=snapshot.rowCount||observation.endIndex!==observation.startIndex+1||observation.startIndex===target||!snapshot.rowHasMetadata?.[observation.startIndex])return 'EVIDENCE_UNAVAILABLE';
+    if(!Array.isArray(snapshot.rowMetadataIds)||snapshot.rowMetadataIds.length!==snapshot.rowCount||snapshot.rowMetadataIds.some((ids,index)=>!Array.isArray(ids)||ids.some(id=>!Number.isSafeInteger(id)||id<1||id>2147483647)||snapshot.rowHasMetadata?.[index]!==Boolean(ids.length))||new Set(snapshot.rowMetadataIds.flat()).size!==snapshot.rowMetadataIds.flat().length)return 'EVIDENCE_UNAVAILABLE';
+    const occurrences=snapshot.rowMetadataIds.flat().filter(id=>id===metadataId).length;
+    if(observation.kind==='ABSENT')return occurrences===0?'MARKER_ABSENT_REVIEW':'EVIDENCE_UNAVAILABLE';
+    if(observation.kind!=='PRESENT'||observation.metadataKey!=='P'||observation.visibility!=='DOCUMENT'||observation.sheetId!==sheetId||observation.dimension!=='ROWS'||!Number.isSafeInteger(observation.startIndex)||observation.startIndex<1||observation.startIndex>=snapshot.rowCount||observation.endIndex!==observation.startIndex+1||observation.startIndex===target||occurrences!==1||snapshot.rowMetadataIds[observation.startIndex]?.length!==1||snapshot.rowMetadataIds[observation.startIndex]?.[0]!==metadataId)return 'EVIDENCE_UNAVAILABLE';
     // This does not establish who controls the other row or permit deletion.
     return 'MARKER_WRONG_ROW_REVIEW';
   }catch{return 'EVIDENCE_UNAVAILABLE';}

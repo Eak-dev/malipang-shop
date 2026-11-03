@@ -20,9 +20,9 @@ async function get(env:Env,path:string):Promise<unknown>{
  const token=await getGoogleAccessToken(env),res=await fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Stable notice read');
  if(!res.ok)throw Error('STABLE_NOTICE_READ');return res.json();
 }
-async function structure(env:Env):Promise<[Range,Range]>{
- const query=new URLSearchParams({fields:'spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges)'});
- const x=await get(env,`?${query}`) as {spreadsheetId?:unknown;namedRanges?:Array<{namedRangeId?:unknown;name?:unknown;range?:Record<string,unknown>}>;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown;frozenRowCount?:unknown}};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>}>};
+type Structure={spreadsheetId?:unknown;namedRanges?:Array<{namedRangeId?:unknown;name?:unknown;range?:Record<string,unknown>}>;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown;frozenRowCount?:unknown}};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>;data?:Array<{startRow?:unknown;startColumn?:unknown;rowData?:Array<{values?:Array<Record<string,unknown>>}>}>}>};
+const structureFields='spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges)';
+function parseStructure(env:Env,x:Structure):[Range,Range]{
  if(x.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!Array.isArray(x.sheets)||!Array.isArray(x.namedRanges))throw Error('STABLE_NOTICE_STRUCTURE');
  const sheets=x.sheets.filter(s=>s.properties?.title===env.SHEET_EXPENSE_DAILY);if(sheets.length!==1||x.sheets.some(s=>names.includes(s.properties?.title as typeof names[number])))throw Error('STABLE_NOTICE_STRUCTURE');
  const sheet=sheets[0]!,p=sheet.properties!,g=p.gridProperties;if(!integer(p.sheetId)||!g||!integer(g.rowCount)||!integer(g.columnCount)||!integer(g.frozenRowCount))throw Error('STABLE_NOTICE_STRUCTURE');
@@ -31,12 +31,16 @@ async function structure(env:Env):Promise<[Range,Range]>{
  for(const a of ranges){for(const r of sheet.merges||[])if(r.sheetId!==undefined&&r.sheetId!==p.sheetId||overlaps(a,r))throw Error('STABLE_NOTICE_STRUCTURE');for(const pRange of sheet.protectedRanges||[])if(!pRange.range||pRange.unprotectedRanges!==undefined||pRange.range.sheetId!==undefined&&pRange.range.sheetId!==p.sheetId||overlaps(a,pRange.range))throw Error('STABLE_NOTICE_STRUCTURE');}
  return ranges;
 }
+async function structure(env:Env):Promise<[Range,Range]>{
+ const query=new URLSearchParams({fields:structureFields});
+ return parseStructure(env,await get(env,`?${query}`) as Structure);
+}
 async function snapshot(env:Env):Promise<Snapshot>{
- const ranges=await structure(env),query=new URLSearchParams({fields:'spreadsheetId,sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,note,dataValidation,textFormatRuns,chipRuns))))'});for(const name of names)query.append('ranges',name);
- const x=await get(env,`?${query}`) as {spreadsheetId?:unknown;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown};data?:Array<{startRow?:unknown;startColumn?:unknown;rowData?:Array<{values?:Array<Record<string,unknown>>}>}>}>};
+ const ranges=await structure(env),query=new URLSearchParams({fields:'spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges,data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,note,dataValidation,textFormatRuns,chipRuns))))'});for(const name of names)query.append('ranges',name);
+ const x=await get(env,`?${query}`) as Structure;
  const sheets=(x.sheets||[]).filter(s=>s.properties?.sheetId===ranges[0].sheetId&&s.properties.title===env.SHEET_EXPENSE_DAILY);if(x.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||sheets.length!==1||!Array.isArray(sheets[0]!.data))throw Error('STABLE_NOTICE_READ');
  const cells=ranges.map(range=>{const found=sheets[0]!.data!.filter(d=>(d.startRow??0)===range.row&&(d.startColumn??0)===range.column);if(found.length!==1||found[0]!.rowData&&found[0]!.rowData!.length>1||found[0]!.rowData?.[0]?.values&&found[0]!.rowData![0]!.values!.length>1)throw Error('STABLE_NOTICE_READ');const c=found[0]!.rowData?.[0]?.values?.[0]??{};return{value:c.userEnteredValue??null,note:c.note??null,validation:c.dataValidation??null,format:c.userEnteredFormat??null,textRuns:c.textFormatRuns??null,chips:c.chipRuns??null};}) as [Cell,Cell];
- if(encode(ranges)!==encode(await structure(env))||cells.some(c=>c.note!==null||c.validation!==null||c.textRuns!==null&&encode(c.textRuns)!=='[]'||c.chips!==null&&encode(c.chips)!=='[]'))throw Error('STABLE_NOTICE_CHANGED');return{ranges,cells};
+ if(encode(ranges)!==encode(parseStructure(env,x))||cells.some(c=>c.note!==null||c.validation!==null||c.textRuns!==null&&encode(c.textRuns)!=='[]'||c.chips!==null&&encode(c.chips)!=='[]'))throw Error('STABLE_NOTICE_CHANGED');return{ranges,cells};
 }
 function text(cell:Cell):string|null{if(cell.value===null)return null;const value=cell.value as {stringValue?:unknown};if(typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==1||typeof value.stringValue!=='string')throw Error('STABLE_NOTICE_CELL');return value.stringValue;}
 function stamp():string{const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()),value=(type:string)=>parts.find(p=>p.type===type)?.value;return `${value('year')}-${value('month')}-${value('day')} ${value('hour')}:${value('minute')}:${value('second')}`;}

@@ -52,6 +52,18 @@ endpoint rejects ambiguous claims and previous write intents. The next attempt
 rechecks the sheet; it may hold again if formulas or structure are unsafe.
 Existing source IDs captured at cutover are not automatically reconciled.
 
+New expenses are synchronized in short stages: daily, expense RAW, each
+purchase-detail item, then a final read-only verification of every projection.
+Each stage releases the workbook and requeues the existing job; no new business
+transaction is created. Source fingerprints and verified journals carry
+forward between stages. If an editor changes an earlier projection, a source
+changes, an identifier is duplicated, or a write acknowledgement is uncertain,
+the operation stops for review instead of replaying a possible write. A brief
+ready period between stages means the final verification is required before a
+job is complete. Large itemized receipts can take several minutes to finish.
+The staging keeps each invocation within the Cloudflare free-plan 50 external
+subrequest limit; it does not add month rows automatically.
+
 Forward-fix / rollback: pause delivery and preserve queue messages, inspect
 claim, journals, source revisions and Sheets for every uncertain operation.
 Never automatically clear a claim or retry an uncertain provider write. Rolling

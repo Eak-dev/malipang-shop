@@ -23,11 +23,27 @@ import { operationsSummary } from "../operations/summary";
 import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
 import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
 import {inspectHistoricalMarkerAdmin,approveHistoricalMarkerRemediation,executeHistoricalMarkerRemediation,historicalMarkerRemediationStatus,quarantineHistoricalMarkerRemediation,cancelHistoricalMarkerRemediation} from './personal-historical-marker-remediation';
+import {inspectPersonalMarkerReviewedRecovery,approvePersonalMarkerReviewedRecovery,resolvePersonalMarkerReviewedRecovery,personalMarkerReviewedRecoveryStatus,cancelPersonalMarkerReviewedRecovery} from './personal-marker-reviewed-recovery';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-inspect'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown};return Response.json({ok:true,...await inspectPersonalMarkerReviewedRecovery(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-approve'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof approvePersonalMarkerReviewedRecovery>[1];const result=await approvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-resolve'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof resolvePersonalMarkerReviewedRecovery>[1];const result=await resolvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-status'){
+      const body=await request.json().catch(()=>({})) as {recoveryActionId?:unknown};return Response.json({ok:true,...await personalMarkerReviewedRecoveryStatus(env,body.recoveryActionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-cancel'){
+      const body=await request.json().catch(()=>({})) as Parameters<typeof cancelPersonalMarkerReviewedRecovery>[1];const result=await cancelPersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
     if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/inspect'){
       const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectHistoricalMarkerAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
     }

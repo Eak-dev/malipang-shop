@@ -6,6 +6,6 @@
 
 `DELETE_WRONG_ROW` ปิดทุกทาง รวม action ที่อาจมีอยู่ก่อนแล้ว: การจอง metadata ID ใน D1 ไม่พิสูจน์ว่า marker บน Google ถูกสร้างโดยระบบนี้ การลบต้องรอหลักฐาน provenance ที่เชื่อถือได้และรีวิวแยก
 
-Recovery ของ action ที่ค้าง REVIEW จากคำขอ remediation เองยังไม่พร้อม: schema ปัจจุบันตั้งใจบล็อก action ใหม่และการปลดล็อกทั้งชีตไว้ ต้องมีการตรวจ provider/source ใหม่ แยกการอนุมัติ บันทึก audit และยืนยันการระบายคำขอจริงโดยไม่ replay ก่อนใช้งาน production
+ต้นแบบ 0058 เพิ่มขั้นตรวจและอนุมัติแยกสำหรับ action ที่ค้าง REVIEW: ถ้าหลักฐานปัจจุบันตรงผลที่ตั้งใจ ให้บันทึกผลที่ตรวจได้; ถ้าหลักฐานยืนยันว่าไม่เกิดการเปลี่ยนแปลงหลังระบายคำขอจริง ให้ยกเลิก action เก่า การส่งใหม่ต้องอนุมัติเป็น action ใหม่เสมอ ทั้งสองทางไม่ส่ง Google ซ้ำ ไม่แก้ sync_jobs และคงล็อก historical เดิมไว้ หากหลักฐานไม่พอให้คง REVIEW การตรวจและข้อความรับรองจากผู้ดูแลไม่ใช่กลไกกั้น editor หรือพิสูจน์ว่าคำขอเก่าหยุดจริง
 
-โค้ด `historicalEnrollmentIntegrity` รุ่นนี้ต้องพบ migration 0055 และ trigger ที่ตรงครบ หากปล่อยโค้ดก่อน schema จะ fail closed และพักงานที่พึ่ง guard นี้ การ rollback Worker หรือ schema ต้องคงการกั้น writer และพิสูจน์สถานะ REVIEW ค้างก่อนปล่อยงาน
+โค้ด `historicalEnrollmentIntegrity` รุ่นนี้ต้องพบ migration 0055 และ trigger ที่ตรงครบ ส่วน marker remediation ต้องพบ 0058 และ trigger ที่ตรงครบด้วย หากปล่อยโค้ดก่อน schema จะ fail closed และพักงานที่พึ่ง guard เหล่านี้ การ rollback Worker หรือ schema ต้องคงการกั้น writer และพิสูจน์สถานะ REVIEW ค้างก่อนปล่อยงาน ทั้งหมดต้องรวมกับ migration 0056–0057 และทดสอบ schema จริงก่อน release

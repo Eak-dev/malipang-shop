@@ -104,6 +104,11 @@ export class ExpenseProjectionRuntimeJournal{
     // Neither may dispatch based on a caller-supplied digest alone.
     return projection==='DAILY'||projection==='DETAIL'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
   }
+  /** D1 inventory/readback evidence only. This predicate must not be used to
+   * authorize a Google mutation: DETAIL dispatchFence remains closed. */
+  detailInventoryFence(token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
+    return this.projectionFence('DETAIL',token,c);
+  }
   /** Verifies the exact NOTICE binding; never grants permission to write DAILY. */
   noticeReceiptFence(token:string,c:ExpenseProjectionContext,windowToken:string):{sql:string;args:unknown[]}{
     if(this.env.DAILY_BADGE_WRITER_ENABLED!=='true'||!/^[-A-Za-z0-9_]{16,128}$/.test(windowToken)||!this.generationLease)throw Error('DAILY_BADGE_DISABLED');

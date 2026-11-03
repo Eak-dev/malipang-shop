@@ -2,6 +2,9 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {inspectDailyAppendSnapshot} from '../dist/sheets/daily-append-preflight.js';
 import {expectedHelperFormulae} from '../dist/sheets/daily-stable-row-writes.js';
+import {readDailyAppendPreflight} from '../dist/sheets/daily-recovery-identity-reader.js';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),auth=require('../dist/sheets/google-auth.js');
 
 const blank=()=>Array(25).fill(null);
 function fixture(space=true){
@@ -42,3 +45,15 @@ test('checks every running balance even when the final row and month subtotal ap
  assert.equal(inspectDailyAppendSnapshot(x).reason,'ROW_ACCOUNTING_UNVERIFIED');
 });
 test('holds a financial row with multiple outflow channels',()=>{const x=fixture();x.formula[6][5]=x.effective[6][5]=10;assert.equal(inspectDailyAppendSnapshot(x).reason,'MULTIPLE_OUTFLOW_CHANNELS');});
+function provider(mode='normal'){
+ const x=fixture(mode!=='capacity'),env={RUNTIME_MODE:'production',DAILY_APPEND_PREFLIGHT_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book',SHEET_EXPENSE_DAILY:'daily',SHEET_EXPENSE_RAW:'raw',SHEET_PERSONAL_USE_RAW:'personal',SHEET_PURCHASE_DETAILS:'detail',DB:{}},oldFetch=globalThis.fetch,oldAuth=auth.getGoogleAccessToken;let calls=0,formulaReads=0,annotationReads=0;
+ auth.getGoogleAccessToken=async()=> 'fake';globalThis.fetch=async(url,init={})=>{calls++;assert.equal(init.method,undefined);const u=new URL(String(url));
+  if(u.pathname.endsWith('/values:batchGet')){const formula=u.searchParams.get('valueRenderOption')==='FORMULA';if(formula&&++formulaReads===2&&mode==='change')x.formula[6][3]='changed';return new Response(JSON.stringify({valueRanges:[{range:`daily!A1:Y${x.rowCount}`,values:formula?x.formula:x.effective}]}));}
+  if(u.searchParams.has('ranges')){annotationReads++;const cells=mode==='capacity'?x.formula[7].slice(0,19).map(v=>v===null?{}:{userEnteredValue:typeof v==='number'?{numberValue:v}:String(v).startsWith('=')?{formulaValue:v}:{stringValue:v}}):Array.from({length:mode==='short'?2:25},()=>({}));if(mode==='note'||mode==='note-late'&&annotationReads===2)cells[1].note='private';if(mode==='validation'||mode==='validation-late'&&annotationReads===2)cells[1].dataValidation={condition:{type:'NUMBER_GREATER'}};if(mode==='helper-late'&&annotationReads===2)cells[8].userEnteredValue={formulaValue:'=ROW()'};const data={startRow:mode==='wrong-row'?6:7,...(mode==='omitted'?{}:{rowData:mode==='empty'?[]:[{values:cells}]})},range={sheetId:7,startRowIndex:7,endRowIndex:8};return new Response(JSON.stringify({spreadsheetId:'book',sheets:[{properties:{sheetId:7},...(mode==='protected'||mode==='protected-late'&&annotationReads===2?{protectedRanges:[{range}]}:{}),...(mode==='merge-late'&&annotationReads===2?{merges:[range]}:{}),data:[data]}]}));}
+  return new Response(JSON.stringify({spreadsheetId:'book',sheets:[{properties:{sheetId:7,title:'daily',gridProperties:{rowCount:x.rowCount,columnCount:25}}}]}));};
+ return{env,calls:()=>calls,close(){globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldAuth;}};
+}
+test('Google read-only preflight double reads the live-shaped grid and checks annotations',async()=>{const h=provider();try{const r=await readDailyAppendPreflight(h.env,'exp_new',2026,10);assert.equal(r.status,'APPEND');assert.equal(h.calls(),8);}finally{h.close();}});
+test('Google preflight handles sparse blank GridData without ignoring changed coordinates',async()=>{for(const mode of ['omitted','empty','short']){const h=provider(mode);try{assert.equal((await readDailyAppendPreflight(h.env,'exp_new',2026,10)).status,'APPEND',mode);}finally{h.close();}}});
+test('Google preflight accepts a sparse subtotal when expansion is proposed',async()=>{const h=provider('capacity');try{assert.equal((await readDailyAppendPreflight(h.env,'exp_new',2026,10)).status,'CAPACITY_REQUIRED');}finally{h.close();}});
+test('Google preflight is default-off and holds changed snapshots, notes, validation and protection',async()=>{for(const mode of ['change','note','validation','protected','wrong-row','note-late','validation-late','protected-late','merge-late','helper-late']){const h=provider(mode);try{assert.equal((await readDailyAppendPreflight(h.env,'exp_new',2026,10)).reason,'PROVIDER_SNAPSHOT_UNVERIFIED',mode);}finally{h.close();}}const h=provider();try{h.env.DAILY_APPEND_PREFLIGHT_ENABLED='false';await assert.rejects(readDailyAppendPreflight(h.env,'exp_new',2026,10),/DISABLED/);assert.equal(h.calls(),0);}finally{h.close();}});

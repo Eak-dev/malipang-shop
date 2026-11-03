@@ -21,6 +21,6 @@ CREATE TABLE IF NOT EXISTS expense_projection_runtime_intents (
   admission_watermark INTEGER NOT NULL CHECK(admission_watermark >= 0),
   evidence_digest TEXT,
   updated_at TEXT NOT NULL,
-  PRIMARY KEY(spreadsheet_id,expense_id,source_version,projection),
+  PRIMARY KEY(spreadsheet_id,expense_id,source_version,source_revision,projection),
   CHECK(state <> 'VERIFIED' OR evidence_digest IS NOT NULL)
 );

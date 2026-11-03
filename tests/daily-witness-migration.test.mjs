@@ -1,0 +1,7 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {readFileSync,readdirSync} from 'node:fs';
+import {createRequire} from 'node:module';
+const directory=new URL('../migrations/',import.meta.url),migration=readFileSync(new URL('0052_daily_witness_recovery.sql',directory),'utf8');
+test('witness recovery migration splits correctly and retains audit records',()=>{const db=new DatabaseSync(':memory:');try{for(const n of readdirSync(directory).filter(n=>/^\d+.*\.sql$/.test(n)&&n<'0052').sort())db.exec(readFileSync(new URL(n,directory),'utf8'));const {unstable_splitSqlQuery}=createRequire(import.meta.url)('wrangler');db.exec('BEGIN');for(const stmt of unstable_splitSqlQuery(migration))db.exec(stmt);db.exec('COMMIT');db.exec("INSERT INTO daily_witness_recovery_actions VALUES('a','book','daily','window','exp_a',44,1,2,'notice','mutation','outer','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',1,1,'ADMIN_TOKEN','now')");assert.throws(()=>db.exec('DELETE FROM daily_witness_recovery_actions'),/retained/);assert.throws(()=>db.exec("UPDATE daily_witness_recovery_actions SET evidence_digest='other'"),/immutable/);assert.throws(()=>db.exec('INSERT OR REPLACE INTO daily_witness_recovery_actions SELECT * FROM daily_witness_recovery_actions'),/collision/);assert.equal(db.prepare('SELECT count(*) n FROM daily_witness_recovery_actions').get().n,1);}finally{db.close();}});

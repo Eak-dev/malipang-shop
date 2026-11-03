@@ -163,13 +163,14 @@ export async function sendPersonalEnrollmentMutation(env:Env,source:RawSourcePro
 }
 /** Historical transport is one-shot and only callable with a branded intent
  * whose fresh source, provider snapshot, and D1 lock still match. */
-export async function sendHistoricalPersonalEnrollmentMutation(env:Env,metadataId:number,sheetId:number,plan:ReturnType<typeof planPersonalRawEnrollment>,intent:PersonalHistoricalEnrollment):Promise<void>{
+export async function sendHistoricalPersonalEnrollmentMutation(env:Env,metadataId:number,sheetId:number,plan:ReturnType<typeof planPersonalRawEnrollment>,intent:PersonalHistoricalEnrollment):Promise<string>{
   if(env.PERSONAL_HISTORICAL_WRITER_ENABLED!=='true')throw Error('HISTORICAL_ENROLLMENT_DISABLED');const expected=JSON.stringify(plan);let response:Response;
   try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body:JSON.stringify({requests:[plan]})},true,async()=>{if(!await PersonalHistoricalEnrollment.authorizeTransport(intent,env,expected))throw Error('HISTORICAL_ENROLLMENT_FENCE_LOST');},true);}
   catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_ENROLLMENT_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('HISTORICAL_ENROLLMENT_PREFLIGHT_UNAVAILABLE');}
   try{const data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets historical enrollment response') as {replies?:Array<{createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}}}>};
     const m=data?.replies?.[0]?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange,wanted=plan.createDeveloperMetadata.developerMetadata.location.dimensionRange;
     if(!Array.isArray(data?.replies)||data.replies.length!==1||m?.metadataId!==metadataId||m.metadataKey!=='P'||m.visibility!=='DOCUMENT'||r?.sheetId!==sheetId||r.dimension!=='ROWS'||r.startIndex!==wanted.startIndex||r.endIndex!==wanted.endIndex)throw Error('invalid');
+    const bytes=new TextEncoder().encode(JSON.stringify(['historical-provider-ack-v1',metadataId,m.metadataKey,m.visibility,r.sheetId,r.dimension,r.startIndex,r.endIndex]));return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),v=>v.toString(16).padStart(2,'0')).join('');
   }catch{throw new SheetsMutationOutcomeUnknownError(new Error('HISTORICAL_ENROLLMENT_RESPONSE_UNKNOWN'));}
 }
 /** Bounded, typed properties/grid reads used for planning RAW append. */

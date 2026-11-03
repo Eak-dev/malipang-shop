@@ -22,11 +22,18 @@ import { onlineOrderReviewSummary } from "../expense/online-order-review-reposit
 import { operationsSummary } from "../operations/summary";
 import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
 import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
+import {PersonalHistoricalEnrollment} from '../sheets/personal-historical-enrollment';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/start'){
+      if(env.PERSONAL_HISTORICAL_ADMIN_DISPATCH_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RECOVERY_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RESUME_ENABLED!=='true')return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_DISABLED'},{status:503,headers:{'cache-control':'no-store'}});
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown;month?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};
+      try{const intent=await PersonalHistoricalEnrollment.prepare(env,body),result=await intent.dispatchOnce();return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});}
+      catch(error){if(error instanceof Error&&error.message==='HISTORICAL_RESERVATION_OUTCOME_UNKNOWN')return Response.json({ok:false,state:'OUTCOME_UNKNOWN'},{status:202,headers:{'cache-control':'no-store'}});return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_UNAVAILABLE'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
     if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/status'){
       const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await personalHistoricalEnrollmentStatus(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
     }

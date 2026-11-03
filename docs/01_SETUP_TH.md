@@ -53,6 +53,8 @@ npm run deploy
 
 ## 6. Bootstrap และ import พนักงาน
 
+ใน release candidate นี้ bootstrap ตรวจรายชื่อแท็บแบบอ่านอย่างเดียวและตอบ HTTP 409 พร้อม `ok: false`, `mode: READ_ONLY` และ `setupComplete: false` ระบบไม่สร้างแท็บ ไม่เขียนหัวตาราง และไม่แก้หน้า 04 ผู้ดูแลต้องสร้างแท็บที่ขาดและตรวจหัวตารางเองก่อน import หรือใช้งาน การตั้งค่าอัตโนมัติยังไม่พร้อมใช้งาน
+
 ```bash
 curl -X POST 'https://<worker>/admin/bootstrap-sheets' -H 'Authorization: Bearer <ADMIN_TOKEN>'
 curl -X POST 'https://<worker>/admin/import-employees-from-sheet' -H 'Authorization: Bearer <ADMIN_TOKEN>'

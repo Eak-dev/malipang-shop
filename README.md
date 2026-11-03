@@ -474,7 +474,7 @@ prefix คำสั่งส่วนตัวที่รองรับทั�
 
 หลังได้ Google OAuth access token และก่อนส่ง mutation จริง ระบบทำ final CAS แล้ว renew per-entity lease อย่างน้อย 15 นาที ซึ่งยาวกว่า [ขีดจำกัดการประมวลผลหนึ่งคำขอของ Google Sheets ที่ 180 วินาที](https://developers.google.com/workspace/sheets/api/limits); หาก auth ใช้เวลาจน lease เดิมหมด CAS จะหยุดก่อน dispatch และหากกำหนด client timeout ยาวกว่าค่าปกติ lease จะขยายตาม mutation timeout + provider bound + safety margin ด้วย ระบบคง lease/token เดิมไว้เมื่อผลลัพธ์ยังไม่แน่ชัด เช่น client timeout, network disconnect, HTTP 408 หรือ HTTP 5xx และไม่ถือว่า `AbortController` ยืนยันการยกเลิกฝั่ง Google งาน version ใหม่จึงเขียนได้หลัง writer เดิมตอบสำเร็จ หรือหลัง uncertainty lease หมดและ recovery รับช่วงแล้วเท่านั้น ส่วน HTTP rejection ที่ระบุว่าไม่ได้รับ mutation เช่น validation/auth/quota 4xx จะเข้าสู่ retry/DLQ เดิมโดยไม่ถูกกัก 15 นาที
 
-`POST /admin/bootstrap-sheets` ตรวจสูตร PERSONAL_USE ใน `04_OWNER_MONTH_CLOSE` แบบ idempotent: เติมเฉพาะเซลล์ที่ว่าง และหยุดด้วย layout conflict หากพบข้อความหรือสูตรอื่นอยู่แล้ว เพื่อไม่เขียนทับสูตรที่ Owner ดูแลเอง
+`POST /admin/bootstrap-sheets` ใน release candidate นี้ตรวจรายชื่อแท็บแบบอ่านอย่างเดียว และตอบ HTTP 409 พร้อม `ok: false`, `mode: READ_ONLY`, `headersVerified: false`, `requiresManualSetup: true` และ `setupComplete: false` เพื่อไม่ให้ client เดิมเข้าใจว่าจัดเตรียมเสร็จ ระบบไม่สร้างแท็บ เขียนหัวตาราง หรือแก้หน้า `04_OWNER_MONTH_CLOSE`; ผู้ดูแลต้องสร้างแท็บที่ขาดและตรวจหัวด้วยตนเอง การตั้งค่าอัตโนมัติยังต้องพัฒนาการกู้คืนและการประสานการเขียนก่อนเปิดใช้
 
 ### Bank Slip
 
@@ -973,7 +973,7 @@ npx wrangler secret put <NAME>
 - `GET /admin/status`
 - `GET /admin/readiness`
 - `GET /admin/operations/summary` — recent failures, scheduled-step freshness, corrected latency และรายการค้างแบบ aggregate; ดู [reliability review](docs/24_SYSTEM_RELIABILITY_REVIEW_TH.md)
-- `POST /admin/bootstrap-sheets`
+- `POST /admin/bootstrap-sheets` — ตรวจรายชื่อแท็บแบบอ่านอย่างเดียว ตอบ HTTP 409 และต้องจัดเตรียม/ตรวจหัวตารางเอง
 - `POST /admin/retry-sync`
 - `POST /admin/reconcile-sheets`
 

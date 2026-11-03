@@ -49,7 +49,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
-    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
+    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){const result=await bootstrapSheets(env);return Response.json({ok:false,...result,setupComplete:false},{status:409,headers:{"cache-control":"no-store"}});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/sync-staff-statuses-from-sheet-scoped")return Response.json({ok:true,...await syncStaffStatusesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});

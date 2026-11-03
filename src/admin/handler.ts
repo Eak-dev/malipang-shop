@@ -20,6 +20,7 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import {resumeStableCapacity} from './stable-capacity-resume';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -33,7 +34,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
-    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
+    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){if(env.STABLE_PHASE1_ENABLED==='true')return Response.json({ok:false,error:'STABLE_LEGACY_WRITE_REVIEW'},{status:409});await bootstrapSheets(env);return Response.json({ok:true});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/sync-staff-statuses-from-sheet-scoped")return Response.json({ok:true,...await syncStaffStatusesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
@@ -70,6 +71,12 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
     if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});}
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/resume-capacity'){const body=await request.json() as {expenseId?:unknown;version?:unknown};await resumeStableCapacity(env,typeof body.expenseId==='string'?body.expenseId:'',typeof body.version==='number'?body.version:0);return Response.json({ok:true,queued:true});}
+    if(request.method==='GET'&&url.pathname==='/admin/stable-sync/status'){
+      if(env.STABLE_PHASE1_ENABLED!=='true')return Response.json({ok:false,error:'STABLE_PHASE1_DISABLED'},{status:409});
+      const [claim,reviews]=await Promise.all([env.DB.prepare('SELECT state,updated_at,notice_stamp FROM stable_workbook_claims WHERE spreadsheet_id=?').bind(env.GOOGLE_SPREADSHEET_ID).first(),env.DB.prepare("SELECT CASE WHEN last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY' WHEN last_error='STABLE_HISTORICAL_OR_SOURCE_REVIEW' THEN 'HISTORICAL_OR_SOURCE' ELSE 'OTHER' END AS reason,count(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason").all()]);
+      return Response.json({ok:true,claim:claim??null,reviews:reviews.results??[]},{headers:{'cache-control':'no-store'}});
+    }
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
       const purpose=typeof body.purpose==="string"?body.purpose:undefined;
@@ -85,6 +92,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     }
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-sheets")return Response.json({ok:true,...await reconcileSheets(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/reconcile-expense-items"){
+      if(env.STABLE_PHASE1_ENABLED==='true')return Response.json({ok:false,error:'STABLE_LEGACY_WRITE_REVIEW'},{status:409});
       const body=await request.json().catch(()=>({})) as{expenseId?:unknown};
       const expenseId=typeof body.expenseId==="string"?body.expenseId.trim():"";
       if(!/^[A-Za-z0-9_-]{8,128}$/.test(expenseId))throw new Error("valid expenseId is required");

@@ -1,6 +1,10 @@
 import type {Env} from '../types';
 
 export type StableSourceType='EXPENSE'|'PERSONAL_USE';
+const revisionTriggers=['expense_events','expense_documents','expense_document_links','expense_document_items','owner_personal_transactions'].flatMap(table=>['insert','update','delete'].map(operation=>`stable_source_revision_${table}_${operation}`));
+/** Missing tracking or retention triggers makes revision evidence unusable. */
+const retained=['stable_source_revision_no_delete','stable_source_revision_no_replace','stable_source_revision_monotonic','stable_pre_cutover_no_delete','stable_pre_cutover_no_update','stable_pre_cutover_no_replace','stable_cutover_no_delete','stable_cutover_no_replace','stable_cutover_transition','stable_projection_no_delete','stable_projection_no_replace','stable_projection_transition'];
+export const stableSourceIntegrity=`(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (${[...revisionTriggers,...retained].map(name=>`'${name}'`).join(',')}))=27`;
 
 /** The snapshot and activation must be submitted in one D1 batch only after
  * legacy writers and their provider requests are drained. This function is a

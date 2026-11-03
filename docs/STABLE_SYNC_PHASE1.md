@@ -1,37 +1,44 @@
-# Stable sync: first delivery
+# Stable sync: phase 1 (not deployed)
 
-Goal: newly admitted expense and personal-use records use a stable identifier
-to locate their destination, and stop for review on duplicate identifiers,
-unverified prior data, provider uncertainty, or conflicting writes. A full
-month is held for a person to add capacity; automatic expansion is deferred.
-Historical rows without independently established identity are held.
+Authority: owner-approved production release after the essential data-safety
+checks. Base: canonical main `7005538efe9a34a12e60a8bf7d027d0f8585bec8`.
+Scope: new expense and personal-use projections; stable IDs rather than
+remembered row positions; stop on duplicates, conflicting content or uncertain
+provider response. Existing sources at cutover are held for manual review.
+Month capacity exhaustion is held for manual insertion before the subtotal and
+manual formula/total checks. Automatic expansion and general historical
+reconciliation remain out of scope.
 
-Base: canonical main `7005538efe9a34a12e60a8bf7d027d0f8585bec8`.
-The previous experimental branch is retained separately.
+Implementation connects new financial jobs and legacy sheet/staff jobs to a
+shared durable claim. The claim is retained on uncertainty. Before a write the
+system displays a visible cooperative edit pause and waits 15 seconds; Google
+Sheets does not provide a compare-and-swap lock and editors must respect the
+notice. Expense projections are journaled and read back; monthly formulas and
+totals are verified before claim release. Personal-use projections are also
+journaled and verified. The capacity resume endpoint is restricted to the
+specific safe, no-write capacity state. Automatic release of uncertain claims
+is intentionally absent: investigate them before any controlled recovery.
 
-Current implementation is **not connected to production**: the daily-row
-and ledger planners locate identifiers without storing a row, and the daily
-planner holds a full month;
-the workbook claim records an unresolved attempt without an expiry. A
-transactional cutover snapshot can distinguish source IDs already present
-from later inserts, and refuses activation with an incomplete snapshot.
-An unrouted personal-use writer now checks the source and current sheet,
-records a durable intent, writes once and verifies readback. Its local tests
-mock Google; an uncertain result retains the claim. Removing an ID after a
-verified write causes a review rather than a second append.
-These components do not by themselves authorize a Google write. In particular, every
-relevant writer must honor the claim, existing workers must be drained, and
-the cooperative editor pause is still required.
+Do not activate merely because local tests pass. Release requires: current
+canonical main and exact merged SHA; CI and dry-run; private D1 backup verified
+by checksum, local restore, integrity and foreign-key checks; migration on a
+restored production-shaped database with retry; a visible and structurally
+verified notice and named ranges in the live workbook; pause queue delivery,
+drain old in-flight writers and provider requests; apply migration, atomically
+snapshot all existing source IDs and activate; deploy the approved flag-enabled
+version; verify configuration, health and queue/claim status, then resume delivery.
+Verify the first naturally occurring transaction without creating fake records.
+No production business record should be created or edited for testing.
 
-Remaining for this delivery:
+Forward-fix / rollback: pause delivery and preserve queue messages, inspect
+claim, journals, source revisions and Sheets for every uncertain operation.
+Never automatically clear a claim or retry an uncertain provider write. Rolling
+back the Worker cannot undo Sheet writes; reconcile each unresolved item first.
+The cutover snapshot and journal are immutable and are not cleared to enable a
+retry. Restore backup only under a separately verified incident procedure to
+avoid discarding post-backup business events.
 
-1. Admit only records proven new after the cutover, with a durable identity.
-2. Wire expense, personal-use and purchase-detail paths to the shared claim,
-   use identity-based reads and writes, and retain ambiguous outcomes.
-3. Verify provider readback and totals before releasing the claim; implement
-   an explicit review path for a retained claim.
-4. Run the focused conflict, duplicate and uncertain-outcome checks; prepare
-   backup and a rollback; drain the old deployment before the authorized
-   production cutover. Verify a naturally occurring transaction afterward.
-
-The local helpers and local tests are evidence of isolated behaviour only.
+Follow-up: automatic row expansion and adjustment of formulas/references;
+identity reconciliation of pre-cutover records; more granular revision tracking
+(the global source revision can safely hold a sync if an unrelated source
+changes concurrently); operator tooling for reviewed ambiguous operations.

@@ -6,7 +6,7 @@ import {stableWorkbookClaimOwned,withStableWorkbookClaim} from '../dist/sheets/s
 import {newStableSourcePredicate,stableCutoverStatements} from '../dist/sheets/stable-source-cutover.js';
 
 function fixture(){
- const sqlite=new DatabaseSync(':memory:');sqlite.exec('CREATE TABLE expense_events(expense_id TEXT PRIMARY KEY); CREATE TABLE owner_personal_transactions(personal_use_id TEXT PRIMARY KEY)');sqlite.exec(readFileSync(new URL('../migrations/0021_stable_workbook_claim.sql',import.meta.url),'utf8'));
+ const sqlite=new DatabaseSync(':memory:');sqlite.exec('CREATE TABLE expense_events(expense_id TEXT PRIMARY KEY); CREATE TABLE owner_personal_transactions(personal_use_id TEXT PRIMARY KEY); CREATE TABLE expense_documents(id TEXT); CREATE TABLE expense_document_links(id TEXT); CREATE TABLE expense_document_items(id TEXT)');sqlite.exec(readFileSync(new URL('../migrations/0021_stable_workbook_claim.sql',import.meta.url),'utf8'));
  const DB={prepare(sql){const q=sqlite.prepare(sql);let args=[];return{bind(...values){args=values;return this;},async first(){return q.get(...args)??null;},async run(){if(/^\s*SELECT\b/i.test(sql))return{success:true,results:q.all(...args),meta:{changes:0}};return{success:true,meta:{changes:Number(q.run(...args).changes)}};}};},async batch(statements){sqlite.exec('BEGIN');try{const result=[];for(const stmt of statements)result.push(await stmt.run());sqlite.exec('COMMIT');return result;}catch(error){sqlite.exec('ROLLBACK');throw error;}}};
  return{sqlite,env:{DB,GOOGLE_SPREADSHEET_ID:'book'},close(){sqlite.close();}};
 }

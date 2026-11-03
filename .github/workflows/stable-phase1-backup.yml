@@ -46,7 +46,7 @@ jobs:
         run: |
           set -euo pipefail
           db="$RUNNER_TEMP/phase1-restored.sqlite"
-          gzip -dc "$RUNNER_TEMP/phase1-downloaded.sql.gz" | sqlite3 "$db"
+          gzip -dc "$RUNNER_TEMP/phase1-downloaded.sql.gz" | sqlite3 -cmd "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;" "$db" > /dev/null
           test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
           test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
           counts="SELECT (SELECT count(*) FROM expense_events)||','||(SELECT count(*) FROM expense_documents)||','||(SELECT count(*) FROM expense_document_links)||','||(SELECT count(*) FROM expense_document_items)||','||(SELECT count(*) FROM owner_personal_transactions);"
@@ -56,5 +56,5 @@ jobs:
           test "$before" = "$(sqlite3 "$db" "$counts")"
           test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
           test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
-          test "$(sqlite3 "$db" \"SELECT count(*) FROM stable_sync_cutover WHERE singleton=1 AND state='PREPARED'\")" = 1
+          test "$(sqlite3 "$db" "SELECT count(*) FROM stable_sync_cutover WHERE singleton=1 AND state='PREPARED'")" = 1
           echo 'Local restore, migration retry, source counts and integrity verified.'

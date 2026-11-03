@@ -12,6 +12,8 @@
 
 สำหรับรายการใหม่ มี reader/planner ที่อ่านทุกคอลัมน์ของ RAW ภายในขีดจำกัด และ candidate intent ใน migration 0033 ที่จอง metadata ID กับ sheet-wide lock ซึ่งไม่หมดอายุ การสูญหายของ D1 acknowledgement ไม่อนุญาตให้ process เดิมหรือ process ใหม่ส่งต่อโดยอัตโนมัติ ทุก failure ต้องคง REVIEW หรือ IN_FLIGHT เพื่อกู้หลักฐาน. ยังไม่มี transport ที่บังคับ dispatch หนึ่งครั้งหลัง OAuth และ fence, ไม่มี provider postread/identity enrollment/ปลด lock และยังไม่มี route; ค่า boolean จาก `claimProviderDispatch` ห้ามนำไปใช้ซ้ำ ระบบนี้ยังไม่กันคนหรือ writer เก่าแก้ชีตพร้อมกัน
 
+RAW identity reader/writer และ append planner ต้องเห็นหัวตารางครบตามลำดับทุกคอลัมน์ (expense 17 ช่อง, personal-use 15 ช่อง) หากมีการสลับหรือเปลี่ยนชื่อคอลัมน์ต้องหยุดตรวจ การอ่านหัวตารางในไฟล์จริงเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การล็อกการแก้ไขคอลัมน์
+
 เมื่อ `SHEETS_LEDGER_IDENTITY_INSPECTION=true` งาน EXPENSE/PERSONAL_USE และ purchase detail จะอ่านรหัสในชีตปัจจุบัน โดยไม่อ่าน `sheet_row_index` และพักเป็น REVIEW ก่อนจอง/เขียนแถวเสมอ การตรวจพบหนึ่งรายการไม่ได้อนุญาตเขียน เพราะผู้ใช้สามารถย้าย ลบ หรือคัดลอกแถวระหว่างอ่านกับเขียนได้ เมื่อไม่ตั้งค่า flag เส้นทางเดิมไม่เปลี่ยนและยังมีความเสี่ยงเดิม
 
 RAW ใช้ Expense_ID และ Personal_Use_ID ในคอลัมน์ A; purchase detail ใช้ Purchase_Item_ID คอลัมน์ A ร่วม Expense_ID คอลัมน์ B. Snapshot ต้องครอบคลุมขนาด grid จริง ไม่เกิน 10,000 แถว และหัวตารางต้องตรง; ไม่พบ, พบซ้ำ, ข้อมูลไม่ครบ, grid ใหญ่เกินหรืออ่านไม่ได้ ต้อง REVIEW และไม่บันทึกข้อมูลส่วนตัวลงข้อความเหตุผล. ค่าตรงเพียงรายการเดียวเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การรับรองเอกลักษณ์หรืออนุญาตแก้ไข.

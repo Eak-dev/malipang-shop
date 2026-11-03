@@ -1,4 +1,5 @@
 import type { LedgerKind } from './ledger-identity-inspection';
+import {RAW_PROJECTION_HEADERS} from './raw-projection';
 
 /**
  * Prototype request builder for a pre-enrolled, single row metadata identity.
@@ -43,7 +44,7 @@ export interface LedgerWriteGuard {
   observed:readonly LedgerCellState[];
 }
 const head:Record<LedgerKind,readonly string[]>={
-  EXPENSE:['Expense_ID'], PERSONAL_USE:['Personal_Use_ID'], PURCHASE_DETAILS:['Purchase_Item_ID','Expense_ID']
+  EXPENSE:RAW_PROJECTION_HEADERS.EXPENSE, PERSONAL_USE:RAW_PROJECTION_HEADERS.PERSONAL_USE, PURCHASE_DETAILS:['Purchase_Item_ID','Expense_ID']
 };
 const key:Record<LedgerKind,string>={EXPENSE:'E',PERSONAL_USE:'P',PURCHASE_DETAILS:'D'};
 const size:Record<LedgerKind,number>={EXPENSE:17,PERSONAL_USE:15,PURCHASE_DETAILS:20};

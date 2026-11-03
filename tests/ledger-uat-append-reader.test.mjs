@@ -5,12 +5,13 @@ const require=createRequire(import.meta.url);
 const auth=require('../dist/sheets/google-auth.js');
 const {readLedgerUatAppendSnapshot:read,readExpenseRawProductionAppendSnapshot:readProduction}=require('../dist/sheets/ledger-uat-append-reader.js');
 const {buildLedgerUatAppendRequests:plan,buildExpenseRawProductionAppendRequests:planProduction}=require('../dist/sheets/ledger-uat-append-planner.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
 test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
 const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'uat',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'uat',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true',SHEET_EXPENSE_RAW:'Raw'};
 const props={sheetId:7,title:'Raw',gridProperties:{rowCount:4,columnCount:20}};
 const base=()=>({sheets:[{properties:structuredClone(props)}]});
-const grid=()=>({sheets:[{properties:structuredClone(props),data:[{rowData:[{values:[{userEnteredValue:{stringValue:'Expense_ID'}}]},{values:[{userEnteredValue:{stringValue:'existing'}}]},{values:[{}, {note:'manual note'}]}]}]}]});
+const grid=()=>({sheets:[{properties:structuredClone(props),data:[{rowData:[{values:RAW_PROJECTION_HEADERS.EXPENSE.map(h=>({userEnteredValue:{stringValue:h}}))},{values:[{userEnteredValue:{stringValue:'existing'}}]},{values:[{}, {note:'manual note'}]}]}]}]});
 const responses=(sequence)=>{let calls=0;auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async()=>new Response(JSON.stringify(sequence[calls++]));return()=>calls;};
 test('authenticated complete grid reader feeds UAT-only planner and preserves annotations',async()=>{
   const calls=responses([base(),grid()]);const snapshot=await read(env,'Raw',7);

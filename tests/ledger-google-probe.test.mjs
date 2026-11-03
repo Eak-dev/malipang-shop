@@ -5,12 +5,13 @@ const require=createRequire(import.meta.url);
 const {parseLedgerGoogleSnapshot,createLedgerGoogleUatProbe,createExpenseRawProductionProbe}=require('../dist/sheets/ledger-google-probe.js');
 const auth=require('../dist/sheets/google-auth.js');
 const client=require('../dist/sheets/client.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
 test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
 const identity={kind:'EXPENSE',sheetId:7,entityId:'expense-1'};
 const witness={metadataId:44,metadataKey:'E',sheetId:7,dimension:'ROWS',startIndex:2,endIndex:3,visibility:'DOCUMENT'};
 const cell=value=>({userEnteredValue:{stringValue:value}});
-const fixture=()=>({sheets:[{properties:{sheetId:7,title:'Ledger',gridProperties:{rowCount:4,columnCount:17}},data:[{rowData:[{values:[cell('Expense_ID')]},{},{values:[cell('expense-1'),cell('2026-10-01')]}]}]}]});
+const fixture=()=>({sheets:[{properties:{sheetId:7,title:'Ledger',gridProperties:{rowCount:4,columnCount:17}},data:[{rowData:[{values:RAW_PROJECTION_HEADERS.EXPENSE.map(cell)},{},{values:[cell('expense-1'),cell('2026-10-01')]}]}]}]});
 const parse=x=>parseLedgerGoogleSnapshot(x,'Ledger',identity,witness);
 test('whole-grid parser preserves row identity and sparse empty cell states',()=>{
   const result=parse(fixture());assert.equal(result.identityRows.length,4);assert.equal(result.identityRows[2][0],'expense-1');assert.equal(result.guard.observed[1].entered,'2026-10-01');assert.equal(result.guard.observed[2].entered,null);assert.deepEqual(result.guard.fields,[1,2,3,4,5,6,7]);
@@ -23,6 +24,7 @@ test('duplicate, moved, formula identity, bad bounds, and ambiguous shape hold',
     x=>x.sheets[0].properties.gridProperties.rowCount=10001,
     x=>x.sheets[0].data.push({}),
     x=>x.sheets[0].data[0].startRow=1,
+    x=>{const a=x.sheets[0].data[0].rowData[0].values;[a[2],a[3]]=[a[3],a[2]];},
   ]){const x=fixture();mutate(x);assert.throws(()=>parse(x));}
 });
 test('protection or merges block even if outside the target',()=>{

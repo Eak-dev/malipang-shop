@@ -1,6 +1,7 @@
 import type {Env} from '../types';
 import type {LedgerCellState,LedgerWriteIdentity} from './ledger-metadata-writer';
 import type {RawSourceProof} from './raw-source-proof';
+import {RAW_PROJECTION_HEADERS} from './raw-projection';
 
 /** A complete, current, independently obtained UAT-only grid observation.
  * This type is not evidence of provenance, a lock, or an atomic precondition. */
@@ -13,7 +14,6 @@ export interface LedgerUatAppendSnapshot{
   hasMerges:boolean;
 }
 const widths={EXPENSE:17,PERSONAL_USE:15} as const;
-const headers={EXPENSE:'Expense_ID',PERSONAL_USE:'Personal_Use_ID'} as const;
 const keys={EXPENSE:'E',PERSONAL_USE:'P'} as const;
 function complete(cell:LedgerCellState|undefined):cell is LedgerCellState{
   if(!cell||typeof cell.hasValidation!=='boolean'||!(cell.note===null||typeof cell.note==='string')||!(cell.formula===null||typeof cell.formula==='string'))return false;
@@ -53,7 +53,7 @@ function planLedgerAppend(env:Env,sheetName:string,identity:LedgerWriteIdentity,
     if(row[0]!.formula!==null)throw Error('LEDGER_UAT_APPEND_ID_UNCERTAIN');
     if(r>0&&row[0]!.entered===identity.entityId)throw Error('LEDGER_UAT_APPEND_DUPLICATE');
   }
-  if(snapshot.rows[0]![0]!.entered!==headers[kind])throw Error('LEDGER_UAT_APPEND_HEADER_INVALID');
+  if(!RAW_PROJECTION_HEADERS[kind].every((name,i)=>snapshot.rows[0]![i]!.entered===name&&snapshot.rows[0]![i]!.formula===null))throw Error('LEDGER_UAT_APPEND_HEADER_INVALID');
   const index=Math.max(1,last+1),cells=Array.from({length:snapshot.columnCount},(_,i)=>i<size?entered(values[i]):{});
   return [
     {insertDimension:{range:{sheetId:identity.sheetId,dimension:'ROWS',startIndex:index,endIndex:index+1},inheritFromBefore:true}},

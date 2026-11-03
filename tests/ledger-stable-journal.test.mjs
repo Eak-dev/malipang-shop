@@ -7,6 +7,7 @@ const require=createRequire(import.meta.url);
 const {LedgerStableJournal,digestLedgerCell,baselineMatches}=require('../dist/sheets/ledger-stable-journal.js');
 const {projectExistingLedgerShadow}=require('../dist/sheets/ledger-stable-projector.js');
 const auth=require('../dist/sheets/google-auth.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 const original={token:auth.getGoogleAccessToken,fetch:globalThis.fetch};
 test.afterEach(()=>{auth.getGoogleAccessToken=original.token;globalThis.fetch=original.fetch});
 const expenseFields=[1,2,3,4,5,6,7],personalFields=[1,2,3,4,5,6,13,14],detailFields=[2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,18,19];
@@ -140,7 +141,7 @@ test('existing RAW update checks journal, source, pre-dispatch and postimage bef
     let written=false,calls=0;auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>{calls++;written=true;return new Response(JSON.stringify({totalUpdatedRows:1,responses:[{}]}))};
     const identity={kind:'EXPENSE',sheetId:42,entityId:h.expense.id}, witness={metadataId:42,metadataKey:'E',sheetId:42,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
     const makeCells=()=>Array.from({length:17},()=>({entered:null,formula:null,note:null,hasValidation:false}));
-    const probe={async read(){const expected=makeCells(),observed=makeCells();for(const i of expenseFields){expected[i].entered=prior[i];observed[i].entered=i===2&&written?'fixture':prior[i]}return{witness,identityRows:[['Expense_ID'],['exp_fixture']],guard:{fields:expenseFields,expected,observed}}}};
+    const probe={async read(){const expected=makeCells(),observed=makeCells();for(const i of expenseFields){expected[i].entered=prior[i];observed[i].entered=i===2&&written?'fixture':prior[i]}return{witness,identityRows:[[...RAW_PROJECTION_HEADERS.EXPENSE],['exp_fixture']],guard:{fields:expenseFields,expected,observed}}}};
     const values=['exp_fixture','2026-10-01','fixture',100,'transfer','SHOP_BANK','ingredients','CONFIRMED',...Array(9).fill(null)];
     assert.equal(await projectExistingLedgerShadow(h.env,'raw',h.expense,identity,42,1,values,token,probe),'VERIFIED');
     const row=h.db.prepare(`SELECT state,projected_version,baseline_json FROM ledger_stable_identity_journal WHERE entity_key='exp_fixture'`).get();
@@ -152,7 +153,7 @@ test('partial patch cannot mark an entire CORE projection as a newer version',as
     let calls=0;globalThis.fetch=async()=>{calls++;throw Error('must not dispatch')};
     const identity={kind:'EXPENSE',sheetId:42,entityId:h.expense.id},witness={metadataId:42,metadataKey:'E',sheetId:42,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
     const cells=()=>Array.from({length:17},()=>({entered:null,formula:null,note:null,hasValidation:false}));
-    const probe={async read(){return{witness,identityRows:[['Expense_ID'],['exp_fixture']],guard:{fields:[2],expected:cells(),observed:cells()}}}};
+    const probe={async read(){return{witness,identityRows:[[...RAW_PROJECTION_HEADERS.EXPENSE],['exp_fixture']],guard:{fields:[2],expected:cells(),observed:cells()}}}};
     const values=['exp_fixture','2026-10-01','fixture',100,'transfer','SHOP_BANK','ingredients','CONFIRMED',...Array(9).fill(null)];
     assert.equal(await projectExistingLedgerShadow(h.env,'raw',h.expense,identity,42,1,values,token,probe),'REVIEW');
     const row=h.db.prepare(`SELECT state,projected_version FROM ledger_stable_identity_journal WHERE entity_key='exp_fixture'`).get();
@@ -168,7 +169,7 @@ test('manual edit after preflight, source race or unknown response holds without
       let reads=0,written=false,calls=0;auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>{calls++;written=true;if(scenario==='source')h.db.prepare(`UPDATE expense_events SET description='changed'`).run();return new Response(scenario==='unknown'?'invalid-json':JSON.stringify({totalUpdatedRows:1,responses:[{}]}))};
       const identity={kind:'EXPENSE',sheetId:42,entityId:h.expense.id},witness={metadataId:42,metadataKey:'E',sheetId:42,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
       const cells=()=>Array.from({length:17},()=>({entered:null,formula:null,note:null,hasValidation:false}));
-      const probe={async read(){reads++;const expected=cells(),observed=cells(),old=scenario==='manual'&&reads===2?'manual':'old fixture';for(const i of expenseFields){expected[i].entered=i===2?old:prior[i];observed[i].entered=i===2?(written?'fixture':old):prior[i]}return{witness,identityRows:[['Expense_ID'],['exp_fixture']],guard:{fields:expenseFields,expected,observed}}}};
+      const probe={async read(){reads++;const expected=cells(),observed=cells(),old=scenario==='manual'&&reads===2?'manual':'old fixture';for(const i of expenseFields){expected[i].entered=i===2?old:prior[i];observed[i].entered=i===2?(written?'fixture':old):prior[i]}return{witness,identityRows:[[...RAW_PROJECTION_HEADERS.EXPENSE],['exp_fixture']],guard:{fields:expenseFields,expected,observed}}}};
       const values=['exp_fixture','2026-10-01','fixture',100,'transfer','SHOP_BANK','ingredients','CONFIRMED',...Array(9).fill(null)];
       assert.equal(await projectExistingLedgerShadow(h.env,'raw',h.expense,identity,42,1,values,token,probe),'REVIEW');
       assert.equal(h.db.prepare(`SELECT state FROM ledger_stable_identity_journal WHERE entity_key='exp_fixture'`).get().state,'REVIEW');

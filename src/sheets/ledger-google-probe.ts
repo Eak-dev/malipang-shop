@@ -2,6 +2,7 @@ import type {Env} from '../types';
 import {getLedgerUatSnapshotPart,getRawIdentityProductionMetadata,getRawIdentityProductionGrid} from './client';
 import {verifyLedgerMetadataWitness,type LedgerCellState,type LedgerMetadataWitness,type LedgerWriteIdentity} from './ledger-metadata-writer';
 import type {LedgerProjectionProbe} from './ledger-stable-projector';
+import {RAW_PROJECTION_HEADERS} from './raw-projection';
 
 // UAT-only reader: the resulting snapshot is evidence at a point in time,
 // not a lock or a Sheets compare-and-swap. Never wire to production as-is.
@@ -43,18 +44,22 @@ export function parseLedgerGoogleSnapshot(data:unknown,sheetName:string,identity
   const blocks=array(sheet.data);if(blocks.length!==1)throw Error('LEDGER_UAT_GRID_INVALID');
   const block=obj(blocks[0]);if(integer(block.startRow??0)!==0||integer(block.startColumn??0)!==0)throw Error('LEDGER_UAT_GRID_INVALID');
   const rows=block.rowData===undefined?[]:array(block.rowData);if(rows.length>count)throw Error('LEDGER_UAT_GRID_INVALID');
+  const headerCells=rows[0]===undefined?[]:objectHeaderCells(rows[0]);
+  if(!RAW_PROJECTION_HEADERS[identity.kind].every((name,i)=>{const cell=parseLedgerUatCell(headerCells[i]??{});return cell.entered===name&&cell.formula===null;}))throw Error('LEDGER_UAT_HEADER_INVALID');
   const identityRows:unknown[][]=Array.from({length:count},()=>[]);let observed:LedgerCellState[]|undefined;
   for(let r=0;r<rows.length;r++){
     const row=obj(rows[r]),cells=row.values===undefined?[]:array(row.values);if(cells.length>size)throw Error('LEDGER_UAT_GRID_INVALID');
     const id=parseLedgerUatCell(cells[0]??{});if(id.formula!==null)throw Error('LEDGER_UAT_ID_FORMULA');identityRows[r]=[id.entered];
     if(r===witness.startIndex)observed=Array.from({length:size},(_,i)=>parseLedgerUatCell(cells[i]??{}));
   }
+  identityRows[0]=[...RAW_PROJECTION_HEADERS[identity.kind]];
   if(!observed)observed=Array.from({length:size},blank);
   verifyLedgerMetadataWitness(identity,witness,identityRows);
   // Expected and observed share the just-read snapshot. The durable hash
   // baseline is independently checked by the projector before dispatch.
   return {witness,identityRows,guard:{fields:[...owned[identity.kind]],expected:observed,observed}};
 }
+function objectHeaderCells(row:unknown):unknown[]{const r=obj(row);return r.values===undefined?[]:array(r.values);}
 
 function createLedgerGoogleProbe(env:Env,sheetName:string,identity:LedgerWriteIdentity,metadataId:number,reader:{metadata:()=>Promise<unknown>;grid:()=>Promise<unknown>}):LedgerProjectionProbe{
   if(!sheetName||identity.kind==='PURCHASE_DETAILS'||!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647)throw Error('LEDGER_UAT_PROBE_INVALID');

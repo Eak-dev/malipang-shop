@@ -14,6 +14,7 @@ const client=require('../dist/sheets/client.js');
 const {FullRawIdentityIntent}=require('../dist/sheets/full-raw-identity-intent.js');
 const {FullRawAppendIntent}=require('../dist/sheets/full-raw-append-intent.js');
 const {ExpenseProjectionRuntimeJournal}=require('../dist/sheets/expense-projection-runtime-journal.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 class Statement{constructor(db,sql){this.db=db;this.sql=sql;this.args=[]}bind(...args){this.args=args;return this}async first(){return this.db.prepare(this.sql).get(...this.args)??null}async run(){return{meta:{changes:Number(this.db.prepare(this.sql).run(...this.args).changes)}}}}
 class D1{constructor(db){this.db=db}prepare(sql){return new Statement(this.db,sql)}}
 function fixture(){
@@ -82,7 +83,7 @@ test('wrong identity, missing source, status and version do not authorize writes
 test('ambiguous-write inspection never authorizes retry or releases REVIEW',async()=>{
   const f=fixture();try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),identity={kind:'EXPENSE',sheetId:7,entityId:proof.entityId},witness={metadataId:44,metadataKey:'E',sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
-    const rows=[['Expense_ID'],[proof.entityId]],cells=proof.values.map(entered=>({entered,formula:null,note:null,hasValidation:false}));
+    const rows=[[...RAW_PROJECTION_HEADERS.EXPENSE],[proof.entityId]],cells=proof.values.map(entered=>({entered,formula:null,note:null,hasValidation:false}));
     const oldValues=proof.values.map((v,i)=>i===2?'old description':v),baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(oldValues[i]);
     const inspect=()=>inspectRawRecovery(f.env,proof,identity,witness,44,rows,cells,baseline);
     assert.deepEqual(await inspect(),{status:'REVIEW',observation:'MATCHES_DESIRED'});
@@ -99,7 +100,7 @@ test('full metadata adapter checks complete baseline and postimage yet remains R
   const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
     Object.assign(f.env,{RUNTIME_MODE:'shadow',SHEETS_LEDGER_FULL_PROJECTION_UAT:'true',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true',GOOGLE_SPREADSHEET_ID:'uat',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'uat',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production'});
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),identity={kind:'EXPENSE',sheetId:7,entityId:proof.entityId},witness={metadataId:44,metadataKey:'E',sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
-    const rows=[['Expense_ID'],[proof.entityId]],cells=proof.values.map(entered=>({entered,formula:null,note:null,hasValidation:false}));cells[2].entered='old description';
+    const rows=[[...RAW_PROJECTION_HEADERS.EXPENSE],[proof.entityId]],cells=proof.values.map(entered=>({entered,formula:null,note:null,hasValidation:false}));cells[2].entered='old description';
     const baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(cells[i].entered);
     let begins=0,holds=0,dispatches=0,canDispatch=true;
     const intents={async begin(){begins++;return true},async canDispatch(){return canDispatch},async hold(){holds++}};
@@ -166,7 +167,7 @@ function mockProductionRawProvider(proof,options={}){
   let calls=0;auth.getGoogleAccessToken=async()=> 'synthetic-token';
   const metadata={metadataId:44,metadataKey:'E',visibility:'DOCUMENT',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2}}};
   const values=proof.values.map(value=>value===null||value===''?{}:typeof value==='string'?{userEnteredValue:{stringValue:value}}:typeof value==='number'?{userEnteredValue:{numberValue:value}}:{userEnteredValue:{boolValue:value}});
-  const grid={sheets:[{properties:{sheetId:7,title:'raw',gridProperties:{rowCount:2,columnCount:17}},data:[{rowData:[{values:[{userEnteredValue:{stringValue:'Expense_ID'}}]},{values}]}]}]};
+  const grid={sheets:[{properties:{sheetId:7,title:'raw',gridProperties:{rowCount:2,columnCount:17}},data:[{rowData:[{values:RAW_PROJECTION_HEADERS.EXPENSE.map(h=>({userEnteredValue:{stringValue:h}}))},{values}]}]}]};
   globalThis.fetch=async(_url,init)=>{assert.equal(init.method,'GET');calls++;if(calls===2&&options.onGrid)await options.onGrid(grid);const payload=calls===2?grid:structuredClone(metadata);if(calls===3&&options.moveMetadata)payload.location.dimensionRange.startIndex=2;return new Response(JSON.stringify(payload));};
   return()=>calls;
 }

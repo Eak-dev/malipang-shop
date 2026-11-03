@@ -4,6 +4,7 @@ import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
 import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
+import {RAW_PROJECTION_HEADERS} from './raw-projection';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -150,8 +151,8 @@ export async function bootstrapSheets(env:Env):Promise<void>{
     [env.SHEET_WAGE_HISTORY,["Wage_ID","Employee_ID","Staff_Name","Daily_Wage_Baht","Effective_From","Effective_To","Source","Note","Version","Created_At","Updated_At"]],
     [env.SHEET_SHIFT_SCHEDULE,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Daily_Wage_Snapshot_Baht","Wage_Source_ID","Status","Note","Version","Updated_At"]],
     [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
-    [env.SHEET_EXPENSE_RAW,["Expense_ID","Transaction_Date","Description","Amount_Baht","Payment_Key","Source_Wallet","Category","Status","Message_ID","Trace_ID","Submitted_By_Staff_ID","Branch_ID","Document_ID","Document_Type","Vendor","Document_Number","Order_ID"]],
-    [env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW",["Personal_Use_ID","Transaction_Type","Transaction_Date","Description","Amount_Baht","Source_Wallet","Status","Message_ID","Trace_ID","Submitted_By","Branch_ID","Approved_At","Created_At","Updated_At","Version"]],
+    [env.SHEET_EXPENSE_RAW,RAW_PROJECTION_HEADERS.EXPENSE],
+    [env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW",RAW_PROJECTION_HEADERS.PERSONAL_USE],
     [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",["Purchase_Item_ID","Expense_ID","Document_ID","วันที่ซื้อ","บริษัท/ร้านค้า","เลขที่เอกสาร","รายการสินค้า","จำนวน","หน่วย","ราคาต่อหน่วย","ส่วนลดรายการ","จำนวนเงินรายการ","ส่วนลด/ปรับยอดระดับเอกสาร","ยอดจ่ายจริงของ Expense","หมวด","สาขา","สถานะ","Evidence ref (private)","Created_At","Updated_At / Cancelled_At"]],
     [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
   ] as const;

@@ -6,11 +6,12 @@ const {verifyLedgerMetadataWitness,buildLedgerMetadataValueRange}=require('../di
 const {digestLedgerCell}=require('../dist/sheets/ledger-stable-journal.js');
 const client=require('../dist/sheets/client.js');
 const auth=require('../dist/sheets/google-auth.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
 test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
 const identity={kind:'EXPENSE',sheetId:42,entityId:'exp_a'};
 const witness={metadataId:123,metadataKey:'E',sheetId:42,dimension:'ROWS',startIndex:1,endIndex:2,visibility:'DOCUMENT'};
-const rows=[['Expense_ID'],['exp_a'],['exp_b']];
+const rows=[[...RAW_PROJECTION_HEADERS.EXPENSE],['exp_a'],['exp_b']];
 const guard=(size,fields)=>{
   const cells=Array.from({length:size},()=>({entered:null,formula:null,note:null,hasValidation:false}));
   return{fields,expected:structuredClone(cells),observed:structuredClone(cells)};
@@ -30,6 +31,13 @@ test('detail identity uses both item and parent expense; copied IDs hold',()=>{
   assert.doesNotThrow(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_a']]));
   assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_b']]));
   assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_a'],['item_a','exp_a']]));
+});
+test('expense and personal RAW reject reordered non-ID column headers',()=>{
+  const expHeaders=[...RAW_PROJECTION_HEADERS.EXPENSE];[expHeaders[2],expHeaders[3]]=[expHeaders[3],expHeaders[2]];
+  assert.throws(()=>verifyLedgerMetadataWitness(identity,witness,[expHeaders,['exp_a']]));
+  const personal={kind:'PERSONAL_USE',sheetId:42,entityId:'personal_a'},pw={...witness,metadataKey:'P'},personalHeaders=[...RAW_PROJECTION_HEADERS.PERSONAL_USE];
+  assert.doesNotThrow(()=>verifyLedgerMetadataWitness(personal,pw,[personalHeaders,['personal_a']]));
+  [personalHeaders[2],personalHeaders[3]]=[personalHeaders[3],personalHeaders[2]];assert.throws(()=>verifyLedgerMetadataWitness(personal,pw,[personalHeaders,['personal_a']]));
 });
 test('data filter uses metadataId only, preserves identity cells and deliberately clears old nulls',()=>{
   const values=['exp_a',...Array(16).fill('fixture')];values[4]=null;

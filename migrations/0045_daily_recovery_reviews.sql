@@ -4,7 +4,7 @@
 -- candidate provides no API to create or trust one as a recovery authorization.
 CREATE TABLE IF NOT EXISTS daily_recovery_identity_witnesses (
  spreadsheet_id TEXT NOT NULL,sheet_name TEXT NOT NULL,expense_id TEXT NOT NULL,metadata_id INTEGER NOT NULL,
- projected_version INTEGER NOT NULL,projected_revision INTEGER NOT NULL CHECK(projected_revision>0),baseline_sha256 TEXT NOT NULL CHECK(length(baseline_sha256)=64),
+ projected_version INTEGER NOT NULL CHECK(typeof(projected_version)='integer' AND projected_version BETWEEN 1 AND 9007199254740991),projected_revision INTEGER NOT NULL CHECK(typeof(projected_revision)='integer' AND projected_revision BETWEEN 1 AND 9007199254740991),baseline_sha256 TEXT NOT NULL CHECK(length(baseline_sha256)=64),
  provenance TEXT NOT NULL CHECK(provenance='PRODUCTION_VERIFIED_WRITER'),
  created_at TEXT NOT NULL, PRIMARY KEY(spreadsheet_id,sheet_name,expense_id,projected_revision)
 );

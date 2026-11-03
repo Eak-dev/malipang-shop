@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {sheetScopesDistinct} from './sheet-scope-isolation';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 
 export interface PersonalProjectionContext{revision:number;generation:string;watermark:number}
@@ -25,7 +26,7 @@ export class PersonalProjectionRuntimeJournal{
   private readonly generationLease:PersonalGenerationLease|undefined;
   constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,generationLease?:PersonalGenerationLease){this.job={...job};this.generationLease=generationLease?{...generationLease}:undefined;}
   private check():void{
-    const e=this.env,j=this.job;if(e.RUNTIME_MODE!=='production'||e.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!e.GOOGLE_SPREADSHEET_ID||j.kind!=='SHEETS_SYNC'||j.entityType!=='PERSONAL_USE'||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(j.entityKey)||!Number.isSafeInteger(j.entityVersion)||j.entityVersion<1||!/^[-A-Za-z0-9_]{8,128}$/.test(this.lease))throw Error('PERSONAL_PROJECTION_DISABLED');
+    const e=this.env,j=this.job;if(!sheetScopesDistinct(e)||e.RUNTIME_MODE!=='production'||e.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!e.GOOGLE_SPREADSHEET_ID||j.kind!=='SHEETS_SYNC'||j.entityType!=='PERSONAL_USE'||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(j.entityKey)||!Number.isSafeInteger(j.entityVersion)||j.entityVersion<1||!/^[-A-Za-z0-9_]{8,128}$/.test(this.lease))throw Error('PERSONAL_PROJECTION_DISABLED');
     const v=this.generationLease;if(e.PERSONAL_GENERATION_WORKER_ENABLED!=='true'||!v||!/^[-A-Za-z0-9_]{8,128}$/.test(v.generation)||!Number.isSafeInteger(v.revision)||v.revision<1||!/^[-A-Za-z0-9_]{8,128}$/.test(v.token))throw Error('PERSONAL_GENERATION_LEASE_REQUIRED');
   }
   private sheet():string{return this.env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW';}

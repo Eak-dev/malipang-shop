@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {sheetScopesDistinct} from './sheet-scope-isolation';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 
 export type ExpenseProjection='RAW'|'DAILY'|'DETAIL';
@@ -48,7 +49,7 @@ export class ExpenseProjectionRuntimeJournal{
   private readonly job:SheetsSyncJob;
   constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,generationLease?:ExpenseGenerationLease){this.job={...job};this.generationLease=generationLease?{...generationLease}:undefined;}
   private check(projection?:ExpenseProjection):void{
-    if(this.env.RUNTIME_MODE!=='production'||this.env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||this.env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!this.env.GOOGLE_SPREADSHEET_ID||!this.env.SHEET_EXPENSE_DAILY||!this.env.SHEET_EXPENSE_RAW||this.job.kind!=='SHEETS_SYNC'||this.job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(this.job.entityKey)||!Number.isSafeInteger(this.job.entityVersion)||this.job.entityVersion<1||!this.lease||projection&&!projections.has(projection))throw new Error('EXPENSE_PROJECTION_DISABLED');
+    if(!sheetScopesDistinct(this.env)||this.env.RUNTIME_MODE!=='production'||this.env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||this.env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!this.env.GOOGLE_SPREADSHEET_ID||!this.env.SHEET_EXPENSE_DAILY||!this.env.SHEET_EXPENSE_RAW||this.job.kind!=='SHEETS_SYNC'||this.job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(this.job.entityKey)||!Number.isSafeInteger(this.job.entityVersion)||this.job.entityVersion<1||!this.lease||projection&&!projections.has(projection))throw new Error('EXPENSE_PROJECTION_DISABLED');
     const v=this.generationLease;
     if(this.env.EXPENSE_GENERATION_WORKER_ENABLED!=='true'||!v||!/^[-A-Za-z0-9_]{8,128}$/.test(v.generation)||!Number.isSafeInteger(v.revision)||v.revision<1||!/^[-A-Za-z0-9_]{8,128}$/.test(v.token))throw new Error('EXPENSE_GENERATION_LEASE_REQUIRED');
   }

@@ -7,12 +7,12 @@ function check(env:Env):void{
 }
 // This is a discovery/claim precondition, not a Google Sheets lock and not a
 // replacement for the canonical per-projection fence immediately before send.
-function eligible(alias:string):string{return `EXISTS(SELECT 1 FROM expense_events e
-  JOIN expense_projection_source_revisions r ON r.expense_id=e.expense_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision=${alias}.source_revision
+function eligible(alias:string,matchRevision=true):string{return `EXISTS(SELECT 1 FROM expense_events e
+  JOIN expense_projection_source_revisions r ON r.expense_id=e.expense_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND r.revision=${alias}.source_revision`:''}
   JOIN expense_projection_admissions a ON a.expense_id=e.expense_id
   JOIN expense_projection_cutovers c ON c.spreadsheet_id=${alias}.spreadsheet_id AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=${alias}.cutover_generation AND a.sequence>c.admission_watermark
   JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
-  WHERE e.expense_id=${alias}.expense_id AND e.status='CONFIRMED' AND typeof(e.version)='integer' AND e.version=${alias}.source_version AND e.version>0
+  WHERE e.expense_id=${alias}.expense_id AND e.status='CONFIRMED' AND typeof(e.version)='integer' AND e.version BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND e.version=${alias}.source_version`:''}
   AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.sheet_name IN (?,?,?) AND (i.entity_key=e.expense_id OR substr(i.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))
   AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=${alias}.spreadsheet_id AND p.expense_id=e.expense_id AND p.state IN ('IN_FLIGHT','REVIEW'))
   AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_jobs prior WHERE prior.spreadsheet_id=${alias}.spreadsheet_id AND prior.expense_id=e.expense_id AND prior.state IN ('IN_FLIGHT','REVIEW')))`;}
@@ -23,19 +23,23 @@ function eligibilityArgs(env:Env):string[]{return[env.SHEET_EXPENSE_DAILY,env.SH
 export async function runExpenseGenerationScheduler(env:Env):Promise<void>{
   check(env);await discoverExpenseProjectionGenerations(env,100);
   const expired=env.DB.prepare(`UPDATE expense_projection_generation_jobs SET state='REVIEW',reason='LEASE_EXPIRED_OUTCOME_UNKNOWN',lease_token=NULL,lease_until=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND state='IN_FLIGHT' AND lease_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')`).bind(env.GOOGLE_SPREADSHEET_ID);
+  // PENDING has never been claimed, and there is no transition back to it.
+  // Its CAS update races safely with claim: only one can change PENDING.
+  const supersede=env.DB.prepare(`UPDATE expense_projection_generation_jobs AS q SET state='SUPERSEDED',reason='SOURCE_ADVANCED_BEFORE_CLAIM',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible('q',false)} AND EXISTS(SELECT 1 FROM expense_projection_source_revisions r WHERE r.expense_id=q.expense_id AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
   const stale=env.DB.prepare(`UPDATE expense_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_OR_FENCE_CHANGED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND NOT ${eligible('q')}`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
   const materialize=env.DB.prepare(`INSERT INTO expense_projection_generation_jobs(spreadsheet_id,cutover_generation,expense_id,source_version,source_revision,state,reason,created_at,updated_at)
+    WITH candidates AS (SELECT o.*,${eligible('o')} AS exact_ok,(${eligible('o',false)} AND EXISTS(SELECT 1 FROM expense_projection_source_revisions r WHERE r.expense_id=o.expense_id AND r.revision>o.source_revision)) AS current_ok
+      FROM expense_projection_generation_observations o JOIN expense_projection_cutovers c ON c.spreadsheet_id=o.spreadsheet_id AND c.generation=o.cutover_generation AND c.sheet_name=? AND c.state='ACTIVE'
+      WHERE o.spreadsheet_id=? AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_jobs q WHERE q.spreadsheet_id=o.spreadsheet_id AND q.cutover_generation=o.cutover_generation AND q.expense_id=o.expense_id AND q.source_version=o.source_version AND q.source_revision=o.source_revision)
+      ORDER BY o.discovered_at,o.expense_id LIMIT 100)
     SELECT o.spreadsheet_id,o.cutover_generation,o.expense_id,o.source_version,o.source_revision,
-      CASE WHEN o.state='PENDING' AND ${eligible('o')} THEN 'PENDING' ELSE 'REVIEW' END,
-      CASE WHEN o.state='REVIEW' THEN COALESCE(o.reason,'OBSERVATION_REVIEW') WHEN ${eligible('o')} THEN NULL ELSE 'SOURCE_OR_FENCE_CHANGED' END,
-      strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    FROM expense_projection_generation_observations o JOIN expense_projection_cutovers c ON c.spreadsheet_id=o.spreadsheet_id AND c.generation=o.cutover_generation AND c.sheet_name=? AND c.state='ACTIVE'
-    WHERE o.spreadsheet_id=? AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_jobs q WHERE q.spreadsheet_id=o.spreadsheet_id AND q.cutover_generation=o.cutover_generation AND q.expense_id=o.expense_id AND q.source_version=o.source_version AND q.source_revision=o.source_revision)
-    ORDER BY o.discovered_at,o.expense_id LIMIT 100
+      CASE WHEN o.state='REVIEW' THEN 'REVIEW' WHEN o.exact_ok THEN 'PENDING' WHEN o.current_ok THEN 'SUPERSEDED' ELSE 'REVIEW' END,
+      CASE WHEN o.state='REVIEW' THEN COALESCE(o.reason,'OBSERVATION_REVIEW') WHEN o.exact_ok THEN NULL WHEN o.current_ok THEN 'SOURCE_ADVANCED_BEFORE_QUEUE' ELSE 'SOURCE_OR_FENCE_CHANGED' END,
+      strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM candidates o WHERE 1
     ON CONFLICT(spreadsheet_id,cutover_generation,expense_id,source_version,source_revision) DO NOTHING`).bind(...eligibilityArgs(env),...eligibilityArgs(env),env.SHEET_EXPENSE_DAILY,env.GOOGLE_SPREADSHEET_ID);
   // Batch rollback prevents marking a lease expired without applying the rest
   // of that tick. A lost acknowledgement leaves the durable rows authoritative.
-  await env.DB.batch([expired,stale,materialize]);
+  await env.DB.batch([expired,supersede,stale,materialize]);
 }
 
 /** Foundation for a future consumer; not connected to cron or a queue route.

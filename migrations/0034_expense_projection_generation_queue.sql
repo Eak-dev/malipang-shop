@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS expense_projection_generation_jobs (
   expense_id TEXT NOT NULL,
   source_version INTEGER NOT NULL,
   source_revision INTEGER NOT NULL,
-  state TEXT NOT NULL CHECK(state IN ('PENDING','IN_FLIGHT','REVIEW')),
+  state TEXT NOT NULL CHECK(state IN ('PENDING','IN_FLIGHT','REVIEW','SUPERSEDED')),
   reason TEXT,
   lease_token TEXT,
   lease_until TEXT,

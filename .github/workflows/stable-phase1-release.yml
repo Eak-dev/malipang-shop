@@ -88,7 +88,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx wrangler d1 migrations apply malipang-v5-2 --remote --yes
+          printf 'y\n' | npx wrangler d1 migrations apply malipang-v5-2 --remote
           npx wrangler deploy
           npx wrangler versions list --json > "$RUNNER_TEMP/deployed-versions.json"
           curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null

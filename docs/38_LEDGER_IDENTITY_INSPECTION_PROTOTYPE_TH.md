@@ -12,7 +12,7 @@
 
 สำหรับรายการใหม่ มี reader/planner ที่อ่านทุกคอลัมน์ของ RAW ภายในขีดจำกัด และ candidate intent ใน migration 0033 ที่จอง metadata ID กับ sheet-wide lock ซึ่งไม่หมดอายุ การสูญหายของ D1 acknowledgement ไม่อนุญาตให้ process เดิมหรือ process ใหม่ส่งต่อโดยอัตโนมัติ มี candidate transport ที่บังคับ one-shot และอ่านกริด/ตรวจ fence หลัง OAuth แล้วอ่าน metadata และข้อมูลกลับ ทุกผลยังพัก REVIEW และไม่ปลด lock. ยังไม่มี production route, identity enrollment หรือ workflow ตรวจหลักฐานและปลด lock; ต้องผูก generation lease และตรวจระบบจริงก่อนใช้งาน. การตรวจนี้ไม่กันคน, source D1 หรือ writer เก่าเปลี่ยนข้อมูลขณะส่ง Google: หาก source เปลี่ยนระหว่าง request ชีตอาจเห็นข้อมูลล้าสมัยชั่วคราว แม้ readback จะพบและพักงาน
 
-RAW identity reader/writer และ append planner ต้องเห็นหัวตารางครบตามลำดับทุกคอลัมน์ (expense 17 ช่อง, personal-use 15 ช่อง) หากมีการสลับหรือเปลี่ยนชื่อคอลัมน์ต้องหยุดตรวจ การอ่านหัวตารางในไฟล์จริงเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การล็อกการแก้ไขคอลัมน์
+RAW identity reader/writer และ append planner ต้องเห็นหัวตารางครบตามลำดับทุกคอลัมน์ (expense 17 ช่อง, personal-use 15 ช่อง) ส่วน detail metadata witness ตรวจครบ 20 ช่อง หากมีการสลับหรือเปลี่ยนชื่อคอลัมน์ต้องหยุดตรวจ การอ่านหัวตารางในไฟล์จริงเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การล็อกการแก้ไขคอลัมน์; detail ยังไม่มี trusted reader หรือ production route
 
 `auditLegacyExpenseRawEnrollment` ใช้ตรวจว่าภาพข้อมูลที่ส่งเข้ามามี ID เดียวและค่า RAW ทั้งแถวตรง source หรือไม่ โดยไม่คืนเลขแถว ทุกผลเป็น REVIEW; `SINGLE_MATCH` บอกเพียงว่าตรงกับ snapshot ที่ caller ส่งมา ไม่ยืนยันว่าอ่านจาก Google จริงหรืออนุญาตผูก metadata. การลงทะเบียนแถวเก่าจริงยังไม่มีเส้นทางและต้องมีหลักฐาน identity, trusted read, durable intent และการกันการแก้พร้อมกัน
 

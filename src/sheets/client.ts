@@ -171,7 +171,7 @@ export async function bootstrapSheets(env:Env):Promise<void>{
     [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
     [env.SHEET_EXPENSE_RAW,RAW_PROJECTION_HEADERS.EXPENSE],
     [env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW",RAW_PROJECTION_HEADERS.PERSONAL_USE],
-    [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",["Purchase_Item_ID","Expense_ID","Document_ID","วันที่ซื้อ","บริษัท/ร้านค้า","เลขที่เอกสาร","รายการสินค้า","จำนวน","หน่วย","ราคาต่อหน่วย","ส่วนลดรายการ","จำนวนเงินรายการ","ส่วนลด/ปรับยอดระดับเอกสาร","ยอดจ่ายจริงของ Expense","หมวด","สาขา","สถานะ","Evidence ref (private)","Created_At","Updated_At / Cancelled_At"]],
+    [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",RAW_PROJECTION_HEADERS.PURCHASE_DETAILS],
     [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
   ] as const;
   const requests=definitions.filter(([name])=>!existing.has(name)).map(([title])=>({addSheet:{properties:{title,gridProperties:{frozenRowCount:1}}}}));if(requests.length)await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});

@@ -28,9 +28,11 @@ test('preflight follows moved rows and rejects duplicate, wrong row, metadata, o
 });
 test('detail identity uses both item and parent expense; copied IDs hold',()=>{
   const ident={kind:'PURCHASE_DETAILS',sheetId:42,entityId:'exp_a',itemId:'item_a'}, w={...witness,metadataKey:'D'};
-  assert.doesNotThrow(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_a']]));
-  assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_b']]));
-  assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[['Purchase_Item_ID','Expense_ID'],['item_a','exp_a'],['item_a','exp_a']]));
+  const header=[...RAW_PROJECTION_HEADERS.PURCHASE_DETAILS];
+  assert.doesNotThrow(()=>verifyLedgerMetadataWitness(ident,w,[header,['item_a','exp_a']]));
+  assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[header,['item_a','exp_b']]));
+  assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[header,['item_a','exp_a'],['item_a','exp_a']]));
+  const swapped=[...header];[swapped[16],swapped[19]]=[swapped[19],swapped[16]];assert.throws(()=>verifyLedgerMetadataWitness(ident,w,[swapped,['item_a','exp_a']]));
 });
 test('expense and personal RAW reject reordered non-ID column headers',()=>{
   const expHeaders=[...RAW_PROJECTION_HEADERS.EXPENSE];[expHeaders[2],expHeaders[3]]=[expHeaders[3],expHeaders[2]];

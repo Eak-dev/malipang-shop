@@ -1,7 +1,8 @@
 /** Shared RAW value layout. Kept independent of row addressing and I/O. */
 export const RAW_PROJECTION_HEADERS={
   EXPENSE:['Expense_ID','Transaction_Date','Description','Amount_Baht','Payment_Key','Source_Wallet','Category','Status','Message_ID','Trace_ID','Submitted_By_Staff_ID','Branch_ID','Document_ID','Document_Type','Vendor','Document_Number','Order_ID'],
-  PERSONAL_USE:['Personal_Use_ID','Transaction_Type','Transaction_Date','Description','Amount_Baht','Source_Wallet','Status','Message_ID','Trace_ID','Submitted_By','Branch_ID','Approved_At','Created_At','Updated_At','Version']
+  PERSONAL_USE:['Personal_Use_ID','Transaction_Type','Transaction_Date','Description','Amount_Baht','Source_Wallet','Status','Message_ID','Trace_ID','Submitted_By','Branch_ID','Approved_At','Created_At','Updated_At','Version'],
+  PURCHASE_DETAILS:['Purchase_Item_ID','Expense_ID','Document_ID','วันที่ซื้อ','บริษัท/ร้านค้า','เลขที่เอกสาร','รายการสินค้า','จำนวน','หน่วย','ราคาต่อหน่วย','ส่วนลดรายการ','จำนวนเงินรายการ','ส่วนลด/ปรับยอดระดับเอกสาร','ยอดจ่ายจริงของ Expense','หมวด','สาขา','สถานะ','Evidence ref (private)','Created_At','Updated_At / Cancelled_At']
 } as const;
 const baht=(value:unknown)=>Number(value||0)/100;
 export function buildExpenseRawSheetValues(expense:Record<string,unknown>,document:Record<string,unknown>|null):unknown[]{

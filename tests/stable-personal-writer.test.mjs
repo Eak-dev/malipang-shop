@@ -49,7 +49,7 @@ test('personal job completes after readback and releases its workbook claim',asy
 test('phase-one queue dispatch writes a new personal record but holds historical records',async()=>{
  for(const historical of [false,true]){const h=fixture(),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused};try{
   h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");if(historical)h.sqlite.exec("INSERT INTO stable_pre_cutover_sources VALUES('PERSONAL_USE','personal_1')");
-  notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
+  notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
   assert.equal(await dispatchStablePhase1(h.env,h.job),historical?'REVIEW':'PROCESSED');assert.equal(h.writes(),historical?0:1);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,historical?'REVIEW':'COMPLETED');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  }finally{Object.assign(notice,old);h.close();}}
 });

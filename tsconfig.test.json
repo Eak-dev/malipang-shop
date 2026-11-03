@@ -69,6 +69,7 @@
     "src/sheets/ledger-uat-append-reader.ts",
     "src/sheets/raw-projection.ts",
     "src/sheets/raw-source-proof.ts",
+    "src/sheets/detail-source-proof.ts",
     "src/sheets/raw-recovery-inspection.ts",
     "src/sheets/raw-full-projection-shadow.ts",
     "src/sheets/full-raw-identity-intent.ts",

@@ -72,6 +72,8 @@
     "src/sheets/full-raw-append-intent.ts",
     "src/sheets/legacy-raw-enrollment-audit.ts",
     "src/sheets/personal-projection-runtime-journal.ts",
+    "src/sheets/personal-legacy-writer-gate.ts",
+    "src/sheets/personal-historical-source-proof.ts",
     "src/sheets/personal-raw-identity-intent.ts",
     "src/sheets/personal-raw-enrollment-plan.ts",
     "src/sheets/personal-raw-enrollment.ts",

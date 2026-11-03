@@ -6,6 +6,8 @@ ALTER TABLE daily_stable_row_intents ADD COLUMN projected_revision INTEGER;
 CREATE TABLE daily_registry_migration_assertion(ok INTEGER NOT NULL CHECK(ok=1));
 INSERT INTO daily_registry_migration_assertion(ok) SELECT CASE WHEN
  (SELECT count(*) FROM pragma_table_info('daily_recovery_identity_witnesses') WHERE name IN ('sheet_name','projected_revision'))=2
+ AND (SELECT group_concat(name,',') FROM (SELECT name FROM pragma_table_info('daily_recovery_identity_witnesses') WHERE pk>0 ORDER BY pk))='spreadsheet_id,sheet_name,expense_id,projected_revision'
+ AND (SELECT count(*) FROM pragma_index_list('daily_recovery_identity_witnesses') WHERE "unique"=1)=1
  AND NOT EXISTS(SELECT 1 FROM daily_stable_row_intents i JOIN sheet_metadata_identity_registry r ON r.spreadsheet_id=i.spreadsheet_id AND r.metadata_id=i.metadata_id)
  AND NOT EXISTS(SELECT 1 FROM daily_recovery_identity_witnesses w JOIN sheet_metadata_identity_registry r ON r.spreadsheet_id=w.spreadsheet_id AND r.metadata_id=w.metadata_id)
  THEN 1 ELSE 0 END;

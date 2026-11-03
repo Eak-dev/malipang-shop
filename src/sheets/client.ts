@@ -4,13 +4,12 @@ import { fetchWithTimeout,readBoundedJson } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
 import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
-import {RAW_PROJECTION_HEADERS} from './raw-projection';
 import {buildExpenseRawProductionAppendRequests,type LedgerUatAppendSnapshot} from './ledger-uat-append-planner';
 import type {RawSourceProof} from './raw-source-proof';
 import {FullRawAppendIntent} from './full-raw-append-intent';
 import {PersonalRawEnrollment} from './personal-raw-enrollment';
+import {legacyPersonalWriterOpen} from './personal-legacy-writer-gate';
 import type {planPersonalRawEnrollment} from './personal-raw-enrollment-plan';
-import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -196,32 +195,14 @@ export async function getSheetId(env:Env,title:string):Promise<number>{
   if(!Number.isInteger(found))throw new Error(`Google Sheet tab not found: ${title}`);
   return Number(found);
 }
-export async function bootstrapSheets(env:Env):Promise<void>{
-  const meta=await sheetsFetch(env,"?fields=sheets.properties",{method:"GET"}).then(r=>r.json()) as{sheets?:Array<{properties:{title:string}}>},existing=new Set((meta.sheets||[]).map(s=>s.properties.title));
-  const definitions=[
-    [env.SHEET_ATTENDANCE_RAW,["Event_ID","Received_At","Work_Date","Employee_ID","Staff_Name","Punch_Type","Official_Time","LINE_Time","Diff_Min","Status","Confidence","Image_Key","Note","Validation_Code","Message_ID","Trace_ID","Version","Attendance_Source","Photo_DateTime","GPS_Lat","GPS_Lng","Distance_M","Clock_Evidence","Clock_Confidence","Overlay_Raw_Text","Image_SHA256"]],
-    [env.SHEET_DAILY_PAYROLL,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Time_In","Time_Out","Work_Hours","Late_Min","Early_Out_Min","Daily_Wage_Baht","Confirmed_Wage_Baht","Pending_Review_Wage_Baht","Pay_Status","Review_Flag","Version","Wage_Source_ID","Daily_Wage_Snapshot_Baht","Late_Deduction_Baht","Missing_Punch_Type","Missing_Punch_Deduction_Baht","OT_Approved_Baht","Other_Adjustment_Baht","Net_Pay_Baht","Payroll_Policy_Code","Finalized_At"]],
-    [env.SHEET_WEEKLY_PAYROLL,["Pay_Date","Period_Start","Employee_ID","Staff_Name","Work_Days","Amount_To_Pay_Baht","Pending_Review_Baht","Status","Version","Base_Wage_Total_Baht","Late_Deduction_Total_Baht","Missing_Punch_Deduction_Total_Baht","OT_Total_Baht","Other_Adjustment_Total_Baht","Net_Pay_Baht","Pending_Review_Count","Period_End"]],
-    [env.SHEET_WAGE_HISTORY,["Wage_ID","Employee_ID","Staff_Name","Daily_Wage_Baht","Effective_From","Effective_To","Source","Note","Version","Created_At","Updated_At"]],
-    [env.SHEET_SHIFT_SCHEDULE,["Work_Date","Employee_ID","Staff_Name","Scheduled_In","Scheduled_Out","Daily_Wage_Snapshot_Baht","Wage_Source_ID","Status","Note","Version","Updated_At"]],
-    [env.SHEET_OT_REQUESTS,["OT_ID","Work_Date","Employee_ID","Staff_Name","Reason","Planned_Start","Planned_End","Fixed_Amount_Baht","Requested_By","Owner_Preapproved_At","Employee_Confirm_Status","Employee_Confirmed_At","Owner_Final_Status","Owner_Final_Amount_Baht","Owner_Final_At","Actual_OT_Min","Status","Note","Version","Updated_At"]],
-    [env.SHEET_EXPENSE_RAW,RAW_PROJECTION_HEADERS.EXPENSE],
-    [env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW",RAW_PROJECTION_HEADERS.PERSONAL_USE],
-    [env.SHEET_PURCHASE_DETAILS||"รายละเอียดการซื้อ",RAW_PROJECTION_HEADERS.PURCHASE_DETAILS],
-    [env.SHEET_SYSTEM_LOG,["Created_At","Trace_ID","Level","Event","Detail"]]
-  ] as const;
-  const requests=definitions.filter(([name])=>!existing.has(name)).map(([title])=>({addSheet:{properties:{title,gridProperties:{frozenRowCount:1}}}}));if(requests.length)await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})});
-  // Never rewrite an existing sheet's headers: several operational tabs carry
-  // formulas, formatting and manually maintained labels.  New tabs get their
-  // complete header row at creation time.
-  const newDefinitions=definitions.filter(([name])=>!existing.has(name));
-  await batchWriteValues(env,newDefinitions.map(([name,headers])=>({range:`'${name}'!A1:${columnName(headers.length)}1`,values:[Array.from(headers)]})));
-  if(existing.has("04_OWNER_MONTH_CLOSE")){
-    const marker=await batchGetSheetFormulaValues(env,["'04_OWNER_MONTH_CLOSE'!A5","'04_OWNER_MONTH_CLOSE'!A34"]);
-    if(marker.length!==2)throw new Error("OWNER_MONTH_CLOSE_LAYOUT_READBACK_INCOMPLETE");
-    if(shouldSkipLegacyOwnerMonthCloseBootstrap(marker[0]?.[0]?.[0],marker[1]?.[0]?.[0]))return;
-    const cells=ownerMonthClosePersonalUseCells(env.SHEET_PERSONAL_USE_RAW||"V52_PERSONAL_USE_RAW"),qualified=cells.map(cell=>`'04_OWNER_MONTH_CLOSE'!${cell.range}`),current=await batchGetSheetFormulaValues(env,qualified),writes=planOwnerMonthClosePersonalUseWrites(current,cells,legacyOwnerMonthClosePersonalUseCells());
-    await batchWriteUserEnteredValues(env,writes.map(cell=>({range:`'04_OWNER_MONTH_CLOSE'!${cell.range}`,values:[[cell.value]]})));
-  }
+/** Temporary read-only scope: administrators create missing tabs and verify
+ * headers manually. It never mutates existing sheets or the owner close page. */
+export async function bootstrapSheets(env:Env):Promise<{mode:'READ_ONLY';missingTabs:string[];headersVerified:false;requiresManualSetup:boolean}>{
+  if(!await legacyPersonalWriterOpen(env))throw new Error('PERSONAL_LEGACY_CUTOVER_HOLD');
+  const names=[env.SHEET_ATTENDANCE_RAW,env.SHEET_DAILY_PAYROLL,env.SHEET_WEEKLY_PAYROLL,env.SHEET_WAGE_HISTORY,env.SHEET_SHIFT_SCHEDULE,env.SHEET_OT_REQUESTS,env.SHEET_EXPENSE_RAW,env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW',env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',env.SHEET_SYSTEM_LOG];
+  if(names.some(name=>typeof name!=='string'||!name)||new Set(names).size!==names.length)throw new Error('BOOTSTRAP_DEFINITIONS_INVALID');
+  let meta:{sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown}}>};try{meta=await identityInspectionGet(env,'?fields=sheets.properties(sheetId,title)') as typeof meta;}catch{throw new Error('BOOTSTRAP_INSPECTION_UNAVAILABLE');}
+  if(!Array.isArray(meta.sheets)||meta.sheets.some(s=>typeof s.properties?.title!=='string'||!Number.isSafeInteger(s.properties.sheetId)||Number(s.properties.sheetId)<0))throw new Error('BOOTSTRAP_METADATA_INVALID');
+  const existing=new Set(meta.sheets.map(s=>s.properties!.title as string)),ids=new Set(meta.sheets.map(s=>Number(s.properties!.sheetId)));if(existing.size!==meta.sheets.length||ids.size!==meta.sheets.length)throw new Error('BOOTSTRAP_METADATA_INVALID');
+  const missingTabs=names.filter(name=>!existing.has(name));return{mode:'READ_ONLY',missingTabs,headersVerified:false,requiresManualSetup:true};
 }
-function columnName(index:number):string{let n=index,result="";while(n>0){n--;result=String.fromCharCode(65+n%26)+result;n=Math.floor(n/26);}return result;}

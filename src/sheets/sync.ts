@@ -7,11 +7,13 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {legacyDailyWriterOpen,holdLegacyExpenseJob} from './daily-legacy-writer-gate';
+import {legacyPersonalWriterOpen,legacyPersonalWriterAccess,holdLegacyPersonalJob,personalLegacySqlFence,type PersonalLegacyAccess} from './personal-legacy-writer-gate';
 import { inspectLedgerAndHold,LedgerIdentityInspectionReview } from './ledger-identity-inspection';
 import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
+class PersonalUseLegacyGateClosed extends Error{}
 export const PERSONAL_USE_AMBIGUITY_LEASE_MS=15*60*1000;
 export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
@@ -124,15 +126,17 @@ async function loadFencedPersonalUseProjection(env:Env,job:SheetsSyncJob,leaseTo
   if(!item)throw new Error(`Personal-use transaction not found: ${job.entityKey}`);
   return item;
 }
-async function renewPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,nowMs=Date.now()):Promise<string|null>{
+async function renewPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,access:Exclude<PersonalLegacyAccess,'CLOSED'>,nowMs=Date.now()):Promise<string|null>{
   // This deadline only identifies an abandoned owner for quarantine; its
   // expiry is not evidence that a request can no longer reach Sheets.
   const clientTimeoutMs=Math.max(0,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000)),leaseMs=Math.max(PERSONAL_USE_AMBIGUITY_LEASE_MS,clientTimeoutMs+GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS+PERSONAL_USE_AMBIGUITY_MARGIN_MS),now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+leaseMs).toISOString();
+  const gate=personalLegacySqlFence(env,access);
   const result=await env.DB.prepare(`UPDATE sync_jobs SET updated_at=?,lease_until=?
     WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND lease_until>?
-      AND EXISTS(SELECT 1 FROM owner_personal_transactions p WHERE p.personal_use_id=? AND p.version=?)`).bind(now,leaseUntil,job.entityKey,job.entityVersion,leaseToken,now,job.entityKey,job.entityVersion).run();
+      AND EXISTS(SELECT 1 FROM owner_personal_transactions p WHERE p.personal_use_id=? AND p.version=?) AND ${gate.sql}`).bind(now,leaseUntil,job.entityKey,job.entityVersion,leaseToken,now,job.entityKey,job.entityVersion,...gate.args).run();
   return Number(result.meta.changes||0)===1?leaseUntil:null;
 }
+async function holdOwnedPersonalLegacyGate(env:Env,job:SheetsSyncJob,leaseToken:string):Promise<boolean>{const held=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='PERSONAL_LEGACY_CUTOVER_HOLD' WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityKey,job.entityVersion,leaseToken).run();return Number(held.meta.changes||0)===1;}
 async function retainAmbiguousPersonalUseWriteFence(env:Env,job:SheetsSyncJob,leaseToken:string,error:Error):Promise<boolean>{
   const result=await env.DB.prepare(`UPDATE sync_jobs SET status='REVIEW',updated_at=?,next_attempt_at=NULL,last_error=?
     WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),`${PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX}${String(error)}`,job.entityKey,job.entityVersion,leaseToken).run();
@@ -177,6 +181,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
   if(job.entityType==='EXPENSE'&&!await legacyDailyWriterOpen(env))return holdLegacyExpenseJob(env,job);
+  if(job.entityType==='PERSONAL_USE'&&!await legacyPersonalWriterOpen(env))return holdLegacyPersonalJob(env,job);
   if(env.SHEETS_SYNC_ENABLED!=="true"){
     // Pausing transport must not resolve a prior terminal failure or drop a
     // queued event. Preserve the outbox and any terminal review hold.
@@ -235,6 +240,7 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
     }else throw new Error(`Unsupported sheet entity type: ${job.entityType}`);
     if(expense)await inspectLedgerAndHold(env,'EXPENSE',sheet,job.entityKey);
     if(personalUse)await inspectLedgerAndHold(env,'PERSONAL_USE',sheet,job.entityKey);
+    if(personalUse&&!await legacyPersonalWriterOpen(env))return await holdOwnedPersonalLegacyGate(env,job,leaseToken)?'REVIEW':'BUSY';
     const allocation=await allocateRow(env,sheet,job.entityKey),row=allocation.row;
     if(expense)await assertExpenseRawSheetRowSafe(env,sheet,row,job.entityKey,allocation.newlyAllocated);
     if(personalUse){
@@ -258,7 +264,8 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
         // batchWriteValues invokes this only after OAuth succeeds and immediately
         // before dispatch. If auth outlives the original lease, this CAS fails
         // closed and the stale request is never sent.
-        personalUseAmbiguityLeaseUntil=await renewPersonalUseWriteFence(env,job,leaseToken);
+        const access=await legacyPersonalWriterAccess(env);if(access==='CLOSED')throw new PersonalUseLegacyGateClosed();
+        try{personalUseAmbiguityLeaseUntil=await renewPersonalUseWriteFence(env,job,leaseToken,access);}catch{throw new PersonalUseLegacyGateClosed();}
         if(!personalUseAmbiguityLeaseUntil)throw new PersonalUseWriteFenceUnavailableError();
         personalUseWriteOutcomeUncertain=true;
       }:undefined);
@@ -273,7 +280,11 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
         }
       }
     }catch(error){
+      if(error instanceof PersonalUseLegacyGateClosed){
+        return await holdOwnedPersonalLegacyGate(env,job,leaseToken)?'REVIEW':'BUSY';
+      }
       if(error instanceof PersonalUseWriteFenceUnavailableError){
+        if(!await legacyPersonalWriterOpen(env))return await holdOwnedPersonalLegacyGate(env,job,leaseToken)?'REVIEW':'BUSY';
         // No Sheets request was dispatched. Release only this exact token when
         // D1 atomically proves the job is superseded; never touch a reclaimed
         // lease owned by another worker.

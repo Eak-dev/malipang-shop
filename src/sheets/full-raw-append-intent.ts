@@ -1,5 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
-import {ExpenseProjectionRuntimeJournal,type ExpenseProjectionContext} from './expense-projection-runtime-journal';
+import {ExpenseProjectionRuntimeJournal,type ExpenseProjectionContext,type ExpenseGenerationLease} from './expense-projection-runtime-journal';
 import {rawSourceStillMatches,type RawSourceProof} from './raw-source-proof';
 
 /**
@@ -18,7 +18,7 @@ export class FullRawAppendIntent{
   private acknowledgedReservation:{token:string;metadataId:number}|null=null;
   private acknowledgedDispatch:{token:string;metadataId:number}|null=null;
   private providerDispatchClaimed=false;
-  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,private readonly outerToken:string,context:ExpenseProjectionContext){this.job={...job};this.context={...context};this.outer=new ExpenseProjectionRuntimeJournal(env,this.job,lease);}
+  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,private readonly outerToken:string,context:ExpenseProjectionContext,generationLease?:ExpenseGenerationLease){this.job={...job};this.context={...context};this.outer=new ExpenseProjectionRuntimeJournal(env,this.job,lease,generationLease);}
   private check(source:RawSourceProof,token:string,metadataId?:number):void{
     const e=this.env,c=this.context,j=this.job;
     if(e.RUNTIME_MODE!=='production'||e.RAW_APPEND_WRITER_ENABLED!=='true'||e.RAW_FULL_IDENTITY_WRITER_ENABLED!=='true'||e.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||e.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!e.GOOGLE_SPREADSHEET_ID||!e.SHEET_EXPENSE_RAW||!e.SHEET_EXPENSE_DAILY||j.kind!=='SHEETS_SYNC'||j.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(j.entityKey)||!Number.isSafeInteger(j.entityVersion)||j.entityVersion<1||source.kind!=='EXPENSE'||source.entityId!==j.entityKey||source.version!==j.entityVersion||!/^[a-f0-9]{64}$/.test(source.fingerprint)||!/^[-A-Za-z0-9_]{16,128}$/.test(token)||!/^[-A-Za-z0-9_]{8,128}$/.test(this.lease)||!/^[-A-Za-z0-9_]{8,128}$/.test(this.outerToken)||!Number.isSafeInteger(c.revision)||c.revision<1||!Number.isSafeInteger(c.watermark)||c.watermark<0||!/^[-A-Za-z0-9_]{8,128}$/.test(c.generation)||metadataId!==undefined&&(!Number.isSafeInteger(metadataId)||metadataId<1||metadataId>2147483647))throw Error('FULL_RAW_APPEND_DISABLED');

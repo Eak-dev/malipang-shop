@@ -2,7 +2,7 @@ import type {Env,SheetsSyncJob} from '../types';
 import {digestLedgerCell,type LedgerBaseline} from './ledger-stable-journal';
 import {rawProjectionValuesMatch,rawSourceStillMatches,type RawSourceProof} from './raw-source-proof';
 import type {RawFullIntentPort} from './raw-full-projection-shadow';
-import {ExpenseProjectionRuntimeJournal,type ExpenseProjectionContext} from './expense-projection-runtime-journal';
+import {ExpenseProjectionRuntimeJournal,type ExpenseProjectionContext,type ExpenseGenerationLease} from './expense-projection-runtime-journal';
 import {createExpenseRawProductionProbe} from './ledger-google-probe';
 import {verifyLedgerMetadataWitness,type LedgerWriteIdentity} from './ledger-metadata-writer';
 
@@ -29,7 +29,7 @@ export class FullRawIdentityIntent implements RawFullIntentPort{
   private readonly outer:ExpenseProjectionRuntimeJournal;
   private readonly job:SheetsSyncJob;
   private readonly context:FullRawCutoverContext;
-  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,private readonly outerToken:string,context:FullRawCutoverContext){this.job={...job};this.context={...context};this.outer=new ExpenseProjectionRuntimeJournal(env,this.job,lease);}
+  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,private readonly outerToken:string,context:FullRawCutoverContext,generationLease?:ExpenseGenerationLease){this.job={...job};this.context={...context};this.outer=new ExpenseProjectionRuntimeJournal(env,this.job,lease,generationLease);}
   private check():void{
     const e=this.env,c=this.context,j=this.job;
     if(e.RUNTIME_MODE!=='production'||e.RAW_FULL_IDENTITY_WRITER_ENABLED!=='true'||e.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||e.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!e.GOOGLE_SPREADSHEET_ID||!e.SHEET_EXPENSE_RAW||!e.SHEET_EXPENSE_DAILY||j.kind!=='SHEETS_SYNC'||j.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(j.entityKey)||!Number.isSafeInteger(j.entityVersion)||j.entityVersion<1||!/^[-A-Za-z0-9_]{8,128}$/.test(this.lease)||!/^[-A-Za-z0-9_]{8,128}$/.test(this.outerToken)||!Number.isSafeInteger(c.revision)||c.revision<1||!Number.isSafeInteger(c.watermark)||c.watermark<0||!/^[-A-Za-z0-9_]{8,128}$/.test(c.generation))throw Error('FULL_RAW_INTENT_DISABLED');

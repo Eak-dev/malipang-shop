@@ -122,14 +122,16 @@ test('full metadata adapter checks complete baseline and postimage yet remains R
   }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}
 });
 async function installIntentFixture(f,baseline){
-  Object.assign(f.env,{RUNTIME_MODE:'production',RAW_FULL_IDENTITY_WRITER_ENABLED:'true',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'uat',SHEET_EXPENSE_RAW:'raw',SHEET_EXPENSE_DAILY:'daily',SHEET_PURCHASE_DETAILS:'details'});
+  Object.assign(f.env,{RUNTIME_MODE:'production',EXPENSE_GENERATION_WORKER_ENABLED:'true',RAW_FULL_IDENTITY_WRITER_ENABLED:'true',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'uat',SHEET_EXPENSE_RAW:'raw',SHEET_EXPENSE_DAILY:'daily',SHEET_PURCHASE_DETAILS:'details'});
   f.db.exec(`INSERT INTO expense_projection_cutovers(spreadsheet_id,sheet_name,generation,state,admission_watermark,activated_at) VALUES('uat','daily','generation_123','ACTIVE',0,'now');
     INSERT INTO daily_legacy_writer_gates(spreadsheet_id,sheet_name,state,generation,updated_at) VALUES('uat','daily','HOLD','generation_123','now');
     INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_fixture',2,'synthetic','PROCESSING',1,'now','9999-01-01T00:00:00.000Z','lease_token_123456');`);
   f.db.prepare(`INSERT INTO full_raw_identity_intents(spreadsheet_id,sheet_name,expense_id,metadata_id,state,projected_version,baseline_json,source_version,source_revision,updated_at) VALUES('uat','raw','exp_fixture',44,'VERIFIED',1,?,1,1,'now')`).run(JSON.stringify(baseline));
-  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:2,traceId:'synthetic'},outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_123456');
+  const revision=f.db.prepare("SELECT revision FROM expense_projection_source_revisions WHERE expense_id='exp_fixture'").get().revision,generationLease={generation:'generation_123',revision,token:'generation_token_123456'};
+  f.db.prepare("INSERT INTO expense_projection_generation_jobs(spreadsheet_id,cutover_generation,expense_id,source_version,source_revision,state,lease_token,lease_until,created_at,updated_at) VALUES('uat','generation_123','exp_fixture',2,?,'IN_FLIGHT','generation_token_123456','9999-01-01T00:00:00.000Z','now','now')").run(revision);
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:2,traceId:'synthetic'},outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_123456',generationLease);
   const context=await outer.context();assert.ok(context);const outerToken=await outer.begin('RAW',context);assert.ok(outerToken);
-  return {intent:new FullRawIdentityIntent(f.env,job,'lease_token_123456',outerToken,context),outer,outerToken,context};
+  return {intent:new FullRawIdentityIntent(f.env,job,'lease_token_123456',outerToken,context,generationLease),outer,outerToken,context,generationLease};
 }
 test('canonical outer fence and inner baseline/lease are enforced in the same D1 statement',async()=>{
   const f=fixture();try{
@@ -245,8 +247,9 @@ async function installAppendFixture(f,proof,keepExisting=false){
   const baseline={};for(let i=1;i<17;i++)baseline[String(i)]=await digestLedgerCell(proof.values[i]);
   const outer=await installIntentFixture(f,baseline);if(!keepExisting)f.db.exec('DELETE FROM full_raw_identity_intents');
   f.env.RAW_APPEND_WRITER_ENABLED='true';const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:proof.entityId,entityVersion:proof.version,traceId:'synthetic'};
-  return {...outer,append:new FullRawAppendIntent(f.env,job,'lease_token_123456',outer.outerToken,outer.context)};
+  return {...outer,append:new FullRawAppendIntent(f.env,job,'lease_token_123456',outer.outerToken,outer.context,outer.generationLease)};
 }
+test('RAW append cannot acquire a sheet lock without the generation lease',async()=>{const f=fixture();try{const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),outer=await installAppendFixture(f,proof),job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:proof.entityId,entityVersion:proof.version,traceId:'synthetic'},append=new FullRawAppendIntent(f.env,job,'lease_token_123456',outer.outerToken,outer.context);await assert.rejects(append.acquire(proof,'append_token_123456'),/LEASE_REQUIRED/);assert.equal(f.db.prepare('SELECT count(*) n FROM full_raw_sheet_locks').get().n,0);}finally{f.close();}});
 test('append reservation holds one RAW sheet, uses fixed metadata identity and never expires',async()=>{
   const f=fixture();try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
@@ -262,8 +265,9 @@ test('two different expense append intents cannot acquire the same RAW sheet',as
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),first=await installAppendFixture(f,proof);
     f.db.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,updated_at,version) VALUES('exp_second','msg_second','line','second',12000,'transfer','SHOP_BANK','ingredients','2026-10-01','CONFIRMED','then','now',1)`).run();
     f.db.exec(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job2','EXPENSE','exp_second',1,'synthetic','PROCESSING',1,'now','9999-01-01T00:00:00.000Z','lease_token_654321')`);
-    const secondProof=await readRawSourceProof(f.env,'EXPENSE','exp_second',1),job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_second',entityVersion:1,traceId:'synthetic'},outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_654321');
-    const ctx=await outer.context();assert.ok(ctx);const outerToken=await outer.begin('RAW',ctx);assert.ok(outerToken);const second=new FullRawAppendIntent(f.env,job,'lease_token_654321',outerToken,ctx);
+    const secondProof=await readRawSourceProof(f.env,'EXPENSE','exp_second',1),job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_second',entityVersion:1,traceId:'synthetic'},revision=f.db.prepare("SELECT revision FROM expense_projection_source_revisions WHERE expense_id='exp_second'").get().revision,generationLease={generation:'generation_123',revision,token:'generation_token_654321'};
+    f.db.prepare("INSERT INTO expense_projection_generation_jobs(spreadsheet_id,cutover_generation,expense_id,source_version,source_revision,state,lease_token,lease_until,created_at,updated_at) VALUES('uat','generation_123','exp_second',1,?,'IN_FLIGHT','generation_token_654321','9999-01-01T00:00:00.000Z','now','now')").run(revision);
+    const outer=new ExpenseProjectionRuntimeJournal(f.env,job,'lease_token_654321',generationLease),ctx=await outer.context();assert.ok(ctx);const outerToken=await outer.begin('RAW',ctx);assert.ok(outerToken);const second=new FullRawAppendIntent(f.env,job,'lease_token_654321',outerToken,ctx,generationLease);
     const results=await Promise.all([first.append.acquire(proof,'append_token_first_123'),second.acquire(secondProof,'append_token_second_123')]);assert.equal(results.filter(Boolean).length,1);assert.equal(f.db.prepare('SELECT count(*) n FROM full_raw_sheet_locks').get().n,1);
   }finally{f.close();}
 });

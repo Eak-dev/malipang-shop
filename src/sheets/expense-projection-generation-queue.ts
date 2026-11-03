@@ -56,3 +56,20 @@ export async function claimExpenseGeneration(env:Env,key:ExpenseGenerationKey):P
     WHERE q.spreadsheet_id=? AND q.cutover_generation=? AND q.expense_id=? AND q.source_version=? AND q.source_revision=? AND q.state='PENDING' AND ${eligible('q')}`).bind(token,key.spreadsheetId,key.generation,key.expenseId,key.version,key.revision,...eligibilityArgs(env)).run();
   return Number(result.meta.changes||0)===1?token:null;
 }
+
+/** Default-off consumer path. Until all three trusted provider adapters and a
+ * generation-aware completion/reconciliation protocol exist, a claimed job
+ * is durably held for review and no provider is called. A lost D1 response is
+ * not retried as a write: the scheduler later holds an expired lease. */
+export async function runExpenseGenerationConsumer(env:Env):Promise<boolean>{
+  check(env);if(env.EXPENSE_GENERATION_WORKER_ENABLED!=='true')throw Error('EXPENSE_GENERATION_WORKER_DISABLED');
+  const q=await env.DB.prepare(`SELECT q.spreadsheet_id AS spreadsheetId,q.cutover_generation AS generation,q.expense_id AS expenseId,q.source_version AS version,q.source_revision AS revision FROM expense_projection_generation_jobs q WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible('q')} ORDER BY q.updated_at,q.expense_id LIMIT 1`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env)).first<ExpenseGenerationKey>();
+  if(!q)return false;
+  if(!/^[-A-Za-z0-9_]{8,128}$/.test(q.generation)||!/^exp_[-A-Za-z0-9_]{1,128}$/.test(q.expenseId)||!Number.isSafeInteger(q.version)||q.version<1||!Number.isSafeInteger(q.revision)||q.revision<1){
+    const r=await env.DB.prepare(`UPDATE expense_projection_generation_jobs SET state='REVIEW',reason='INVALID_GENERATION_IDENTITY',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND cutover_generation=? AND expense_id=? AND source_version=? AND source_revision=? AND state='PENDING'`).bind(q.spreadsheetId,q.generation,q.expenseId,q.version,q.revision).run();
+    if(Number(r.meta.changes||0)!==1)throw Error('EXPENSE_GENERATION_HOLD_UNCERTAIN');return true;
+  }
+  const token=await claimExpenseGeneration(env,q);if(!token)return false;
+  const result=await env.DB.prepare(`UPDATE expense_projection_generation_jobs SET state='REVIEW',reason='PROVIDER_ADAPTERS_NOT_READY',lease_token=NULL,lease_until=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND cutover_generation=? AND expense_id=? AND source_version=? AND source_revision=? AND state='IN_FLIGHT' AND lease_token=?`).bind(q.spreadsheetId,q.generation,q.expenseId,q.version,q.revision,token).run();
+  if(Number(result.meta.changes||0)!==1)throw Error('EXPENSE_GENERATION_HOLD_UNCERTAIN');return true;
+}

@@ -34,6 +34,9 @@ const partialIndexIntegrity=Object.entries(expectedPartialIndexes).map(([name,sq
 const expectedForeignKeys:Record<string,Array<[string,string]>>={expense_document_links:[['expense_documents','document_id'],['expense_events','expense_id']],expense_document_items:[['expense_documents','document_id'],['expense_events','expense_id']]};
 const foreignKeyIntegrity=`(SELECT foreign_keys FROM pragma_foreign_keys)=1 AND `+Object.entries(expectedForeignKeys).map(([table,keys])=>`(SELECT count(*) FROM pragma_foreign_key_list('${table}'))=${keys.length} AND `+keys.map(([target,column])=>`EXISTS(SELECT 1 FROM pragma_foreign_key_list('${table}') WHERE "table"='${target}' AND "from"='${column}' AND upper(on_delete)='NO ACTION' AND upper(on_update)='NO ACTION')`).join(' AND ')).join(' AND ');
 
+// Same D1 schema checks used when interpreting source revision as evidence.
+export const expenseSourceEvidenceIntegrity=`${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}`;
+
 /** Production candidate, intentionally not wired to the queue yet. A D1
  * revision is not a Sheets lock: an operator must still exclude and drain old
  * workers, direct integrations and human editors before any Google mutation.

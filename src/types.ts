@@ -65,6 +65,7 @@ export interface Env {
   EXPENSE_GENERATION_WORKER_ENABLED?: string;
   DAILY_EDIT_COORDINATION_ENABLED?: string;
   DAILY_BADGE_WRITER_ENABLED?: string;
+  DAILY_RECOVERY_ADMIN_ENABLED?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;

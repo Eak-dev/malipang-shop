@@ -20,11 +20,16 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import {holdDailyRecoveryIntent,inspectDailyRecovery,recordDailyRecoveryHold} from "./daily-recovery";
+import {readBoundedJson} from "../shared/async";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
-  if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
+  const url=new URL(request.url);if(!authorized(request,env))return new Response("Unauthorized",{status:401,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
   try{
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/inspect"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown};return Response.json({ok:true,...await inspectDailyRecovery(env,body.windowToken)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/keep-review"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await recordDailyRecoveryHold(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
+    if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/hold-in-flight"){const body=await readBoundedJson(request,4096,5000,"Daily recovery request") as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await holdDailyRecoveryIntent(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }
@@ -94,6 +99,6 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate")return Response.json({ok:true,...await evaluateUploadedImage(env,request) as Record<string,unknown>});
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));
-    return new Response("Not found",{status:404});
-  }catch(error){return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400});}
+    return new Response("Not found",{status:404,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
+  }catch(error){return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400,...(url.pathname.startsWith("/admin/daily-recovery/")?{headers:{"cache-control":"no-store, max-age=0"}}:{})});}
 }

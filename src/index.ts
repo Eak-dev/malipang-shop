@@ -8,7 +8,7 @@ import { SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
-import { runExpenseGenerationScheduler } from "./sheets/expense-projection-generation-queue";
+import { runExpenseGenerationScheduler,runExpenseGenerationConsumer } from "./sheets/expense-projection-generation-queue";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -36,5 +36,6 @@ export default{
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
     ctx.waitUntil(runScheduledMaintenance(env));
     if(env.EXPENSE_GENERATION_SCHEDULER_ENABLED==='true')ctx.waitUntil(runExpenseGenerationScheduler(env));
+    if(env.EXPENSE_GENERATION_WORKER_ENABLED==='true')ctx.waitUntil(runExpenseGenerationConsumer(env));
   }
 } satisfies ExportedHandler<Env,QueueJob>;

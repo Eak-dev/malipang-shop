@@ -2,6 +2,7 @@ import type {Env,SheetsSyncJob} from '../types';
 
 export type ExpenseProjection='RAW'|'DAILY'|'DETAIL';
 export interface ExpenseProjectionContext{revision:number;generation:string;watermark:number}
+export interface ExpenseGenerationLease{generation:string;revision:number;token:string}
 const projections=new Set<ExpenseProjection>(['RAW','DAILY','DETAIL']);
 // Presence catches accidental incomplete installation; it is not proof that
 // a privileged database editor has not replaced a trigger's SQL.
@@ -37,10 +38,21 @@ const foreignKeyIntegrity=`(SELECT foreign_keys FROM pragma_foreign_keys)=1 AND 
  * Only records admitted after the cutoff are eligible; historic identities and
  * cancellation require separate verified migration and recovery workflows. */
 export class ExpenseProjectionRuntimeJournal{
-  constructor(private readonly env:Env,private readonly job:SheetsSyncJob,private readonly lease:string){}
+  private readonly generationLease:ExpenseGenerationLease|undefined;
+  private readonly job:SheetsSyncJob;
+  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,generationLease?:ExpenseGenerationLease){this.job={...job};this.generationLease=generationLease?{...generationLease}:undefined;}
   private check(projection?:ExpenseProjection):void{
     if(this.env.RUNTIME_MODE!=='production'||this.env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||this.env.DAILY_LEGACY_WRITER_GATE_ENABLED!=='true'||!this.env.GOOGLE_SPREADSHEET_ID||!this.env.SHEET_EXPENSE_DAILY||!this.env.SHEET_EXPENSE_RAW||this.job.kind!=='SHEETS_SYNC'||this.job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(this.job.entityKey)||!Number.isSafeInteger(this.job.entityVersion)||this.job.entityVersion<1||!this.lease||projection&&!projections.has(projection))throw new Error('EXPENSE_PROJECTION_DISABLED');
+    const v=this.generationLease;
+    if(this.env.EXPENSE_GENERATION_WORKER_ENABLED!=='true'||!v||!/^[-A-Za-z0-9_]{8,128}$/.test(v.generation)||!Number.isSafeInteger(v.revision)||v.revision<1||!/^[-A-Za-z0-9_]{8,128}$/.test(v.token))throw new Error('EXPENSE_GENERATION_LEASE_REQUIRED');
   }
+  // Aliases e, r and c belong to the canonical source guard. This entire
+  // predicate is embedded into the same D1 statement as each projection write.
+  private generationGuard():string{return this.generationLease?` AND EXISTS(SELECT 1 FROM expense_projection_generation_jobs v WHERE v.spreadsheet_id=c.spreadsheet_id AND v.cutover_generation=c.generation AND v.cutover_generation=? AND v.expense_id=e.expense_id AND v.source_version=e.version AND v.source_revision=r.revision AND v.source_revision=? AND v.state='IN_FLIGHT' AND v.lease_token=? AND v.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+    AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_jobs other WHERE other.spreadsheet_id=v.spreadsheet_id AND other.expense_id=v.expense_id AND other.state IN ('IN_FLIGHT','REVIEW') AND (other.cutover_generation<>v.cutover_generation OR other.source_version<>v.source_version OR other.source_revision<>v.source_revision))
+    AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_observations seen WHERE seen.spreadsheet_id=v.spreadsheet_id AND seen.expense_id=v.expense_id AND seen.source_revision>v.source_revision)
+    AND NOT EXISTS(SELECT 1 FROM expense_projection_generation_jobs seen WHERE seen.spreadsheet_id=v.spreadsheet_id AND seen.expense_id=v.expense_id AND seen.source_revision>v.source_revision))`:'';}
+  private generationArgs():unknown[]{const v=this.generationLease;return v?[v.generation,v.revision,v.token]:[];}
   private guard():string{return `EXISTS(SELECT 1 FROM expense_events e
     JOIN expense_projection_source_revisions r ON r.expense_id=e.expense_id AND r.state='TRACKED' AND r.revision=?
     JOIN expense_projection_admissions a ON a.expense_id=e.expense_id
@@ -48,8 +60,8 @@ export class ExpenseProjectionRuntimeJournal{
     JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
     JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}
-    AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|')))`;}
-  private args(c:ExpenseProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ'];}
+    AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))${this.generationGuard()})`;}
+  private args(c:ExpenseProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',...this.generationArgs()];}
   private valid(c:ExpenseProjectionContext):boolean{return Number.isSafeInteger(c.revision)&&c.revision>0&&c.revision<=9007199254740991&&typeof c.generation==='string'&&/^[A-Za-z0-9_-]{8,128}$/.test(c.generation)&&Number.isSafeInteger(c.watermark)&&c.watermark>=0;}
   /** Current context is only a preimage, not permission to dispatch. */
   async context():Promise<ExpenseProjectionContext|null>{
@@ -60,22 +72,22 @@ export class ExpenseProjectionRuntimeJournal{
       JOIN daily_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
       JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND EXISTS(SELECT 1 FROM expense_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${triggerIntegrity} AND ${uniqueIndexIntegrity} AND ${indexColumnIntegrity} AND ${partialIndexIntegrity} AND ${foreignKeyIntegrity}
-      AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ').first<ExpenseProjectionContext>();
+      AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name IN (?,?,?) AND (s.entity_key=e.expense_id OR substr(s.entity_key,1,length(e.expense_id)+1)=e.expense_id||'|'))${this.generationGuard()}`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_DAILY,this.lease,this.job.entityKey,this.job.entityVersion,this.env.SHEET_EXPENSE_DAILY,this.env.SHEET_EXPENSE_RAW,this.env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',...this.generationArgs()).first<ExpenseProjectionContext>();
     return row&&this.valid(row)?row:null;
   }
   async begin(projection:ExpenseProjection,c:ExpenseProjectionContext):Promise<string|null>{
     this.check(projection);if(!this.valid(c))return null;const token=crypto.randomUUID();
     const result=await this.env.DB.prepare(`INSERT INTO expense_projection_runtime_intents(spreadsheet_id,expense_id,source_version,source_revision,projection,state,operation_token,cutover_generation,admission_watermark,updated_at)
       SELECT ?,?,?,?,?,'IN_FLIGHT',?,?,?,? WHERE ${this.guard()}
-      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND (p.state IN ('IN_FLIGHT','REVIEW') OR (p.source_version=? AND p.source_revision<>?)))
-      ON CONFLICT(spreadsheet_id,expense_id,source_version,projection) DO NOTHING`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,new Date().toISOString(),...this.args(c),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision).run();return Number(result.meta.changes||0)===1?token:null;
+      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.state IN ('IN_FLIGHT','REVIEW'))
+      ON CONFLICT(spreadsheet_id,expense_id,source_version,source_revision,projection) DO NOTHING`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,new Date().toISOString(),...this.args(c),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey).run();return Number(result.meta.changes||0)===1?token:null;
   }
   /** Reusable SQL predicate for an inner identity-intent UPDATE in the same
    * D1 statement. Copying only a prior JS boolean creates a race. */
   dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
     this.check(projection);if(!token||!this.valid(c))throw new Error('EXPENSE_PROJECTION_FENCE_INVALID');
     return {sql:`EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.source_version=? AND p.source_revision=? AND p.projection=? AND p.state='IN_FLIGHT' AND p.operation_token=? AND p.cutover_generation=? AND p.admission_watermark=? AND ${this.guard()}
-      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=p.spreadsheet_id AND q.expense_id=p.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>p.source_version OR q.projection<>p.projection)))`,args:[this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c)]};
+      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=p.spreadsheet_id AND q.expense_id=p.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>p.source_version OR q.source_revision<>p.source_revision OR q.projection<>p.projection)))`,args:[this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c)]};
   }
   async canDispatch(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):Promise<boolean>{
     this.check(projection);if(!token||!this.valid(c))return false;const fence=this.dispatchFence(projection,token,c);
@@ -86,15 +98,17 @@ export class ExpenseProjectionRuntimeJournal{
   async verify(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext,evidenceDigest:string):Promise<boolean>{
     this.check(projection);if(!token||!this.valid(c)||!/^[a-f0-9]{64}$/.test(evidenceDigest))return false;
     const result=await this.env.DB.prepare(`UPDATE expense_projection_runtime_intents SET state='VERIFIED',evidence_digest=?,updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND source_version=? AND source_revision=? AND projection=? AND state='IN_FLIGHT' AND operation_token=? AND cutover_generation=? AND admission_watermark=? AND ${this.guard()}
-      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=expense_projection_runtime_intents.spreadsheet_id AND q.expense_id=expense_projection_runtime_intents.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>expense_projection_runtime_intents.source_version OR q.projection<>expense_projection_runtime_intents.projection))`).bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c)).run();return Number(result.meta.changes||0)===1;
+      AND (?<>'RAW' OR EXISTS(SELECT 1 FROM full_raw_identity_intents i WHERE i.spreadsheet_id=? AND i.sheet_name=? AND i.expense_id=? AND i.state='VERIFIED' AND i.projected_version=? AND i.projected_revision=? AND i.source_version=? AND i.source_revision=? AND i.verified_outer_token=? AND i.verified_generation=? AND i.verified_evidence_digest=?
+        AND CASE WHEN json_valid(i.baseline_json) THEN json_type(i.baseline_json)='object' AND (SELECT count(*) FROM json_each(i.baseline_json))=16 AND (SELECT count(DISTINCT key) FROM json_each(i.baseline_json))=16 AND NOT EXISTS(SELECT 1 FROM json_each(i.baseline_json) b WHERE CAST(b.key AS INTEGER)<1 OR CAST(b.key AS INTEGER)>16 OR CAST(CAST(b.key AS INTEGER) AS TEXT)<>b.key OR b.type<>'text' OR length(b.value)<>64 OR b.value GLOB '*[^0-9a-f]*') ELSE 0 END))
+      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents q WHERE q.spreadsheet_id=expense_projection_runtime_intents.spreadsheet_id AND q.expense_id=expense_projection_runtime_intents.expense_id AND q.state IN ('IN_FLIGHT','REVIEW') AND (q.source_version<>expense_projection_runtime_intents.source_version OR q.source_revision<>expense_projection_runtime_intents.source_revision OR q.projection<>expense_projection_runtime_intents.projection))`).bind(evidenceDigest,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,projection,token,c.generation,c.watermark,...this.args(c),projection,this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,this.job.entityVersion,c.revision,this.job.entityVersion,c.revision,token,c.generation,evidenceDigest).run();return Number(result.meta.changes||0)===1;
   }
   async hold(projection:ExpenseProjection,token:string):Promise<boolean>{
     this.check(projection);const result=await this.env.DB.prepare(`UPDATE expense_projection_runtime_intents SET state='REVIEW',updated_at=? WHERE spreadsheet_id=? AND expense_id=? AND source_version=? AND projection=? AND state='IN_FLIGHT' AND operation_token=?`).bind(new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,projection,token).run();return Number(result.meta.changes||0)===1;
   }
   async complete(c:ExpenseProjectionContext):Promise<boolean>{
-    this.check();if(!this.valid(c))return false;
-    const result=await this.env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${this.guard()}
-      AND (SELECT count(*) FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.source_version=? AND p.source_revision=? AND p.cutover_generation=? AND p.admission_watermark=? AND p.state='VERIFIED' AND p.projection IN ('RAW','DAILY','DETAIL'))=3
-      AND NOT EXISTS(SELECT 1 FROM expense_projection_runtime_intents p WHERE p.spreadsheet_id=? AND p.expense_id=? AND p.state IN ('IN_FLIGHT','REVIEW'))`).bind(new Date().toISOString(),this.job.entityKey,this.job.entityVersion,this.lease,...this.args(c),this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey,this.job.entityVersion,c.revision,c.generation,c.watermark,this.env.GOOGLE_SPREADSHEET_ID,this.job.entityKey).run();return Number(result.meta.changes||0)===1;
+    this.check();void c;
+    // A generation-aware, three-projection completion transaction does not
+    // exist yet. Never complete the old sync job as a substitute.
+    return false;
   }
 }

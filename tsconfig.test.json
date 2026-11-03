@@ -46,6 +46,7 @@
     "src/sheets/legacy-raw-enrollment-audit.ts",
     "src/sheets/personal-projection-runtime-journal.ts",
     "src/sheets/personal-projection-generation-observer.ts",
+    "src/sheets/personal-projection-generation-queue.ts",
     "src/sheets/owner-month-close.ts",
     "src/sheets/google-auth.ts",
     "src/sheets/daily-expense.ts",

@@ -1,6 +1,7 @@
 import type {Env,SheetsSyncJob} from '../types';
 
 export interface PersonalProjectionContext{revision:number;generation:string;watermark:number}
+export interface PersonalGenerationLease{generation:string;revision:number;token:string}
 const triggers=['personal_projection_before_insert','personal_projection_insert','personal_projection_before_update','personal_projection_update','personal_projection_delete'];
 const schemaGuard=`(SELECT foreign_keys FROM pragma_foreign_keys)=1
   AND (SELECT count(*) FROM pragma_foreign_key_list('owner_personal_transaction_audit'))=1
@@ -18,12 +19,16 @@ const schemaGuard=`(SELECT foreign_keys FROM pragma_foreign_keys)=1
  * automatic retry exists here. A D1 fence is not a Sheets lock. */
 export class PersonalProjectionRuntimeJournal{
   private readonly job:SheetsSyncJob;
-  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string){this.job={...job};}
+  private readonly generationLease:PersonalGenerationLease|undefined;
+  constructor(private readonly env:Env,job:SheetsSyncJob,private readonly lease:string,generationLease?:PersonalGenerationLease){this.job={...job};this.generationLease=generationLease?{...generationLease}:undefined;}
   private check():void{
     const e=this.env,j=this.job;if(e.RUNTIME_MODE!=='production'||e.PERSONAL_STABLE_PROJECTION_ENABLED!=='true'||!e.GOOGLE_SPREADSHEET_ID||j.kind!=='SHEETS_SYNC'||j.entityType!=='PERSONAL_USE'||!/^personal_[A-Za-z0-9_-]{1,128}$/.test(j.entityKey)||!Number.isSafeInteger(j.entityVersion)||j.entityVersion<1||!/^[-A-Za-z0-9_]{8,128}$/.test(this.lease))throw Error('PERSONAL_PROJECTION_DISABLED');
+    const v=this.generationLease;if(e.PERSONAL_GENERATION_WORKER_ENABLED!=='true'||!v||!/^[-A-Za-z0-9_]{8,128}$/.test(v.generation)||!Number.isSafeInteger(v.revision)||v.revision<1||!/^[-A-Za-z0-9_]{8,128}$/.test(v.token))throw Error('PERSONAL_GENERATION_LEASE_REQUIRED');
   }
   private sheet():string{return this.env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW';}
   private valid(c:PersonalProjectionContext):boolean{return !!c&&Number.isSafeInteger(c.revision)&&c.revision>0&&Number.isSafeInteger(c.watermark)&&c.watermark>=0&&typeof c.generation==='string'&&/^[-A-Za-z0-9_]{8,128}$/.test(c.generation);}
+  private generationGuard():string{return `EXISTS(SELECT 1 FROM personal_projection_generation_jobs v WHERE v.spreadsheet_id=c.spreadsheet_id AND v.cutover_generation=c.generation AND v.cutover_generation=? AND v.personal_use_id=p.personal_use_id AND v.source_version=p.version AND v.source_revision=r.revision AND v.source_revision=? AND v.state='IN_FLIGHT' AND v.lease_token=? AND v.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs other WHERE other.spreadsheet_id=v.spreadsheet_id AND other.personal_use_id=v.personal_use_id AND other.state IN ('IN_FLIGHT','REVIEW') AND (other.cutover_generation<>v.cutover_generation OR other.source_version<>v.source_version OR other.source_revision<>v.source_revision)))`;}
+  private generationArgs():unknown[]{const v=this.generationLease!;return[v.generation,v.revision,v.token];}
   private guard():string{return `EXISTS(SELECT 1 FROM owner_personal_transactions p
     JOIN personal_projection_source_revisions r ON r.personal_use_id=p.personal_use_id AND r.state='TRACKED' AND r.revision=?
     JOIN personal_projection_admissions a ON a.personal_use_id=p.personal_use_id
@@ -32,9 +37,11 @@ export class PersonalProjectionRuntimeJournal{
     JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
+    AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
+    AND ${this.generationGuard()}
     AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
     AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW')))`;}
-  private args(c:PersonalProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,...triggers];}
+  private args(c:PersonalProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,...triggers,...this.generationArgs()];}
   /** Snapshot only, not permission to send a provider request. */
   async context():Promise<PersonalProjectionContext|null>{
     this.check();const row=await this.env.DB.prepare(`SELECT r.revision,c.generation,c.admission_watermark AS watermark FROM owner_personal_transactions p
@@ -45,8 +52,10 @@ export class PersonalProjectionRuntimeJournal{
       JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
       AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
+      AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
+      AND ${this.generationGuard()}
       AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
-      AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW'))`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),this.lease,this.job.entityKey,this.job.entityVersion,...triggers).first<PersonalProjectionContext>();return row&&this.valid(row)?row:null;
+      AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW'))`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),this.lease,this.job.entityKey,this.job.entityVersion,...triggers,...this.generationArgs()).first<PersonalProjectionContext>();return row&&this.valid(row)?row:null;
   }
   async begin(c:PersonalProjectionContext):Promise<string|null>{
     this.check();if(!this.valid(c))return null;const token=crypto.randomUUID();

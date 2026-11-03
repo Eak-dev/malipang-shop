@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 
 export interface PersonalProjectionContext{revision:number;generation:string;watermark:number}
 export interface PersonalGenerationLease{generation:string;revision:number;token:string}
@@ -35,7 +36,7 @@ export class PersonalProjectionRuntimeJournal{
     JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=? AND c.admission_watermark=? AND a.sequence>c.admission_watermark
     JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
     JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
+    WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard} AND ${sheetMetadataRegistryIntegrity}
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
     AND ${this.generationGuard()}
@@ -50,7 +51,7 @@ export class PersonalProjectionRuntimeJournal{
       JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND a.sequence>c.admission_watermark
       JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
       JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
-      WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard}
+      WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard} AND ${sheetMetadataRegistryIntegrity}
       AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
       AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
       AND ${this.generationGuard()}

@@ -8,6 +8,7 @@ CREATE TABLE IF NOT EXISTS full_raw_identity_intents (
   metadata_id INTEGER NOT NULL CHECK(metadata_id BETWEEN 1 AND 2147483647),
   state TEXT NOT NULL CHECK(state IN ('VERIFIED','IN_FLIGHT','REVIEW')),
   projected_version INTEGER NOT NULL CHECK(projected_version > 0),
+  projected_revision INTEGER NOT NULL CHECK(projected_revision BETWEEN 1 AND 9007199254740991),
   baseline_json TEXT NOT NULL,
   source_version INTEGER NOT NULL CHECK(source_version > 0),
   source_revision INTEGER NOT NULL CHECK(source_revision > 0),

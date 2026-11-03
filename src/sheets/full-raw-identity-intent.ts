@@ -26,6 +26,7 @@ function canonicalFullExpenseBaseline(value:LedgerBaseline):string{
 export class FullRawIdentityIntent implements RawFullIntentPort{
   private baselineAtBegin:string|null=null;
   private projectedVersionAtBegin:number|null=null;
+  private projectedRevisionAtBegin:number|null=null;
   private readonly outer:ExpenseProjectionRuntimeJournal;
   private readonly job:SheetsSyncJob;
   private readonly context:FullRawCutoverContext;
@@ -41,22 +42,22 @@ export class FullRawIdentityIntent implements RawFullIntentPort{
     this.check();if(!this.matches(source,metadataId,token))return false;const canonical=canonicalFullExpenseBaseline(baseline);
     const fence=this.outer.dispatchFence('RAW',this.outerToken,this.context);
     const r=await this.env.DB.prepare(`UPDATE full_raw_identity_intents SET state='IN_FLIGHT',source_version=?,source_revision=?,source_fingerprint=?,operation_token=?,outer_token=?,cutover_generation=?,updated_at=?
-      WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='VERIFIED' AND projected_version<? AND baseline_json=? AND ${fence.sql} RETURNING projected_version`)
-      .bind(source.version,this.context.revision,source.fingerprint,token,this.outerToken,this.context.generation,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,source.version,canonical,...fence.args).first<{projected_version:number}>();
-    if(!r||!Number.isSafeInteger(r.projected_version)||r.projected_version<1)return false;
-    this.baselineAtBegin=canonical;this.projectedVersionAtBegin=r.projected_version;return true;
+      WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='VERIFIED' AND typeof(projected_version)='integer' AND projected_version<=? AND typeof(projected_revision)='integer' AND projected_revision<? AND baseline_json=? AND ${fence.sql} RETURNING projected_version,projected_revision`)
+      .bind(source.version,this.context.revision,source.fingerprint,token,this.outerToken,this.context.generation,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,source.version,this.context.revision,canonical,...fence.args).first<{projected_version:number;projected_revision:number}>();
+    if(!r||!Number.isSafeInteger(r.projected_version)||r.projected_version<1||!Number.isSafeInteger(r.projected_revision)||r.projected_revision<1)return false;
+    this.baselineAtBegin=canonical;this.projectedVersionAtBegin=r.projected_version;this.projectedRevisionAtBegin=r.projected_revision;return true;
   }
   async canDispatch(source:RawSourceProof,metadataId:number,token:string):Promise<boolean>{
-    this.check();if(!this.matches(source,metadataId,token)||this.baselineAtBegin===null||this.projectedVersionAtBegin===null)return false;
+    this.check();if(!this.matches(source,metadataId,token)||this.baselineAtBegin===null||this.projectedVersionAtBegin===null||this.projectedRevisionAtBegin===null)return false;
     const fence=this.outer.dispatchFence('RAW',this.outerToken,this.context);
-    const row=await this.env.DB.prepare(`SELECT 1 AS ok FROM full_raw_identity_intents WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='IN_FLIGHT' AND source_version=? AND source_revision=? AND source_fingerprint=? AND operation_token=? AND outer_token=? AND cutover_generation=? AND baseline_json=? AND projected_version=? AND ${fence.sql}`)
-      .bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,source.version,this.context.revision,source.fingerprint,token,this.outerToken,this.context.generation,this.baselineAtBegin,this.projectedVersionAtBegin,...fence.args).first<{ok:number}>();return !!row;
+    const row=await this.env.DB.prepare(`SELECT 1 AS ok FROM full_raw_identity_intents WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='IN_FLIGHT' AND source_version=? AND source_revision=? AND source_fingerprint=? AND operation_token=? AND outer_token=? AND cutover_generation=? AND baseline_json=? AND projected_version=? AND projected_revision=? AND ${fence.sql}`)
+      .bind(this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,source.version,this.context.revision,source.fingerprint,token,this.outerToken,this.context.generation,this.baselineAtBegin,this.projectedVersionAtBegin,this.projectedRevisionAtBegin,...fence.args).first<{ok:number}>();return !!row;
   }
   /** Fresh provider readback followed by the atomic D1 fence. This verifies
    * only this RAW identity; the outer projection stays IN_FLIGHT. Exclusion of
    * editors and old writers is still required because Sheets has no value CAS. */
   async finish(source:RawSourceProof,identity:LedgerWriteIdentity,metadataId:number,token:string):Promise<FullRawFinishResult>{
-    this.check();if(!this.matches(source,metadataId,token)||identity.kind!=='EXPENSE'||identity.entityId!==source.entityId||identity.itemId!==undefined||this.baselineAtBegin===null||this.projectedVersionAtBegin===null)return {status:'NOT_VERIFIED'};
+    this.check();if(!this.matches(source,metadataId,token)||identity.kind!=='EXPENSE'||identity.entityId!==source.entityId||identity.itemId!==undefined||this.baselineAtBegin===null||this.projectedVersionAtBegin===null||this.projectedRevisionAtBegin===null)return {status:'NOT_VERIFIED'};
     let expected:RawSourceProof,canonical:string,evidenceDigest:string;
     try{
       expected={...source,values:[...source.values]};const target:LedgerWriteIdentity={...identity};
@@ -71,10 +72,10 @@ export class FullRawIdentityIntent implements RawFullIntentPort{
     }catch{return {status:'NOT_VERIFIED'};}
     try{
       const fence=this.outer.dispatchFence('RAW',this.outerToken,this.context);
-      const row=await this.env.DB.prepare(`UPDATE full_raw_identity_intents SET state='VERIFIED',projected_version=?,baseline_json=?,verified_evidence_digest=?,verified_outer_token=?,verified_generation=?,operation_token=NULL,outer_token=NULL,cutover_generation=NULL,source_fingerprint=NULL,updated_at=?
-        WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='IN_FLIGHT' AND source_version=? AND source_revision=? AND source_fingerprint=? AND operation_token=? AND outer_token=? AND cutover_generation=? AND baseline_json=? AND projected_version=? AND ${fence.sql} RETURNING metadata_id`)
-        .bind(expected.version,canonical,evidenceDigest,this.outerToken,this.context.generation,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,expected.version,this.context.revision,expected.fingerprint,token,this.outerToken,this.context.generation,this.baselineAtBegin,this.projectedVersionAtBegin,...fence.args).first<{metadata_id:number}>();
-      if(!row||row.metadata_id!==metadataId)return {status:'UNKNOWN'};this.baselineAtBegin=null;this.projectedVersionAtBegin=null;return {status:'VERIFIED',evidenceDigest};
+      const row=await this.env.DB.prepare(`UPDATE full_raw_identity_intents SET state='VERIFIED',projected_version=?,projected_revision=?,baseline_json=?,verified_evidence_digest=?,verified_outer_token=?,verified_generation=?,operation_token=NULL,outer_token=NULL,cutover_generation=NULL,source_fingerprint=NULL,updated_at=?
+        WHERE spreadsheet_id=? AND sheet_name=? AND expense_id=? AND metadata_id=? AND state='IN_FLIGHT' AND source_version=? AND source_revision=? AND source_fingerprint=? AND operation_token=? AND outer_token=? AND cutover_generation=? AND baseline_json=? AND projected_version=? AND projected_revision=? AND ${fence.sql} RETURNING metadata_id`)
+        .bind(expected.version,this.context.revision,canonical,evidenceDigest,this.outerToken,this.context.generation,new Date().toISOString(),this.env.GOOGLE_SPREADSHEET_ID,this.env.SHEET_EXPENSE_RAW,this.job.entityKey,metadataId,expected.version,this.context.revision,expected.fingerprint,token,this.outerToken,this.context.generation,this.baselineAtBegin,this.projectedVersionAtBegin,this.projectedRevisionAtBegin,...fence.args).first<{metadata_id:number}>();
+      if(!row||row.metadata_id!==metadataId)return {status:'UNKNOWN'};this.baselineAtBegin=null;this.projectedVersionAtBegin=null;this.projectedRevisionAtBegin=null;return {status:'VERIFIED',evidenceDigest};
     }catch{return {status:'UNKNOWN'};}
   }
   /** A failed or uncertain finish is never replayed. Keep the outer intent in

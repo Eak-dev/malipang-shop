@@ -16,6 +16,8 @@ RAW identity reader/writer และ append planner ต้องเห็นห�
 
 `auditLegacyExpenseRawEnrollment` ใช้ตรวจว่าภาพข้อมูลที่ส่งเข้ามามี ID เดียวและค่า RAW ทั้งแถวตรง source หรือไม่ โดยไม่คืนเลขแถว ทุกผลเป็น REVIEW; `SINGLE_MATCH` บอกเพียงว่าตรงกับ snapshot ที่ caller ส่งมา ไม่ยืนยันว่าอ่านจาก Google จริงหรืออนุญาตผูก metadata. การลงทะเบียนแถวเก่าจริงยังไม่มีเส้นทางและต้องมีหลักฐาน identity, trusted read, durable intent และการกันการแก้พร้อมกัน
 
+มี migration candidate 0035 สำหรับ source revision/admission ของ PERSONAL_USE ใน D1 เดิม และปรับ INSERT ของ service เพื่อไม่เพิ่ม revision เมื่อ webhook เดิมส่งซ้ำ; ยังไม่ apply migration และยังไม่มี personal outer intent/guard/route. Trigger ทำงานใน transaction ของรายการส่วนตัวและอาจทำให้ธุรกรรมล้มเพื่อรักษาหลักฐาน revision จึงต้องตรวจภาระและผลกระทบจริง, schema/index/foreign-key integrity, รวมถึง drain source writer ระหว่างติดตั้งก่อนพิจารณา production. REPLACE/rowid บางกรณีอาจเพิ่ม revision อย่างอนุรักษ์นิยมแม้ข้อมูลธุรกิจไม่เปลี่ยน
+
 เมื่อ `SHEETS_LEDGER_IDENTITY_INSPECTION=true` งาน EXPENSE/PERSONAL_USE และ purchase detail จะอ่านรหัสในชีตปัจจุบัน โดยไม่อ่าน `sheet_row_index` และพักเป็น REVIEW ก่อนจอง/เขียนแถวเสมอ การตรวจพบหนึ่งรายการไม่ได้อนุญาตเขียน เพราะผู้ใช้สามารถย้าย ลบ หรือคัดลอกแถวระหว่างอ่านกับเขียนได้ เมื่อไม่ตั้งค่า flag เส้นทางเดิมไม่เปลี่ยนและยังมีความเสี่ยงเดิม
 
 RAW ใช้ Expense_ID และ Personal_Use_ID ในคอลัมน์ A; purchase detail ใช้ Purchase_Item_ID คอลัมน์ A ร่วม Expense_ID คอลัมน์ B. Snapshot ต้องครอบคลุมขนาด grid จริง ไม่เกิน 10,000 แถว และหัวตารางต้องตรง; ไม่พบ, พบซ้ำ, ข้อมูลไม่ครบ, grid ใหญ่เกินหรืออ่านไม่ได้ ต้อง REVIEW และไม่บันทึกข้อมูลส่วนตัวลงข้อความเหตุผล. ค่าตรงเพียงรายการเดียวเป็นเพียงหลักฐาน ณ เวลาที่อ่าน ไม่ใช่การรับรองเอกลักษณ์หรืออนุญาตแก้ไข.

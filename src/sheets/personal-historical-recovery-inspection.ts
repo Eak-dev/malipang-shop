@@ -4,7 +4,7 @@ import {createPersonalRawProductionProbe} from './ledger-google-probe';
 import {digestLedgerCell,type LedgerBaseline} from './ledger-stable-journal';
 import {historicalEnrollmentIntegrity} from './personal-historical-enrollment-integrity';
 import {personalRecoverySourceIntegrity} from './personal-projection-runtime-journal';
-import {personalEnrollmentLockIntegrity} from './personal-raw-enrollment';
+import {personalEnrollmentLockIntegrity} from './personal-enrollment-lock-integrity';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
 import {isIsoDate} from '../shared/time';
 import {sheetScopesDistinct} from './sheet-scope-isolation';

@@ -2,7 +2,7 @@ import type {Env} from '../types';
 import type {PersonalHistoricalSourceProof} from './personal-historical-source-proof';
 import {personalRecoverySourceIntegrity} from './personal-projection-runtime-journal';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
-import {personalEnrollmentLockIntegrity} from './personal-raw-enrollment';
+import {personalEnrollmentLockIntegrity} from './personal-enrollment-lock-integrity';
 import {historicalEnrollmentIntegrity} from './personal-historical-enrollment-integrity';
 import {historicalProvenanceIntegrity} from './personal-historical-provenance-integrity';
 import {sheetScopesDistinct} from './sheet-scope-isolation';

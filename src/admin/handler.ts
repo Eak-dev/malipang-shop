@@ -25,14 +25,21 @@ import {dailyReviewedReleaseStatus,inspectDailyReviewedRelease,resolveDailyRevie
 import {readBoundedJson} from "../shared/async";
 import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
 import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
+
 import {PersonalHistoricalEnrollment} from '../sheets/personal-historical-enrollment';
 import {inspectHistoricalMarker} from '../sheets/personal-historical-marker-inspection';
 async function readRecoveryRequest(request:Request):Promise<unknown>{try{return await readBoundedJson(request,4096,5000,'Recovery request');}catch{throw Error('RECOVERY_REQUEST_INVALID');}}
+
+
+import {inspectHistoricalMarkerAdmin,approveHistoricalMarkerRemediation,executeHistoricalMarkerRemediation,historicalMarkerRemediationStatus,quarantineHistoricalMarkerRemediation,cancelHistoricalMarkerRemediation} from './personal-historical-marker-remediation';
+import {inspectPersonalMarkerReviewedRecovery,approvePersonalMarkerReviewedRecovery,resolvePersonalMarkerReviewedRecovery,personalMarkerReviewedRecoveryStatus,cancelPersonalMarkerReviewedRecovery} from './personal-marker-reviewed-recovery';
+
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   const url=new URL(request.url),sensitiveRecovery=url.pathname.startsWith("/admin/daily-recovery/")||url.pathname.startsWith("/admin/personal-historical-")||url.pathname.startsWith("/admin/personal-enrollment-recovery/");if(!authorized(request,env))return new Response("Unauthorized",{status:401,...(sensitiveRecovery?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
   try{
+
 
     if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/inspect"){const body=await readRecoveryRequest(request) as {windowToken?:unknown};return Response.json({ok:true,...await inspectDailyRecovery(env,body.windowToken)},{headers:{"cache-control":"no-store, max-age=0"}});}
     if(env.DAILY_RECOVERY_ADMIN_ENABLED==="true"&&request.method==="POST"&&url.pathname==="/admin/daily-recovery/keep-review"){const body=await readRecoveryRequest(request) as {windowToken?:unknown;evidenceDigest?:unknown;reason?:unknown};return Response.json({ok:true,...await recordDailyRecoveryHold(env,body)},{headers:{"cache-control":"no-store, max-age=0"}});}
@@ -53,6 +60,42 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const body=await readRecoveryRequest(request) as {personalUseId?:unknown;month?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};
       try{const intent=await PersonalHistoricalEnrollment.prepare(env,body),result=await intent.dispatchOnce();return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});}
       catch(error){if(error instanceof Error&&error.message==='HISTORICAL_RESERVATION_OUTCOME_UNKNOWN')return Response.json({ok:false,state:'OUTCOME_UNKNOWN'},{status:202,headers:{'cache-control':'no-store'}});return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_UNAVAILABLE'},{status:409,headers:{'cache-control':'no-store'}});}
+
+    }
+
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-inspect'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await inspectPersonalMarkerReviewedRecovery(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-approve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof approvePersonalMarkerReviewedRecovery>[1];const result=await approvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-resolve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof resolvePersonalMarkerReviewedRecovery>[1];const result=await resolvePersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-status'){
+      const body=await readRecoveryRequest(request) as {recoveryActionId?:unknown};return Response.json({ok:true,...await personalMarkerReviewedRecoveryStatus(env,body.recoveryActionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/review-cancel'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof cancelPersonalMarkerReviewedRecovery>[1];const result=await cancelPersonalMarkerReviewedRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/inspect'){
+      const body=await readRecoveryRequest(request) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectHistoricalMarkerAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/approve'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof approveHistoricalMarkerRemediation>[1];const result=await approveHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/execute'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof executeHistoricalMarkerRemediation>[1];const result=await executeHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/status'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};return Response.json({ok:true,...await historicalMarkerRemediationStatus(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/quarantine'){
+      const body=await readRecoveryRequest(request) as {actionId?:unknown};const result=await quarantineHistoricalMarkerRemediation(env,body.actionId);return Response.json({ok:result.state==='REVIEW',...result},{status:result.state==='REVIEW'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-marker/cancel'){
+      const body=await readRecoveryRequest(request) as Parameters<typeof cancelHistoricalMarkerRemediation>[1];const result=await cancelHistoricalMarkerRemediation(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+
     }
     if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/status'){
       const body=await readRecoveryRequest(request) as {personalUseId?:unknown};return Response.json({ok:true,...await personalHistoricalEnrollmentStatus(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
@@ -161,5 +204,5 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));
     return new Response("Not found",{status:404,...(sensitiveRecovery?{headers:{"cache-control":"no-store, max-age=0"}}:{})});
-  }catch(error){if(sensitiveRecovery){const message=error instanceof Error?error.message:"",isRead=/\/(inspect|status|marker-inspect|inspect-release|release-status|witness-status)$/.test(url.pathname),invalid=message==="RECOVERY_REQUEST_INVALID"||message.endsWith("_INVALID")||message.endsWith("_DISABLED");return Response.json(invalid||isRead?{ok:false,error:"RECOVERY_REQUEST_UNAVAILABLE"}:{ok:false,state:"OUTCOME_UNKNOWN"},{status:invalid||isRead?400:202,headers:{"cache-control":"no-store, max-age=0"}});}return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400});}
+  }catch(error){if(sensitiveRecovery){const message=error instanceof Error?error.message:"",isRead=/\/(?:review-)?(inspect|status|marker-inspect|inspect-release|release-status|witness-status)$/.test(url.pathname),invalid=message==="RECOVERY_REQUEST_INVALID"||message.endsWith("_INVALID")||message.endsWith("_DISABLED");return Response.json(invalid||isRead?{ok:false,error:"RECOVERY_REQUEST_UNAVAILABLE"}:{ok:false,state:"OUTCOME_UNKNOWN"},{status:invalid||isRead?400:202,headers:{"cache-control":"no-store, max-age=0"}});}return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400});}
 }

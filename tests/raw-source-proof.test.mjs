@@ -320,7 +320,9 @@ function mockAppendProvider(proof,options={}){
       metadata=body.requests[2].createDeveloperMetadata.developerMetadata;
       if(options.postMismatch)rows[range.startIndex].values[2]={userEnteredValue:{stringValue:'changed'}};
       if(options.lostResponse)throw Error('synthetic network lost response');
-      return new Response(JSON.stringify({replies:[{},{},{createDeveloperMetadata:{developerMetadata:metadata}}]}));
+      if(options.malformedResponse)return new Response('{sensitive-sentinel malformed response');
+      const returned=structuredClone(metadata);if(options.wrongMetadata)returned.metadataId++;
+      return new Response(JSON.stringify({replies:[{},{},{createDeveloperMetadata:{developerMetadata:returned}}]}));
     }
     assert.equal(init.method,'GET');
     if(u.pathname.includes('/developerMetadata/'))return new Response(JSON.stringify(metadata));
@@ -331,16 +333,16 @@ function mockAppendProvider(proof,options={}){
   return()=>({posts,gridReads});
 }
 test('production append controller sends at most once and verifies provider readback before holding',async()=>{
-  for(const mode of ['success','lost','readback_mismatch','grid_changed','source_aba','source_during_post']){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+  for(const mode of ['success','lost','malformed','wrong_metadata','readback_mismatch','grid_changed','source_aba','source_during_post']){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
     assert.equal(await append.acquire(proof,token),true);assert.equal(await append.reserve(proof,44,token),true);
-    const state=mockAppendProvider(proof,{lostResponse:mode==='lost',postMismatch:mode==='readback_mismatch',onPost:()=>{if(mode==='source_during_post')f.db.exec(`UPDATE expense_events SET trace_id='changed'`)},onFresh:rows=>{
+    const state=mockAppendProvider(proof,{lostResponse:mode==='lost',malformedResponse:mode==='malformed',wrongMetadata:mode==='wrong_metadata',postMismatch:mode==='readback_mismatch',onPost:()=>{if(mode==='source_during_post')f.db.exec(`UPDATE expense_events SET trace_id='changed'`)},onFresh:rows=>{
       if(mode==='grid_changed')rows[2]={values:[{}, {}, {},{note:'new manual note'}]};
       if(mode==='source_aba')f.db.exec(`UPDATE expense_events SET trace_id='changed'; UPDATE expense_events SET trace_id='trace-a'`);
     }});
     const [first,second]=await Promise.all([append.dispatchOnce(proof,44,token,7),append.dispatchOnce(proof,44,token,7)]);
     assert.deepEqual(second,{status:'ALREADY_ATTEMPTED'});
-    const expected=mode==='success'?'READBACK_MATCHED':mode==='lost'?'OUTCOME_UNKNOWN':mode==='readback_mismatch'||mode==='source_during_post'?'READBACK_UNVERIFIED':'NOT_DISPATCHED';
+    const expected=mode==='success'?'READBACK_MATCHED':['lost','malformed','wrong_metadata'].includes(mode)?'OUTCOME_UNKNOWN':mode==='readback_mismatch'||mode==='source_during_post'?'READBACK_UNVERIFIED':'NOT_DISPATCHED';
     assert.deepEqual(first,{status:'REVIEW',observation:expected});assert.equal(state().posts,mode==='grid_changed'||mode==='source_aba'?0:1);
     assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'REVIEW');assert.equal(f.db.prepare('SELECT state FROM full_raw_append_intents').get().state,'REVIEW');
     assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'REVIEW');assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');

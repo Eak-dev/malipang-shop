@@ -17,3 +17,5 @@ CREATE TABLE IF NOT EXISTS expense_projection_generation_jobs (
   CHECK(state<>'REVIEW' OR reason IS NOT NULL)
 );
 CREATE INDEX IF NOT EXISTS idx_expense_projection_generation_jobs_state ON expense_projection_generation_jobs(state,updated_at);
+CREATE INDEX IF NOT EXISTS idx_expense_projection_generation_jobs_revision ON expense_projection_generation_jobs(spreadsheet_id,expense_id,source_revision);
+CREATE INDEX IF NOT EXISTS idx_expense_projection_observations_revision ON expense_projection_generation_observations(spreadsheet_id,expense_id,source_revision);

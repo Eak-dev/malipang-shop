@@ -38,6 +38,8 @@ Historical enrollment candidate สำหรับรายการส่วน
 
 Admin marker inspection candidate อ่าน source และ Google ซ้ำเพื่อจำแนกว่าไม่พบ marker, marker อยู่ผิดแถว หรือหลักฐานไม่พอ ผลทุกกรณียังคง REVIEW ไม่เปิดเผยเลขแถว ไม่ลบหรือย้าย metadata และไม่ใช่สิทธิ์ให้เขียนซ้ำ การมองเห็น metadata ขึ้นอยู่กับสิทธิ์ของ Google project ด้วย
 
+Provenance candidate ค้น metadata ID จาก Google ก่อนจองและก่อนส่ง พร้อมเก็บหลักฐานแยกเมื่อได้รับ ACK ที่ตรวจตรงเท่านั้น โดยไม่เก็บเลขแถว หลักฐานนี้ยังไม่อนุญาตให้ลบ marker ด้วยตัวเอง: request ที่ไม่ทราบผลหรือรายการเก่าที่ไม่มีหลักฐาน ACK ต้องถือว่าเจ้าของ marker ไม่แน่ชัดและห้ามลบ การค้นซ้ำและการรอไม่ใช่ Google CAS และยังต้องระบายผู้เขียน metadata อื่นจริงก่อนเปลี่ยนข้อมูล
+
 Outer guard ปฏิเสธ source revision ที่ต่ำกว่า observation หรืองาน generation ที่เคยบันทึกไว้ใน workbook เดียวกันแม้คนละ generation แต่ไม่สามารถพิสูจน์ revision ที่ไม่เคยถูกสังเกตหรือหลักฐานที่ถูก restore หายไปทั้งหมดได้
 
 ยังต้องมีวิธี recovery ที่ตรวจ provider เมื่อผลไม่แน่ชัด และการเชื่อม writer กับ provider readback, enrollment, การกั้น writer เดิมและ editor ระหว่างเขียน รวมถึงทดสอบ D1/Google จริงก่อนเปิด route. ห้ามตีความว่ารายการ personal ซิงก์ครบจากการทดสอบนี้. สถานะ intent หรือ D1 lock ไม่ใช่ Google Sheets CAS และไม่ป้องกันเจ้าของไฟล์ที่ข้าม protection ได้

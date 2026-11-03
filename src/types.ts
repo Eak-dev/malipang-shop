@@ -16,6 +16,16 @@ export interface Env {
   ATTENDANCE_ENABLED: string;
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
+  /** Experimental read-only identity inspection. Never permits a Sheets write. */
+  SHEETS_LEDGER_IDENTITY_INSPECTION?: string;
+  /** Reserved for isolated UAT only; never enable against production. */
+  SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE?: string;
+  SHEETS_LEDGER_FULL_PROJECTION_UAT?: string;
+  RAW_FULL_IDENTITY_WRITER_ENABLED?: string;
+  RAW_APPEND_WRITER_ENABLED?: string;
+  SHEETS_LEDGER_UAT_SPREADSHEET_ID?: string;
+  SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID?: string;
+  SHEETS_LEDGER_UAT_DATABASE_MARKER?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;

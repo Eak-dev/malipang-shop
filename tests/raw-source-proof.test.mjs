@@ -13,6 +13,7 @@ const auth=require('../dist/sheets/google-auth.js');
 const client=require('../dist/sheets/client.js');
 const {FullRawIdentityIntent}=require('../dist/sheets/full-raw-identity-intent.js');
 const {FullRawAppendIntent}=require('../dist/sheets/full-raw-append-intent.js');
+const {auditLegacyExpenseRawEnrollment}=require('../dist/sheets/legacy-raw-enrollment-audit.js');
 const {ExpenseProjectionRuntimeJournal}=require('../dist/sheets/expense-projection-runtime-journal.js');
 const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
 class Statement{constructor(db,sql){this.db=db;this.sql=sql;this.args=[]}bind(...args){this.args=args;return this}async first(){return this.db.prepare(this.sql).get(...this.args)??null}async run(){return{meta:{changes:Number(this.db.prepare(this.sql).run(...this.args).changes)}}}}
@@ -292,4 +293,19 @@ test('lost lock, reservation or dispatch acknowledgment never authorizes a later
     assert.equal(await append.holdAndFenceOuter(token),stage==='lock'?'REVIEW_LOCAL_STATE_UNCERTAIN':'REVIEW');
     assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'REVIEW');
   }finally{f.close();}}
+});
+test('legacy enrollment audit requires one exact RAW row and never returns a row number or authorization',async()=>{
+  const f=fixture();try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),blank=()=>({entered:null,formula:null,note:null,hasValidation:false});
+    const rows=Array.from({length:4},()=>Array.from({length:20},blank));RAW_PROJECTION_HEADERS.EXPENSE.forEach((v,i)=>rows[0][i].entered=v);proof.values.forEach((v,i)=>rows[2][i].entered=v);
+    const snapshot={sheetId:7,rowCount:4,columnCount:20,rows,hasProtectedRanges:false,hasMerges:false},audit=()=>auditLegacyExpenseRawEnrollment(f.env,proof,snapshot);
+    assert.deepEqual(await audit(),{status:'REVIEW',observation:'SINGLE_MATCH'});
+    rows[3][0].entered=proof.entityId;assert.deepEqual(await audit(),{status:'REVIEW',observation:'DUPLICATE'});rows[3][0].entered=null;
+    rows[2][0].entered='other';assert.deepEqual(await audit(),{status:'REVIEW',observation:'MISSING'});rows[2][0].entered=proof.entityId;
+    rows[2][3].entered=999;assert.deepEqual(await audit(),{status:'REVIEW',observation:'VALUES_DIFFER'});rows[2][3].entered=proof.values[3];
+    rows[2][3].note='manual';assert.deepEqual(await audit(),{status:'REVIEW',observation:'SCHEMA_OR_ANNOTATION_UNSAFE'});rows[2][3].note=null;
+    [rows[0][2],rows[0][3]]=[rows[0][3],rows[0][2]];assert.deepEqual(await audit(),{status:'REVIEW',observation:'SCHEMA_OR_ANNOTATION_UNSAFE'});[rows[0][2],rows[0][3]]=[rows[0][3],rows[0][2]];
+    rows[3][0].formula='="exp_fixture"';assert.deepEqual(await audit(),{status:'REVIEW',observation:'SCHEMA_OR_ANNOTATION_UNSAFE'});rows[3][0].formula=null;
+    f.db.exec(`UPDATE expense_events SET trace_id='changed' WHERE expense_id='exp_fixture'`);assert.deepEqual(await audit(),{status:'REVIEW',observation:'SOURCE_CHANGED_OR_UNAVAILABLE'});
+  }finally{f.close();}
 });

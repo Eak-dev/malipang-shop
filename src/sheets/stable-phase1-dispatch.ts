@@ -20,7 +20,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
  try{
   const eligible=await env.DB.prepare(`SELECT 1 AS ok WHERE ${newStableSourcePredicate(job.entityType)}`).bind(job.entityKey).first<{ok:number}>();
   if(!eligible){await hold('STABLE_HISTORICAL_OR_SOURCE_REVIEW');return 'REVIEW';}
-  if(job.entityType==='EXPENSE'){const result=await runStableExpenseJob(env,job,lease);return result==='COMPLETED'?'PROCESSED':'REVIEW';}
+  if(job.entityType==='EXPENSE'){const result=await runStableExpenseJob(env,job,lease);return result==='COMPLETED'?'PROCESSED':result==='CONTINUE'?'BUSY':'REVIEW';}
   await runStablePersonalJob(env,job,lease);return 'PROCESSED';
  }catch(error){
   if(isStableWorkbookBusy(error)){

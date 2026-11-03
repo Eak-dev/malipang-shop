@@ -51,6 +51,8 @@ export interface Env {
   SHEET_EXPENSE_DAILY: string;
   DAILY_LEGACY_WRITER_GATE_ENABLED?: string;
   EXPENSE_STABLE_PROJECTION_ENABLED?: string;
+  EXPENSE_GENERATION_SCHEDULER_ENABLED?: string;
+  EXPENSE_GENERATION_WORKER_ENABLED?: string;
   /** Private item-level purchase ledger.  `รายวัน` remains summary-only. */
   SHEET_PURCHASE_DETAILS?: string;
   SHEET_SYSTEM_LOG: string;

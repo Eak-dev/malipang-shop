@@ -91,9 +91,9 @@ export class ExpenseProjectionRuntimeJournal{
   }
   dispatchFence(projection:ExpenseProjection,token:string,c:ExpenseProjectionContext):{sql:string;args:unknown[]}{
     const fence=this.projectionFence(projection,token,c);
-    // Cooperative notices cannot prove human/editor exclusion. Until an
-    // independently reviewed verifier is available, DAILY provider writes
-    // must remain impossible even if every other lease matches.
+    // The owner chose a cooperative pause, not a hard human lock. Until
+    // the in-Sheets signal and independently verified system-writer drain
+    // exist, DAILY writes remain impossible even when other leases match.
     return projection==='DAILY'?{sql:`(${fence.sql} AND 0=1)`,args:fence.args}:fence;
   }
   /** Only publishes a D1 NOTICE; this cannot authorize a provider write. */

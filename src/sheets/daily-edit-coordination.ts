@@ -33,6 +33,6 @@ export async function requestDailyEditNotice(env:Env,job:SheetsSyncJob,syncLease
   const outer=new ExpenseProjectionRuntimeJournal(env,job,syncLease,generationLease);
   return outer.requestDailyNotice(outerToken,context,windowToken,seconds);
 }
-/** Fail closed until a reviewed independent exclusion verifier exists. A
- * banner, delay, or voluntary cooperation cannot prove no concurrent edits. */
+/** Fail closed until the in-Sheets cooperative signal and independently
+ * verified system-writer drainage exist. Human cooperation is not a lock. */
 export async function beginDailyCoordinatedWrite():Promise<false>{return false;}

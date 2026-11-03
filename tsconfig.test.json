@@ -70,6 +70,7 @@
     "src/sheets/raw-projection.ts",
     "src/sheets/raw-source-proof.ts",
     "src/sheets/detail-source-proof.ts",
+    "src/sheets/detail-google-inventory.ts",
     "src/sheets/raw-recovery-inspection.ts",
     "src/sheets/raw-full-projection-shadow.ts",
     "src/sheets/full-raw-identity-intent.ts",

@@ -142,6 +142,12 @@ export async function getPersonalIdentityProductionGrid(env:Env):Promise<unknown
   const query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('PERSONAL_IDENTITY_READER_UNAVAILABLE');}
 }
+/** Bounded read-only DETAIL inventory; never a write authorization. */
+export async function getDetailProductionInventory(env:Env):Promise<unknown>{
+  if(env.RUNTIME_MODE!=='production'||env.DETAIL_IDENTITY_READER_ENABLED!=='true'||env.EXPENSE_STABLE_PROJECTION_ENABLED!=='true'||!env.GOOGLE_SPREADSHEET_ID||!env.SHEET_PURCHASE_DETAILS)throw Error('DETAIL_READER_DISABLED');
+  const range=`'${env.SHEET_PURCHASE_DETAILS.replace(/'/g,"''")}'!A1:T2500`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation)),rowMetadata(developerMetadata(metadataId,metadataKey,visibility,location))))'});
+  try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw Error('DETAIL_READER_UNAVAILABLE');}
+}
 export async function getPersonalProductionGridProperties(env:Env):Promise<unknown>{
   assertPersonalIdentityProductionReader(env);const range=`'${env.SHEET_PERSONAL_USE_RAW!.replace(/'/g,"''")}'!A1`;
   const query=new URLSearchParams({ranges:range,fields:'sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))'});

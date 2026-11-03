@@ -45,6 +45,10 @@ test('historical schema guard detects missing or modified triggers',()=>{
   const h=expenseSqlite();try{
     const check=()=>h.sqlite.prepare(`SELECT CASE WHEN ${mod.exports.historicalEnrollmentIntegrity} THEN 1 ELSE 0 END AS ok`).get().ok;
     assert.equal(check(),1);
+    h.sqlite.exec("CREATE TRIGGER historical_injected AFTER UPDATE ON personal_historical_enrollment_intents BEGIN SELECT 1; END");
+    assert.equal(check(),0);
+    h.sqlite.exec('DROP TRIGGER historical_injected');
+    assert.equal(check(),1);
     h.sqlite.exec('DROP TRIGGER personal_historical_identity_transition');
     assert.equal(check(),0);
     h.sqlite.exec("CREATE TRIGGER personal_historical_identity_transition BEFORE UPDATE OF state ON personal_historical_enrollment_intents BEGIN SELECT 1; END");

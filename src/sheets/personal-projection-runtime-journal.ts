@@ -1,6 +1,7 @@
 import type {Env,SheetsSyncJob} from '../types';
 import {sheetScopesDistinct} from './sheet-scope-isolation';
 import {sheetMetadataRegistryIntegrity} from './sheet-metadata-registry-guard';
+import {historicalResumeGuard} from './personal-historical-resume-guard';
 
 export interface PersonalProjectionContext{revision:number;generation:string;watermark:number}
 export interface PersonalGenerationLease{generation:string;revision:number;token:string}
@@ -36,14 +37,14 @@ export class PersonalProjectionRuntimeJournal{
   private guard():string{return `EXISTS(SELECT 1 FROM owner_personal_transactions p
     JOIN personal_projection_source_revisions r ON r.personal_use_id=p.personal_use_id AND r.state='TRACKED' AND r.revision=?
     JOIN personal_projection_admissions a ON a.personal_use_id=p.personal_use_id
-    JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=? AND c.admission_watermark=? AND a.sequence>c.admission_watermark
+    JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=? AND c.admission_watermark=?
     JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
     JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
     WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard} AND ${sheetMetadataRegistryIntegrity}
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
     AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
     AND ${this.generationGuard()}
-    AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
+    AND ((a.sequence>c.admission_watermark AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)) OR ${historicalResumeGuard(this.env,'p','c')})
     AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW')))`;}
   private args(c:PersonalProjectionContext):unknown[]{return[c.revision,this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),c.generation,c.watermark,this.lease,this.job.entityKey,this.job.entityVersion,...triggers,...this.generationArgs()];}
   /** Snapshot only, not permission to send a provider request. */
@@ -51,14 +52,14 @@ export class PersonalProjectionRuntimeJournal{
     this.check();const row=await this.env.DB.prepare(`SELECT r.revision,c.generation,c.admission_watermark AS watermark FROM owner_personal_transactions p
       JOIN personal_projection_source_revisions r ON r.personal_use_id=p.personal_use_id AND r.state='TRACKED'
       JOIN personal_projection_admissions a ON a.personal_use_id=p.personal_use_id
-      JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE' AND a.sequence>c.admission_watermark
+      JOIN personal_projection_cutovers c ON c.spreadsheet_id=? AND c.sheet_name=? AND c.state='ACTIVE'
       JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
       JOIN sync_jobs j ON j.entity_type='PERSONAL_USE' AND j.entity_key=p.personal_use_id AND j.entity_version=p.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
       WHERE p.personal_use_id=? AND p.version=? AND p.status='CONFIRMED' AND EXISTS(SELECT 1 FROM personal_projection_bootstrap b WHERE b.singleton=1 AND b.state='COMPLETE') AND ${schemaGuard} AND ${sheetMetadataRegistryIntegrity}
       AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
       AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=c.spreadsheet_id AND seen.personal_use_id=p.personal_use_id AND seen.source_revision>r.revision)
       AND ${this.generationGuard()}
-      AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)
+      AND ((a.sequence>c.admission_watermark AND NOT EXISTS(SELECT 1 FROM sheet_row_index s WHERE s.sheet_name=c.sheet_name AND s.entity_key=p.personal_use_id)) OR ${historicalResumeGuard(this.env,'p','c')})
       AND NOT EXISTS(SELECT 1 FROM sync_jobs q WHERE q.entity_type='PERSONAL_USE' AND q.entity_key=p.personal_use_id AND q.entity_version<>p.version AND q.status IN ('PROCESSING','REVIEW'))`).bind(this.env.GOOGLE_SPREADSHEET_ID,this.sheet(),this.lease,this.job.entityKey,this.job.entityVersion,...triggers,...this.generationArgs()).first<PersonalProjectionContext>();return row&&this.valid(row)?row:null;
   }
   async begin(c:PersonalProjectionContext):Promise<string|null>{

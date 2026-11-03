@@ -1,5 +1,6 @@
 import type {Env} from '../types';
 import {discoverPersonalProjectionGenerations} from './personal-projection-generation-observer';
+import {historicalResumeGuard} from './personal-historical-resume-guard';
 
 export interface PersonalGenerationKey{spreadsheetId:string;generation:string;personalId:string;version:number;revision:number}
 function check(env:Env):void{
@@ -7,13 +8,13 @@ function check(env:Env):void{
 }
 // This is a discovery/claim precondition, not a Google Sheets lock and not a
 // replacement for the canonical per-projection fence immediately before send.
-function eligible(alias:string,matchRevision=true):string{return `EXISTS(SELECT 1 FROM owner_personal_transactions e
+function eligible(env:Env,alias:string,matchRevision=true):string{return `EXISTS(SELECT 1 FROM owner_personal_transactions e
   JOIN personal_projection_source_revisions r ON r.personal_use_id=e.personal_use_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND r.revision=${alias}.source_revision`:''}
   JOIN personal_projection_admissions a ON a.personal_use_id=e.personal_use_id
-  JOIN personal_projection_cutovers c ON c.spreadsheet_id=${alias}.spreadsheet_id AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=${alias}.cutover_generation AND a.sequence>c.admission_watermark
+  JOIN personal_projection_cutovers c ON c.spreadsheet_id=${alias}.spreadsheet_id AND c.sheet_name=? AND c.state='ACTIVE' AND c.generation=${alias}.cutover_generation
   JOIN personal_legacy_writer_gates g ON g.spreadsheet_id=c.spreadsheet_id AND g.sheet_name=c.sheet_name AND g.state='HOLD' AND g.generation=c.generation
   WHERE e.personal_use_id=${alias}.personal_use_id AND e.status='CONFIRMED' AND typeof(e.version)='integer' AND e.version BETWEEN 1 AND 9007199254740991 ${matchRevision?`AND e.version=${alias}.source_version`:''}
-  AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.sheet_name=? AND i.entity_key=e.personal_use_id)
+  AND ((a.sequence>c.admission_watermark AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.sheet_name=? AND i.entity_key=e.personal_use_id)) OR ${historicalResumeGuard(env,'e','c')})
   AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_observations seen WHERE seen.spreadsheet_id=${alias}.spreadsheet_id AND seen.personal_use_id=e.personal_use_id AND seen.source_revision>r.revision)
   AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs seen WHERE seen.spreadsheet_id=${alias}.spreadsheet_id AND seen.personal_use_id=e.personal_use_id AND seen.source_revision>r.revision)
   AND NOT EXISTS(SELECT 1 FROM personal_projection_runtime_intents p WHERE p.spreadsheet_id=${alias}.spreadsheet_id AND p.personal_use_id=e.personal_use_id AND p.state IN ('IN_FLIGHT','REVIEW'))
@@ -30,10 +31,10 @@ export async function runPersonalGenerationScheduler(env:Env):Promise<void>{
   const rollback=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_REVISION_ROLLBACK_OR_MISSING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='SUPERSEDED' AND NOT EXISTS(SELECT 1 FROM owner_personal_transactions e JOIN personal_projection_source_revisions r ON r.personal_use_id=e.personal_use_id WHERE e.personal_use_id=q.personal_use_id AND r.state='TRACKED' AND typeof(r.revision)='integer' AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID);
   // PENDING has never been claimed, and there is no transition back to it.
   // Its CAS update races safely with claim: only one can change PENDING.
-  const supersede=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='SUPERSEDED',reason='SOURCE_ADVANCED_BEFORE_CLAIM',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible('q',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=q.personal_use_id AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
-  const stale=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_OR_FENCE_CHANGED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND NOT ${eligible('q')}`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
+  const supersede=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='SUPERSEDED',reason='SOURCE_ADVANCED_BEFORE_CLAIM',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible(env,'q',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=q.personal_use_id AND r.revision>q.source_revision)`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
+  const stale=env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='REVIEW',reason='SOURCE_OR_FENCE_CHANGED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE q.spreadsheet_id=? AND q.state='PENDING' AND NOT ${eligible(env,'q')}`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env));
   const materialize=env.DB.prepare(`INSERT INTO personal_projection_generation_jobs(spreadsheet_id,cutover_generation,personal_use_id,source_version,source_revision,state,reason,created_at,updated_at)
-    WITH candidates AS (SELECT o.*,${eligible('o')} AS exact_ok,(${eligible('o',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=o.personal_use_id AND r.revision>o.source_revision)) AS current_ok
+    WITH candidates AS (SELECT o.*,${eligible(env,'o')} AS exact_ok,(${eligible(env,'o',false)} AND EXISTS(SELECT 1 FROM personal_projection_source_revisions r WHERE r.personal_use_id=o.personal_use_id AND r.revision>o.source_revision)) AS current_ok
       FROM personal_projection_generation_observations o JOIN personal_projection_cutovers c ON c.spreadsheet_id=o.spreadsheet_id AND c.generation=o.cutover_generation AND c.sheet_name=? AND c.state='ACTIVE'
       WHERE o.spreadsheet_id=? AND NOT EXISTS(SELECT 1 FROM personal_projection_generation_jobs q WHERE q.spreadsheet_id=o.spreadsheet_id AND q.cutover_generation=o.cutover_generation AND q.personal_use_id=o.personal_use_id AND q.source_version=o.source_version AND q.source_revision=o.source_revision)
       ORDER BY o.discovered_at,o.personal_use_id LIMIT 100)
@@ -53,7 +54,7 @@ export async function claimPersonalGeneration(env:Env,key:PersonalGenerationKey)
   check(env);if(env.PERSONAL_GENERATION_WORKER_ENABLED!=='true'||key.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!/^[-A-Za-z0-9_]{8,128}$/.test(key.generation)||!/^personal_[-A-Za-z0-9_]{1,128}$/.test(key.personalId)||!Number.isSafeInteger(key.version)||key.version<1||!Number.isSafeInteger(key.revision)||key.revision<1)throw Error('PERSONAL_GENERATION_WORKER_DISABLED');
   const token=crypto.randomUUID();
   const result=await env.DB.prepare(`UPDATE personal_projection_generation_jobs AS q SET state='IN_FLIGHT',lease_token=?,lease_until=strftime('%Y-%m-%dT%H:%M:%fZ','now','+2 minutes'),updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
-    WHERE q.spreadsheet_id=? AND q.cutover_generation=? AND q.personal_use_id=? AND q.source_version=? AND q.source_revision=? AND q.state='PENDING' AND ${eligible('q')}`).bind(token,key.spreadsheetId,key.generation,key.personalId,key.version,key.revision,...eligibilityArgs(env)).run();
+    WHERE q.spreadsheet_id=? AND q.cutover_generation=? AND q.personal_use_id=? AND q.source_version=? AND q.source_revision=? AND q.state='PENDING' AND ${eligible(env,'q')}`).bind(token,key.spreadsheetId,key.generation,key.personalId,key.version,key.revision,...eligibilityArgs(env)).run();
   return Number(result.meta.changes||0)===1?token:null;
 }
 
@@ -63,7 +64,7 @@ export async function claimPersonalGeneration(env:Env,key:PersonalGenerationKey)
  * not retried as a write: the scheduler later holds an expired lease. */
 export async function runPersonalGenerationConsumer(env:Env):Promise<boolean>{
   check(env);if(env.PERSONAL_GENERATION_WORKER_ENABLED!=='true')throw Error('PERSONAL_GENERATION_WORKER_DISABLED');
-  const q=await env.DB.prepare(`SELECT q.spreadsheet_id AS spreadsheetId,q.cutover_generation AS generation,q.personal_use_id AS personalId,q.source_version AS version,q.source_revision AS revision FROM personal_projection_generation_jobs q WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible('q')} ORDER BY q.updated_at,q.personal_use_id LIMIT 1`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env)).first<PersonalGenerationKey>();
+  const q=await env.DB.prepare(`SELECT q.spreadsheet_id AS spreadsheetId,q.cutover_generation AS generation,q.personal_use_id AS personalId,q.source_version AS version,q.source_revision AS revision FROM personal_projection_generation_jobs q WHERE q.spreadsheet_id=? AND q.state='PENDING' AND ${eligible(env,'q')} ORDER BY q.updated_at,q.personal_use_id LIMIT 1`).bind(env.GOOGLE_SPREADSHEET_ID,...eligibilityArgs(env)).first<PersonalGenerationKey>();
   if(!q)return false;
   if(!/^[-A-Za-z0-9_]{8,128}$/.test(q.generation)||!/^personal_[-A-Za-z0-9_]{1,128}$/.test(q.personalId)||!Number.isSafeInteger(q.version)||q.version<1||!Number.isSafeInteger(q.revision)||q.revision<1){
     const r=await env.DB.prepare(`UPDATE personal_projection_generation_jobs SET state='REVIEW',reason='INVALID_GENERATION_IDENTITY',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND cutover_generation=? AND personal_use_id=? AND source_version=? AND source_revision=? AND state='PENDING'`).bind(q.spreadsheetId,q.generation,q.personalId,q.version,q.revision).run();

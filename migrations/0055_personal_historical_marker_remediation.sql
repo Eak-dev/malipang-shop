@@ -29,6 +29,7 @@ CREATE TABLE personal_historical_marker_actions (
 -- All unresolved marker operations block the whole personal sheet, including
 -- a different entity or metadata id. REVIEW is deliberately non-releasable.
 CREATE UNIQUE INDEX personal_historical_marker_one_open ON personal_historical_marker_actions(spreadsheet_id,sheet_name) WHERE state IN ('APPROVED','DISPATCHED','REVIEW');
+CREATE UNIQUE INDEX personal_historical_marker_token_once ON personal_historical_marker_actions(spreadsheet_id,remediation_token);
 CREATE TABLE personal_historical_marker_atomic_assertions(assertion_id TEXT PRIMARY KEY,ok INTEGER NOT NULL CHECK(ok=1));
 
 CREATE TRIGGER historical_marker_action_admit BEFORE INSERT ON personal_historical_marker_actions

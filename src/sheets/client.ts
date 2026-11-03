@@ -5,6 +5,9 @@ import { numberEnv } from "../shared/env";
 import { buildLedgerMetadataValueRange,verifyLedgerMetadataWitness,type LedgerWriteIdentity,type LedgerMetadataWitness,type LedgerWriteGuard } from './ledger-metadata-writer';
 import { baselineMatches,canonicalLedgerBaseline,type LedgerBaseline,type LedgerCellValue } from './ledger-stable-journal';
 import {RAW_PROJECTION_HEADERS} from './raw-projection';
+import {buildExpenseRawProductionAppendRequests,type LedgerUatAppendSnapshot} from './ledger-uat-append-planner';
+import type {RawSourceProof} from './raw-source-proof';
+import {FullRawAppendIntent} from './full-raw-append-intent';
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites,shouldSkipLegacyOwnerMonthCloseBootstrap } from "./owner-month-close";
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -122,6 +125,21 @@ export async function getRawProductionCompleteGrid(env:Env,rows:number,columns:n
   let n=columns,col='';while(n>0){n--;col=String.fromCharCode(65+n%26)+col;n=Math.floor(n/26);}
   const range=`'${env.SHEET_EXPENSE_RAW.replace(/'/g,"''")}'!A1:${col}${rows}`,query=new URLSearchParams({ranges:range,fields:'sheets(properties(sheetId,title,gridProperties(rowCount,columnCount)),protectedRanges,merges,data(startRow,startColumn,rowData(values(userEnteredValue,note,dataValidation))))'});
   try{return await identityInspectionGet(env,`?${query.toString()}`);}catch{throw new Error('RAW_IDENTITY_READER_UNAVAILABLE');}
+}
+/** Internal candidate transport. The caller must have reserved the fixed
+ * identity and sheet lock and supply a one-shot final fence. No route calls it. */
+export async function sendRawProductionAppendBatch(env:Env,source:RawSourceProof,identity:LedgerWriteIdentity,metadataId:number,snapshot:LedgerUatAppendSnapshot,intent:FullRawAppendIntent,token:string):Promise<void>{
+  if(env.RAW_APPEND_WRITER_ENABLED!=='true')throw Error('RAW_APPEND_TRANSPORT_DISABLED');
+  const requests=buildExpenseRawProductionAppendRequests(env,source,identity,metadataId,snapshot),body=JSON.stringify({requests});
+  let response:Response;try{response=await sheetsFetch(env,':batchUpdate',{method:'POST',body},true,async()=>{if(!await FullRawAppendIntent.authorizeTransport(intent,env,source,identity,metadataId,token,JSON.stringify(requests)))throw Error('RAW_APPEND_FENCE_LOST');},true);}
+  catch(error){if(error instanceof SheetsMutationOutcomeUnknownError)throw new SheetsMutationOutcomeUnknownError(new Error('RAW_APPEND_OUTCOME_UNKNOWN'));if(error instanceof SheetsHttpError)throw new SheetsHttpError(error.status,`Sheets HTTP ${error.status}`,error.retryAfterSeconds);throw Error('RAW_APPEND_PREFLIGHT_UNAVAILABLE');}
+  try{
+    const data=await readBoundedJson(response,65536,numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Sheets RAW append response') as {replies?:unknown[]};
+    if(!Array.isArray(data?.replies)||data.replies.length!==3)throw Error('invalid');
+    const reply=data.replies[2] as {createDeveloperMetadata?:{developerMetadata?:{metadataId?:unknown;metadataKey?:unknown;visibility?:unknown;location?:{dimensionRange?:{sheetId?:unknown;dimension?:unknown;startIndex?:unknown;endIndex?:unknown}}}}};
+    const m=reply?.createDeveloperMetadata?.developerMetadata,r=m?.location?.dimensionRange;
+    if(m?.metadataId!==metadataId||m.metadataKey!=='E'||m.visibility!=='DOCUMENT'||r?.sheetId!==identity.sheetId||r.dimension!=='ROWS'||!Number.isSafeInteger(r.startIndex)||Number(r.startIndex)<1||r.endIndex!==Number(r.startIndex)+1)throw Error('invalid');
+  }catch{throw new SheetsMutationOutcomeUnknownError(new Error('RAW_APPEND_RESPONSE_UNAVAILABLE'));}
 }
 /** Grid extent, not a cached row position. Used only by the disabled-by-default inspection prototype. */
 export async function getSheetRowCount(env:Env,title:string):Promise<number>{

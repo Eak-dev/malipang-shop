@@ -251,8 +251,7 @@ test('append reservation holds one RAW sheet, uses fixed metadata identity and n
   const f=fixture();try{
     const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
     assert.equal(await append.acquire(proof,token),true);assert.equal(await append.reserve(proof,44,token),true);assert.equal(await append.beginDispatch(proof,44,token),true);
-    const claims=await Promise.all([append.claimProviderDispatch(proof,44,token),append.claimProviderDispatch(proof,44,token)]);assert.deepEqual(claims.sort(),[false,true]);
-    assert.equal(await append.hold(token),true);assert.equal(await append.claimProviderDispatch(proof,44,token),false);assert.equal(await append.acquire(proof,'second_token_123456'),false);
+    assert.equal(await append.hold(token),true);assert.equal(await append.acquire(proof,'second_token_123456'),false);
     assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'REVIEW');assert.equal(f.db.prepare('SELECT state FROM full_raw_append_intents').get().state,'REVIEW');
     for(const table of ['full_raw_sheet_locks','full_raw_append_intents'])assert.equal(f.db.prepare(`PRAGMA table_info(${table})`).all().some(r=>/row_number|row_index/.test(r.name)),false);
   }finally{f.close();}
@@ -286,7 +285,6 @@ test('lost lock, reservation or dispatch acknowledgment never authorizes a later
     const prepare=f.env.DB.prepare.bind(f.env.DB);f.env.DB.prepare=sql=>{const statement=prepare(sql);if(!sql.includes(target))return statement;return{bind(...args){const bound=statement.bind(...args);return{async run(){await bound.run();throw Error('synthetic lost acknowledgment');}}}};};
     const operation=stage==='lock'?()=>append.acquire(proof,token):stage==='reservation'?()=>append.reserve(proof,44,token):()=>append.beginDispatch(proof,44,token);
     await assert.rejects(operation(),/lost acknowledgment/);
-    assert.equal(await append.claimProviderDispatch(proof,44,token),false);
     if(stage==='lock')assert.equal(await append.reserve(proof,44,token),false);
     if(stage==='reservation')assert.equal(await append.beginDispatch(proof,44,token),false);
     assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'HELD');
@@ -308,4 +306,60 @@ test('legacy enrollment audit requires one exact RAW row and never returns a row
     rows[3][0].formula='="exp_fixture"';assert.deepEqual(await audit(),{status:'REVIEW',observation:'SCHEMA_OR_ANNOTATION_UNSAFE'});rows[3][0].formula=null;
     f.db.exec(`UPDATE expense_events SET trace_id='changed' WHERE expense_id='exp_fixture'`);assert.deepEqual(await audit(),{status:'REVIEW',observation:'SOURCE_CHANGED_OR_UNAVAILABLE'});
   }finally{f.close();}
+});
+function mockAppendProvider(proof,options={}){
+  let posts=0,gridReads=0,metadata=null;auth.getGoogleAccessToken=async()=> 'synthetic-token';
+  const properties={sheetId:7,title:'raw',gridProperties:{rowCount:3,columnCount:17}},rows=[{values:RAW_PROJECTION_HEADERS.EXPENSE.map(h=>({userEnteredValue:{stringValue:h}}))},{},{}];
+  const grid=()=>({sheets:[{properties:structuredClone(properties),data:[{rowData:structuredClone(rows)}]}]});
+  globalThis.fetch=async(url,init)=>{
+    const u=new URL(String(url));
+    if(init.method==='POST'){
+      posts++;const body=JSON.parse(init.body),range=body.requests[0].insertDimension.range;assert.equal(body.requests.length,3);
+      if(options.onPost)options.onPost();
+      rows.splice(range.startIndex,0,body.requests[1].updateCells.rows[0]);properties.gridProperties.rowCount++;
+      metadata=body.requests[2].createDeveloperMetadata.developerMetadata;
+      if(options.postMismatch)rows[range.startIndex].values[2]={userEnteredValue:{stringValue:'changed'}};
+      if(options.lostResponse)throw Error('synthetic network lost response');
+      return new Response(JSON.stringify({replies:[{},{},{createDeveloperMetadata:{developerMetadata:metadata}}]}));
+    }
+    assert.equal(init.method,'GET');
+    if(u.pathname.includes('/developerMetadata/'))return new Response(JSON.stringify(metadata));
+    if(u.searchParams.get('fields')?.startsWith('sheets.properties'))return new Response(JSON.stringify({sheets:[{properties:structuredClone(properties)}]}));
+    gridReads++;if(gridReads===2&&options.onFresh)options.onFresh(rows);
+    return new Response(JSON.stringify(grid()));
+  };
+  return()=>({posts,gridReads});
+}
+test('production append controller sends at most once and verifies provider readback before holding',async()=>{
+  for(const mode of ['success','lost','readback_mismatch','grid_changed','source_aba','source_during_post']){const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456';
+    assert.equal(await append.acquire(proof,token),true);assert.equal(await append.reserve(proof,44,token),true);
+    const state=mockAppendProvider(proof,{lostResponse:mode==='lost',postMismatch:mode==='readback_mismatch',onPost:()=>{if(mode==='source_during_post')f.db.exec(`UPDATE expense_events SET trace_id='changed'`)},onFresh:rows=>{
+      if(mode==='grid_changed')rows[2]={values:[{}, {}, {},{note:'new manual note'}]};
+      if(mode==='source_aba')f.db.exec(`UPDATE expense_events SET trace_id='changed'; UPDATE expense_events SET trace_id='trace-a'`);
+    }});
+    const [first,second]=await Promise.all([append.dispatchOnce(proof,44,token,7),append.dispatchOnce(proof,44,token,7)]);
+    assert.deepEqual(second,{status:'ALREADY_ATTEMPTED'});
+    const expected=mode==='success'?'READBACK_MATCHED':mode==='lost'?'OUTCOME_UNKNOWN':mode==='readback_mismatch'||mode==='source_during_post'?'READBACK_UNVERIFIED':'NOT_DISPATCHED';
+    assert.deepEqual(first,{status:'REVIEW',observation:expected});assert.equal(state().posts,mode==='grid_changed'||mode==='source_aba'?0:1);
+    assert.equal(f.db.prepare('SELECT state FROM full_raw_sheet_locks').get().state,'REVIEW');assert.equal(f.db.prepare('SELECT state FROM full_raw_append_intents').get().state,'REVIEW');
+    assert.equal(f.db.prepare(`SELECT state FROM expense_projection_runtime_intents WHERE projection='RAW'`).get().state,'REVIEW');assert.equal(f.db.prepare(`SELECT status FROM sync_jobs`).get().status,'PROCESSING');
+    if(mode==='success'){
+      const blank=()=>({entered:null,formula:null,note:null,hasValidation:false}),rows=Array.from({length:3},()=>Array.from({length:17},blank));RAW_PROJECTION_HEADERS.EXPENSE.forEach((h,i)=>rows[0][i].entered=h);
+      const snapshot={sheetId:7,rowCount:3,columnCount:17,rows,hasProtectedRanges:false,hasMerges:false},identity={kind:'EXPENSE',sheetId:7,entityId:proof.entityId};
+      await assert.rejects(client.sendRawProductionAppendBatch(f.env,proof,identity,44,snapshot,append,token),/PREFLIGHT_UNAVAILABLE/);assert.equal(state().posts,1);
+    }
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}}
+});
+test('fabricated prototype or overridden instance cannot bypass the private transport brand',async()=>{
+  const f=fixture(),oldFetch=globalThis.fetch,oldToken=auth.getGoogleAccessToken;try{
+    const proof=await readRawSourceProof(f.env,'EXPENSE','exp_fixture',2),{append}=await installAppendFixture(f,proof),token='append_token_123456',identity={kind:'EXPENSE',sheetId:7,entityId:'exp_fixture'};
+    const blank=()=>({entered:null,formula:null,note:null,hasValidation:false}),rows=Array.from({length:3},()=>Array.from({length:17},blank));RAW_PROJECTION_HEADERS.EXPENSE.forEach((h,i)=>rows[0][i].entered=h);
+    const snapshot={sheetId:7,rowCount:3,columnCount:17,rows,hasProtectedRanges:false,hasMerges:false};let posts=0;auth.getGoogleAccessToken=async()=> 'synthetic-token';globalThis.fetch=async(_url,init)=>{if(init.method==='POST')posts++;throw Error('unexpected request');};
+    const fake=Object.create(FullRawAppendIntent.prototype);fake.authorizeProviderTransport=async()=>true;
+    await assert.rejects(client.sendRawProductionAppendBatch(f.env,proof,identity,44,snapshot,fake,token),/PREFLIGHT_UNAVAILABLE/);
+    append.authorizeProviderTransport=async()=>true;
+    await assert.rejects(client.sendRawProductionAppendBatch(f.env,proof,identity,44,snapshot,append,token),/PREFLIGHT_UNAVAILABLE/);
+    assert.equal(Reflect.set(FullRawAppendIntent,'authorizeTransport',async()=>true),false);assert.equal(posts,0);
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldToken;f.close();}
 });

@@ -20,11 +20,27 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/inspect"){
+      const body=await request.json().catch(()=>({})) as{personalUseId?:unknown};const view=await inspectPersonalEnrollmentAdmin(env,body.personalUseId);return Response.json({ok:true,...view},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/approve"){
+      const body=await request.json().catch(()=>({})) as{personalUseId?:unknown;evidenceDigest?:unknown;reason?:unknown};const result=await approvePersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/status"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown};const result=await personalEnrollmentRecoveryStatus(env,body.actionId);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/cancel"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown;reason?:unknown};const result=await cancelPersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/resolve"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown};const result=await resolvePersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }

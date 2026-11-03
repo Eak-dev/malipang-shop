@@ -14,6 +14,8 @@ const schemaGuard=`(SELECT foreign_keys FROM pragma_foreign_keys)=1
   AND (SELECT count(*) FROM pragma_index_xinfo('sqlite_autoindex_owner_personal_transactions_1') WHERE key=1 AND (coll IS NULL OR upper(coll)<>'BINARY'))=0
   AND (SELECT count(*) FROM pragma_index_xinfo('sqlite_autoindex_owner_personal_transactions_2') WHERE key=1 AND (coll IS NULL OR upper(coll)<>'BINARY'))=0
   AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN (${triggers.map(()=>'?').join(',')}))=5`;
+let recoveryTriggerIndex=0;
+export const personalRecoverySourceIntegrity=schemaGuard.replace(/\?/g,()=>`'${triggers[recoveryTriggerIndex++]}'`);
 
 /** Default-off foundation for a NEW personal-use record after cutover. No
  * production route, provider write, enrollment, verification, completion or

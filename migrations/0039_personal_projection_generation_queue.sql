@@ -6,7 +6,7 @@ CREATE TABLE IF NOT EXISTS personal_projection_generation_jobs (
   personal_use_id TEXT NOT NULL,
   source_version INTEGER NOT NULL,
   source_revision INTEGER NOT NULL,
-  state TEXT NOT NULL CHECK(state IN ('PENDING','IN_FLIGHT','REVIEW','SUPERSEDED')),
+  state TEXT NOT NULL CHECK(state IN ('PENDING','IN_FLIGHT','REVIEW','SUPERSEDED','COMPLETED')),
   reason TEXT,
   lease_token TEXT,
   lease_until TEXT,

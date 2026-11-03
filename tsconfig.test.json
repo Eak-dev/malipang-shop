@@ -49,6 +49,7 @@
     "src/sheets/personal-raw-enrollment-plan.ts",
     "src/sheets/personal-raw-enrollment.ts",
     "src/sheets/personal-raw-enrollment-recovery.ts",
+    "src/admin/personal-enrollment-recovery.ts",
     "src/sheets/personal-projection-generation-observer.ts",
     "src/sheets/personal-projection-generation-queue.ts",
     "src/sheets/owner-month-close.ts",

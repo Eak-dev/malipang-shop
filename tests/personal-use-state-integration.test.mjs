@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-import {handlePersonalUsePostback} from '../dist/personal-use/service.js';
+import {handlePersonalUsePostback,handlePersonalUseText} from '../dist/personal-use/service.js';
 import {recoverPendingSheetJobs} from '../dist/db/repositories.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:'B001',employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{canSubmitExpense:true}};
@@ -73,6 +73,18 @@ function row(sqlite,id){return plain(sqlite.prepare(`SELECT status,version FROM 
 function actions(sqlite,id){return plain(sqlite.prepare(`SELECT action FROM owner_personal_transaction_audit WHERE personal_use_id=? ORDER BY created_at,action`).all(id)).map(item=>item.action);}
 function outbox(sqlite,id){return plain(sqlite.prepare(`SELECT entity_version,status FROM sync_jobs WHERE entity_type='PERSONAL_USE' AND entity_key=? ORDER BY entity_version`).all(id));}
 function sheetJobs(queue){return queue.batchMessages.map(message=>message.body).filter(job=>job.kind==='SHEETS_SYNC'&&job.entityType==='PERSONAL_USE');}
+
+test('duplicate personal-use webhook preserves business rows, audit and source revision',async()=>{
+  const h=harness();try{
+    h.sqlite.exec(migration('0035_personal_projection_source_revision.sql'));
+    const event={source:{type:'user',userId:'line_owner'},message:{id:'duplicate_message',type:'text',text:'ส่วนตัว | 750 | บัญชีร้าน | ค่าใช้ส่วนตัว | 2026-10-01'}};
+    await Promise.all([handlePersonalUseText(h.env,event,'first',owner),handlePersonalUseText(h.env,event,'second',owner)]);
+    await handlePersonalUseText(h.env,event,'third',owner);
+    const rows=h.sqlite.prepare(`SELECT personal_use_id FROM owner_personal_transactions`).all();assert.equal(rows.length,1);
+    assert.equal(h.sqlite.prepare(`SELECT count(*) n FROM owner_personal_transaction_audit WHERE action='CREATE_DRAFT'`).get().n,1);
+    const rev=h.sqlite.prepare(`SELECT revision,state FROM personal_projection_source_revisions WHERE personal_use_id=?`).get(rows[0].personal_use_id);assert.equal(rev.revision,1);assert.equal(rev.state,'TRACKED');
+  }finally{h.close();}
+});
 
 test('SQLite integration: exactly one confirm/cancel CAS transition wins from WAITING_CONFIRM',async()=>{
   for(const competing of [

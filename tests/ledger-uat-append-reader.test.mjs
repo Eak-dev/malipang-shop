@@ -1,0 +1,53 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url);
+const auth=require('../dist/sheets/google-auth.js');
+const {readLedgerUatAppendSnapshot:read,readExpenseRawProductionAppendSnapshot:readProduction,readPersonalRawProductionSnapshot:readPersonal}=require('../dist/sheets/ledger-uat-append-reader.js');
+const {buildLedgerUatAppendRequests:plan,buildExpenseRawProductionAppendRequests:planProduction}=require('../dist/sheets/ledger-uat-append-planner.js');
+const {RAW_PROJECTION_HEADERS}=require('../dist/sheets/raw-projection.js');
+const original={fetch:globalThis.fetch,token:auth.getGoogleAccessToken};
+test.afterEach(()=>{globalThis.fetch=original.fetch;auth.getGoogleAccessToken=original.token});
+const env={RUNTIME_MODE:'shadow',GOOGLE_SPREADSHEET_ID:'uat',SHEETS_LEDGER_UAT_SPREADSHEET_ID:'uat',SHEETS_LEDGER_PRODUCTION_SPREADSHEET_ID:'production',SHEETS_LEDGER_ANCHORED_WRITE_PROTOTYPE:'true',SHEET_EXPENSE_RAW:'Raw'};
+const props={sheetId:7,title:'Raw',gridProperties:{rowCount:4,columnCount:20}};
+const base=()=>({sheets:[{properties:structuredClone(props)}]});
+const grid=()=>({sheets:[{properties:structuredClone(props),data:[{rowData:[{values:RAW_PROJECTION_HEADERS.EXPENSE.map(h=>({userEnteredValue:{stringValue:h}}))},{values:[{userEnteredValue:{stringValue:'existing'}}]},{values:[{}, {note:'manual note'}]}]}]}]});
+const responses=(sequence)=>{let calls=0;auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async()=>new Response(JSON.stringify(sequence[calls++]));return()=>calls;};
+test('authenticated complete grid reader feeds UAT-only planner and preserves annotations',async()=>{
+  const calls=responses([base(),grid()]);const snapshot=await read(env,'Raw',7);
+  assert.equal(calls(),2);assert.equal(snapshot.rows.length,4);assert.equal(snapshot.rows[0].length,20);assert.equal(snapshot.rows[2][1].note,'manual note');
+  const values=['new','date','description',1,...Array(13).fill('')],requests=plan(env,'Raw',{kind:'EXPENSE',sheetId:7,entityId:'new'},99,values,snapshot);
+  assert.equal(requests[0].insertDimension.range.startIndex,3);
+});
+test('grid changes between reads hold; protections survive into the planner',async()=>{
+  const changed=grid();changed.sheets[0].properties.gridProperties.rowCount=5;responses([base(),changed]);await assert.rejects(read(env,'Raw',7),/GRID_CHANGED/);
+  const protectedGrid=grid();protectedGrid.sheets[0].protectedRanges=[{warningOnly:true}];responses([base(),protectedGrid]);const snapshot=await read(env,'Raw',7);assert.equal(snapshot.hasProtectedRanges,true);
+  assert.throws(()=>plan(env,'Raw',{kind:'EXPENSE',sheetId:7,entityId:'new'},99,['new',...Array(16).fill('')],snapshot),/GRID_INVALID/);
+});
+test('oversized grid, ambiguous shape or wrong sheet holds',async()=>{
+  const large=base();large.sheets[0].properties.gridProperties.rowCount=2500;const calls=responses([large]);await assert.rejects(read(env,'Raw',7),/GRID_LIMIT/);assert.equal(calls(),1);
+  const invalid=grid();invalid.sheets[0].data[0].startColumn=1;responses([base(),invalid]);await assert.rejects(read(env,'Raw',7),/READ_INVALID/);
+  responses([base()]);await assert.rejects(read(env,'Raw',8),/SHEET_INVALID/);
+});
+test('production configuration is rejected before HTTP fetch',async()=>{
+  let calls=0;globalThis.fetch=async()=>{calls++;throw Error('unexpected');};auth.getGoogleAccessToken=async()=> 'token';
+  await assert.rejects(read({...env,GOOGLE_SPREADSHEET_ID:'production'},'Raw',7),/READER_DISABLED/);assert.equal(calls,0);
+});
+test('production candidate reads only configured RAW grid and plans without authorizing dispatch',async()=>{
+  let calls=0;const urls=[];auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));calls++;return new Response(JSON.stringify(calls===1?base():grid()));};
+  const prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_EXPENSE_RAW:'Raw',SHEET_EXPENSE_DAILY:'Daily',RAW_FULL_IDENTITY_WRITER_ENABLED:'true',EXPENSE_STABLE_PROJECTION_ENABLED:'true',DAILY_LEGACY_WRITER_GATE_ENABLED:'true'};
+  await assert.rejects(readProduction({...prod,RAW_FULL_IDENTITY_WRITER_ENABLED:undefined},7),/READER_DISABLED/);assert.equal(calls,0);
+  const snapshot=await readProduction(prod,7);assert.equal(urls[0].searchParams.get('ranges'),"'Raw'!A1");assert.equal(urls[1].searchParams.get('ranges'),"'Raw'!A1:T4");
+  const source={kind:'EXPENSE',entityId:'new',version:2,values:['new',...Array(16).fill('')],fingerprint:'a'.repeat(64)};
+  const requests=planProduction(prod,source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot);assert.equal(requests.length,3);assert.equal(requests[0].insertDimension.range.startIndex,3);
+  assert.throws(()=>planProduction({...prod,RAW_FULL_IDENTITY_WRITER_ENABLED:'false'},source,{kind:'EXPENSE',sheetId:7,entityId:'new'},44,snapshot),/DISABLED/);
+});
+
+test('personal production snapshot is scoped to configured sheet and bounded',async()=>{
+  const pr={sheetId:7,title:'Personal',gridProperties:{rowCount:4,columnCount:15}},basePersonal={sheets:[{properties:pr}]},gridPersonal={sheets:[{properties:pr,data:[{rowData:[{values:RAW_PROJECTION_HEADERS.PERSONAL_USE.map(h=>({userEnteredValue:{stringValue:h}}))}]}]}]};let calls=0,urls=[];auth.getGoogleAccessToken=async()=> 'token';globalThis.fetch=async(url,init)=>{assert.equal(init.method,'GET');urls.push(new URL(String(url)));return new Response(JSON.stringify(++calls===1?basePersonal:gridPersonal));};
+  const prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_PERSONAL_USE_RAW:'Personal',PERSONAL_IDENTITY_READER_ENABLED:'true',PERSONAL_STABLE_PROJECTION_ENABLED:'true'};await assert.rejects(readPersonal({...prod,PERSONAL_IDENTITY_READER_ENABLED:undefined},7),/DISABLED/);assert.equal(calls,0);const snapshot=await readPersonal(prod,7);assert.equal(snapshot.rows[0][0].entered,'Personal_Use_ID');assert.deepEqual(snapshot.rowHasMetadata,[false,false,false,false]);assert.match(urls[1].searchParams.get('fields'),/rowMetadata/);assert.equal(urls[0].searchParams.get('ranges'),"'Personal'!A1");assert.equal(urls[1].searchParams.get('ranges'),"'Personal'!A1:O4");
+});
+test('personal snapshot preserves sparse row metadata markers and rejects malformed shape',async()=>{
+  const pr={sheetId:7,title:'Personal',gridProperties:{rowCount:3,columnCount:15}},basePersonal={sheets:[{properties:pr}]},gridPersonal={sheets:[{properties:pr,data:[{rowData:[{values:RAW_PROJECTION_HEADERS.PERSONAL_USE.map(h=>({userEnteredValue:{stringValue:h}}))}],rowMetadata:[{}, {developerMetadata:[{metadataId:44,metadataKey:'P',visibility:'DOCUMENT',location:{dimensionRange:{sheetId:7,dimension:'ROWS',startIndex:1,endIndex:2}}}]}]}]}]},prod={RUNTIME_MODE:'production',GOOGLE_SPREADSHEET_ID:'synthetic',SHEET_PERSONAL_USE_RAW:'Personal',PERSONAL_IDENTITY_READER_ENABLED:'true',PERSONAL_STABLE_PROJECTION_ENABLED:'true'};
+  responses([basePersonal,gridPersonal]);const snapshot=await readPersonal(prod,7);assert.deepEqual(snapshot.rowHasMetadata,[false,true,false]);assert.deepEqual(snapshot.rowMetadataIds,[[],[44],[]]);gridPersonal.sheets[0].data[0].rowMetadata[1].developerMetadata[0].location.dimensionRange.startIndex=2;responses([basePersonal,gridPersonal]);await assert.rejects(readPersonal(prod,7),/METADATA_INVALID/);gridPersonal.sheets[0].data[0].rowMetadata[1]={developerMetadata:'invalid'};responses([basePersonal,gridPersonal]);await assert.rejects(readPersonal(prod,7),/READ_INVALID/);
+});

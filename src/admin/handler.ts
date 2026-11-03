@@ -20,11 +20,62 @@ import { getLineBotInfo,getLineMessageQuota } from "../line/api";
 import { reconcileHistoricalFailedJobs } from "./failed-job-reconciliation";
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import { operationsSummary } from "../operations/summary";
+import { inspectPersonalEnrollmentAdmin,approvePersonalEnrollmentRecovery,resolvePersonalEnrollmentRecovery,personalEnrollmentRecoveryStatus,cancelPersonalEnrollmentRecovery } from "./personal-enrollment-recovery";
+import {inspectPersonalHistoricalRecoveryAdmin,quarantinePersonalHistoricalRecovery,approvePersonalHistoricalRecovery,resolvePersonalHistoricalRecovery,personalHistoricalRecoveryStatus,cancelPersonalHistoricalRecovery,personalHistoricalEnrollmentStatus} from './personal-historical-recovery';
+import {PersonalHistoricalEnrollment} from '../sheets/personal-historical-enrollment';
+import {inspectHistoricalMarker} from '../sheets/personal-historical-marker-inspection';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
   try{
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/marker-inspect'){
+      if(env.PERSONAL_HISTORICAL_RECOVERY_ENABLED!=='true')return Response.json({ok:false,error:'HISTORICAL_RECOVERY_DISABLED'},{status:503,headers:{'cache-control':'no-store'}});
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};if(typeof body.personalUseId!=='string')return Response.json({ok:false,error:'HISTORICAL_RECOVERY_INVALID'},{status:400,headers:{'cache-control':'no-store'}});
+      const result=await inspectHistoricalMarker(env,body.personalUseId);return Response.json({ok:result.observation!=='EVIDENCE_UNAVAILABLE',...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/start'){
+      if(env.PERSONAL_HISTORICAL_ADMIN_DISPATCH_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RECOVERY_ENABLED!=='true'||env.PERSONAL_HISTORICAL_RESUME_ENABLED!=='true')return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_DISABLED'},{status:503,headers:{'cache-control':'no-store'}});
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown;month?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};
+      try{const intent=await PersonalHistoricalEnrollment.prepare(env,body),result=await intent.dispatchOnce();return Response.json({ok:result.state==='VERIFIED',...result},{status:result.state==='VERIFIED'?200:202,headers:{'cache-control':'no-store'}});}
+      catch(error){if(error instanceof Error&&error.message==='HISTORICAL_RESERVATION_OUTCOME_UNKNOWN')return Response.json({ok:false,state:'OUTCOME_UNKNOWN'},{status:202,headers:{'cache-control':'no-store'}});return Response.json({ok:false,error:'HISTORICAL_ENROLLMENT_UNAVAILABLE'},{status:409,headers:{'cache-control':'no-store'}});}
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-enrollment/status'){
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await personalHistoricalEnrollmentStatus(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/inspect'){
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown};return Response.json({ok:true,...await inspectPersonalHistoricalRecoveryAdmin(env,body.personalUseId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/quarantine'){
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown;reason?:unknown};const result=await quarantinePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='REVIEW',...result},{status:result.state==='REVIEW'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/approve'){
+      const body=await request.json().catch(()=>({})) as {personalUseId?:unknown;evidenceDigest?:unknown;reason?:unknown};const result=await approvePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='APPROVED',...result},{status:result.state==='APPROVED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/resolve'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown;providerRequestsSettled?:unknown};const result=await resolvePersonalHistoricalRecovery(env,body);return Response.json({ok:result.state!=='OUTCOME_UNKNOWN',...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/status'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown};return Response.json({ok:true,...await personalHistoricalRecoveryStatus(env,body.actionId)},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/personal-historical-recovery/cancel'){
+      const body=await request.json().catch(()=>({})) as {actionId?:unknown;reason?:unknown};const result=await cancelPersonalHistoricalRecovery(env,body);return Response.json({ok:result.state==='CANCELLED',...result},{status:result.state==='CANCELLED'?200:202,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/inspect"){
+      const body=await request.json().catch(()=>({})) as{personalUseId?:unknown};const view=await inspectPersonalEnrollmentAdmin(env,body.personalUseId);return Response.json({ok:true,...view},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/approve"){
+      const body=await request.json().catch(()=>({})) as{personalUseId?:unknown;evidenceDigest?:unknown;reason?:unknown};const result=await approvePersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/status"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown};const result=await personalEnrollmentRecoveryStatus(env,body.actionId);return Response.json({ok:true,...result},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/cancel"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown;reason?:unknown};const result=await cancelPersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==="POST"&&url.pathname==="/admin/personal-enrollment-recovery/resolve"){
+      const body=await request.json().catch(()=>({})) as{actionId?:unknown;editorsPaused?:unknown;legacyWritersDrained?:unknown};const result=await resolvePersonalEnrollmentRecovery(env,body);return Response.json({ok:true,...result},{status:result.state==='OUTCOME_UNKNOWN'?202:200,headers:{'cache-control':'no-store'}});
+    }
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }
@@ -33,7 +84,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}
     }
     if(request.method==="GET"&&url.pathname==="/admin/expenses/review-summary")return Response.json({ok:true,...await onlineOrderReviewSummary(env)});
-    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){await bootstrapSheets(env);return Response.json({ok:true});}
+    if(request.method==="POST"&&url.pathname==="/admin/bootstrap-sheets"){const result=await bootstrapSheets(env);return Response.json({ok:false,...result,setupComplete:false},{status:409,headers:{"cache-control":"no-store"}});}
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env)});
     if(request.method==="POST"&&url.pathname==="/admin/import-employees-from-sheet-scoped")return Response.json({ok:true,...await importEmployeesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});
     if(request.method==="POST"&&url.pathname==="/admin/sync-staff-statuses-from-sheet-scoped")return Response.json({ok:true,...await syncStaffStatusesFromConfiguredSheet(env,await request.json().catch(()=>({})) as never)});

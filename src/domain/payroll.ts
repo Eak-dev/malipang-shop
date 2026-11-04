@@ -2,6 +2,9 @@ import { minutesOf } from "../shared/time";
 import type { Employee,MissingPunchType } from "../types";
 
 export const PAYROLL_POLICY_CODE="LATE_V1_CONFIG_OPT_OUT_FIXED_OT_V1";
+export const FLAT_LATE_POLICY_CODE="LATE_V2_GRACE5_FLAT50_CONFIG_OPT_OUT_FIXED_OT_V1";
+export const LEGACY_LATE_POLICY_CODE="LATE_V1_FIXED_OT_V1";
+export type PayrollPolicyCode=typeof PAYROLL_POLICY_CODE|typeof FLAT_LATE_POLICY_CODE;
 export const LATE_GRACE_MIN=5;
 export interface PayrollInput{
   employee:Employee;
@@ -11,6 +14,7 @@ export interface PayrollInput{
   finalizeMissingPunch?:boolean;
   otApprovedSatang?:number;
   otherAdjustmentSatang?:number;
+  policyCode?:PayrollPolicyCode;
 }
 export interface PayrollResult{
   workMinutes:number;
@@ -50,6 +54,8 @@ export function missingPunchType(timeIn:string|null,timeOut:string|null):Missing
 
 export function calculatePayroll(input:PayrollInput):PayrollResult{
   const{employee,timeIn,timeOut,review}=input;
+  const policyCode=input.policyCode??PAYROLL_POLICY_CODE;
+  if(policyCode!==PAYROLL_POLICY_CODE&&policyCode!==FLAT_LATE_POLICY_CODE)throw new Error("PAYROLL_POLICY_UNKNOWN");
   const inMin=timeIn?minutesOf(timeIn):null,outMin=timeOut?minutesOf(timeOut):null;
   const workMinutes=inMin==null||outMin==null?0:Math.max(0,outMin-inMin);
   const lateMinutes=inMin==null?0:Math.max(0,inMin-minutesOf(employee.scheduledIn));
@@ -57,7 +63,7 @@ export function calculatePayroll(input:PayrollInput):PayrollResult{
   const missing=missingPunchType(timeIn,timeOut),inactiveSynthetic=employee.status==="INACTIVE"&&missing==="BOTH";
   const baseWageSatang=inactiveSynthetic?0:Math.max(0,Math.round(employee.dailyWageSatang));
   const lateDeductionEnabled=Math.max(0,Math.round(employee.lateDeductionSatang))>0;
-  const lateDeductionSatang=lateDeductionEnabled?lateDeductionFor(baseWageSatang,lateMinutes,employee.graceMin):0;
+  const lateDeductionSatang=!lateDeductionEnabled?0:policyCode===FLAT_LATE_POLICY_CODE?(lateMinutes<=5?0:5_000):lateDeductionFor(baseWageSatang,lateMinutes,employee.graceMin);
   const missingPunchDeductionSatang=missing==="NONE"?0:missing==="BOTH"?baseWageSatang:Math.round(baseWageSatang/2);
   const appliedLateDeductionSatang=lateDeductionSatang>missingPunchDeductionSatang?lateDeductionSatang:0;
   const appliedMissingPunchDeductionSatang=missingPunchDeductionSatang>=lateDeductionSatang?missingPunchDeductionSatang:0;
@@ -66,7 +72,7 @@ export function calculatePayroll(input:PayrollInput):PayrollResult{
   const otApprovedSatang=Math.max(0,Math.round(input.otApprovedSatang||0));
   const otherAdjustmentSatang=Math.round(input.otherAdjustmentSatang||0);
   const netPaySatang=Math.max(0,baseWageSatang-totalDeductionSatang+otApprovedSatang+otherAdjustmentSatang);
-  const base={workMinutes,lateMinutes,earlyOutMinutes,baseWageSatang,lateDeductionSatang,missingPunchType:missing,missingPunchDeductionSatang,appliedLateDeductionSatang,appliedMissingPunchDeductionSatang,earlyDeductionSatang,totalDeductionSatang,otApprovedSatang,otherAdjustmentSatang,estimatedWageSatang:netPaySatang,netPaySatang,policyCode:PAYROLL_POLICY_CODE};
+  const base={workMinutes,lateMinutes,earlyOutMinutes,baseWageSatang,lateDeductionSatang,missingPunchType:missing,missingPunchDeductionSatang,appliedLateDeductionSatang,appliedMissingPunchDeductionSatang,earlyDeductionSatang,totalDeductionSatang,otApprovedSatang,otherAdjustmentSatang,estimatedWageSatang:netPaySatang,netPaySatang,policyCode};
   if(inactiveSynthetic)return netPaySatang>0?{...base,confirmedWageSatang:netPaySatang,pendingWageSatang:0,payStatus:"READY"}:{...base,confirmedWageSatang:0,pendingWageSatang:0,payStatus:"NO_AMOUNT"};
   if(missing==="BOTH")return{...base,confirmedWageSatang:0,pendingWageSatang:0,payStatus:"REVIEW"};
   if((missing==="MISSING_IN"||missing==="MISSING_OUT")&&!input.finalizeMissingPunch)return{...base,confirmedWageSatang:0,pendingWageSatang:netPaySatang,payStatus:"REVIEW"};

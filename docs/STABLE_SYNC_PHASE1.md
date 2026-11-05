@@ -64,6 +64,36 @@ job is complete. Large itemized receipts can take several minutes to finish.
 The staging keeps each invocation within the Cloudflare free-plan 50 external
 subrequest limit; it does not add month rows automatically.
 
+## Review claim diagnostics and blocking (migration 0022)
+
+A claim moved to `REVIEW` records `phase` (`BEGIN_NOTICE`, `OPERATION`,
+`END_NOTICE` or `RELEASE`) and a short sanitized `review_reason`, for example
+`STABLE_NOTICE_READ:HTTP_429` or `SHEETS_MUTATION_OUTCOME_UNKNOWN:TIMEOUT`.
+Provider bodies, identifiers and free-form messages are never stored. The
+Worker also logs `stable-workbook-review` with the same phase and reason.
+`GET /admin/stable-sync/status` returns both fields and the count of
+`IN_FLIGHT` projection intents. A phase of `END_NOTICE` with no `IN_FLIGHT`
+intent means every business projection of that operation was already verified
+and only the notice reset failed; it still requires the reviewed recovery
+below, because automatic release is not part of this change.
+
+While a claim is in `REVIEW`, workbook deliveries are acknowledged without a
+re-send and without taking a job lease or spending an attempt; the durable
+`sync_jobs` and staff outbox rows are kept unchanged. Scheduled recovery and
+`/admin/retry-sync` re-send nothing until the claim is resolved, then the first
+recovery run re-sends the waiting jobs. A held (non-review) claim still causes
+the existing 30-second busy re-send.
+
+Idempotent Sheets reads (GET only) are retried once after a 429 or 5xx,
+honouring `Retry-After` up to 30 seconds (20 seconds without it; 2 seconds for
+5xx). Mutations are never retried. The notice pre-image is read inside the
+dispatch fence, so a pause uses 6 reads and a ready reset 4 reads instead of 8
+and 6.
+
+Release order: apply migration 0022 before deploying the Worker. Older Worker
+versions never use the new columns; if the Worker runs first it still moves a
+failed claim to `REVIEW`, just without diagnostics.
+
 Forward-fix / rollback: pause delivery and preserve queue messages, inspect
 claim, journals, source revisions and Sheets for every uncertain operation.
 Never automatically clear a claim or retry an uncertain provider write. Rolling

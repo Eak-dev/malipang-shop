@@ -58,7 +58,7 @@ test('a moved RAW row is found by identifier in final verification',async()=>{co
 test('lost RAW acknowledgement retains the intent and blocks a replay',async()=>{const h=fixture();try{
  assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'CONTINUE');h.sqlite.exec("UPDATE sync_jobs SET status='PROCESSING',lease_token='lease',lease_until='2099-01-01T00:00:00.000Z' WHERE job_id='job'");
  const original=client.batchWriteValues;client.batchWriteValues=async(...args)=>{await original(...args);throw Error('lost response');};
- await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'));assert.equal(h.raw.length,2);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='EXPENSE_RAW'").get().state,'IN_FLIGHT');await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/BUSY/);assert.equal(h.raw.length,2);
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'));assert.equal(h.raw.length,2);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='EXPENSE_RAW'").get().state,'IN_FLIGHT');await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/REVIEW/);assert.equal(h.raw.length,2);
  }finally{h.close();}});
 test('queue dispatch processes a new expense and holds a full month without a provider write',async()=>{for(const full of [false,true]){const h=fixture(full),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused};try{
  h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
@@ -66,7 +66,25 @@ test('queue dispatch processes a new expense and holds a full month without a pr
  }finally{Object.assign(notice,old);h.close();}}});
 test('staged expense with item stays below the 50 subrequest limit per invocation',async()=>{const h=fixture(false,true),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused},fns=['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','batchUpdateSpreadsheet','batchWriteValues'];let count=0,max=0;const add=n=>{count+=n;max=Math.max(max,count);if(count>50)throw Error('subrequest limit');};try{
  h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");
- notice.beginStableNotice=async(env,token)=>{add(9);await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{add(7);};notice.stableNoticePaused=async()=>{add(2);return true;};
+ notice.beginStableNotice=async(env,token)=>{add(7);await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{add(5);};notice.stableNoticePaused=async()=>{add(2);return true;};
  for(const name of fns){const fn=client[name];client[name]=async(...args)=>{add(1);return fn(...args);};}
  let outcome;for(let i=0;i<6;i++){count=1;outcome=await dispatchStablePhase1(h.env,h.job);if(outcome!=='BUSY')break;}assert.equal(outcome,'PROCESSED');assert.equal(h.writes(),3);assert.ok(max<=50,`maximum ${max}`);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'COMPLETED');
  }finally{Object.assign(notice,old);h.close();}});
+test('verified stage followed by a rate-limited end notice keeps the job durable, records the cause and never repeats the write',async()=>{const h=fixture(),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused},logged=[],error=console.error;try{
+ h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");console.error=(...args)=>logged.push(args);
+ notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.stableNoticePaused=async()=>true;notice.endStableNotice=async()=>{throw new client.SheetsHttpError(429,'STABLE_NOTICE_READ');};
+ assert.equal(await dispatchStablePhase1(h.env,h.job),'REVIEW');assert.equal(h.writes(),1);
+ assert.deepEqual({...h.sqlite.prepare('SELECT state,phase,review_reason FROM stable_workbook_claims').get()},{state:'REVIEW',phase:'END_NOTICE',review_reason:'STABLE_NOTICE_READ:HTTP_429'});
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'PENDING',last_error:'STABLE_STAGE_CONTINUE'});
+ assert.deepEqual(h.sqlite.prepare('SELECT projection,state FROM stable_projection_writes').all().map(x=>`${x.projection}:${x.state}`),['DAILY:VERIFIED']);
+ assert.ok(logged.some(([event,detail])=>event==='stable-workbook-review'&&detail.reason==='STABLE_NOTICE_READ:HTTP_429'&&detail.phase==='END_NOTICE'));
+ const attempts=h.sqlite.prepare("SELECT attempt_count FROM sync_jobs WHERE job_id='job'").get().attempt_count;
+ for(let i=0;i<5;i++)assert.equal(await dispatchStablePhase1(h.env,h.job),'BLOCKED');
+ assert.equal(h.sqlite.prepare("SELECT attempt_count FROM sync_jobs WHERE job_id='job'").get().attempt_count,attempts);assert.equal(h.writes(),1);
+ }finally{console.error=error;Object.assign(notice,old);h.close();}});
+test('a review claim that appears after the pre-check releases the job lease without spending the job',async()=>{const h=fixture(),claims=require('../dist/sheets/stable-workbook-claim.js'),check=claims.stableWorkbookInReview;try{
+ h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'; INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','other','REVIEW','now','now')");
+ claims.stableWorkbookInReview=async()=>false;
+ assert.equal(await dispatchStablePhase1(h.env,h.job),'BLOCKED');assert.equal(h.writes(),0);
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error,lease_token FROM sync_jobs WHERE job_id='job'").get()},{status:'PENDING',last_error:'STABLE_WORKBOOK_REVIEW',lease_token:null});
+ }finally{claims.stableWorkbookInReview=check;h.close();}});

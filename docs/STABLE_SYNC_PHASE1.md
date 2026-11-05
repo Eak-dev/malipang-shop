@@ -94,6 +94,15 @@ Release order: apply migration 0022 before deploying the Worker. Older Worker
 versions never use the new columns; if the Worker runs first it still moves a
 failed claim to `REVIEW`, just without diagnostics.
 
+The release runs only through the manual workflow
+`production-stable-review-diagnostics.yml`, after owner approval in a
+Production Change issue. It verifies that the runtime source equals reviewed
+commit `e3b7ab8`, takes and restores a checksum-verified private backup, pauses
+delivery until no active lease or held claim remains, applies 0022, deploys,
+checks the new status fields, and resumes delivery. If it fails before the
+deploy starts, it resumes delivery on the unchanged Worker. It never changes a
+workbook claim; an existing `REVIEW` claim needs the separate reviewed recovery.
+
 Forward-fix / rollback: pause delivery and preserve queue messages, inspect
 claim, journals, source revisions and Sheets for every uncertain operation.
 Never automatically clear a claim or retry an uncertain provider write. Rolling

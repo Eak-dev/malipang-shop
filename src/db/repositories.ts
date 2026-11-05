@@ -1,5 +1,6 @@
 import { getStaffActorByLineId } from "../access/repository";
 import type { Employee, Env, LineEvent, SheetsSyncJob } from "../types";
+import { stableWorkbookInReview } from "../sheets/stable-workbook-claim";
 
 export type InboundClaim="CLAIMED"|"BUSY"|"TERMINAL";
 export class InboundBusyError extends Error{constructor(){super("Inbound event is still processing");this.name="InboundBusyError";}}
@@ -82,6 +83,9 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
 }
 export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,includeTerminalDlq=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;
+  // Every writer is blocked by a retained review claim. Jobs stay durable and
+  // are re-sent by the first recovery after an operator resolves the review.
+  if(await stableWorkbookInReview(env))return 0;
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString(),terminalDlqAllowed=includeTerminalDlq?1:0;
   const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED','PROCESSING') AND (?=1 OR NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')) ORDER BY s.updated_at LIMIT 200`).bind(terminalDlqAllowed).all<RecoverableSheetJobRow>();
   const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>(includeTerminalDlq||Number(row.terminal_dlq_open||0)!==1)&&isRecoverableSheetJob(row,now,stale)).slice(0,50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));

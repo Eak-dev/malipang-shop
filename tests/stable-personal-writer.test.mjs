@@ -23,7 +23,7 @@ test('new personal transaction is found by ID after a move and does not write tw
 });
 test('a lost provider reply holds the workbook and prevents a repeat write',async()=>{
  const h=fixture();try{h.lose();await assert.rejects(withStableWorkbookClaim(h.env,t=>writeNewPersonalUnderClaim(h.env,h.job,'lease',t)));assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
-  await assert.rejects(withStableWorkbookClaim(h.env,t=>writeNewPersonalUnderClaim(h.env,h.job,'lease',t)),/BUSY/);assert.equal(h.writes(),1);
+  await assert.rejects(withStableWorkbookClaim(h.env,t=>writeNewPersonalUnderClaim(h.env,h.job,'lease',t)),/REVIEW/);assert.equal(h.writes(),1);
  }finally{h.close();}
 });
 test('a removed identity after a verified write is held instead of appended again',async()=>{

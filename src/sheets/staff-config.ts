@@ -1,4 +1,5 @@
 import { batchWriteValues, getSheetValues } from "./client";
+import { stableWorkbookInReview } from "./stable-workbook-claim";
 import type { Env, StaffConfigSyncJob } from "../types";
 export type { StaffConfigSyncJob } from "../types";
 
@@ -228,6 +229,8 @@ export async function processStaffConfigSyncJob(env: Env, job: StaffConfigSyncJo
 
 export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs = Date.now()): Promise<number> {
   if (env.SHEETS_SYNC_ENABLED !== "true") return 0;
+  // A retained review claim blocks this writer too; the outbox keeps the job.
+  if (await stableWorkbookInReview(env)) return 0;
   const now = new Date(nowMs).toISOString();
   const staleBefore = new Date(nowMs - LEASE_MS).toISOString();
 

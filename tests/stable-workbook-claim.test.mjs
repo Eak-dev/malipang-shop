@@ -44,7 +44,7 @@ test('claim serializes a workbook and releases only after a verified operation',
 test('uncertain operation is retained for review and never auto-retried',async()=>{
  const h=fixture();try{await assert.rejects(withStableWorkbookClaim(h.env,async()=>{throw Error('unknown provider response');}));
   assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
-  await assert.rejects(withStableWorkbookClaim(h.env,async()=>assert.fail('must not run')),/BUSY/);
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>assert.fail('must not run')),/REVIEW/);
  }finally{h.close();}
 });
 

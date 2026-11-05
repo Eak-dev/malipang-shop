@@ -16,9 +16,11 @@ Backend กลางของร้าน **มะลิปัง (MaliPang)** �
 
 ---
 
-## 1. Production Snapshot ล่าสุด
+## 1. Production Snapshot ประวัติ — Incident #93 (กรกฎาคม 2026)
 
-Snapshot นี้ใช้สำหรับอ้างอิงสถานะที่ผ่าน Production verification ล่าสุด ไม่ใช่ค่าที่ควร hard-code ลง logic
+Snapshot นี้เป็นหลักฐานของ Incident #93 เท่านั้น ไม่ใช่การยืนยัน Worker version, SHA, queue หรือยอดปัจจุบัน ห้ามใช้เป็น rollback target โดยไม่ตรวจ Production ใหม่
+
+> **เตรียมเว็บไซต์ Owner — 15 ตุลาคม 2026:** อ่าน [Owner Master / Website Handoff](docs/21_OWNER_MASTER_WEB_HANDOFF_TH.md) ก่อนเริ่ม UI/API เพื่อใช้โครงสร้าง 4 หน้าหลักและกติกาเงินหน้าร้านล่าสุด เอกสารนี้แยกสิ่งที่มีจริงใน Sheets, สิ่งที่ backend รองรับ และงานเว็บไซต์ที่ยังไม่ได้ทำ โดยไม่ย้ายข้อมูลส่วนตัวเข้า GitHub
 
 | รายการ | สถานะ |
 |---|---|
@@ -42,7 +44,7 @@ Worker URL:
 
 <https://malipang-backend-v5-2.eakkachai-dev.workers.dev>
 
-### สิ่งที่ Production verification ล่าสุดพิสูจน์แล้ว
+### สิ่งที่ Production verification ของ Incident #93 พิสูจน์แล้ว
 
 - Attendance valid image สามารถบันทึก Punch ได้ 1 ครั้งและตอบผลผ่าน LINE Reply API
 - Attendance stale/invalid image ถูกปฏิเสธโดยไม่สร้าง Attendance และตอบสาเหตุผ่าน Reply API
@@ -646,6 +648,19 @@ Google Sheets เป็น mirror/reporting
 D1 เป็น source of truth
 
 ถ้า Sheets sync มีปัญหา ห้ามแก้ด้วยการสร้าง business transaction ใหม่
+
+### Owner Master — 4 หน้าหลักและขอบเขตเว็บไซต์
+
+โครงสร้างที่ปรับ 13 ตุลาคม และตรวจแบบ read-only อีกครั้ง 15 ตุลาคม 2026:
+
+- `34_OWNER_DAILY_CASH` — เงินหน้าร้าน ยอดขายปรับมัดจำ และรายจ่ายแยกแหล่งเงิน
+- `04_OWNER_MONTH_CLOSE` — สรุป/กระทบยอดปิดเดือน โดยคงช่องกรอกและสูตรเดิม
+- `03_ต้นทุนสินค้า` — สรุปสูตรต้นทุนขนมปังเดิม ไม่ใช่ต้นทุนที่รับรองครบทุกสินค้า
+- `05_รายการต้องตรวจ` — ข้อสังเกตจากสูตร Sheets ไม่ใช่สถานะ queue/D1 แบบสด
+
+ยังเก็บแท็บเดิมและประวัติครบ; การซ่อนแท็บไม่ใช่การเลิกใช้ระบบ ณ วันตรวจมีแท็บแสดง 7 แท็บ (4 หน้าหลัก + `30_RECON_DAILY`, `SRC_ACTUAL_1069`, `รายวัน`) จึงห้ามบังคับซ่อน/ลบจากจำนวนหน้าของเว็บไซต์
+
+กติกาเงินสด, มัดจำ, ตาราง mapping, ข้อจำกัดช่วงข้อมูลและ acceptance tests สำหรับเว็บไซต์อยู่ใน [เอกสารส่งต่องาน](docs/21_OWNER_MASTER_WEB_HANDOFF_TH.md) ข้อมูลยอดขาย/ต้นทุน/มัดจำที่ยังมีเฉพาะใน Sheets ต้องมีแผนเชื่อมและตรวจ parity ไม่อ้างว่ามี D1/API ครบแล้ว
 
 ### Row mapping
 
@@ -1384,10 +1399,13 @@ Production release ต้องมี explicit authorization
 - [Codex Task Template](docs/10_CODEX_TASK_TEMPLATE_TH.md)
 - [Fast-track UAT 23 กรกฎาคม 2026](docs/13_FAST_TRACK_UAT_2026-07-23.md)
 - [V1.1 Identity, Roles, Branch และ HR registration](docs/19_V11_IDENTITY_ACCESS_TH.md)
+- [Owner Master ล่าสุดและข้อกำหนดเตรียมเว็บไซต์](docs/21_OWNER_MASTER_WEB_HANDOFF_TH.md)
 
 ---
 
-## 31. Current Production Summary
+## 31. Historical Production Summary — Incident #93
+
+ส่วนนี้เก็บบริบท release เดิม ไม่ใช่ live status; การเตรียมเว็บไซต์ครั้งนี้ไม่ได้ตรวจยืนยัน deployment ปัจจุบัน ดูขอบเขตหลักฐานล่าสุดในเอกสารส่งต่องานด้านบน
 
 ```text
 System: MaliPang Backend V5.2

@@ -25,7 +25,7 @@ function fixture({flag='true',schema=true}={}){
  const DB={prepare(sql){const q=sqlite.prepare(sql);let args=[];return{bind(...values){args=values;return this;},async first(){return q.get(...args)??null;},async all(){return{success:true,results:q.all(...args)};},async run(){return{success:true,meta:{changes:q.run(...args).changes}};}};}};
  const env={DB,GOOGLE_SPREADSHEET_ID:'test-book',STABLE_PHASE1_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:flag,STABLE_SHEETS_PACING_ENABLED:flag==='false'?'false':'true'};
  const oldBegin=notice.beginStableNotice,oldEnd=notice.endStableNotice,oldPace=pacing.admitPacedWorkbookOperation,oldPreflight=pacing.pacingPreflightBlocked;
- notice.beginStableNotice=async()=>{};notice.endStableNotice=async()=>{};
+ notice.beginStableNotice=async(_env,_token,_wait,onMutationAuthorized)=>{await onMutationAuthorized?.();};notice.endStableNotice=async()=>{};
  pacing.admitPacedWorkbookOperation=async()=>true;pacing.pacingPreflightBlocked=async()=>false;
  return{sqlite,env,close(){notice.beginStableNotice=oldBegin;notice.endStableNotice=oldEnd;pacing.admitPacedWorkbookOperation=oldPace;pacing.pacingPreflightBlocked=oldPreflight;sqlite.close();}};
 }

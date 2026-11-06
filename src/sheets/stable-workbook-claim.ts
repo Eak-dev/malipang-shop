@@ -68,17 +68,16 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       claimed=false;
       throw Error(STABLE_SHEETS_PACING_BLOCKED);
     }
-    const admitted=await admitStableRecovery(env,identity,token);
-    if(!admitted){
-      // No Sheets call has been made. Release only this untouched HELD claim;
-      // a lost D1 acknowledgement stays retained for human review.
-      const released=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL").bind(book,token).run();
-      if(released.success!==true||Number(released.meta?.changes)!==1)throw Error('STABLE_RECOVERY_DENIED_RELEASE_UNCERTAIN');
-      claimed=false;
-      throw Error(STABLE_RECOVERY_BLOCKED);
-    }
     phase='BEGIN_NOTICE';
-    if(flag==='true')await beginStableNotice(env,token,undefined,()=>{beginNoticeMayHaveWritten=true;});
+    if(flag==='true')await beginStableNotice(env,token,undefined,async()=>{
+      // The pre-image is verified and no provider POST has been sent yet.
+      // Admit here (not before the notice GETs) so a safe read deferral
+      // cannot strand an ADMITTED recovery epoch.
+      if(!await admitStableRecovery(env,identity,token))throw Error(STABLE_RECOVERY_BLOCKED);
+      // MUST be the last instruction before returning to mutation dispatch:
+      // a lost POST acknowledgement must never look like a safe read defer.
+      beginNoticeMayHaveWritten=true;
+    });
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='OPERATION';
     const result=await operation(token);
@@ -102,13 +101,15 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     // When a *read* failed before the first Sheets mutation was authorized,
     // this claim never wrote to Google. A guarded release is safe; all other
     // errors (including a lost POST ACK) retain the claim for review.
-    if(claimed && env.STABLE_SHEETS_PACING_ENABLED==='true' && phase==='BEGIN_NOTICE' && !beginNoticeMayHaveWritten && readMayBeSafelyDeferred(error)){
+    if(claimed && phase==='BEGIN_NOTICE' && !beginNoticeMayHaveWritten &&
+       (env.STABLE_SHEETS_PACING_ENABLED==='true' && readMayBeSafelyDeferred(error) ||
+        error instanceof Error && error.message===STABLE_RECOVERY_BLOCKED)){
       let released=false;
       try{
         const r=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(book,token).run();
         released=r.success===true&&Number(r.meta?.changes)===1;
       }catch{}
-      if(released){claimed=false;throw Error(STABLE_NOTICE_READ_DEFERRED);}
+      if(released){claimed=false;throw Error(error instanceof Error && error.message===STABLE_RECOVERY_BLOCKED ? STABLE_RECOVERY_BLOCKED : STABLE_NOTICE_READ_DEFERRED);}
     }
     if(claimed)await retainForReview(db,book,token,phase,error);
     throw error;

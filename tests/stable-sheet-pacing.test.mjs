@@ -168,6 +168,11 @@ test('mixed LINE and canary batch re-enqueues only target while still processing
  const prev=p.processInbound,oldDispatch=dispatch.dispatchStablePhase1,queued=[];let line=0,ack=0;
  try{
   armExactRecovery(h,'EXPENSE','exp-target');
+  // The synthetic SQLite adapter omits D1's success:true; emulate the
+  // Cloudflare D1 response for the exact-target CAS without changing SQL.
+  const originalPrepare=h.env.DB.prepare;
+  h.env.DB.prepare=function(sql){const q=originalPrepare.call(this,sql),run=q.run;
+   q.run=async function(){return{...await run.call(this),success:true};};return q;};
   p.processInbound=async()=>{line++;};
   dispatch.dispatchStablePhase1=async()=>assert.fail('mixed batch should prioritize LINE');
   h.env.JOB_QUEUE.send=async(job,options)=>queued.push({job,options});
@@ -206,4 +211,88 @@ test('blocked StaffConfig without a durable outbox is retried, never silently AC
   assert.equal(acks,0);assert.equal(retries,1);
   assert.equal(h.sqlite.prepare("SELECT count(*) n FROM failed_jobs").get().n,0);
  }finally{h.close();}
+});
+
+function d1SuccessRunMeta(h){
+ const original=h.env.DB.prepare;
+ h.env.DB.prepare=function(sql){const stmt=original.call(this,sql),run=stmt.run;
+   stmt.run=async function(){return {...await run.call(this),success:true};};
+   return stmt;};
+}
+
+test('NL-7: repeated mixed LINE batches reserve at most one pending canary delivery and update its timestamp',async()=>{
+ const h=expenseSqlite(),p=require('../dist/router/process-event.js');
+ const prior=p.processInbound;let lineCalls=0,acks=0;
+ const sent=[];
+ try{
+  armExactRecovery(h,'EXPENSE','exp-target');
+  d1SuccessRunMeta(h);
+  p.processInbound=async()=>{lineCalls++;};
+  h.env.JOB_QUEUE.send=async(job,opts)=>sent.push({job,opts});
+  const messages=[
+   {body:{kind:'LINE_EVENT',event:{},receivedAtIso:'2026-11-06T00:00:00Z',traceId:'line'},attempts:1,ack(){acks++;},retry(){assert.fail('LINE must not retry');}},
+   {body:{...expense,entityKey:'exp-target'},attempts:1,ack(){acks++;},retry(){assert.fail('target must not retry');}}
+  ];
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.equal(sent.length,1);
+  const first=h.sqlite.prepare("SELECT updated_at,next_attempt_at,status FROM sync_jobs WHERE entity_key='exp-target'").get();
+  assert.equal(first.status,'PENDING');
+  assert.ok(Date.parse(first.next_attempt_at)>Date.parse(first.updated_at));
+  assert.ok(Date.parse(first.next_attempt_at)-Date.parse(first.updated_at)>=89_000);
+  // The same target may be delivered again before its delayed enqueue fires.
+  // It must ACK without creating a second Queue message.
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  const after=h.sqlite.prepare("SELECT updated_at,next_attempt_at,status FROM sync_jobs WHERE entity_key='exp-target'").get();
+  assert.equal(sent.length,1);assert.equal(acks,4);assert.equal(lineCalls,2);
+  assert.equal(after.next_attempt_at,first.next_attempt_at);
+  assert.equal(after.updated_at,first.updated_at);
+  // If an independent operation completed, even a stale delivery cannot
+  // re-send a completed financial projection.
+  h.sqlite.prepare("UPDATE sync_jobs SET status='COMPLETED',next_attempt_at=NULL WHERE entity_key='exp-target'").run();
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.equal(sent.length,1);
+ }finally{p.processInbound=prior;h.close();}
+});
+
+test('NL-7: failure to enqueue after durable CAS retries original message with outbox retained',async()=>{
+ const h=expenseSqlite(),p=require('../dist/router/process-event.js');
+ const prior=p.processInbound;let retry=0,ackedTarget=0,ackLine=0;
+ try{
+  armExactRecovery(h,'EXPENSE','exp-target');
+  d1SuccessRunMeta(h);
+  p.processInbound=async()=>{};
+  h.env.JOB_QUEUE.send=async()=>{throw Error('SYNTHETIC_QUEUE_SEND_FAILURE');};
+  const messages=[
+   {body:{kind:'LINE_EVENT',event:{},receivedAtIso:'2026-11-06T00:00:00Z',traceId:'line'},attempts:1,ack(){ackLine++;},retry(){assert.fail('LINE must not retry');}},
+   {body:{...expense,entityKey:'exp-target'},attempts:1,ack(){ackedTarget++;},retry(opts){assert.equal(opts.delaySeconds,90);retry++;}}
+  ];
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.equal(ackLine,1);assert.equal(ackedTarget,0);assert.equal(retry,1);
+  const saved=h.sqlite.prepare("SELECT status,updated_at,next_attempt_at FROM sync_jobs WHERE entity_key='exp-target'").get();
+  assert.equal(saved.status,'PENDING');
+  assert.ok(Date.parse(saved.next_attempt_at)>Date.parse(saved.updated_at));
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM failed_jobs").get().n,0);
+ }finally{p.processInbound=prior;h.close();}
+});
+
+test('NL-7: staff-config target redelivery is also CAS-deduplicated and never touches non-target staff',async()=>{
+ const h=expenseSqlite(),p=require('../dist/router/process-event.js');
+ const prior=p.processInbound;const sent=[];let acks=0;
+ try{
+  armExactRecovery(h,'STAFF_CONFIG_SYNC','EMP_SYNTH',1);
+  d1SuccessRunMeta(h);
+  h.sqlite.prepare("INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,updated_at) VALUES('EMP_SYNTH','Synthetic','line-emp','08:00','18:00','2026-11-01T00:00:00Z')").run();
+  h.sqlite.prepare("INSERT INTO staff_config_sync_outbox(employee_id,version,trace_id,status,attempt_count,created_at,updated_at) VALUES('EMP_SYNTH',1,'trace-staff','PENDING',0,'2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')").run();
+  p.processInbound=async()=>{};
+  h.env.JOB_QUEUE.send=async(job,opts)=>sent.push({job,opts});
+  const messages=[
+   {body:{kind:'LINE_EVENT',event:{},receivedAtIso:'2026-11-06T00:00:00Z',traceId:'line'},attempts:1,ack(){acks++;},retry(){assert.fail('no LINE retry');}},
+   {body:{kind:'STAFF_CONFIG_SYNC',employeeId:'EMP_SYNTH',version:1,traceId:'trace-staff'},attempts:1,ack(){acks++;},retry(){assert.fail('no staff retry');}}
+  ];
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.equal(sent.length,1);assert.equal(sent[0].job.employeeId,'EMP_SYNTH');assert.equal(acks,4);
+  const row=h.sqlite.prepare("SELECT status,updated_at,next_attempt_at FROM staff_config_sync_outbox WHERE employee_id='EMP_SYNTH'").get();
+  assert.equal(row.status,'PENDING');assert.ok(Date.parse(row.next_attempt_at)>Date.parse(row.updated_at));
+ }finally{p.processInbound=prior;h.close();}
 });

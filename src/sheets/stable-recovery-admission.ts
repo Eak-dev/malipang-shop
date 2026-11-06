@@ -44,6 +44,40 @@ export function isRecoveryTarget(job:RecoveryIdentity|undefined,target:RecoveryT
   return!!target&&!!candidate&&candidate.entityType===target.entityType&&
     candidate.entityKey===target.entityKey&&candidate.entityVersion===target.entityVersion;
 }
+/** Reserve one delayed re-delivery of the ARMED canary when it arrives in a
+ * LINE-prioritized batch. A D1 CAS bumps updated_at and sets next_attempt_at
+ * BEFORE Queue.send; this prevents Cron and duplicate batches from flooding
+ * the queue with the same target. A failed Queue.send must retry its original
+ * message; the durable outbox remains eligible after the cooldown.
+ * This is NOT a business writer admission and never accesses Google Sheets. */
+export async function reserveArmedTargetRedelivery(
+ env:Env,job:SheetsSyncJob|StaffConfigSyncJob,delaySeconds=90,nowMs=Date.now()
+):Promise<boolean>{
+ const target=await activeStableRecoveryTarget(env);
+ if(!isRecoveryTarget(job,target)||!Number.isSafeInteger(delaySeconds)||delaySeconds<1||
+    delaySeconds>900||!Number.isSafeInteger(nowMs)||nowMs<0||!job.traceId)return false;
+ const now=new Date(nowMs).toISOString(),next=new Date(nowMs+delaySeconds*1000).toISOString();
+ const staff=job.kind==='STAFF_CONFIG_SYNC';
+ const identity=staff?[job.employeeId,job.version]:[job.entityType,job.entityKey,job.entityVersion];
+ const jobScope=staff?'employee_id=? AND version=?':'entity_type=? AND entity_key=? AND entity_version=?';
+ const table=staff?'staff_config_sync_outbox':'sync_jobs';
+ const terminalGuard=staff?'':`AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs'
+   AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version
+   AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`;
+ const result=await env.DB.prepare(`UPDATE ${table} SET updated_at=?,next_attempt_at=?
+   WHERE ${jobScope} AND trace_id=? AND status IN ('PENDING','FAILED')
+   AND (next_attempt_at IS NULL OR next_attempt_at<=?)
+   AND EXISTS(SELECT 1 FROM stable_recovery_epochs e
+     WHERE e.epoch_id=? AND e.spreadsheet_id=? AND e.state='ARMED'
+       AND e.target_type=? AND e.target_key=? AND e.target_version=?)
+   ${terminalGuard}`)
+   .bind(now,next,...identity,job.traceId,now,target!.epochId,env.GOOGLE_SPREADSHEET_ID,
+     target!.entityType,target!.entityKey,target!.entityVersion).run();
+ if(result.success!==true||!Number.isSafeInteger(result.meta?.changes))
+   throw Error('STABLE_RECOVERY_REDELIVERY_CAS_UNKNOWN');
+ return result.meta.changes===1;
+}
+
 export async function stableRecoveryGateBlocked(env:Env,job?:RecoveryIdentity):Promise<boolean>{
   if(!recoveryGateConfigured(env))return false;
   if(!recoveryGateValid(env))return true;

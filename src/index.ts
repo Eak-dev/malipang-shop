@@ -7,7 +7,7 @@ import { missingRuntimeConfig } from "./shared/env";
 import { ensureSheetSyncOutbox,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import {dispatchStablePhase1,isStableWorkbookBusy,isStableWorkbookReview} from './sheets/stable-phase1-dispatch';
 import {withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './sheets/stable-workbook-claim';
-import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget} from './sheets/stable-recovery-admission';
+import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget,reserveArmedTargetRedelivery} from './sheets/stable-recovery-admission';
 import {stablePacingConfigured,stablePacingValid,persistedStableBusyDelay,STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE} from './sheets/stable-sheet-pacing';
 import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
@@ -67,7 +67,11 @@ export default{
           // forever while the broad recovery cron is disabled. Re-send only
           // its exact target with a delay; keep the durable outbox.
           if(includesLine && isRecoveryTarget(job,canaryTarget)){
-            await (env.JOB_QUEUE as unknown as Queue<WorkbookQueueJob>).send(job,{delaySeconds:90});
+            // Only the exact ARMED target may CAS-reserve one delayed send.
+            // An existing future delivery or a COMPLETED job must not be
+            // re-enqueued. A failed send retries this original message.
+            if(await reserveArmedTargetRedelivery(env,job,90))
+              await (env.JOB_QUEUE as unknown as Queue<WorkbookQueueJob>).send(job,{delaySeconds:90});
           }
           message.ack();
         }catch{message.retry({delaySeconds:90});}

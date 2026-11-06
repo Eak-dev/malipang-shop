@@ -3,6 +3,7 @@ import { isIsoDate,payrollPeriodFor } from "../shared/time";
 import type { Employee,Env } from "../types";
 import { approvedOtSatangForDay,employeeFromRow } from "./repository";
 import { recalculateDailyPayroll } from "./recalculate";
+import { resolvePayrollDayContext } from "./day-context";
 
 export interface PayrollRangeInput{
   fromDate?:string;
@@ -26,6 +27,9 @@ interface PreviewRow{
   otApprovedBaht:number;
   netPayBaht:number;
   payStatus:string;
+  payrollPolicyCode:string;
+  effectiveGraceMin:number;
+  lateDeductionEnabled:boolean;
 }
 
 interface EmployeeSummary{
@@ -57,9 +61,13 @@ function validatePeriod(input:PayrollRangeInput):{fromDate:string;toDate:string;
 
 export async function previewPayrollRange(env:Env,input:PayrollRangeInput):Promise<{periodStart:string;periodEnd:string;payDate:string;rowCount:number;totalNetPayBaht:number;pendingReviewCount:number;employees:EmployeeSummary[];rows:PreviewRow[]}>
 {
-  const{fromDate,toDate,payDate}=validatePeriod(input),result=await env.DB.prepare(`SELECT d.*,e.staff_name,e.line_user_id,e.can_submit_expense,e.status FROM attendance_daily d JOIN employees e ON e.employee_id=d.employee_id WHERE d.work_date BETWEEN ? AND ? ORDER BY d.employee_id,d.work_date`).bind(fromDate,toDate).all<Record<string,unknown>>(),rows:PreviewRow[]=[],summaries=new Map<string,EmployeeSummary>();
+  const{fromDate,toDate,payDate}=validatePeriod(input),result=await env.DB.prepare(`SELECT d.*,e.staff_name,e.line_user_id,e.can_submit_expense,e.status,e.scheduled_in current_scheduled_in,e.scheduled_out current_scheduled_out,e.grace_min current_grace_min,e.late_deduction_satang current_late_deduction_satang,e.early_deduction_satang current_early_deduction_satang FROM attendance_daily d JOIN employees e ON e.employee_id=d.employee_id WHERE d.work_date BETWEEN ? AND ? ORDER BY d.employee_id,d.work_date`).bind(fromDate,toDate).all<Record<string,unknown>>(),rows:PreviewRow[]=[],summaries=new Map<string,EmployeeSummary>();
   for(const row of result.results||[]){
-    const employee:Employee=employeeFromRow(row),workDate=String(row.work_date),wageSatang=payrollSnapshotSatang(row,employee),otApprovedSatang=await approvedOtSatangForDay(env,employee.employeeId,workDate),payroll=calculatePayroll({employee:{...employee,dailyWageSatang:wageSatang},timeIn:row.time_in?String(row.time_in):null,timeOut:row.time_out?String(row.time_out):null,review:Number(row.review_flag||0)===1,finalizeMissingPunch:true,otApprovedSatang,otherAdjustmentSatang:Number(row.other_adjustment_satang||0)}),staffName=String(row.staff_name),previewRow:PreviewRow={workDate,employeeId:employee.employeeId,staffName,wageSourceId:String(row.wage_source_id||"LEGACY_SNAPSHOT"),dailyWageBaht:satangToBaht(wageSatang),timeIn:row.time_in?String(row.time_in):null,timeOut:row.time_out?String(row.time_out):null,lateMinutes:payroll.lateMinutes,lateDeductionBaht:satangToBaht(payroll.appliedLateDeductionSatang),missingPunchType:payroll.missingPunchType,missingPunchDeductionBaht:satangToBaht(payroll.appliedMissingPunchDeductionSatang),otApprovedBaht:satangToBaht(payroll.otApprovedSatang),netPayBaht:satangToBaht(payroll.netPaySatang),payStatus:payroll.payStatus};
+    const employee:Employee=employeeFromRow({...row,scheduled_in:row.current_scheduled_in,scheduled_out:row.current_scheduled_out,grace_min:row.current_grace_min,late_deduction_satang:row.current_late_deduction_satang,early_deduction_satang:row.current_early_deduction_satang});
+    const workDate=String(row.work_date),wageSatang=payrollSnapshotSatang(row,employee),timeIn=row.time_in?String(row.time_in):null,timeOut=row.time_out?String(row.time_out):null;
+    const context=resolvePayrollDayContext(env,{employee:{...employee,dailyWageSatang:wageSatang},workDate,daily:row,timeIn,timeOut});
+    const otApprovedSatang=await approvedOtSatangForDay(env,employee.employeeId,workDate),payroll=calculatePayroll({...context,timeIn,timeOut,review:Number(row.review_flag||0)===1,finalizeMissingPunch:true,otApprovedSatang,otherAdjustmentSatang:Number(row.other_adjustment_satang||0)}),staffName=String(row.staff_name);
+    const previewRow:PreviewRow={workDate,employeeId:employee.employeeId,staffName,wageSourceId:String(row.wage_source_id||"LEGACY_SNAPSHOT"),dailyWageBaht:satangToBaht(wageSatang),timeIn,timeOut,lateMinutes:payroll.lateMinutes,lateDeductionBaht:satangToBaht(payroll.appliedLateDeductionSatang),missingPunchType:payroll.missingPunchType,missingPunchDeductionBaht:satangToBaht(payroll.appliedMissingPunchDeductionSatang),otApprovedBaht:satangToBaht(payroll.otApprovedSatang),netPayBaht:satangToBaht(payroll.netPaySatang),payStatus:payroll.payStatus,payrollPolicyCode:context.policyCode,effectiveGraceMin:context.employee.graceMin,lateDeductionEnabled:context.employee.lateDeductionSatang>0};
     rows.push(previewRow);
     const summary=summaries.get(employee.employeeId)||{employeeId:employee.employeeId,staffName,workDays:0,baseWageBaht:0,lateDeductionBaht:0,missingPunchDeductionBaht:0,otApprovedBaht:0,netPayBaht:0,pendingReviewCount:0};
     if(countsAsPayrollWorkDay(previewRow.timeIn,previewRow.timeOut))summary.workDays+=1;

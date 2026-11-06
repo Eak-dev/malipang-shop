@@ -5,6 +5,9 @@ export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
 export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "PERSONAL_USE" | "SYSTEM_LOG";
 
 export interface Env {
+  /** Unset until Owner approves an effective date and exact employee scope. */
+  PAYROLL_LATE_V2_EFFECTIVE_FROM?: string;
+  PAYROLL_LATE_V2_EMPLOYEE_IDS?: string;
   DB: D1Database;
   AI: { run(model: string, input: unknown): Promise<unknown> };
   EVIDENCE: R2Bucket;

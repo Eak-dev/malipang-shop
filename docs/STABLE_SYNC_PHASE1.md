@@ -225,9 +225,13 @@ operator recovery, even if the original D1 lease expires.
    after their durable outbox is verified, to be recovered by cron.
 8. **PRODUCTION-WRITE — SEPARATE OWNER APPROVAL:** selectively reconcile
    terminal DLQ / failed jobs by stable IDs and source status. The generic
-   admin `/admin/retry-sync` excludes terminal DLQ; `includeTerminalDlq:true`
-   returns 409 pending a separately approved exact-ID reconciliation tool.
-   Do not replay completed jobs or WAITING_CONFIRM transactions. Compare D1 = Daily = RAW
+   admin `/admin/retry-sync` excludes terminal DLQ **by default**; explicit
+   `includeTerminalDlq:true` preserves the legacy ability to re-drive eligible
+   Terminal DLQ jobs, subject to unchanged workbook REVIEW/Gate safeguards.
+   This explicit option is **not an exact-ID tool** and may enqueue multiple
+   terminal jobs; reconcile each candidate and obtain separate Owner approval
+   before any Production use. Do not replay completed jobs or WAITING_CONFIRM
+   transactions. Compare D1 = Daily = RAW
    counts/amounts/IDs and independent HR/payroll projections before
    declaring incident resolved.
 

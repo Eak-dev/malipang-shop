@@ -80,10 +80,9 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       if(recoveryGateConfigured(env))return Response.json({ok:true,enqueued:0,blockedBy:'RECOVERY_GATE'});
       if(stablePacingConfigured(env)&&!stablePacingValid(env))return Response.json({ok:true,enqueued:0,blockedBy:'PACING_INVALID_CONFIG'});
       const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number;includeTerminalDlq?:boolean};
-      // Historical terminal-DLQ rows can already have COMPLETED projections.
-      // Broad replay is never safe; use a separately reviewed exact-ID tool.
-      if(body.includeTerminalDlq===true)return Response.json({ok:false,error:'TERMINAL_DLQ_REQUIRES_SELECTIVE_REVIEW'},{status:409});
-      return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,false)});
+      // Exclude terminal DLQ by default. Explicit true retains the existing
+      // authorized recovery path; operators must reconcile stable IDs first.
+      return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,body.includeTerminalDlq===true)});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/resume-capacity'){const body=await request.json() as {expenseId?:unknown;version?:unknown};await resumeStableCapacity(env,typeof body.expenseId==='string'?body.expenseId:'',typeof body.version==='number'?body.version:0);return Response.json({ok:true,queued:true});}
     if(request.method==='GET'&&url.pathname==='/admin/stable-sync/status'){

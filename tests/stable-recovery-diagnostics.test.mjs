@@ -57,15 +57,38 @@ test('admin retry-sync explicitly identifies blocked REVIEW, CANARY and invalid 
 });
 
 
-test('admin retry-sync denies blanket terminal DLQ redrive even if asked explicitly',async()=>{
+test('NH-3: default-on existing stable sync excludes Terminal DLQ, explicit boolean true retains old admin redrive',async()=>{
  const h=expenseSqlite();try{
-  Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',STABLE_PHASE1_ENABLED:'true'});
-  const response=await handleAdmin(new Request('https://example.test/admin/retry-sync',{
-   method:'POST',headers:{authorization:'Bearer '+h.env.ADMIN_TOKEN,'content-type':'application/json'},
-   body:JSON.stringify({includeTerminalDlq:true})
-  }),h.env,{});
-  assert.equal(response.status,409);
-  assert.equal((await response.json()).error,'TERMINAL_DLQ_REQUIRES_SELECTIVE_REVIEW');
+  Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',
+    STABLE_PHASE1_ENABLED:'true',SHEETS_SYNC_ENABLED:'true'});
+  const now='2026-01-01T00:00:00.000Z';
+  h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('dlq-job','EXPENSE','synthetic-dlq',1,'trace-dlq','FAILED',3,?)").run(now);
+  h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed-dlq','malipang-jobs','trace-dlq','EXPENSE:synthetic-dlq:1','{}','DEAD_LETTER_MAX_RETRIES','OPEN',5,?,?)").run(now,now);
+  // A completed job must never be re-enqueued, even with explicit opt-in.
+  h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES('done-job','EXPENSE','synthetic-done',1,'trace-done','COMPLETED',3,?)").run(now);
+  h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed-done','malipang-jobs','trace-done','EXPENSE:synthetic-done:1','{}','DEAD_LETTER_MAX_RETRIES','OPEN',5,?,?)").run(now,now);
+  const endpoint='https://example.test/admin/retry-sync';
+  const call=async(body,token=h.env.ADMIN_TOKEN)=>{
+    const response=await handleAdmin(new Request(endpoint,{method:'POST',
+      headers:{authorization:'Bearer '+token,'content-type':'application/json'},
+      body:JSON.stringify(body)}),h.env,{});
+    const text=await response.text();
+    return {status:response.status,body:text.startsWith('{')?JSON.parse(text):text};
+  };
+  // Default (all new optional flags absent) must not unexpectedly redrive DLQ.
+  assert.deepEqual(await call({}),{status:200,body:{ok:true,enqueued:0}});
+  assert.deepEqual(await call({includeTerminalDlq:false}),{status:200,body:{ok:true,enqueued:0}});
+  assert.deepEqual(await call({includeTerminalDlq:'true'}),{status:200,body:{ok:true,enqueued:0}});
   assert.equal(h.queue.length,0);
+  assert.equal((await call({includeTerminalDlq:true},'invalid-token')).status,401);
+  assert.equal(h.queue.length,0);
+  const result=await call({includeTerminalDlq:true});
+  assert.deepEqual(result,{status:200,body:{ok:true,enqueued:1}});
+  assert.equal(h.queue.length,1);
+  assert.equal(h.queue[0].body.entityKey,'synthetic-dlq');
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_key='synthetic-done'").get().status,'COMPLETED');
+  // The D1 durable job is updated only once; a second immediate call is not a replay storm.
+  assert.deepEqual(await call({includeTerminalDlq:true}),{status:200,body:{ok:true,enqueued:0}});
+  assert.equal(h.queue.length,1);
  }finally{h.close();}
 });

@@ -118,3 +118,92 @@ test('a verified staged CONTINUE schedules the next stage after pacing delay, no
   assert.deepEqual(next[0].job,expense);
  }finally{dispatch.dispatchStablePhase1=prior;h.close();}
 });
+
+function armExactRecovery(h,entityType,entityKey,entityVersion=1){
+ h.env.STABLE_RECOVERY_GATE_ENABLED='true';
+ h.env.STABLE_SHEETS_PACING_ENABLED='true';
+ h.env.STABLE_PHASE1_ENABLED='true';
+ h.env.GOOGLE_SPREADSHEET_ID='book';
+ h.sqlite.prepare("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('synthetic-canary-epoch-001','book','ARMED',?,?,?,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z')")
+  .run(entityType,entityKey,entityVersion);
+}
+test('armed canary cron sends exactly its eligible target, not earlier unrelated pending jobs',async()=>{
+ const h=expenseSqlite(),{recoverPendingSheetJobs}=require('../dist/db/repositories.js');
+ try{
+  armExactRecovery(h,'EXPENSE','expense-target',1);
+  const rows=[['DAILY_PAYROLL','hr-unrelated'],['EXPENSE','expense-target'],['EXPENSE','expense-other']];
+  for(const [type,key] of rows)
+   h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at) VALUES(?,?,?,?,?,'PENDING',0,'2026-11-01T00:00:00Z')")
+    .run('job-'+key,type,key,1,'trace-'+key);
+  // The fixture's SQLite adapter omits Cloudflare's success:true metadata.
+  const originalPrepare=h.env.DB.prepare;h.env.DB.prepare=function(sql){
+   const q=originalPrepare.call(this,sql),run=q.run;
+   q.run=async function(){return {...await run.call(this),success:true};};return q;
+  };
+  h.env.JOB_QUEUE.send=async(job)=>h.queue.push({body:job});
+  const recovered=await recoverPendingSheetJobs(h.env,300,false);
+  assert.equal(recovered,1);assert.equal(h.queue.length,1);
+  assert.equal(h.queue[0].body.entityKey,'expense-target');
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_key='hr-unrelated'").get().status,'PENDING');
+  assert.equal(await recoverPendingSheetJobs(h.env,300,false),0);
+ }finally{h.close();}
+});
+test('canary target is selected even when not the first Sheets message',async()=>{
+ const h=expenseSqlite(),dispatch=require('../dist/sheets/stable-phase1-dispatch.js');
+ const prev=dispatch.dispatchStablePhase1;const calls=[];let ack=0;
+ try{
+  armExactRecovery(h,'EXPENSE','exp-target');
+  dispatch.dispatchStablePhase1=async(_env,j)=>{calls.push(j.entityKey);return 'BLOCKED';};
+  const messages=[
+    {body:{...expense,entityKey:'non-target'},attempts:1,ack(){ack++;},retry(){assert.fail('unexpected retry');}},
+    {body:{...expense,entityKey:'exp-target'},attempts:1,ack(){ack++;},retry(){assert.fail('unexpected retry');}}
+  ];
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.deepEqual(calls,['exp-target']);assert.equal(ack,2);
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE entity_key='non-target'").get().n,1);
+ }finally{dispatch.dispatchStablePhase1=prev;h.close();}
+});
+test('mixed LINE and canary batch re-enqueues only target while still processing LINE',async()=>{
+ const h=expenseSqlite(),p=require('../dist/router/process-event.js'),dispatch=require('../dist/sheets/stable-phase1-dispatch.js');
+ const prev=p.processInbound,oldDispatch=dispatch.dispatchStablePhase1,queued=[];let line=0,ack=0;
+ try{
+  armExactRecovery(h,'EXPENSE','exp-target');
+  p.processInbound=async()=>{line++;};
+  dispatch.dispatchStablePhase1=async()=>assert.fail('mixed batch should prioritize LINE');
+  h.env.JOB_QUEUE.send=async(job,options)=>queued.push({job,options});
+  const messages=[
+    {body:{kind:'LINE_EVENT',event:{},receivedAtIso:'2026-11-06T00:00:00Z',traceId:'line-test'},attempts:1,ack(){ack++;},retry(){assert.fail('line retry');}},
+    {body:{...expense,entityKey:'exp-target'},attempts:1,ack(){ack++;},retry(){assert.fail('canary retry');}},
+    {body:{...expense,entityKey:'exp-other'},attempts:1,ack(){ack++;},retry(){assert.fail('non-target retry');}}
+  ];
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});
+  assert.equal(line,1);assert.equal(ack,3);assert.equal(queued.length,1);
+  assert.equal(queued[0].job.entityKey,'exp-target');assert.equal(queued[0].options.delaySeconds,90);
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE entity_key IN ('exp-target','exp-other')").get().n,2);
+ }finally{p.processInbound=prev;dispatch.dispatchStablePhase1=oldDispatch;h.close();}
+});
+test('staff-config canary cron only sends the exact staff outbox row',async()=>{
+ const h=expenseSqlite(),{recoverPendingStaffConfigSyncs}=require('../dist/sheets/staff-config.js');
+ try{
+  armExactRecovery(h,'STAFF_CONFIG_SYNC','EMP_SYNTH',1);
+  for(const key of ['EMP_SYNTH','EMP_OTHER']){
+   h.sqlite.prepare("INSERT INTO employees(employee_id,staff_name,line_user_id,scheduled_in,scheduled_out,updated_at) VALUES(?,? ,?,'08:00','18:00','2026-11-01T00:00:00Z')").run(key,'Synthetic', 'line-'+key);
+   h.sqlite.prepare("INSERT INTO staff_config_sync_outbox(employee_id,version,trace_id,status,attempt_count,created_at,updated_at) VALUES(?,1,?,'PENDING',0,'2026-11-01T00:00:00Z','2026-11-01T00:00:00Z')").run(key,'trace-'+key);
+  }
+  const recovered=await recoverPendingStaffConfigSyncs(h.env);
+  assert.equal(recovered,1);assert.equal(h.queue.length,1);
+  assert.equal(h.queue[0].body.employeeId,'EMP_SYNTH');
+ }finally{h.close();}
+});
+
+test('blocked StaffConfig without a durable outbox is retried, never silently ACKed',async()=>{
+ const h=expenseSqlite();let acks=0,retries=0;
+ try{
+  armExactRecovery(h,'EXPENSE','exp-target');
+  const message={body:{kind:'STAFF_CONFIG_SYNC',employeeId:'EMP_MISSING',version:1,traceId:'fixture'},
+   attempts:1,ack(){acks++;},retry(options){retries++;assert.equal(options.delaySeconds,90);}};
+  await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
+  assert.equal(acks,0);assert.equal(retries,1);
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM failed_jobs").get().n,0);
+ }finally{h.close();}
+});

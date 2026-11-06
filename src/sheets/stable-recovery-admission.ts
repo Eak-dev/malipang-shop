@@ -26,6 +26,24 @@ function identityOf(job?:RecoveryIdentity):Target|null{
     !job.entityKey||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1)return null;
   return {entityType:job.entityType,entityKey:job.entityKey,entityVersion:job.entityVersion};
 }
+export type RecoveryTarget={epochId:string;entityType:string;entityKey:string;entityVersion:number};
+/** Internal-only, read-only exact-target lookup. Never return IDs in HTTP
+ * diagnostics or logs. No active ARMED epoch => no canary scheduling. */
+export async function activeStableRecoveryTarget(env:Env):Promise<RecoveryTarget|null>{
+  if(!recoveryGateConfigured(env)||!recoveryGateValid(env))return null;
+  try{
+    const row=await env.DB.prepare("SELECT epoch_id,target_type,target_key,target_version FROM stable_recovery_epochs WHERE spreadsheet_id=? AND state='ARMED' LIMIT 1")
+      .bind(env.GOOGLE_SPREADSHEET_ID).first<{epoch_id:string;target_type:string;target_key:string;target_version:number}>();
+    if(!row||!row.epoch_id||!row.target_type||!row.target_key||
+       !Number.isSafeInteger(row.target_version)||row.target_version<1)return null;
+    return{epochId:row.epoch_id,entityType:row.target_type,entityKey:row.target_key,entityVersion:row.target_version};
+  }catch{return null;}
+}
+export function isRecoveryTarget(job:RecoveryIdentity|undefined,target:RecoveryTarget|null):boolean{
+  const candidate=identityOf(job);
+  return!!target&&!!candidate&&candidate.entityType===target.entityType&&
+    candidate.entityKey===target.entityKey&&candidate.entityVersion===target.entityVersion;
+}
 export async function stableRecoveryGateBlocked(env:Env,job?:RecoveryIdentity):Promise<boolean>{
   if(!recoveryGateConfigured(env))return false;
   if(!recoveryGateValid(env))return true;
@@ -120,21 +138,29 @@ export async function completeStableRecoveryTarget(env:Env,job:RecoveryIdentity|
 
 export type RecoveryDiagnostic={
  mode:string;state?:string;targetType?:string;admittedStages?:number;unverifiedStages?:number;
- parked?:Array<{entityType:string;count:number}>;epochCreatedAt?:string;targetJobStatus?:string;
+ parked?:Array<{entityType:string;count:number}>;deferredByReason?:Array<{entityType:string;reason:string;count:number}>;epochCreatedAt?:string;targetJobStatus?:string;
 };
 export async function stableRecoveryGateDiagnostic(env:Env):Promise<RecoveryDiagnostic>{
   if(!recoveryGateConfigured(env))return{mode:'DISABLED'};
   if(!recoveryGateValid(env))return{mode:'INVALID_CONFIG'};
   try{
-    const row=await env.DB.prepare("SELECT epoch_id,state,target_type,created_at FROM stable_recovery_epochs WHERE spreadsheet_id=? ORDER BY CASE WHEN state IN ('ARMED','REVIEW') THEN 0 ELSE 1 END,created_at DESC,epoch_id DESC LIMIT 1")
-      .bind(env.GOOGLE_SPREADSHEET_ID).first<Pick<Epoch,'epoch_id'|'state'|'target_type'|'created_at'>>();
+    const row=await env.DB.prepare("SELECT epoch_id,state,target_type,target_key,target_version,created_at FROM stable_recovery_epochs WHERE spreadsheet_id=? ORDER BY CASE WHEN state IN ('ARMED','REVIEW') THEN 0 ELSE 1 END,created_at DESC,epoch_id DESC LIMIT 1")
+      .bind(env.GOOGLE_SPREADSHEET_ID).first<Pick<Epoch,'epoch_id'|'state'|'target_type'|'target_key'|'target_version'|'created_at'>>();
     if(!row)return{mode:'UNARMED'};
-    const [summary,parked]=await Promise.all([
+    const targetStatusSql=row.target_type==='STAFF_CONFIG_SYNC'?
+      'SELECT status FROM staff_config_sync_outbox WHERE employee_id=? AND version=?':
+      'SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?';
+    const targetStatusArgs=row.target_type==='STAFF_CONFIG_SYNC'?[row.target_key,row.target_version]:[row.target_type,row.target_key,row.target_version];
+    const [summary,parked,deferred,targetStatus]=await Promise.all([
       env.DB.prepare("SELECT count(*) total,sum(CASE WHEN state='ADMITTED' THEN 1 ELSE 0 END) unverified FROM stable_recovery_operations WHERE epoch_id=?").bind(row.epoch_id).first<{total:number;unverified:number|null}>(),
-      env.DB.prepare("SELECT entity_type,count(*) n FROM sync_jobs WHERE last_error='STABLE_RECOVERY_GATE_BLOCKED' GROUP BY entity_type ORDER BY entity_type").all<{entity_type:string;n:number}>()
+      env.DB.prepare("SELECT entity_type,count(*) n FROM sync_jobs WHERE last_error='STABLE_RECOVERY_GATE_BLOCKED' GROUP BY entity_type ORDER BY entity_type").all<{entity_type:string;n:number}>(),
+      env.DB.prepare("SELECT entity_type,last_error,count(*) n FROM sync_jobs WHERE last_error IN ('STABLE_RECOVERY_GATE_BLOCKED','STABLE_SHEETS_PACING_BLOCKED','STABLE_SHEETS_PACING_UNAVAILABLE','STABLE_NOTICE_READ_DEFERRED') GROUP BY entity_type,last_error ORDER BY entity_type,last_error").all<{entity_type:string;last_error:string;n:number}>(),
+      env.DB.prepare(targetStatusSql).bind(...targetStatusArgs).first<{status:string}>()
     ]);
     return{mode:'OPT_IN',state:row.state,targetType:row.target_type,epochCreatedAt:row.created_at,
       admittedStages:Number(summary?.total||0),unverifiedStages:Number(summary?.unverified||0),
-      parked:(parked.results||[]).map(x=>({entityType:x.entity_type,count:Number(x.n)}))};
+      parked:(parked.results||[]).map(x=>({entityType:x.entity_type,count:Number(x.n)})),
+      deferredByReason:(deferred.results||[]).map(x=>({entityType:x.entity_type,reason:x.last_error,count:Number(x.n)})),
+      targetJobStatus:targetStatus?.status||'UNKNOWN'};
   }catch{return{mode:'UNAVAILABLE'};}
 }

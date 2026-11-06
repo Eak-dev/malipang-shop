@@ -7,13 +7,13 @@ import { missingRuntimeConfig } from "./shared/env";
 import { ensureSheetSyncOutbox,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import {dispatchStablePhase1,isStableWorkbookBusy,isStableWorkbookReview} from './sheets/stable-phase1-dispatch';
 import {withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './sheets/stable-workbook-claim';
-import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid} from './sheets/stable-recovery-admission';
+import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget} from './sheets/stable-recovery-admission';
 import {stablePacingConfigured,stablePacingValid,persistedStableBusyDelay,STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE} from './sheets/stable-sheet-pacing';
 import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
 import { queueRetryDelaySeconds } from "./shared/retry";
-import type { Env,QueueJob } from "./types";
+import type { Env,QueueJob,SheetsSyncJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
 export{AttendanceCoordinator};
 function queueMessageAttempt(message:Message<QueueJob>):number{
@@ -21,7 +21,7 @@ function queueMessageAttempt(message:Message<QueueJob>):number{
   return Number.isFinite(attempts)&&attempts>0?Math.floor(attempts):1;
 }
 type WorkbookQueueJob=QueueJob|StaffConfigSyncJob;
-const isWorkbookQueueJob=(job:WorkbookQueueJob):boolean=>job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC';
+const isWorkbookQueueJob=(job:WorkbookQueueJob):job is SheetsSyncJob|StaffConfigSyncJob=>job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC';
 async function operationalBusyDelay(env:Env,job:WorkbookQueueJob):Promise<number>{
  if(!stablePacingConfigured(env)||!isWorkbookQueueJob(job))return SHEET_SYNC_BUSY_RETRY_SECONDS;
  const identity=job.kind==='STAFF_CONFIG_SYNC'?{entityType:'STAFF_CONFIG_SYNC',entityKey:job.employeeId,entityVersion:job.version}:
@@ -50,7 +50,11 @@ export default{
     if(recoveryGateConfigured(env)&&!recoveryGateValid(env))console.error('stable-recovery-gate-invalid-config');
     if(stablePacingConfigured(env)&&!stablePacingValid(env))console.error('stable-sheets-pacing-invalid-config');
     const includesLine=batch.messages.some(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='LINE_EVENT'||j.kind==='LINE_NOTIFICATION';});
-    const chosenSheet=paceBatch&&!includesLine?batch.messages.find(m=>isWorkbookQueueJob(m.body as WorkbookQueueJob)):null;
+    const canaryTarget=recoveryGateConfigured(env)?await activeStableRecoveryTarget(env):null;
+    const chosenSheet=paceBatch&&!includesLine?batch.messages.find(m=>{
+      const j=m.body as WorkbookQueueJob;
+      return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));
+    }):null;
     await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);
       if(paceBatch&&isWorkbookQueueJob(job)&&message!==chosenSheet){
         try{
@@ -59,11 +63,21 @@ export default{
             const persisted=await env.DB.prepare("SELECT 1 present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();
             if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');
           }
+          // A canary that shares a batch with LINE must not be ACK-parked
+          // forever while the broad recovery cron is disabled. Re-send only
+          // its exact target with a delay; keep the durable outbox.
+          if(includesLine && isRecoveryTarget(job,canaryTarget)){
+            await (env.JOB_QUEUE as unknown as Queue<WorkbookQueueJob>).send(job,{delaySeconds:90});
+          }
           message.ack();
         }catch{message.retry({delaySeconds:90});}
         return;
       }if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC"){if(env.STABLE_PHASE1_ENABLED==='true'){
-   if(await stableRecoveryGateBlocked(env,job)){message.ack();return;}
+   if(await stableRecoveryGateBlocked(env,job)){
+    const persisted=await env.DB.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>().catch(()=>null);
+    if(!persisted){message.retry({delaySeconds:90});return;}
+    message.ack();return;
+   }
    await withStableWorkbookClaim(env,()=>processStaffConfigSyncJob(env,job),job);
   }else await processStaffConfigSyncJob(env,job);}else{const outcome=env.STABLE_PHASE1_ENABLED==='true'?await dispatchStablePhase1(env,job,attempt):await syncJob(env,job,attempt);if(outcome==="BUSY"||outcome==='CONTINUE'){
  const delay=outcome==='CONTINUE'?90:await operationalBusyDelay(env,job);

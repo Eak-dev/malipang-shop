@@ -1,7 +1,7 @@
 import { getStaffActorByLineId } from "../access/repository";
 import type { Employee, Env, LineEvent, SheetsSyncJob } from "../types";
 import { stableWorkbookInReview } from "../sheets/stable-workbook-claim";
-import {recoveryGateConfigured} from '../sheets/stable-recovery-admission';
+import {recoveryGateConfigured,activeStableRecoveryTarget} from '../sheets/stable-recovery-admission';
 import {stablePacingConfigured,stablePacingValid} from '../sheets/stable-sheet-pacing';
 
 export type InboundClaim="CLAIMED"|"BUSY"|"TERMINAL";
@@ -83,11 +83,49 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
   await sendScheduledSheetJobs(env,scheduled);
   return unique.length;
 }
+/** While the recovery gate is armed, cron may send ONLY its exact target.
+ * Never redrive terminal DLQ, other expenses, or unrelated HR. The lease
+ * transition is guarded by the same ARMED epoch and original job identity.
+ * This is an enqueue, not a provider write or an authorization to replay. */
+export async function recoverArmedSheetJob(env:Env,staleAfterSeconds=300,nowMs=Date.now()):Promise<number>{
+  const target=await activeStableRecoveryTarget(env);
+  if(!target||target.entityType==='STAFF_CONFIG_SYNC')return 0;
+  const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds)));
+  const now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString();
+  const row=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id,status,updated_at,next_attempt_at,lease_until
+    FROM sync_jobs s WHERE entity_type=? AND entity_key=? AND entity_version=?
+    AND status IN ('PENDING','FAILED','PROCESSING')
+    AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs'
+      AND f.job_key=s.entity_type||':'||s.entity_key||':'||s.entity_version
+      AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') LIMIT 1`)
+    .bind(target.entityType,target.entityKey,target.entityVersion).first<RecoverableSheetJobRow>();
+  if(!row||!isRecoverableSheetJob(row,now,stale))return 0;
+  const job:SheetsSyncJob={kind:'SHEETS_SYNC',entityType:target.entityType as SheetsSyncJob['entityType'],
+    entityKey:target.entityKey,entityVersion:target.entityVersion,traceId:String(row.trace_id)};
+  const result=await env.DB.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=?,
+    next_attempt_at=NULL,lease_until=NULL,lease_token=NULL
+    WHERE entity_type=? AND entity_key=? AND entity_version=?
+    AND EXISTS(SELECT 1 FROM stable_recovery_epochs e WHERE e.epoch_id=? AND e.spreadsheet_id=?
+      AND e.state='ARMED' AND e.target_type=sync_jobs.entity_type
+      AND e.target_key=sync_jobs.entity_key AND e.target_version=sync_jobs.entity_version)
+    AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs'
+      AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version
+      AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')
+    AND (((status IN ('PENDING','FAILED')) AND updated_at<? AND
+          (next_attempt_at IS NULL OR next_attempt_at<=?))
+         OR(status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`)
+   .bind(now,target.entityType,target.entityKey,target.entityVersion,target.epochId,env.GOOGLE_SPREADSHEET_ID,stale,now,now).run();
+  if(result.success!==true||!Number.isSafeInteger(result.meta?.changes))throw Error('STABLE_RECOVERY_ENQUEUE_CAS_UNKNOWN');
+  if(Number(result.meta.changes)!==1)return 0;
+  await env.JOB_QUEUE.send(job);
+  return 1;
+}
 export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,includeTerminalDlq=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true")return 0;
   // Every writer is blocked by a retained review claim. Jobs stay durable and
   // are re-sent by the first recovery after an operator resolves the review.
-  if(await stableWorkbookInReview(env)||recoveryGateConfigured(env)||stablePacingConfigured(env)&&!stablePacingValid(env))return 0;
+  if(await stableWorkbookInReview(env)||stablePacingConfigured(env)&&!stablePacingValid(env))return 0;
+  if(recoveryGateConfigured(env))return recoverArmedSheetJob(env,staleAfterSeconds);
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString(),terminalDlqAllowed=includeTerminalDlq?1:0;
   const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED','PROCESSING') AND (?=1 OR NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')) ORDER BY s.updated_at LIMIT 200`).bind(terminalDlqAllowed).all<RecoverableSheetJobRow>();
   const jobs:SheetsSyncJob[]=(rows.results||[]).filter(row=>(includeTerminalDlq||Number(row.terminal_dlq_open||0)!==1)&&isRecoverableSheetJob(row,now,stale)).slice(0,stablePacingConfigured(env)?4:50).map(r=>({kind:"SHEETS_SYNC",entityType:String(r.entity_type) as SheetsSyncJob["entityType"],entityKey:String(r.entity_key),entityVersion:Number(r.entity_version),traceId:String(r.trace_id)}));

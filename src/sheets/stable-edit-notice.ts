@@ -17,7 +17,7 @@ function overlaps(a:Range,r:Record<string,unknown>):boolean{
  return a.row>=sr&&a.row<er&&a.column>=sc&&a.column<ec;
 }
 async function get(env:Env,path:string):Promise<unknown>{
- const token=await getGoogleAccessToken(env),res=await retryIdempotentRead(()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Stable notice read'));
+ const token=await getGoogleAccessToken(env),res=await retryIdempotentRead(()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Stable notice read'),env.STABLE_SHEETS_PACING_ENABLED!=='true');
  // Keep the HTTP status for diagnostics; the message stays a stable code.
  if(!res.ok)throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));return res.json();
 }
@@ -52,7 +52,7 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 /** Read-only provider readiness; never grants permission to write. */
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ');}catch{return false;}}
 export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch{return false;}}
-export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms))):Promise<void>{
+export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void=()=>{}):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so
  // a single read both proves the ready state and guards the write.
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,seen:{before?:Snapshot}={},time=stamp();

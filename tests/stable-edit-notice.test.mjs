@@ -23,3 +23,39 @@ test('one rate-limited notice read is retried after Retry-After and the operatio
  assert.equal(entered,true);assert.deepEqual(r.waits,[3000]);assert.equal(h.status,'พร้อมแก้ไข');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);}finally{r.restore();h.close();}});
 test('a persistent rate limit on the ready notice keeps the pause visible and records the end phase',async()=>{const h=fixture();let r;try{await assert.rejects(withStableWorkbookClaim(h.env,async()=>{r=reads(()=>({status:503}));}),/STABLE_NOTICE_READ/);
  assert.equal(h.status,'พักแก้ไฟล์');assert.equal(h.writes,1);assert.deepEqual(r.waits,[2000]);assert.deepEqual(claimRow(h),{state:'REVIEW',phase:'END_NOTICE',review_reason:'STABLE_NOTICE_READ:HTTP_503'});}finally{r?.restore();h.close();}});
+
+test('paced notice GET 429 before any pause write fails without inline retry',async()=>{
+ const h=fixture(),r=reads(n=>n===1?{status:429}:null);
+ try{
+  h.env.STABLE_SHEETS_PACING_ENABLED='true';
+  h.env.STABLE_SHEETS_READ_BUDGET_PER_MINUTE='55';
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>assert.fail('must not reach projection'),{entityType:'EXPENSE',entityKey:'synthetic',entityVersion:1}),/STABLE_NOTICE_READ_DEFERRED/);
+  assert.equal(h.writes,0);assert.equal(r.gets,1);assert.deepEqual(r.waits,[]);
+  assert.equal(h.sqlite.prepare('SELECT COUNT(*) n FROM stable_workbook_claims').get().n,0);
+ }finally{r.restore();h.close();}
+});
+
+test('paced notice GET 429 after a verified business callback retains REVIEW without inline wait',async()=>{
+ const h=fixture();let r;
+ try{
+  h.env.STABLE_SHEETS_PACING_ENABLED='true';
+  h.env.STABLE_SHEETS_READ_BUDGET_PER_MINUTE='55';
+  let operations=0;
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>{operations++;r=reads(()=>({status:429}));},{entityType:'EXPENSE',entityKey:'synthetic',entityVersion:1}),/STABLE_NOTICE_READ/);
+  assert.equal(operations,1);assert.equal(h.writes,1);assert.equal(h.status,'พักแก้ไฟล์');
+  assert.deepEqual(r.waits,[]);
+  assert.deepEqual(claimRow(h),{state:'REVIEW',phase:'END_NOTICE',review_reason:'STABLE_NOTICE_READ:HTTP_429'});
+ }finally{r?.restore();h.close();}
+});
+
+test('paced notice rejects a quota error after sending PAUSED as REVIEW, never a safe pre-write defer',async()=>{
+ const h=fixture(),r=reads(n=>n===5?{status:429}:null);
+ try{
+  h.env.STABLE_SHEETS_PACING_ENABLED='true';
+  h.env.STABLE_SHEETS_READ_BUDGET_PER_MINUTE='55';
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>assert.fail('projection must not run'),{entityType:'EXPENSE',entityKey:'synthetic',entityVersion:1}),/STABLE_NOTICE_UNVERIFIED/);
+  assert.equal(h.writes,1);assert.equal(h.status,'พักแก้ไฟล์');
+  assert.deepEqual(r.waits,[]);
+  assert.deepEqual(claimRow(h),{state:'REVIEW',phase:'BEGIN_NOTICE',review_reason:'STABLE_NOTICE_UNVERIFIED'});
+ }finally{r.restore();h.close();}
+});

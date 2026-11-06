@@ -15,5 +15,5 @@ export async function runStablePersonalJob(env:Env,job:SheetsSyncJob,lease:strin
    AND EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='PERSONAL_USE' AND p.entity_id=? AND p.projection='PERSONAL_RAW' AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')`)
    .bind(job.entityKey,job.entityVersion,lease,proof.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,proof.digest).run();
   if(result.success!==true||Number(result.meta?.changes)!==1)throw Error('STABLE_PERSONAL_COMPLETION_UNCERTAIN');
- });
+ },job);
 }

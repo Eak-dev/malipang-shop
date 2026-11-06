@@ -1,8 +1,16 @@
 import type {Env} from '../types';
 import {beginStableNotice,endStableNotice,stableNoticePaused} from './stable-edit-notice';
 import {stableFaultReason} from './stable-fault';
+import {SheetsHttpError} from './client';
+import {admitStableRecovery,verifyStableRecoveryAdmission,holdStableRecoveryCapacity,completeStableRecoveryTarget,stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,type RecoveryIdentity} from './stable-recovery-admission';
+import {admitPacedWorkbookOperation,pacingPreflightBlocked,STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE} from './stable-sheet-pacing';
 
-export type StableClaimPhase='BEGIN_NOTICE'|'OPERATION'|'END_NOTICE'|'RELEASE';
+export type StableClaimPhase='ADMISSION'|'BEGIN_NOTICE'|'OPERATION'|'END_NOTICE'|'RELEASE';
+export const STABLE_NOTICE_READ_DEFERRED='STABLE_NOTICE_READ_DEFERRED';
+function readMayBeSafelyDeferred(error:unknown):boolean{
+  return error instanceof SheetsHttpError && error.message==='STABLE_NOTICE_READ' &&
+    (error.status===429||error.status>=500&&error.status<=599);
+}
 
 /** Read-only. A retained review claim blocks every workbook writer until an
  * operator investigates it; retrying sooner only spends D1, queue and Sheets
@@ -34,10 +42,14 @@ export async function stableWorkbookClaimOwned(env:Env,token:string):Promise<boo
  * human editor, an old deployment, or any writer not using this guard.
  * The caller must return only after all provider writes are read back and
  * verified; an exception retains the claim for review rather than retrying. */
-export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>):Promise<T>{
+export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity):Promise<T>{
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,token=crypto.randomUUID();
   if(!book)throw new Error('STABLE_WORKBOOK_NOT_CONFIGURED');
-  let claimed=false,phase:StableClaimPhase='BEGIN_NOTICE';
+  // Fast deny before reserving the shared workbook; the atomic D1 admission
+  // below remains authoritative against concurrent queue invocations.
+  if(await stableRecoveryGateBlocked(env,identity))throw Error(STABLE_RECOVERY_BLOCKED);
+  if(await pacingPreflightBlocked(env))throw Error(STABLE_SHEETS_PACING_UNAVAILABLE);
+  let claimed=false,phase:StableClaimPhase='ADMISSION',beginNoticeMayHaveWritten=false;
   try{
     const inserted=await db.prepare(`INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at)
       VALUES(?,?,'HELD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT DO NOTHING`).bind(book,token).run();
@@ -49,7 +61,24 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       throw new Error(current?.state==='REVIEW'?'STABLE_WORKBOOK_REVIEW':'STABLE_WORKBOOK_BUSY');
     }
     claimed=true;
-    if(flag==='true')await beginStableNotice(env,token);
+    const paced=await admitPacedWorkbookOperation(env,identity,token);
+    if(!paced){
+      const released=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL").bind(book,token).run();
+      if(released.success!==true||Number(released.meta?.changes)!==1)throw Error('STABLE_SHEETS_PACING_RELEASE_UNCERTAIN');
+      claimed=false;
+      throw Error(STABLE_SHEETS_PACING_BLOCKED);
+    }
+    const admitted=await admitStableRecovery(env,identity,token);
+    if(!admitted){
+      // No Sheets call has been made. Release only this untouched HELD claim;
+      // a lost D1 acknowledgement stays retained for human review.
+      const released=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL").bind(book,token).run();
+      if(released.success!==true||Number(released.meta?.changes)!==1)throw Error('STABLE_RECOVERY_DENIED_RELEASE_UNCERTAIN');
+      claimed=false;
+      throw Error(STABLE_RECOVERY_BLOCKED);
+    }
+    phase='BEGIN_NOTICE';
+    if(flag==='true')await beginStableNotice(env,token,undefined,()=>{beginNoticeMayHaveWritten=true;});
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='OPERATION';
     const result=await operation(token);
@@ -58,11 +87,29 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     if(flag==='true')await endStableNotice(env,token);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='RELEASE';
+    // Each stage (DAILY/RAW/DETAIL/FINAL) is independently admitted,
+    // and only a fully verified notice lifecycle frees the next stage.
+    if(result==='CAPACITY_REVIEW')await holdStableRecoveryCapacity(env,identity,token);
+    else {
+      await verifyStableRecoveryAdmission(env,token);
+      await completeStableRecoveryTarget(env,identity,token);
+    }
     const released=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(book,token).run();
     if(released.success!==true||Number(released.meta?.changes)!==1)throw new Error('STABLE_WORKBOOK_RELEASE_OUTCOME_UNKNOWN');
     claimed=false;
     return result;
   }catch(error){
+    // When a *read* failed before the first Sheets mutation was authorized,
+    // this claim never wrote to Google. A guarded release is safe; all other
+    // errors (including a lost POST ACK) retain the claim for review.
+    if(claimed && env.STABLE_SHEETS_PACING_ENABLED==='true' && phase==='BEGIN_NOTICE' && !beginNoticeMayHaveWritten && readMayBeSafelyDeferred(error)){
+      let released=false;
+      try{
+        const r=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(book,token).run();
+        released=r.success===true&&Number(r.meta?.changes)===1;
+      }catch{}
+      if(released){claimed=false;throw Error(STABLE_NOTICE_READ_DEFERRED);}
+    }
     if(claimed)await retainForReview(db,book,token,phase,error);
     throw error;
   }

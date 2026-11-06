@@ -1,5 +1,7 @@
 import { batchWriteValues, getSheetValues } from "./client";
 import { stableWorkbookInReview } from "./stable-workbook-claim";
+import {recoveryGateConfigured} from './stable-recovery-admission';
+import {stablePacingConfigured,stablePacingValid} from './stable-sheet-pacing';
 import type { Env, StaffConfigSyncJob } from "../types";
 export type { StaffConfigSyncJob } from "../types";
 
@@ -230,7 +232,7 @@ export async function processStaffConfigSyncJob(env: Env, job: StaffConfigSyncJo
 export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs = Date.now()): Promise<number> {
   if (env.SHEETS_SYNC_ENABLED !== "true") return 0;
   // A retained review claim blocks this writer too; the outbox keeps the job.
-  if (await stableWorkbookInReview(env)) return 0;
+  if (await stableWorkbookInReview(env) || recoveryGateConfigured(env) || stablePacingConfigured(env) && !stablePacingValid(env)) return 0;
   const now = new Date(nowMs).toISOString();
   const staleBefore = new Date(nowMs - LEASE_MS).toISOString();
 
@@ -254,7 +256,7 @@ export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs
   )
     .bind(now, Math.max(1, Math.min(100, Math.floor(limit))))
     .all<{ employee_id: string; version: number; trace_id: string }>();
-  const jobs: StaffConfigSyncJob[] = (rows.results || []).map((row) => ({
+  const jobs: StaffConfigSyncJob[] = (rows.results || []).slice(0,stablePacingConfigured(env)?1:limit).map((row) => ({
     kind: "STAFF_CONFIG_SYNC",
     employeeId: String(row.employee_id),
     version: Number(row.version),

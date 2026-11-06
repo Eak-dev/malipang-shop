@@ -22,6 +22,9 @@ import { onlineOrderReviewSummary } from "../expense/online-order-review-reposit
 import { operationsSummary } from "../operations/summary";
 import {resumeStableCapacity} from './stable-capacity-resume';
 import {stableNoticeReady} from '../sheets/stable-edit-notice';
+import {stableRecoveryGateDiagnostic,recoveryGateConfigured} from '../sheets/stable-recovery-admission';
+import {stablePacingDiagnostic,stablePacingConfigured,stablePacingValid} from '../sheets/stable-sheet-pacing';
+import {stableWorkbookInReview} from '../sheets/stable-workbook-claim';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -72,14 +75,20 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       });
       return Response.json({ok:true,queued:true,scenario:body.scenario,businessRecordCreated:false});
     }
-    if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});}
+    if(request.method==="POST"&&url.pathname==="/admin/retry-sync"){
+      if(await stableWorkbookInReview(env))return Response.json({ok:true,enqueued:0,blockedBy:'WORKBOOK_REVIEW'});
+      if(recoveryGateConfigured(env))return Response.json({ok:true,enqueued:0,blockedBy:'RECOVERY_GATE'});
+      if(stablePacingConfigured(env)&&!stablePacingValid(env))return Response.json({ok:true,enqueued:0,blockedBy:'PACING_INVALID_CONFIG'});
+      const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number};
+      return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,true)});
+    }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/resume-capacity'){const body=await request.json() as {expenseId?:unknown;version?:unknown};await resumeStableCapacity(env,typeof body.expenseId==='string'?body.expenseId:'',typeof body.version==='number'?body.version:0);return Response.json({ok:true,queued:true});}
     if(request.method==='GET'&&url.pathname==='/admin/stable-sync/status'){
       if(env.STABLE_PHASE1_ENABLED!=='true')return Response.json({ok:false,error:'STABLE_PHASE1_DISABLED'},{status:409});
       // phase/review_reason come from migration 0022; fall back before it is applied.
       const claimQuery=(columns:string)=>env.DB.prepare(`SELECT ${columns} FROM stable_workbook_claims WHERE spreadsheet_id=?`).bind(env.GOOGLE_SPREADSHEET_ID).first();
-      const [claim,reviews,inFlight]=await Promise.all([claimQuery('state,updated_at,notice_stamp,phase,review_reason').catch(()=>claimQuery('state,updated_at,notice_stamp')),env.DB.prepare("SELECT CASE WHEN last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY' WHEN last_error='STABLE_HISTORICAL_OR_SOURCE_REVIEW' THEN 'HISTORICAL_OR_SOURCE' ELSE 'OTHER' END AS reason,count(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason").all(),env.DB.prepare("SELECT count(*) AS n FROM stable_projection_writes WHERE spreadsheet_id=? AND state='IN_FLIGHT'").bind(env.GOOGLE_SPREADSHEET_ID).first<{n:number}>()]);
-      return Response.json({ok:true,claim:claim??null,reviews:reviews.results??[],inFlightProjections:Number(inFlight?.n??0)},{headers:{'cache-control':'no-store'}});
+      const [claim,reviews,inFlight,recoveryGate,sheetPacing,syncBacklog,expiredProcessing,openTerminalDlq]=await Promise.all([claimQuery('state,updated_at,notice_stamp,phase,review_reason').catch(()=>claimQuery('state,updated_at,notice_stamp')),env.DB.prepare("SELECT CASE WHEN last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY' WHEN last_error='STABLE_HISTORICAL_OR_SOURCE_REVIEW' THEN 'HISTORICAL_OR_SOURCE' ELSE 'OTHER' END AS reason,count(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason").all(),env.DB.prepare("SELECT count(*) AS n FROM stable_projection_writes WHERE spreadsheet_id=? AND state='IN_FLIGHT'").bind(env.GOOGLE_SPREADSHEET_ID).first<{n:number}>(),stableRecoveryGateDiagnostic(env),stablePacingDiagnostic(env),env.DB.prepare("SELECT entity_type,status,count(*) n FROM sync_jobs WHERE status!='COMPLETED' GROUP BY entity_type,status ORDER BY entity_type,status").all(),env.DB.prepare("SELECT count(*) n FROM sync_jobs WHERE status='PROCESSING' AND lease_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')").first<{n:number}>(),env.DB.prepare("SELECT count(*) n FROM failed_jobs WHERE status='OPEN' AND error='DEAD_LETTER_MAX_RETRIES'").first<{n:number}>()]);
+      return Response.json({ok:true,claim:claim??null,reviews:reviews.results??[],inFlightProjections:Number(inFlight?.n??0),recoveryGate,sheetPacing,syncBacklog:(syncBacklog.results||[]).map((x:any)=>({entityType:x.entity_type,status:x.status,count:Number(x.n)})),expiredProcessing:Number(expiredProcessing?.n||0),openTerminalDlq:Number(openTerminalDlq?.n||0)},{headers:{'cache-control':'no-store'}});
     }
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};

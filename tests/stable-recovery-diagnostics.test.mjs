@@ -15,6 +15,7 @@ test('P0-c status is authenticated, aggregate-only and never leaks source identi
   });
   h.sqlite.prepare("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('synthetic-epoch-00001','synthetic-book','ARMED','EXPENSE','sensitive-expense-id',1,'2026-11-06T00:00:00Z','2026-11-06T00:00:00Z')").run();
   h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,last_error) VALUES('x','EXPENSE','sensitive-expense-id',1,'sensitive-trace','PENDING',3,'2026-11-06T00:00:00Z','STABLE_RECOVERY_GATE_BLOCKED')").run();
+  h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,last_error) VALUES('y','DAILY_PAYROLL','sensitive-payroll-id',1,'sensitive-trace-2','PENDING',1,'2026-11-06T00:00:00Z','STABLE_SHEETS_PACING_BLOCKED')").run();
   const unauth=await handleAdmin(new Request('https://example.test/admin/stable-sync/status'),h.env,{});
   assert.equal(unauth.status,401);
   const req=new Request('https://example.test/admin/stable-sync/status',{headers:{authorization:'Bearer '+h.env.ADMIN_TOKEN}});
@@ -23,9 +24,11 @@ test('P0-c status is authenticated, aggregate-only and never leaks source identi
   const body=await res.json();assert.equal(body.ok,true);
   assert.equal(body.recoveryGate.mode,'OPT_IN');
   assert.deepEqual(body.recoveryGate.parked,[{entityType:'EXPENSE',count:1}]);
+  assert.equal(body.recoveryGate.targetJobStatus,'PENDING');
+  assert.deepEqual(body.recoveryGate.deferredByReason,[{entityType:'DAILY_PAYROLL',reason:'STABLE_SHEETS_PACING_BLOCKED',count:1},{entityType:'EXPENSE',reason:'STABLE_RECOVERY_GATE_BLOCKED',count:1}]);
   assert.equal(body.sheetPacing.mode,'UNARMED');
   assert.equal(body.syncBacklog.some(x=>x.entityType==='EXPENSE'&&x.count===1),true);
-  for(const value of ['sensitive-expense-id','sensitive-trace','synthetic-epoch-00001',h.env.ADMIN_TOKEN]){
+  for(const value of ['sensitive-expense-id','sensitive-payroll-id','sensitive-trace','synthetic-epoch-00001',h.env.ADMIN_TOKEN]){
    assert.equal(JSON.stringify(body).includes(value),false);
   }
  }finally{h.close();}
@@ -50,5 +53,19 @@ test('admin retry-sync explicitly identifies blocked REVIEW, CANARY and invalid 
   r=await handleAdmin(request(),h.env,{});assert.equal((await r.json()).blockedBy,'RECOVERY_GATE');
   h.env.STABLE_RECOVERY_GATE_ENABLED='false';h.env.STABLE_SHEETS_PACING_ENABLED='TRUE';
   r=await handleAdmin(request(),h.env,{});assert.equal((await r.json()).blockedBy,'PACING_INVALID_CONFIG');
+ }finally{h.close();}
+});
+
+
+test('admin retry-sync denies blanket terminal DLQ redrive even if asked explicitly',async()=>{
+ const h=expenseSqlite();try{
+  Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',STABLE_PHASE1_ENABLED:'true'});
+  const response=await handleAdmin(new Request('https://example.test/admin/retry-sync',{
+   method:'POST',headers:{authorization:'Bearer '+h.env.ADMIN_TOKEN,'content-type':'application/json'},
+   body:JSON.stringify({includeTerminalDlq:true})
+  }),h.env,{});
+  assert.equal(response.status,409);
+  assert.equal((await response.json()).error,'TERMINAL_DLQ_REQUIRES_SELECTIVE_REVIEW');
+  assert.equal(h.queue.length,0);
  }finally{h.close();}
 });

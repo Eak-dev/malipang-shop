@@ -34,7 +34,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
   await runStablePersonalJob(env,job,lease);return 'PROCESSED';
  }catch(error){
   if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,STABLE_NOTICE_READ_DEFERRED].includes(error.message)){
-   const r=await env.DB.prepare("UPDATE sync_jobs SET status='PENDING',attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='STABLE_RECOVERY_GATE_BLOCKED' WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND attempt_count>=1").bind(job.entityType,job.entityKey,job.entityVersion,lease).run();
+   const r=await env.DB.prepare("UPDATE sync_jobs SET status='PENDING',attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND attempt_count>=1").bind(error.message,job.entityType,job.entityKey,job.entityVersion,lease).run();
    if(r.success!==true||Number(r.meta?.changes)!==1)throw Error('STABLE_RECOVERY_DEFER_UNCERTAIN');
    return [STABLE_SHEETS_PACING_BLOCKED,STABLE_NOTICE_READ_DEFERRED].includes(error.message)?'BUSY':'BLOCKED';
   }

@@ -163,8 +163,12 @@ version; a different target cannot consume admission. The claim's
 
 An EXPENSE can run multiple *independently admitted* DAILY, RAW, DETAIL and
 FINAL stages under the **same epoch**. Each stage first reserves D1 pacing,
-then atomically admits under its own HELD claim, then performs pause,
-projection, READY readback and marks admission VERIFIED. Only when the same
+then verifies a READY named-range pre-image under its own HELD claim; **only
+inside that pre-POST mutation guard** does it atomically admit the exact
+target. A GET 429/5xx before the guard returns safely with no ADMITTED stage.
+After admission, the pause POST, projection and READY readback must complete
+before the operation is marked VERIFIED. Any post-POST uncertain write retains
+REVIEW and its ADMITTED operation. Only when the same
 target reaches durable COMPLETED is the epoch marked COMPLETE; historical
 operations/epoch identities remain retained. No automatic re-arm, no
 timeout-based re-use, and no replacement of old epoch evidence. Unknown D1
@@ -200,11 +204,15 @@ operator recovery, even if the original D1 lease expires.
    `beginStableNotice` requires READY pre-image.
 5. **PRODUCTION-WRITE — SEPARATE OWNER APPROVAL:** append a new ARMED epoch
    for ONE approved target and use a targeted, already-durable job delivery.
-   Recovery cron is intentionally frozen while the exact-target gate is
-   configured. Do not send other jobs or assume arbitrary queue messages
-   will advance the canary. The epoch may need multiple stages separated by
-   pacing gaps. If any new REVIEW, IN_FLIGHT, identity mismatch or unknown
-   outcome occurs, stop and retain evidence.
+   While the exact-target gate is enabled, **only that ARMED target** may be
+   re-enqueued by recovery cron (at most one eligible target per recovery tick,
+   excluding terminal DLQ); unrelated Sheets and HR jobs stay in their durable
+   outboxes. In a mixed LINE+canary queue batch, the target is re-sent after a
+   short delay while LINE is prioritized; a canary later in a Sheets-only
+   batch is selected ahead of unrelated writers. No arbitrary job should
+   advance the canary. Staged expenses require separate verified operations
+   with pacing gaps. If any new REVIEW, IN_FLIGHT, identity mismatch or
+   unknown outcome occurs, stop and retain evidence.
 6. **READ-ONLY:** confirm every stage journal VERIFIED, FINAL job COMPLETED,
    epoch COMPLETE, no duplicates or unexpected workbook writers, status READY,
    LINE intake/notifications healthy and HR outboxes durable.
@@ -216,8 +224,10 @@ operator recovery, even if the original D1 lease expires.
    LINE; excess or mixed-batch Sheets deliveries are acknowledged **only**
    after their durable outbox is verified, to be recovered by cron.
 8. **PRODUCTION-WRITE — SEPARATE OWNER APPROVAL:** selectively reconcile
-   terminal DLQ / failed jobs by stable IDs and source status. Do not replay
-   completed jobs or WAITING_CONFIRM transactions. Compare D1 = Daily = RAW
+   terminal DLQ / failed jobs by stable IDs and source status. The generic
+   admin `/admin/retry-sync` excludes terminal DLQ; `includeTerminalDlq:true`
+   returns 409 pending a separately approved exact-ID reconciliation tool.
+   Do not replay completed jobs or WAITING_CONFIRM transactions. Compare D1 = Daily = RAW
    counts/amounts/IDs and independent HR/payroll projections before
    declaring incident resolved.
 
@@ -241,3 +251,23 @@ queue lag, Sheets admission timing, Google API 429, open DLQ, and time-to-final.
 No auto-claim-release endpoint, remote migration command or secret is provided
 by this implementation. A separate reviewed one-shot recovery tool/workflow
 must be authorized before any actual Production repair.
+
+### Pending Owner policy decisions before Production (not authorized in DEV_OWNED)
+
+- **NM-1 — transient 5xx/429 during OPERATION or END_NOTICE:** the current
+  P0 implementation intentionally retains the global claim in REVIEW after a
+  PAUSED notice or business mutation might have been sent, even if a single
+  Sheets GET fails transiently. Alternatives require separately reviewed
+  safe-cleanup CAS/readback or a bounded 5xx-only GET retry. Neither policy
+  change was approved for Production; do not weaken fail-closed semantics to
+  make a test pass.
+- **NM-3 — throughput/priority:** conservative minimum 75 seconds per
+  workbook stage caps this component near **48 starts/hour** shared by
+  Expense, Attendance, Payroll, Shift and StaffConfig projections. This is a
+  safety-biased proposal and may increase HR/reporting lag. The Owner must
+  explicitly approve acceptable time-to-final and priority/service targets,
+  or authorize a separate queue/failure-domain design and TEST/UAT first.
+- **Unresolved Production context:** the Google Sheets 429 root trigger,
+  full service-account quota across other clients, Workers Free/Paid budget,
+  and safe off-peak backup impact must be verified. This DEV-only PR is not
+  evidence of Production readiness.

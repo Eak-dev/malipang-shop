@@ -1,6 +1,7 @@
 import { onlineOrderReviewSummary } from "../expense/online-order-review-repository";
 import type { Env } from "../types";
 import { maintenanceSteps } from "./maintenance";
+import { sheetsSyncHealth } from "./sheets-sync-health";
 
 const latencyNames=["inbound_queue_wait_ms","expense_image_queue_wait_ms","expense_image_download_ms","expense_image_extraction_ms","expense_image_total_ms","expense_image_end_to_end_ms","line_reply_ms","sheets_sync_ms"] as const;
 const jsonLabels="CASE WHEN json_valid(labels_json) THEN labels_json ELSE '{}' END";
@@ -10,7 +11,7 @@ type Row=Record<string,unknown>;
 /** D1-only diagnostic: no outbound probes, recovery, payloads or identities. */
 export async function operationsSummary(env:Env,now=Date.now()){
   const at=new Date(now).toISOString(),since=new Date(now-24*60*60_000).toISOString(),stale=new Date(now-15*60_000).toISOString();
-  const [inbound,effects,maintenance,latency,orders]=await Promise.all([
+  const [inbound,effects,maintenance,latency,orders,syncHealth]=await Promise.all([
     env.DB.prepare(`SELECT
       COUNT(CASE WHEN last_attempt_at>=? AND last_attempt_at<=? THEN 1 END) recent_events,
       COUNT(CASE WHEN last_attempt_at>=? AND last_attempt_at<=? AND status='FAILED' THEN 1 END) recent_failed,
@@ -41,7 +42,8 @@ export async function operationsSummary(env:Env,now=Date.now()){
       AND (name NOT IN ('inbound_queue_wait_ms','expense_image_queue_wait_ms') OR (json_extract(${jsonLabels},'$.semantics')='INGRESS_TO_START_V2' AND json_extract(${jsonLabels},'$.clockSkew')='false'))
       AND (name<>'expense_image_end_to_end_ms' OR (json_extract(${jsonLabels},'$.semantics')='INGRESS_TO_COMPLETION_V2' AND json_extract(${jsonLabels},'$.clockSkew')='false'))
       GROUP BY name`).bind(since,at,...latencyNames).all<Row>(),
-    onlineOrderReviewSummary(env,undefined,now)
+    onlineOrderReviewSummary(env,undefined,now),
+    sheetsSyncHealth(env,now),
   ]);
   const steps=maintenanceSteps.map(step=>{
     const row=maintenance.results?.find(r=>r.step===step),time=typeof row?.created_at==="string"?row.created_at:null;
@@ -58,9 +60,11 @@ export async function operationsSummary(env:Env,now=Date.now()){
   if(number(effects?.response_fallback_failures))actions.push("INSPECT_UNDELIVERED_RESPONSES");
   if(steps.some(s=>s.status==="FAILED"||s.status==="STALE"))actions.push("INSPECT_SCHEDULED_STEPS");
   if(orders.total)actions.push("REVIEW_HELD_ONLINE_ORDERS_IN_OWNER_LINE");
-  const attention=failures.recentFailedEvents>0||failures.overdueEvents>0||failures.openFailedJobs>0||number(effects?.expired_sync_leases)>0||number(effects?.response_fallback_failures)>0||steps.some(s=>s.status==="FAILED"||s.status==="STALE");
+  if(syncHealth.status==="REVIEW_BLOCKED")actions.push("INSPECT_SHEETS_REVIEW_BEFORE_RECOVERY");
+  if(syncHealth.status==="DELAYED")actions.push("INSPECT_SHEETS_SYNC_LAG_WITHOUT_BLIND_REPLAY");
+  const attention=failures.recentFailedEvents>0||failures.overdueEvents>0||failures.openFailedJobs>0||number(effects?.expired_sync_leases)>0||number(effects?.response_fallback_failures)>0||steps.some(s=>s.status==="FAILED"||s.status==="STALE")||syncHealth.status==="REVIEW_BLOCKED"||syncHealth.status==="DELAYED";
   return{ok:true,checkedAt:at,window:{from:since,to:at,hours:24},status:attention?"ATTENTION":steps.some(s=>s.status==="UNKNOWN")?"UNKNOWN":"OK",
     inbound:{recentEvents:number(inbound?.recent_events),...failures},
-    sideEffects:{pendingSyncJobs:number(effects?.pending_sync),expiredSyncLeases:number(effects?.expired_sync_leases),pendingNotifications:number(effects?.pending_notifications),quotaBlockedNotifications:number(effects?.quota_blocked_notifications),replyFailures:number(effects?.reply_failures),responseFallbackFailures:number(effects?.response_fallback_failures)},
+    sideEffects:{pendingSyncJobs:number(effects?.pending_sync),expiredSyncLeases:number(effects?.expired_sync_leases),pendingNotifications:number(effects?.pending_notifications),quotaBlockedNotifications:number(effects?.quota_blocked_notifications),replyFailures:number(effects?.reply_failures),responseFallbackFailures:number(effects?.response_fallback_failures),sheetsSync:syncHealth},
     scheduled:{staleAfterMinutes:15,steps},latency:timings,onlineOrders:orders,actions};
 }

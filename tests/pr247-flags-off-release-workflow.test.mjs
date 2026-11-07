@@ -344,3 +344,189 @@ test("FAULT INJECTION: completed release leaves Queue state untouched",()=>{
   assert.match(summary,/sentinels verified/);
   assert.doesNotMatch(calls,/queues (resume-delivery|pause-delivery)/);
 });
+
+test("P1-A: confirmed own pre-export pause abort must have durable bounded resume branch",()=>{
+  const cleanup=workflow.slice(at("Failure handling"));
+  assert.match(cleanup,/ABORT_RESUME_REQUESTED/);
+  assert.match(cleanup,/RESUMED_AFTER_ABORT/);
+  assert.match(cleanup,/RELEASE_QUEUE_ID/);
+  assert.match(cleanup,/PRIOR_WORKER_VERSION/);
+  assert.match(cleanup,/RUNNER_TEMP\/export-started/);
+  assert.match(cleanup,/RUNNER_TEMP\/deploy-started/);
+  assert.match(cleanup,/queues resume-delivery malipang-jobs/);
+  assert.match(cleanup,/MANUAL_CONTAINMENT_REQUIRED/);
+});
+test("P1-B: 15-minute expired inbound PROCESSING rows must not block a writer drain forever",()=>{
+  const drain=section("Pause delivery and wait for active writers","Fresh private backup and restored migration validation");
+  assert.match(drain,/inbound_events WHERE status='PROCESSING' AND/);
+  assert.match(drain,/last_attempt_at/);
+  assert.match(drain,/-15 minutes/);
+});
+test("P1-C: pre-deploy cancellation surfaces Cron disabled and an approved restore guide",()=>{
+  const cleanup=workflow.slice(at("Failure handling"));
+  assert.match(cleanup,/CRON_FENCE_STILL_ACTIVE/);
+  assert.match(cleanup,/workers\/scripts\/malipang-backend-v5-2\/schedules/);
+  assert.match(docs,/Cron restoration|Cron Restore|คืน Cron/i);
+  assert.match(docs,/runner|Runner/);
+  assert.match(docs,/RESUMED_AFTER_ABORT/);
+});
+
+// Real Bash failure-handler execution against fully isolated, deterministic
+// provider stubs. Never touches Cloudflare, GitHub, D1, R2, or Google.
+function runSyntheticAbort({state="PAUSE_CONFIRMED",paused=true,exportStarted=false,
+  migrationStarted=false,deployStarted=false,workerDrift=false,unknownMigration=false,
+  lostResumeAck=false,wrongOwner=false,r2PutFails=false,cronDisabled=true}={}) {
+  const folder=fs.mkdtempSync(path.join(os.tmpdir(),"malipang-pr250-abort-"));
+  const bin=path.join(folder,"bin"),log=path.join(folder,"calls"),
+    queue=path.join(folder,"queue"),record=path.join(folder,"r2-state");
+  fs.mkdirSync(bin);fs.writeFileSync(log,"");fs.writeFileSync(queue,paused?"1":"0");
+  const original={release:"PR247",run_id:"34567",expected_sha:"a".repeat(40),
+    queue_id:"b9b12fe82e6b402291b5d16d2ce61770",
+    prior_worker_version:"310192aa-8a04-4b61-8a72-4455231b3339",
+    queue_was_active:!wrongOwner,state};
+  fs.writeFileSync(record,JSON.stringify(original));
+  for(const [name,enabled] of [["export-started",exportStarted],
+    ["migration-started",migrationStarted],["deploy-started",deployStarted]]) {
+    if(enabled)fs.writeFileSync(path.join(folder,name),"synthetic");
+  }
+  const npx=[
+    '#!/usr/bin/env node',
+    'const fs=require("fs"),a=process.argv.slice(2);',
+    'fs.appendFileSync(process.env.CALL_LOG,"npx "+a.join(" ")+"\\n");',
+    'if(a[1]==="r2"&&a[2]==="object"){const file=a.find(v=>v.startsWith("--file="))?.slice(7);',
+    'if(a[3]==="get"){fs.copyFileSync(process.env.RECORD,file);process.exit(0);}',
+    'if(a[3]==="put"){if(process.env.R2_PUT_FAIL==="1")process.exit(77);fs.copyFileSync(file,process.env.RECORD);process.exit(0);}}',
+    'if(a[1]==="d1"&&a[2]==="execute"){const name=process.env.UNKNOWN_MIGRATION==="1"?"UNEXPECTED.sql":"0022_stable_claim_diagnostics.sql";',
+    'process.stdout.write(JSON.stringify([{success:true,results:[{name}]}]));process.exit(0);}',
+    'if(a[1]==="queues"&&a[2]==="resume-delivery"){fs.writeFileSync(process.env.QUEUE_STATE,"0");',
+    'process.exit(process.env.LOST_RESUME_ACK==="1"?77:0);}',
+    'if(a[1]==="queues"&&a[2]==="pause-delivery"){fs.writeFileSync(process.env.QUEUE_STATE,"1");process.exit(0);}',
+    'process.exit(81);',
+  ].join("\n");
+  const curl=[
+    '#!/usr/bin/env node',
+    'const fs=require("fs"),url=process.argv.at(-1);',
+    'fs.appendFileSync(process.env.CALL_LOG,"curl "+url+"\\n");',
+    'let result;',
+    'if(url.endsWith("/schedules"))result={schedules:process.env.FAKE_CRON_DISABLED==="1"?[]:[{cron:"*/5 * * * *"}]};',
+    'else if(url.endsWith("/deployments"))result={deployments:[{versions:[{percentage:100,version_id:process.env.DRIFT==="1"?"different-worker":"310192aa-8a04-4b61-8a72-4455231b3339"}]}]};',
+    'else result={queue_name:"malipang-jobs",settings:{delivery_paused:fs.readFileSync(process.env.QUEUE_STATE,"utf8")==="1"}};',
+    'process.stdout.write(JSON.stringify({success:true,result}));',
+  ].join("\n");
+  const jq=[
+    '#!/usr/bin/env node',
+    'const fs=require("fs"),a=process.argv.slice(2),args={};',
+    'for(let i=0;i<a.length-2;i++)if(a[i]==="--arg"){args[a[i+1]]=a[i+2];i+=2;}',
+    'const exp=a.find(x=>x.startsWith(".state ")||x.startsWith(".state=")||x.startsWith(".success")||x.startsWith(".[0].success")||x.startsWith("\\"Queue delivery_paused"));',
+    'const file=a.at(-1),doc=fs.existsSync(file)?JSON.parse(fs.readFileSync(file,"utf8")):{};',
+    'let v=null,pass=true;',
+    'if(exp?.startsWith(".state //"))v=doc.state??"UNKNOWN";',
+    'else if(exp?.startsWith(".state=")){v={...doc,state:exp.match(/\\.state="([A-Z_]+)"/)?.[1]};}',
+    'else if(exp?.includes(".queue_was_active")){v=doc.state==="PAUSE_CONFIRMED"&&doc.release==="PR247"&&doc.queue_was_active===true&&doc.queue_id===args.q&&doc.prior_worker_version===args.prior&&doc.expected_sha===args.sha&&doc.run_id===args.run;pass=v;}',
+    'else if(exp?.includes(".result.deployments")){v=doc.success===true&&doc.result?.deployments?.[0]?.versions?.length===1&&doc.result.deployments[0].versions[0].percentage===100&&doc.result.deployments[0].versions[0].version_id===args.prior;pass=v;}',
+    'else if(exp?.startsWith(".[0].success")){v=doc[0]?.success===true&&[args.old,args.current].includes(doc[0]?.results?.[0]?.name);pass=v;}',
+    'else if(exp?.includes(".result.schedules")){const arr=doc.result?.schedules;',
+    'v=doc.success===true&&Array.isArray(arr)&&(exp.includes("== 0")?arr.length===0:arr.length===1&&arr[0].cron==="*/5 * * * *");pass=v;}',
+    'else if(exp?.includes("delivery_paused | type")){v=doc.success===true&&doc.result.queue_name==="malipang-jobs"&&typeof doc.result.settings.delivery_paused==="boolean";pass=v;}',
+    'else if(exp?.includes("delivery_paused == true")){v=doc.success===true&&doc.result.queue_name==="malipang-jobs"&&doc.result.settings.delivery_paused===true;pass=v;}',
+    'else if(exp?.includes("delivery_paused == false")){v=doc.success===true&&doc.result.queue_name==="malipang-jobs"&&doc.result.settings.delivery_paused===false;pass=v;}',
+    'else if(exp?.startsWith("\\"Queue delivery_paused"))v="Queue delivery_paused readback: "+doc.result.settings.delivery_paused;',
+    'else {v=false;pass=false;}',
+    'process.stdout.write(typeof v==="object"?JSON.stringify(v):String(v));',
+    'process.exit(pass?0:1);',
+  ].join("\n");
+  for(const [name,text] of [["npx",npx],["curl",curl],["jq",jq]]) {
+    fs.writeFileSync(path.join(bin,name),text,{mode:0o700});
+  }
+  try{
+    const proc=spawnSync("bash",["-c",extractStepBash("Failure handling")],{
+      cwd:folder,encoding:"utf8",timeout:18000,
+      env:{...process.env,PATH:bin+":"+process.env.PATH,
+        CALL_LOG:log,QUEUE_STATE:queue,RECORD:record,
+        R2_PUT_FAIL:r2PutFails?"1":"0",DRIFT:workerDrift?"1":"0",
+        UNKNOWN_MIGRATION:unknownMigration?"1":"0",
+        LOST_RESUME_ACK:lostResumeAck?"1":"0",
+        FAKE_CRON_DISABLED:cronDisabled?"1":"0",
+        RUNNER_TEMP:folder,GITHUB_ENV:path.join(folder,"env"),
+        GITHUB_STEP_SUMMARY:path.join(folder,"summary"),
+        GITHUB_RUN_ID:"34567",EXPECTED_SHA:"a".repeat(40),
+        PRIOR_WORKER_VERSION:"310192aa-8a04-4b61-8a72-4455231b3339",
+        PRIOR_MIGRATION:"0022_stable_claim_diagnostics.sql",
+        MIGRATION:"0023_stable_recovery_admission.sql",
+        CLOUDFLARE_ACCOUNT_ID:"synthetic",CLOUDFLARE_API_TOKEN:"synthetic",
+        RELEASE_QUEUE_ID:original.queue_id,
+        RELEASE_INTENT_KEY:"release-control/pr247/SYNTHETIC.json",
+      },
+    });
+    return {proc,calls:fs.readFileSync(log,"utf8"),
+      summary:fs.readFileSync(path.join(folder,"summary"),"utf8"),
+      paused:fs.readFileSync(queue,"utf8")==="1",
+      durable:JSON.parse(fs.readFileSync(record,"utf8"))};
+  }finally{fs.rmSync(folder,{recursive:true,force:true});}
+}
+
+test("FAULT INJECTION: paused Queue with verified PRE-export owner recovers exactly once and persists RESUMED_AFTER_ABORT",()=>{
+  const r=runSyntheticAbort();
+  assert.equal(r.proc.status,0,r.proc.stderr);
+  assert.equal(r.paused,false);
+  assert.equal(r.durable.state,"RESUMED_AFTER_ABORT");
+  assert.match(r.summary,/RESUMED_AFTER_ABORT/);
+  assert.match(r.summary,/CRON_FENCE_STILL_ACTIVE/);
+  assert.equal((r.calls.match(/queues resume-delivery/g)||[]).length,1);
+  assert.ok(r.calls.indexOf("r2 object put")<r.calls.indexOf("queues resume-delivery"));
+});
+test("FAULT INJECTION: lost abort-resume ACK may succeed only after remote Queue readback",()=>{
+  const r=runSyntheticAbort({lostResumeAck:true});
+  assert.equal(r.proc.status,0,r.proc.stderr);
+  assert.equal(r.paused,false);
+  assert.equal(r.durable.state,"RESUMED_AFTER_ABORT");
+  assert.match(r.summary,/ABORT_RESUME_ACK_LOST/);
+  assert.match(r.summary,/RESUMED_AFTER_ABORT/);
+});
+test("FAULT INJECTION: after export, migration or deploy starts NEVER auto-resume",()=>{
+  for(const stage of ["exportStarted","migrationStarted","deployStarted"]){
+    const r=runSyntheticAbort({[stage]:true});
+    assert.equal(r.proc.status,0,stage+": "+r.proc.stderr);
+    assert.equal(r.paused,true,stage);
+    assert.equal(r.durable.state,"PAUSE_CONFIRMED",stage);
+    assert.doesNotMatch(r.calls,/queues resume-delivery/,stage);
+    assert.match(r.summary,/MANUAL_CONTAINMENT_REQUIRED/,stage);
+  }
+});
+test("FAULT INJECTION: ownership, prior-Worker drift, unknown migration or R2 write failure blocks auto-resume",()=>{
+  for(const options of [{wrongOwner:true},{workerDrift:true},{unknownMigration:true},{r2PutFails:true}]){
+    const r=runSyntheticAbort(options);
+    assert.equal(r.proc.status,0,JSON.stringify(options)+": "+r.proc.stderr);
+    assert.equal(r.paused,true,JSON.stringify(options));
+    assert.doesNotMatch(r.calls,/queues resume-delivery/,JSON.stringify(options));
+    assert.match(r.summary,/MANUAL_CONTAINMENT_REQUIRED/,JSON.stringify(options));
+  }
+});
+test("FAULT INJECTION: ambiguous PAUSE_INTENT or already active Queue never auto-resumes",()=>{
+  for(const options of [{state:"PAUSE_INTENT"},{paused:false}]){
+    const r=runSyntheticAbort(options);
+    assert.equal(r.proc.status,0,r.proc.stderr);
+    assert.doesNotMatch(r.calls,/queues resume-delivery/);
+  }
+});
+
+test("P1-B ACTUAL SQL: stale inbound lease is excluded, current or unknown lease still blocks",async()=>{
+  const {DatabaseSync}=await import("node:sqlite");
+  const drain=extractStepBash("Pause delivery and wait for active writers");
+  const found=drain.match(/^\s*sql="(SELECT [^\n]+)"\s*$/m);
+  assert.ok(found,"Actual one-line drain SQL must be present");
+  const sql=found[1];
+  const db=new DatabaseSync(":memory:");
+  try{
+    db.exec("CREATE TABLE sync_jobs(status TEXT,lease_until TEXT);"+
+      "CREATE TABLE staff_config_sync_outbox(status TEXT,updated_at TEXT);"+
+      "CREATE TABLE stable_workbook_claims(state TEXT);"+
+      "CREATE TABLE inbound_events(status TEXT,last_attempt_at TEXT);");
+    db.exec("INSERT INTO inbound_events VALUES('PROCESSING',strftime('%Y-%m-%dT%H:%M:%fZ','now','-20 minutes'));");
+    assert.equal(db.prepare(sql).get().n,0,"An expired 20-minute inbound lease cannot block export forever");
+    db.exec("INSERT INTO inbound_events VALUES('PROCESSING',strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 minutes'));");
+    assert.equal(db.prepare(sql).get().n,1,"A current inbound lease must block export");
+    db.exec("INSERT INTO inbound_events VALUES('PROCESSING',NULL);");
+    assert.equal(db.prepare(sql).get().n,2,"An unknown inbound lease must fail closed");
+  }finally{db.close();}
+});

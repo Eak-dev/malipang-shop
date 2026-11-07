@@ -1,0 +1,182 @@
+name: Production PR247 flags-off release (G4+G5)
+# Code-only release of reviewed PR #247 source with additive migration 0023.
+# P0 recovery gate and Sheets pacing stay OFF and the existing REVIEW claim is
+# retained, so no Sheets writer is admitted. Never changes a claim, epoch,
+# business row, Google Sheet or queue message. Each run needs Owner approval
+# of G4 and G5 recorded in the Production Change issue.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main SHA that contains merged PR #247
+        required: true
+        type: string
+      confirmation:
+        description: Type exactly RELEASE PR247 4bb84a4 MIGRATION 0023 FLAGS OFF KEEP REVIEW
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      # Independently reviewed PR #247 head. The merged main SHA is an input;
+      # its runtime source must be byte-identical to this reviewed tree.
+      REVIEWED_SOURCE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74
+      REVIEWED_PR_REF: refs/pull/247/head
+      PRIOR_MIGRATION: 0022_stable_claim_diagnostics.sql
+      MIGRATION: 0023_stable_recovery_admission.sql
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Validate exact release and reviewed runtime source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = 'RELEASE PR247 4bb84a4 MIGRATION 0023 FLAGS OFF KEEP REVIEW'
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git fetch --no-tags origin "+$REVIEWED_PR_REF:refs/review/pr247"
+          test "$(git rev-parse refs/review/pr247)" = "$REVIEWED_SOURCE_SHA"
+          # Fails closed until PR #247 is merged unchanged into main.
+          git diff --quiet "$REVIEWED_SOURCE_SHA" HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json
+          test "$(ls migrations | awk -v p="$PRIOR_MIGRATION" '$0>p')" = "$MIGRATION"
+          node -e 'const v=JSON.parse(require("fs").readFileSync("wrangler.jsonc","utf8")).vars;if(v.STABLE_PHASE1_ENABLED!=="true")process.exit(1);for(const k of ["STABLE_RECOVERY_GATE_ENABLED","STABLE_SHEETS_PACING_ENABLED","STABLE_SHEETS_READ_BUDGET_PER_MINUTE"])if(k in v){console.error("P0 flag must stay absent: "+k);process.exit(1);}'
+          test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN" && test -n "$MALIPANG_ADMIN_TOKEN" && test -n "$MALIPANG_WORKER_URL"
+          npm run check > "$RUNNER_TEMP/check.log" 2>&1 || { tail -100 "$RUNNER_TEMP/check.log"; exit 1; }
+          npx wrangler deploy --dry-run
+      - name: Read-only Production preconditions
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > "$RUNNER_TEMP/migration.json"
+          last="$(jq -r '.[0].results[0].name' "$RUNNER_TEMP/migration.json")"
+          case "$last" in
+            "$PRIOR_MIGRATION") echo 'MIGRATION_APPLIED=false' >> "$GITHUB_ENV";;
+            "$MIGRATION") echo 'MIGRATION_APPLIED=true' >> "$GITHUB_ENV";;
+            *) echo "Unexpected last applied migration: $last" >&2; exit 1;;
+          esac
+          sql="SELECT (SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') review,(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') held,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') in_flight,(SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') completed,(SELECT count(*) FROM sync_jobs WHERE status='PENDING') pending,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING') processing,(SELECT count(*) FROM failed_jobs WHERE status='OPEN') open_failed"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/before.json"
+          # Code-only release keeps the one reviewed REVIEW claim as the writer fence.
+          jq -e '.[0].success == true and .[0].results[0].review == 1 and .[0].results[0].held == 0 and .[0].results[0].in_flight == 0' "$RUNNER_TEMP/before.json" >/dev/null
+          echo "COMPLETED_BEFORE=$(jq -r '.[0].results[0].completed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"
+          echo "OPEN_FAILED_BEFORE=$(jq -r '.[0].results[0].open_failed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"
+          { echo '### Before (counts only)'; echo '```json'; jq -c '.[0].results[0]' "$RUNNER_TEMP/before.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Pause delivery and wait for active writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues pause-delivery malipang-jobs
+          touch "$RUNNER_TEMP/delivery-paused"
+          sleep 30
+          sql="SELECT (SELECT count(*) FROM sync_jobs WHERE status='PROCESSING' AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))+(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING' AND updated_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-15 minutes'))+(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') n"
+          for i in $(seq 1 24); do
+            npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/drain.json"
+            if jq -e '.[0].success == true and .[0].results[0].n == 0' "$RUNNER_TEMP/drain.json" >/dev/null; then exit 0; fi
+            sleep 10
+          done
+          echo 'Active writers did not drain.' >&2
+          exit 1
+      # The export runs only after delivery is paused: an export during active
+      # consumers caused D1_ERROR "long-running export" job failures before.
+      - name: Fresh private backup and restored migration validation
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          sql="$RUNNER_TEMP/pre-release.sql"
+          gz="$RUNNER_TEMP/pre-release.sql.gz"
+          verify="$RUNNER_TEMP/pre-release-download.sql.gz"
+          key="d1/pr247-flags-off-release/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -c "$sql" > "$gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$verify" --remote
+          gzip -t "$verify"
+          test "$(sha256sum "$gz" | cut -d ' ' -f 1)" = "$(sha256sum "$verify" | cut -d ' ' -f 1)"
+          db="$RUNNER_TEMP/restored.sqlite"
+          gzip -dc "$verify" | sqlite3 -cmd 'PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;' "$db" > /dev/null
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+          counts="SELECT (SELECT count(*) FROM expense_events)||','||(SELECT count(*) FROM sync_jobs)||','||(SELECT count(*) FROM stable_projection_writes)||','||(SELECT count(*) FROM stable_workbook_claims)||','||(SELECT group_concat(state) FROM stable_workbook_claims);"
+          before="$(sqlite3 "$db" "$counts")"
+          if [ "$MIGRATION_APPLIED" = false ]; then sqlite3 "$db" < "migrations/$MIGRATION"; fi
+          test "$(sqlite3 "$db" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN ('stable_recovery_epochs','stable_recovery_operations','stable_sheet_pacing','stable_sheet_busy_backoffs')")" = 4
+          test "$before" = "$(sqlite3 "$db" "$counts")"
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+          echo "Backup verified: malipang-private-backups/$key" >> "$GITHUB_STEP_SUMMARY"
+      - name: Apply only additive migration 0023
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$MIGRATION_APPLIED" = false ]; then printf 'y\n' | npx wrangler d1 migrations apply malipang-v5-2 --remote; fi
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > "$RUNNER_TEMP/migration-after.json"
+          test "$(jq -r '.[0].results[0].name' "$RUNNER_TEMP/migration-after.json")" = "$MIGRATION"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT count(*) n FROM stable_recovery_epochs" > "$RUNNER_TEMP/epochs.json"
+          jq -e '.[0].success == true and .[0].results[0].n == 0' "$RUNNER_TEMP/epochs.json" >/dev/null
+      - name: Deploy exact release with P0 flags OFF
+        shell: bash
+        run: |
+          set -euo pipefail
+          touch "$RUNNER_TEMP/deploy-started"
+          npx wrangler deploy
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          for i in $(seq 1 12); do
+            if curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/status" | jq -e '.ok == true and .claim.state == "REVIEW" and .recoveryGate.mode == "DISABLED" and .sheetPacing.mode == "DISABLED" and (.inFlightProjections | type) == "number"' >/dev/null; then exit 0; fi
+            sleep 5
+          done
+          echo 'New status fields, retained REVIEW or disabled P0 modes were not observed.' >&2
+          exit 1
+      - name: Resume delivery and prove the release is inert
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues resume-delivery malipang-jobs
+          rm -f "$RUNNER_TEMP/delivery-paused"
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          sleep 120
+          sql="SELECT (SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') review,(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') held,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') in_flight,(SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') completed,(SELECT count(*) FROM sync_jobs WHERE status='PENDING') pending,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING') processing,(SELECT count(*) FROM failed_jobs WHERE status='OPEN') open_failed"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/after.json"
+          { echo '### After (counts only)'; echo '```json'; jq -c '.[0].results[0]' "$RUNNER_TEMP/after.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          # With REVIEW retained nothing may be written to Sheets or newly failed.
+          jq -e --argjson c "$COMPLETED_BEFORE" --argjson f "$OPEN_FAILED_BEFORE" '.[0].success == true and .[0].results[0].review == 1 and .[0].results[0].held == 0 and .[0].results[0].in_flight == 0 and .[0].results[0].completed == $c and .[0].results[0].open_failed <= $f' "$RUNNER_TEMP/after.json" >/dev/null
+          echo 'Release active with REVIEW retained; no Sheets writer admitted. G6a/G6b need separate Owner approval.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Failure handling
+        if: failure()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -f "$RUNNER_TEMP/delivery-paused" ] && [ ! -f "$RUNNER_TEMP/deploy-started" ]; then
+            # The previous Worker is still serving and 0023 is additive, so
+            # LINE intake is restored immediately.
+            npx wrangler queues resume-delivery malipang-jobs
+            echo 'Failed before deployment: previous Worker still active; delivery resumed.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$RUNNER_TEMP/delivery-paused" ]; then
+            echo 'Failed during deployment: delivery remains PAUSED. Inspect /health and /admin/stable-sync/status; roll back with `npx wrangler rollback` while REVIEW is retained, then resume delivery.' >> "$GITHUB_STEP_SUMMARY"
+          elif [ -f "$RUNNER_TEMP/deploy-started" ]; then
+            echo 'Failed after delivery resumed: the new Worker is active. Inspect the counts; while REVIEW is retained `npx wrangler rollback` is safe.' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'Failed before pausing delivery: no Production change.' >> "$GITHUB_STEP_SUMMARY"
+          fi

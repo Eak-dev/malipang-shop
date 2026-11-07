@@ -1,5 +1,7 @@
 import { batchWriteValues, getSheetValues } from "./client";
 import { stableWorkbookInReview } from "./stable-workbook-claim";
+import {recoveryGateConfigured,activeStableRecoveryTarget} from './stable-recovery-admission';
+import {stablePacingConfigured,stablePacingValid} from './stable-sheet-pacing';
 import type { Env, StaffConfigSyncJob } from "../types";
 export type { StaffConfigSyncJob } from "../types";
 
@@ -230,7 +232,11 @@ export async function processStaffConfigSyncJob(env: Env, job: StaffConfigSyncJo
 export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs = Date.now()): Promise<number> {
   if (env.SHEETS_SYNC_ENABLED !== "true") return 0;
   // A retained review claim blocks this writer too; the outbox keeps the job.
-  if (await stableWorkbookInReview(env)) return 0;
+  if (await stableWorkbookInReview(env) || stablePacingConfigured(env) && !stablePacingValid(env)) return 0;
+  const target=recoveryGateConfigured(env)?await activeStableRecoveryTarget(env):null;
+  if(recoveryGateConfigured(env)&&target?.entityType!=='STAFF_CONFIG_SYNC')return 0;
+  const targetWhere=target?' AND employee_id=? AND version=?':'';
+  const targetArgs=target?[target.entityKey,target.entityVersion]:[];
   const now = new Date(nowMs).toISOString();
   const staleBefore = new Date(nowMs - LEASE_MS).toISOString();
 
@@ -240,21 +246,21 @@ export async function recoverPendingStaffConfigSyncs(env: Env, limit = 40, nowMs
   await env.DB.prepare(
     `UPDATE staff_config_sync_outbox
      SET status='FAILED',next_attempt_at=?,last_error='PROCESSING_LEASE_EXPIRED',updated_at=?
-     WHERE status='PROCESSING' AND updated_at<=?`,
+     WHERE status='PROCESSING' AND updated_at<=?${targetWhere}`,
   )
-    .bind(now, now, staleBefore)
+    .bind(now, now, staleBefore,...targetArgs)
     .run();
 
   const rows = await env.DB.prepare(
     `SELECT employee_id,version,trace_id
      FROM staff_config_sync_outbox
-     WHERE status IN ('PENDING','FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)
+     WHERE status IN ('PENDING','FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)${targetWhere}
      ORDER BY updated_at ASC
      LIMIT ?`,
   )
-    .bind(now, Math.max(1, Math.min(100, Math.floor(limit))))
+    .bind(now,...targetArgs, target?1:Math.max(1, Math.min(100, Math.floor(limit))))
     .all<{ employee_id: string; version: number; trace_id: string }>();
-  const jobs: StaffConfigSyncJob[] = (rows.results || []).map((row) => ({
+  const jobs: StaffConfigSyncJob[] = (rows.results || []).slice(0,stablePacingConfigured(env)?1:limit).map((row) => ({
     kind: "STAFF_CONFIG_SYNC",
     employeeId: String(row.employee_id),
     version: Number(row.version),

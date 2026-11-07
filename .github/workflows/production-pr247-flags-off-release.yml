@@ -300,6 +300,20 @@ jobs:
           # GitHub always() can run during cancellation while runner is alive,
           # NOT reliably after force-cancel, timeout kill or lost runner.
           # The private R2 intent remains independent of this runner.
+          # A previously approved Cron fence belongs to an external operator.
+          # Report its state even if the Queue abort is recovered automatically.
+          if curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-final-readback.json"; then
+            if jq -e '.success == true and (.result.schedules | type) == "array" and (.result.schedules | length) == 0' "$RUNNER_TEMP/cron-final-readback.json" >/dev/null; then
+              echo 'CRON_FENCE_STILL_ACTIVE: Cron disabled; Owner-authorized operator must restore */5 and verify.' >> "$GITHUB_STEP_SUMMARY"
+            elif jq -e '.success == true and [.result.schedules[].cron] == ["*/5 * * * *"]' "$RUNNER_TEMP/cron-final-readback.json" >/dev/null; then
+              echo 'CRON_RESTORED_VERIFIED: scheduled maintenance has the canonical trigger.' >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo 'CRON_STATE_UNKNOWN: MANUAL_CONTAINMENT_REQUIRED; verify schedule before normal operation.' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          else
+            echo 'CRON_READBACK_FAILED: MANUAL_CONTAINMENT_REQUIRED; verify/restore Cron.' >> "$GITHUB_STEP_SUMMARY"
+          fi
           if [ -z "$RELEASE_INTENT_KEY" ]; then
             echo 'No release intent recorded: no Queue ownership acquired.' >> "$GITHUB_STEP_SUMMARY"
             exit 0
@@ -317,20 +331,6 @@ jobs:
             else
               echo 'QUEUE_STATE_UNVERIFIED: MANUAL_CONTAINMENT_REQUIRED' >> "$GITHUB_STEP_SUMMARY"
             fi
-          fi
-          # A previously approved Cron fence belongs to an external operator.
-          # Report its state even if the Queue abort is recovered automatically.
-          if curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-final-readback.json"; then
-            if jq -e '.success == true and (.result.schedules | type) == "array" and (.result.schedules | length) == 0' "$RUNNER_TEMP/cron-final-readback.json" >/dev/null; then
-              echo 'CRON_FENCE_STILL_ACTIVE: Cron disabled; Owner-authorized operator must restore */5 and verify.' >> "$GITHUB_STEP_SUMMARY"
-            elif jq -e '.success == true and [.result.schedules[].cron] == ["*/5 * * * *"]' "$RUNNER_TEMP/cron-final-readback.json" >/dev/null; then
-              echo 'CRON_RESTORED_VERIFIED: scheduled maintenance has the canonical trigger.' >> "$GITHUB_STEP_SUMMARY"
-            else
-              echo 'CRON_STATE_UNKNOWN: MANUAL_CONTAINMENT_REQUIRED; verify schedule before normal operation.' >> "$GITHUB_STEP_SUMMARY"
-            fi
-          else
-            echo 'CRON_READBACK_FAILED: MANUAL_CONTAINMENT_REQUIRED; verify/restore Cron.' >> "$GITHUB_STEP_SUMMARY"
           fi
           if [ "$state" = VERIFIED_COMPLETED ]; then
             echo 'D1 code-only release sentinels verified; no automatic Queue action needed.' >> "$GITHUB_STEP_SUMMARY"

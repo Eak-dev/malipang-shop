@@ -375,7 +375,8 @@ test("P1-C: pre-deploy cancellation surfaces Cron disabled and an approved resto
 // provider stubs. Never touches Cloudflare, GitHub, D1, R2, or Google.
 function runSyntheticAbort({state="PAUSE_CONFIRMED",paused=true,exportStarted=false,
   migrationStarted=false,deployStarted=false,workerDrift=false,unknownMigration=false,
-  lostResumeAck=false,wrongOwner=false,r2PutFails=false,cronDisabled=true}={}) {
+  lostResumeAck=false,wrongOwner=false,r2PutFails=false,cronDisabled=true,
+  noIntentKey=false,r2GetFails=false}={}) {
   const folder=fs.mkdtempSync(path.join(os.tmpdir(),"malipang-pr250-abort-"));
   const bin=path.join(folder,"bin"),log=path.join(folder,"calls"),
     queue=path.join(folder,"queue"),record=path.join(folder,"r2-state");
@@ -394,7 +395,7 @@ function runSyntheticAbort({state="PAUSE_CONFIRMED",paused=true,exportStarted=fa
     'const fs=require("fs"),a=process.argv.slice(2);',
     'fs.appendFileSync(process.env.CALL_LOG,"npx "+a.join(" ")+"\\n");',
     'if(a[1]==="r2"&&a[2]==="object"){const file=a.find(v=>v.startsWith("--file="))?.slice(7);',
-    'if(a[3]==="get"){fs.copyFileSync(process.env.RECORD,file);process.exit(0);}',
+    'if(a[3]==="get"){if(process.env.R2_GET_FAIL==="1")process.exit(78);fs.copyFileSync(process.env.RECORD,file);process.exit(0);}',
     'if(a[3]==="put"){if(process.env.R2_PUT_FAIL==="1")process.exit(77);fs.copyFileSync(file,process.env.RECORD);process.exit(0);}}',
     'if(a[1]==="d1"&&a[2]==="execute"){const name=process.env.UNKNOWN_MIGRATION==="1"?"UNEXPECTED.sql":"0022_stable_claim_diagnostics.sql";',
     'process.stdout.write(JSON.stringify([{success:true,results:[{name}]}]));process.exit(0);}',
@@ -443,7 +444,7 @@ function runSyntheticAbort({state="PAUSE_CONFIRMED",paused=true,exportStarted=fa
       cwd:folder,encoding:"utf8",timeout:18000,
       env:{...process.env,PATH:bin+":"+process.env.PATH,
         CALL_LOG:log,QUEUE_STATE:queue,RECORD:record,
-        R2_PUT_FAIL:r2PutFails?"1":"0",DRIFT:workerDrift?"1":"0",
+        R2_PUT_FAIL:r2PutFails?"1":"0",R2_GET_FAIL:r2GetFails?"1":"0",DRIFT:workerDrift?"1":"0",
         UNKNOWN_MIGRATION:unknownMigration?"1":"0",
         LOST_RESUME_ACK:lostResumeAck?"1":"0",
         FAKE_CRON_DISABLED:cronDisabled?"1":"0",
@@ -455,7 +456,7 @@ function runSyntheticAbort({state="PAUSE_CONFIRMED",paused=true,exportStarted=fa
         MIGRATION:"0023_stable_recovery_admission.sql",
         CLOUDFLARE_ACCOUNT_ID:"synthetic",CLOUDFLARE_API_TOKEN:"synthetic",
         RELEASE_QUEUE_ID:original.queue_id,
-        RELEASE_INTENT_KEY:"release-control/pr247/SYNTHETIC.json",
+        RELEASE_INTENT_KEY:noIntentKey?"":"release-control/pr247/SYNTHETIC.json",
       },
     });
     return {proc,calls:fs.readFileSync(log,"utf8"),
@@ -529,4 +530,19 @@ test("P1-B ACTUAL SQL: stale inbound lease is excluded, current or unknown lease
     db.exec("INSERT INTO inbound_events VALUES('PROCESSING',NULL);");
     assert.equal(db.prepare(sql).get().n,2,"An unknown inbound lease must fail closed");
   }finally{db.close();}
+});
+
+test("P1-C FAULT INJECTION: disabled Cron must be reported BEFORE the missing R2 intent exit",()=>{
+  const r=runSyntheticAbort({noIntentKey:true,cronDisabled:true});
+  assert.equal(r.proc.status,0,r.proc.stderr);
+  assert.match(r.summary,/CRON_FENCE_STILL_ACTIVE/);
+  assert.doesNotMatch(r.calls,/queues resume-delivery/);
+  assert.match(r.calls,/\/schedules/);
+});
+test("P1-C FAULT INJECTION: disabled Cron must be reported even if R2 state cannot be read",()=>{
+  const r=runSyntheticAbort({r2GetFails:true,cronDisabled:true});
+  assert.equal(r.proc.status,0,r.proc.stderr);
+  assert.match(r.summary,/CRON_FENCE_STILL_ACTIVE/);
+  assert.match(r.summary,/MANUAL_CONTAINMENT_REQUIRED/);
+  assert.doesNotMatch(r.calls,/queues resume-delivery/);
 });

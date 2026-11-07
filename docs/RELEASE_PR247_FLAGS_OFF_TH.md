@@ -24,7 +24,7 @@ Owner must also authorize and provide evidence for a bounded **external writer /
 3. ต้องตรวจ HTTP Admin writers/Apps Script/มนุษย์แก้ Sheets ไม่ให้ชนกับ D1 export และต้องเตรียมวิธีคืนค่าเดิมของ Cron ที่ทดสอบได้จริง; การ Pause Queue อย่างเดียวไม่ได้หยุด Writer เหล่านี้
 4. ถ้า fail **ก่อนเริ่ม D1 Export** และ R2 ระบุ `PAUSE_CONFIRMED` จากการ Pause ที่ workflow เป็นเจ้าของเอง, Worker/D1/Queue ยังตรง และไม่มี `export-started`, `migration-started`, `deploy-started`, Failure Handler อาจทำ **bounded resume** ให้ Queue จากนั้นตรวจ readback และบันทึก `RESUMED_AFTER_ABORT` ใน R2 (ต้องรวมสิทธินี้ใน G4+G5 Owner Approval); หากผลกำกวมให้ STOP/Manual
 5. ถ้า D1 Export เริ่มไปแล้ว, Migration/Deploy เริ่มแล้ว, CLI ACK สูญหาย หรือ Runner ตาย: ห้าม auto-resume เพราะ remote state อาจยังเปลี่ยนอยู่ ให้ Incident Operator อ่าน R2/Worker/Queue/D1/Google Notice และเลือกกู้คืนแบบเจาะจง
-6. Fail ก่อน Deploy อาจทำให้ Cron ยังถูกปิด แม้ Queue กลับมาทำงานแล้ว: Failure Handler ต้องแสดง `CRON_FENCE_STILL_ACTIVE` ชัดเจน; **Owner-authorized Operator** คืน `*/5 * * * *` จาก Config เดิม จากนั้นอ่าน schedules ซ้ำจนตรง และตรวจ Payroll/LINE recovery/metrics ว่าทำงานต่อ
+6. Fail ก่อน Deploy อาจทำให้ Cron ยังถูกปิด แม้ Queue กลับมาทำงานแล้ว: Failure Handler ต้องตรวจและแสดง `CRON_FENCE_STILL_ACTIVE` **ก่อนตรวจ Release Intent เสมอ แม้ Intent ยังไม่ถูกสร้างหรืออ่าน R2 ไม่ได้**; **Owner-authorized Operator** คืน `*/5 * * * *` จาก Config เดิม จากนั้นอ่าน schedules ซ้ำจนตรง และตรวจ Payroll/LINE recovery/metrics ว่าทำงานต่อ
 7. ถ้ากู้คืน Cron หรือ Queue ไม่ได้ใน Maintenance Window ให้ STOP, แจ้ง Owner และจัดการความเสี่ยงจาก retention/LINE backlog โดยไม่ลบ/Replay หรือแก้ธุรกรรมใด ๆ เอง; retention ของ Queue ต้องอ่านค่าจริงก่อน Release ห้ามสมมติว่ามี 24 ชั่วโมงหรือ 4 วันเสมอ
 
 

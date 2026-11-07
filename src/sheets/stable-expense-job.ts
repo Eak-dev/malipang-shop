@@ -55,5 +55,5 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    .bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,source.digest,book,itemKeys,job.entityVersion,source.digest,projections.details.length).run();
   if(completed.success!==true||Number(completed.meta?.changes)!==1)throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
   return 'COMPLETED';
- });
+ },job);
 }

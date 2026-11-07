@@ -32,7 +32,20 @@
 curl -X POST 'https://<worker>/admin/retry-sync' -H 'Authorization: Bearer <ADMIN_TOKEN>'
 ```
 
-คำสั่งนี้เป็น **manual recovery** และสามารถ retry งาน Sheets ที่เข้า DLQ แล้วได้หนึ่งรอบ; Cron ปกติจะไม่หยิบงาน DLQ เดิมกลับมาวนหรือส่งแจ้งเตือนซ้ำทุก 5 นาที. ถ้ายังล้ม ให้ตรวจ `failed_jobs.error` ก่อนเรียกซ้ำ.
+คำสั่งนี้เป็น **manual recovery** สำหรับงาน Sheets ที่ยังค้าง แต่ **ค่าเริ่มต้นจะไม่รวม Terminal DLQ** เพื่อหลีกเลี่ยงการ re-drive งานที่ต้องตรวจยอดก่อน (การเปลี่ยน Default นี้ได้รับอนุมัติจาก Owner สำหรับ PR #247 ใน DEV_OWNED) ส่วน Cron ปกติยังไม่หยิบงาน Terminal DLQ กลับมาส่งอัตโนมัติ
+
+หากจำเป็นต้องกู้ **Terminal DLQ** หลังตรวจ `sync_jobs`, `failed_jobs`, D1 business status, journal และ stable ID ใน Sheets ว่าไม่ซ้ำแล้ว ให้ใช้การเรียกแบบ **explicit opt-in** ที่รักษาความสามารถเดิมไว้:
+
+```bash
+curl -X POST 'https://<worker>/admin/retry-sync' \
+  -H 'Authorization: Bearer <ADMIN_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{"includeTerminalDlq":true}'
+```
+
+**คำเตือน:** `includeTerminalDlq:true` อนุญาตให้พิจารณา re-drive Terminal DLQ ที่เข้าเงื่อนไขทั้งหมดของ Recovery Scheduler ไม่ใช่การเลือกเฉพาะหนึ่ง Expense ID หรือการพิสูจน์ว่าทุกรายการปลอดภัย ควรใช้เฉพาะเมื่อ Owner อนุมัติการกู้ Production แยก โดยตรวจหลักฐานและยืนยันผลหลังทำเสมอ ห้ามใช้เพียงเพราะระบบรายงานไม่ตรง หากยังล้มให้ตรวจ `failed_jobs.error` ก่อนเรียกซ้ำ
+
+หากมี `REVIEW` workbook claim หรือ Recovery Gate ที่ยังเปิดอยู่ Endpoint จะยังไม่ส่งงานออกตาม Safety Gate ของระบบ.
 
 หาก D1 มีข้อมูลแต่แถวใน Sheets หายหรือ Sync Job เดิมขึ้น COMPLETED ให้สั่ง Backfill ช่วงวันที่:
 

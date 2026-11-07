@@ -24,8 +24,8 @@ export const sheetsReadRetryTiming={wait:(ms:number)=>new Promise<void>(resolve=
 /** A read is idempotent, so one paced retry of a rate-limited or transient
  * response is safe. Mutations never pass through here. Google refills the
  * per-minute read quota continuously; without Retry-After wait 20 seconds. */
-export async function retryIdempotentRead(read:()=>Promise<Response>):Promise<Response>{
-  const first=await read();if(first.status!==429&&(first.status<500||first.status>599))return first;
+export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClaimWait=true):Promise<Response>{
+  const first=await read();if(!allowInClaimWait||first.status!==429&&(first.status<500||first.status>599))return first;
   const retryAfter=parseRetryAfterSeconds(first.headers.get("Retry-After"));try{await first.body?.cancel();}catch{}
   await sheetsReadRetryTiming.wait(first.status===429?Math.min(30,Math.max(1,retryAfter??20))*1000:2000);
   return read();
@@ -39,7 +39,7 @@ async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,b
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
   const send=()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);
   const idempotentRead=!mutation&&(init.method||"GET")==="GET";
-  let res:Response;try{res=idempotentRead?await retryIdempotentRead(send):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
+  let res:Response;try{res=idempotentRead?await retryIdempotentRead(send,env.STABLE_SHEETS_PACING_ENABLED!=='true'):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
   if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}

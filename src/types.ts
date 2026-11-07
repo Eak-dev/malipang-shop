@@ -17,6 +17,11 @@ export interface Env {
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
   STABLE_PHASE1_ENABLED?: string;
+  /** Optional, default-off durable one-workbook-operation recovery canary. */
+  STABLE_RECOVERY_GATE_ENABLED?: string;
+  /** Opt-in D1-serialized pacing for Google Sheets projection operations. */
+  STABLE_SHEETS_PACING_ENABLED?: string;
+  STABLE_SHEETS_READ_BUDGET_PER_MINUTE?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;

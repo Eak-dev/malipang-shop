@@ -83,20 +83,75 @@ jobs:
           echo "COMPLETED_BEFORE=$(jq -r '.[0].results[0].completed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"
           echo "OPEN_FAILED_BEFORE=$(jq -r '.[0].results[0].open_failed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"
           { echo '### Before (counts only)'; echo '```json'; jq -c '.[0].results[0]' "$RUNNER_TEMP/before.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify Cron writer fence and Queue ownership; record durable pause intent
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This step DOES NOT disable Cron. A separate Owner-approved, verified
+          # Production Cron fence must exist before G4/G5 may be dispatched.
+          cf_get() { curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4$1"; }
+          cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-before.json"
+          if ! jq -e '.success == true and (.result.schedules | type) == "array" and (.result.schedules | length) == 0' "$RUNNER_TEMP/cron-before.json" >/dev/null; then
+            echo 'CRON_FENCE_NOT_VERIFIED: active scheduled maintenance can write D1 during export. STOP; obtain separate Owner-controlled Cron fence.' >&2
+            exit 1
+          fi
+          cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" > "$RUNNER_TEMP/queue-before.json"
+          if ! jq -e '.success == true and ([.result[] | select(.queue_name == "malipang-jobs")] | length) == 1 and ([.result[] | select(.queue_name == "malipang-jobs")][0].settings.delivery_paused == false)' "$RUNNER_TEMP/queue-before.json" >/dev/null; then
+            echo 'QUEUE_NOT_ACTIVE_OR_OWNERSHIP_UNKNOWN: will not resume a Queue paused by another operator.' >&2
+            exit 1
+          fi
+          queue_id="$(jq -r '[.result[] | select(.queue_name == "malipang-jobs")][0].queue_id' "$RUNNER_TEMP/queue-before.json")"
+          [[ "$queue_id" =~ ^[a-f0-9]{32}$ ]] || { echo 'QUEUE_ID_UNVERIFIED' >&2; exit 1; }
+          cf_get "/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/deployments-before.json"
+          jq -e '.success == true and (.result.deployments[0].versions | length) == 1 and (.result.deployments[0].versions[0].percentage == 100)' "$RUNNER_TEMP/deployments-before.json" >/dev/null
+          prior="$(jq -r '.result.deployments[0].versions[0].version_id' "$RUNNER_TEMP/deployments-before.json")"
+          test "$prior" = '310192aa-8a04-4b61-8a72-4455231b3339' || { echo 'PRIOR_WORKER_VERSION_DRIFT: require new Owner review.' >&2; exit 1; }
+          key="release-control/pr247/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          echo "RELEASE_QUEUE_ID=$queue_id" >> "$GITHUB_ENV"
+          echo "RELEASE_INTENT_KEY=$key" >> "$GITHUB_ENV"
+          echo "PRIOR_WORKER_VERSION=$prior" >> "$GITHUB_ENV"
+          umask 077
+          jq -n --arg run "$GITHUB_RUN_ID" --arg sha "$EXPECTED_SHA" --arg q "$queue_id" --arg prior "$prior" \
+            '{release:"PR247",run_id:$run,expected_sha:$sha,queue_id:$q,prior_worker_version:$prior,queue_was_active:true,state:"PAUSE_INTENT"}' \
+            > "$RUNNER_TEMP/pr247-release-state.json"
+          # The intent is durable BEFORE any remote pause. It survives runner death,
+          # cancellation, a lost pause ACK and local scratch cleanup.
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$RUNNER_TEMP/pr247-intent-readback.json" --remote
+          cmp -s "$RUNNER_TEMP/pr247-release-state.json" "$RUNNER_TEMP/pr247-intent-readback.json" || { echo 'PAUSE_INTENT_READBACK_FAILED' >&2; exit 1; }
+          echo "Release pause intent preserved in private R2: $key" >> "$GITHUB_STEP_SUMMARY"
       - name: Pause delivery and wait for active writers
         shell: bash
         run: |
           set -euo pipefail
+          # A durable PAUSE_INTENT is already in private R2. If the CLI ACK is
+          # lost after remote success, fail closed and require manual state review.
           npx wrangler queues pause-delivery malipang-jobs
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-paused.json"
+          jq -e '.success == true and .result.queue_name == "malipang-jobs" and .result.settings.delivery_paused == true' "$RUNNER_TEMP/queue-paused.json" >/dev/null || { echo 'PAUSE_ACK_OR_READBACK_AMBIGUOUS' >&2; exit 1; }
+          jq '.state="PAUSE_CONFIRMED"' "$RUNNER_TEMP/pr247-release-state.json" > "$RUNNER_TEMP/pr247-state-next.json"
+          mv "$RUNNER_TEMP/pr247-state-next.json" "$RUNNER_TEMP/pr247-release-state.json"
+          npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
           touch "$RUNNER_TEMP/delivery-paused"
-          sleep 30
-          sql="SELECT (SELECT count(*) FROM sync_jobs WHERE status='PROCESSING' AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))+(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING' AND updated_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-15 minutes'))+(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') n"
-          for i in $(seq 1 24); do
+          # A paused Queue does not cancel in-flight LINE events nor scheduled Cron.
+          # Cron must have been independently stopped; now require consecutive
+          # all-known-writer snapshots to be quiet. Admin/external writers require
+          # their own separately approved operational freeze and audit evidence.
+          sleep 45
+          sql="SELECT (SELECT count(*) FROM sync_jobs WHERE status='PROCESSING' AND lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now'))+(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING' AND updated_at>strftime('%Y-%m-%dT%H:%M:%fZ','now','-15 minutes'))+(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD')+(SELECT count(*) FROM inbound_events WHERE status='PROCESSING') n"
+          quiet=0
+          for i in $(seq 1 16); do
             npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/drain.json"
-            if jq -e '.[0].success == true and .[0].results[0].n == 0' "$RUNNER_TEMP/drain.json" >/dev/null; then exit 0; fi
-            sleep 10
+            if jq -e '.[0].success == true and .[0].results[0].n == 0' "$RUNNER_TEMP/drain.json" >/dev/null; then
+              quiet=$((quiet + 1))
+              if [ "$quiet" -ge 2 ]; then echo 'CONSECUTIVE_QUIET_CHECKS=2' >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+            else
+              quiet=0
+            fi
+            sleep 15
           done
-          echo 'Active writers did not drain.' >&2
+          echo 'D1_WRITERS_NOT_DRAINED: no export or remote migration permitted.' >&2
           exit 1
       # The export runs only after delivery is paused: an export during active
       # consumers caused D1_ERROR "long-running export" job failures before.
@@ -104,6 +159,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Re-read remote state immediately before export. No trust in an old
+          # CLI return code, local marker or previous Cron/Queue state.
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-pre-export.json"
+          jq -e '.success == true and (.result.schedules | length) == 0' "$RUNNER_TEMP/cron-pre-export.json" >/dev/null || { echo 'CRON_FENCE_LOST: export forbidden.' >&2; exit 1; }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-pre-export.json"
+          jq -e '.success == true and .result.settings.delivery_paused == true' "$RUNNER_TEMP/queue-pre-export.json" >/dev/null || { echo 'QUEUE_FENCE_LOST: export forbidden.' >&2; exit 1; }
           umask 077
           sql="$RUNNER_TEMP/pre-release.sql"
           gz="$RUNNER_TEMP/pre-release.sql.gz"
@@ -131,6 +194,13 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Fence must persist between export and schema migration.
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-pre-migration.json"
+          jq -e '.success == true and (.result.schedules | length) == 0' "$RUNNER_TEMP/cron-pre-migration.json" >/dev/null || { echo 'CRON_FENCE_LOST_BEFORE_MIGRATION' >&2; exit 1; }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-pre-migration.json"
+          jq -e '.success == true and .result.settings.delivery_paused == true' "$RUNNER_TEMP/queue-pre-migration.json" >/dev/null || { echo 'QUEUE_FENCE_LOST_BEFORE_MIGRATION' >&2; exit 1; }
           if [ "$MIGRATION_APPLIED" = false ]; then printf 'y\n' | npx wrangler d1 migrations apply malipang-v5-2 --remote; fi
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1" > "$RUNNER_TEMP/migration-after.json"
           test "$(jq -r '.[0].results[0].name' "$RUNNER_TEMP/migration-after.json")" = "$MIGRATION"
@@ -142,6 +212,20 @@ jobs:
           set -euo pipefail
           touch "$RUNNER_TEMP/deploy-started"
           npx wrangler deploy
+          # Capture the exact deployed Worker version for deterministic rollback
+          # (do not assume the previous version by order or use blind rollback).
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/deployments-after.json"
+          jq -e '.success == true and (.result.deployments[0].versions | length) == 1 and (.result.deployments[0].versions[0].percentage == 100)' "$RUNNER_TEMP/deployments-after.json" >/dev/null
+          deployed="$(jq -r '.result.deployments[0].versions[0].version_id' "$RUNNER_TEMP/deployments-after.json")"
+          test -n "$deployed" && test "$deployed" != "$PRIOR_WORKER_VERSION" || { echo 'WORKER_VERSION_UNVERIFIED' >&2; exit 1; }
+          echo "DEPLOYED_WORKER_VERSION=$deployed" >> "$GITHUB_ENV"
+          # The reviewed wrangler.jsonc declares the canonical Cron schedule.
+          # If a separately approved Cron fence was not restored by deployment,
+          # keep the Queue paused until an authorized operator resolves it.
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/cron-after-deploy.json"
+          jq -e '.success == true and ([.result.schedules[].cron] == ["*/5 * * * *"])' "$RUNNER_TEMP/cron-after-deploy.json" >/dev/null || { echo 'CRON_RESTORE_UNVERIFIED: keep Queue paused and require Owner-approved recovery.' >&2; exit 1; }
           curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
           for i in $(seq 1 12); do
             if curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/status" | jq -e '.ok == true and .claim.state == "REVIEW" and .recoveryGate.mode == "DISABLED" and .sheetPacing.mode == "DISABLED" and (.inFlightProjections | type) == "number"' >/dev/null; then exit 0; fi
@@ -153,30 +237,92 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Persist RESUME_REQUESTED before remote action. Its outcome is unknown
+          # until a fresh API readback, not merely a successful CLI return.
+          jq '.state="RESUME_REQUESTED"' "$RUNNER_TEMP/pr247-release-state.json" > "$RUNNER_TEMP/pr247-state-next.json"
+          mv "$RUNNER_TEMP/pr247-state-next.json" "$RUNNER_TEMP/pr247-release-state.json"
+          npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
           npx wrangler queues resume-delivery malipang-jobs
-          rm -f "$RUNNER_TEMP/delivery-paused"
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-resumed.json"
+          jq -e '.success == true and .result.queue_name == "malipang-jobs" and .result.settings.delivery_paused == false' "$RUNNER_TEMP/queue-resumed.json" >/dev/null || { echo 'RESUME_ACK_OR_READBACK_AMBIGUOUS' >&2; exit 1; }
+          jq '.state="RESUMED_VERIFIED"' "$RUNNER_TEMP/pr247-release-state.json" > "$RUNNER_TEMP/pr247-state-next.json"
+          mv "$RUNNER_TEMP/pr247-state-next.json" "$RUNNER_TEMP/pr247-release-state.json"
+          npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
           curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
           sleep 120
           sql="SELECT (SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') review,(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') held,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') in_flight,(SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') completed,(SELECT count(*) FROM sync_jobs WHERE status='PENDING') pending,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING') processing,(SELECT count(*) FROM failed_jobs WHERE status='OPEN') open_failed"
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/after.json"
           { echo '### After (counts only)'; echo '```json'; jq -c '.[0].results[0]' "$RUNNER_TEMP/after.json"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          # With REVIEW retained nothing may be written to Sheets or newly failed.
-          jq -e --argjson c "$COMPLETED_BEFORE" --argjson f "$OPEN_FAILED_BEFORE" '.[0].success == true and .[0].results[0].review == 1 and .[0].results[0].held == 0 and .[0].results[0].in_flight == 0 and .[0].results[0].completed == $c and .[0].results[0].open_failed <= $f' "$RUNNER_TEMP/after.json" >/dev/null
-          echo 'Release active with REVIEW retained; no Sheets writer admitted. G6a/G6b need separate Owner approval.' >> "$GITHUB_STEP_SUMMARY"
+          # D1 counters are sentinels, not conclusive evidence of every
+          # Google Sheets write or external admin/human writer.
+          if ! jq -e --argjson c "$COMPLETED_BEFORE" --argjson f "$OPEN_FAILED_BEFORE" '.[0].success == true and .[0].results[0].review == 1 and .[0].results[0].held == 0 and .[0].results[0].in_flight == 0 and .[0].results[0].completed == $c and .[0].results[0].open_failed <= $f' "$RUNNER_TEMP/after.json" >/dev/null; then
+            jq '.state="POSTCHECK_FAILED"' "$RUNNER_TEMP/pr247-release-state.json" > "$RUNNER_TEMP/pr247-state-next.json"
+            mv "$RUNNER_TEMP/pr247-state-next.json" "$RUNNER_TEMP/pr247-release-state.json"
+            npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
+            # Future G4+G5 Owner authorization must explicitly include this
+            # emergency re-pause: it will intentionally suspend LINE delivery
+            # on an inconsistent release. No purge, replay or claim reset.
+            npx wrangler queues pause-delivery malipang-jobs
+            curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+              "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-recontained.json"
+            jq -e '.success == true and .result.settings.delivery_paused == true' "$RUNNER_TEMP/queue-recontained.json" >/dev/null || { echo 'POSTCHECK_FAILED: MANUAL_CONTAINMENT_REQUIRED (queue state unverified)' >&2; exit 1; }
+            echo 'POSTCHECK_FAILED: Queue re-paused; MANUAL_CONTAINMENT_REQUIRED; preserve evidence and do not blindly roll back.' >&2
+            exit 1
+          fi
+          jq '.state="VERIFIED_COMPLETED"' "$RUNNER_TEMP/pr247-release-state.json" > "$RUNNER_TEMP/pr247-state-next.json"
+          mv "$RUNNER_TEMP/pr247-state-next.json" "$RUNNER_TEMP/pr247-release-state.json"
+          npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-release-state.json" --remote
+          echo 'Code-only release D1 sentinels passed with REVIEW retained; separate Google Sheets parity still required before Full Recovery (G6a/G6b).' >> "$GITHUB_STEP_SUMMARY"
       - name: Failure handling
-        if: failure()
+        if: always()
         shell: bash
         run: |
-          set -euo pipefail
-          if [ -f "$RUNNER_TEMP/delivery-paused" ] && [ ! -f "$RUNNER_TEMP/deploy-started" ]; then
-            # The previous Worker is still serving and 0023 is additive, so
-            # LINE intake is restored immediately.
-            npx wrangler queues resume-delivery malipang-jobs
-            echo 'Failed before deployment: previous Worker still active; delivery resumed.' >> "$GITHUB_STEP_SUMMARY"
-          elif [ -f "$RUNNER_TEMP/delivery-paused" ]; then
-            echo 'Failed during deployment: delivery remains PAUSED. Inspect /health and /admin/stable-sync/status; roll back with `npx wrangler rollback` while REVIEW is retained, then resume delivery.' >> "$GITHUB_STEP_SUMMARY"
-          elif [ -f "$RUNNER_TEMP/deploy-started" ]; then
-            echo 'Failed after delivery resumed: the new Worker is active. Inspect the counts; while REVIEW is retained `npx wrangler rollback` is safe.' >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo 'Failed before pausing delivery: no Production change.' >> "$GITHUB_STEP_SUMMARY"
+          set -eo pipefail
+          # GitHub always() can run during cancellation while runner is alive,
+          # NOT reliably after force-cancel, timeout kill or lost runner.
+          # The private R2 intent remains independent of this runner.
+          if [ -z "$RELEASE_INTENT_KEY" ]; then
+            echo 'No release intent recorded: no Queue ownership acquired.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
           fi
+          if ! npx wrangler r2 object get "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/release-state-readback.json" --remote; then
+            echo 'MANUAL_CONTAINMENT_REQUIRED: private R2 release intent not readable.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          state="$(jq -r '.state // "UNKNOWN"' "$RUNNER_TEMP/release-state-readback.json")"
+          echo "Durable release intent state: $state" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$RELEASE_QUEUE_ID" ]; then
+            if curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN"               "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-final-readback.json"; then
+              jq -e '.success == true and .result.queue_name == "malipang-jobs" and (.result.settings.delivery_paused | type) == "boolean"' "$RUNNER_TEMP/queue-final-readback.json" >/dev/null || echo 'QUEUE_STATE_UNVERIFIED: MANUAL_CONTAINMENT_REQUIRED' >> "$GITHUB_STEP_SUMMARY"
+              jq -r '"Queue delivery_paused readback: \(.result.settings.delivery_paused)"' "$RUNNER_TEMP/queue-final-readback.json" >> "$GITHUB_STEP_SUMMARY"
+            else
+              echo 'QUEUE_STATE_UNVERIFIED: MANUAL_CONTAINMENT_REQUIRED' >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          if [ "$state" = VERIFIED_COMPLETED ]; then
+            echo 'D1 code-only release sentinels verified; no automatic Queue action needed.' >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          # If a non-final check failed AFTER a confirmed resume (e.g. the
+          # health call, D1 SELECT or post-resume test), contain with an audited
+          # re-pause. This contingency requires explicit future G4+G5 approval.
+          if [ "$state" = RESUMED_VERIFIED ] && [ -f "$RUNNER_TEMP/queue-final-readback.json" ] &&
+             jq -e '.success == true and .result.settings.delivery_paused == false' "$RUNNER_TEMP/queue-final-readback.json" >/dev/null; then
+            if npx wrangler queues pause-delivery malipang-jobs; then
+              if curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+                "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues/$RELEASE_QUEUE_ID" > "$RUNNER_TEMP/queue-final-containment.json" &&
+                jq -e '.success == true and .result.settings.delivery_paused == true' "$RUNNER_TEMP/queue-final-containment.json" >/dev/null; then
+                jq '.state="POSTCHECK_FAILED"' "$RUNNER_TEMP/release-state-readback.json" > "$RUNNER_TEMP/pr247-state-next.json"
+                if npx wrangler r2 object put "malipang-private-backups/$RELEASE_INTENT_KEY" --file="$RUNNER_TEMP/pr247-state-next.json" --remote; then
+                  echo 'POSTCHECK_FAILED: confirmed emergency re-pause; Owner incident decision needed.' >> "$GITHUB_STEP_SUMMARY"
+                else
+                  echo 'MANUAL_CONTAINMENT_REQUIRED: re-pause confirmed but private R2 update failed.' >> "$GITHUB_STEP_SUMMARY"
+                fi
+              fi
+            fi
+          fi
+          echo 'MANUAL_CONTAINMENT_REQUIRED: state ambiguous; do NOT blindly resume, replay, roll back or restore D1.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Follow separate Owner-approved incident runbook. Inspect Queue, Cron, REVIEW, exact Worker version and private R2 pause intent; preserve LINE backlog and evidence.' >> "$GITHUB_STEP_SUMMARY"
+          # No automatic resume: the remote Pause ACK may be lost or another
+          # incident operator may own a new pause. Remote ownership unknown.

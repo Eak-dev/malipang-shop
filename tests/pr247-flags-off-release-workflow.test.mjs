@@ -72,6 +72,19 @@ test("cannot edit REVIEW/epochs/business rows or replay DLQ from this workflow",
   assert.doesNotMatch(workflow, /retry-sync|bootstrap-sheets|staff-import|shift-import|reconcile-sheets|resume-capacity|includeTerminalDlq|queues purge|sheets\.googleapis/);
 });
 
+test("REVIEW precondition checks exact workbook digest and incident stamp before remote pause", () => {
+  const stage = section("Read-only Production preconditions", "Verify Cron writer fence and Queue ownership");
+  assert.match(stage, /notice_stamp='2026-11-05 21:26:00'/);
+  assert.match(stage, /length\(operation_token\)>=8 and length\(notice_identity\)>=8/i);
+  assert.match(stage, /expected_book_hash='[0-9a-f]{64}'/);
+  assert.match(stage, /printf '%s' "\$book" \| sha256sum/);
+  assert.match(stage, /REVIEW_WORKBOOK_MISMATCH/);
+  assert.match(stage, /REVIEW_IDENTITY_NOT_VERIFIED/);
+  assert.ok(stage.indexOf("REVIEW_WORKBOOK_MISMATCH") < stage.indexOf("COMPLETED_BEFORE"));
+  assert.ok(stage.indexOf("review-identity-private.json") < stage.indexOf("REVIEW_WORKBOOK_MISMATCH"));
+  assert.doesNotMatch(stage, /1d8Cv76JicUo7jO4KykQ35Xg60GAjMOyJCeYT92xkKL8/);
+});
+
 test("hard-fails BEFORE pause unless Cron triggers are externally fenced by separate Owner approval", () => {
   const prior = workflow.slice(0, at("queues pause-delivery malipang-jobs"));
   assert.match(prior, /workers\/scripts\/malipang-backend-v5-2\/schedules/);

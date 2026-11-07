@@ -78,7 +78,19 @@ jobs:
           esac
           sql="SELECT (SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') review,(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') held,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') in_flight,(SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') completed,(SELECT count(*) FROM sync_jobs WHERE status='PENDING') pending,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING') processing,(SELECT count(*) FROM failed_jobs WHERE status='OPEN') open_failed"
           npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/before.json"
-          # Code-only release keeps the one reviewed REVIEW claim as the writer fence.
+          # Fail closed unless this is exactly the pre-reviewed MaliPang workbook,
+          # with the same paused notice and durable claim identity. Never log IDs.
+          review_sql="SELECT spreadsheet_id FROM stable_workbook_claims WHERE state='REVIEW' AND notice_stamp='2026-11-05 21:26:00' AND length(operation_token)>=8 AND length(notice_identity)>=8"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$review_sql" > "$RUNNER_TEMP/review-identity-private.json"
+          jq -e '.[0].success == true and (.[0].results | length) == 1 and (.[0].results[0].spreadsheet_id | type) == "string"' "$RUNNER_TEMP/review-identity-private.json" >/dev/null || { echo 'REVIEW_IDENTITY_NOT_VERIFIED' >&2; exit 1; }
+          book="$(jq -r '.[0].results[0].spreadsheet_id' "$RUNNER_TEMP/review-identity-private.json")"
+          [[ "$book" =~ ^[A-Za-z0-9_-]{30,100}$ ]] || { echo 'REVIEW_WORKBOOK_ID_INVALID' >&2; exit 1; }
+          expected_book_hash='b8df793b7aafbedea3b9eb42c3bf4d4a8098bef8b91a8a6d5ea6d50fc6e5602f'
+          actual_book_hash="$(printf '%s' "$book" | sha256sum | cut -d ' ' -f 1)"
+          unset book
+          test "$actual_book_hash" = "$expected_book_hash" || { echo 'REVIEW_WORKBOOK_MISMATCH' >&2; exit 1; }
+          # This check proves the D1 claim identity, not the live Google
+          # named-range/notice identity. G6b requires independent provider readback.
           jq -e '.[0].success == true and .[0].results[0].review == 1 and .[0].results[0].held == 0 and .[0].results[0].in_flight == 0' "$RUNNER_TEMP/before.json" >/dev/null
           echo "COMPLETED_BEFORE=$(jq -r '.[0].results[0].completed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"
           echo "OPEN_FAILED_BEFORE=$(jq -r '.[0].results[0].open_failed' "$RUNNER_TEMP/before.json")" >> "$GITHUB_ENV"

@@ -21,7 +21,7 @@ Owner must also authorize and provide evidence for a bounded **external writer /
 
 - Exact main SHA with PR #247 unchanged, only additive migration 0023 after 0022, no P0 recovery/pacing flags in code-only release.
 - Prior Production Worker Version ID remains 310192aa-8a04-4b61-8a72-4455231b3339; any drift stops the workflow.
-- One REVIEW claim, zero HELD and zero IN_FLIGHT, correct Workbook/Notice identity verified privately. The aggregate count alone is insufficient proof of identity.
+- One REVIEW claim, zero HELD and zero IN_FLIGHT. ก่อน Pause Queue ต้องตรวจ SHA-256 ของ Workbook ID เทียบกับรายการ Owner Master ที่ Reviewed ไว้, ยืนยัน Incident Notice Stamp `2026-11-05 21:26:00`, Token/Notice Identity ไม่ว่าง และมี Claim เพียง 1 รายการ โดยไม่พิมพ์ ID/Token ลง Log. **นี่เป็นเพียงการตรวจ D1 identity ไม่ใช่ Google Provider Named Range / READY readback** ซึ่งต้องพิสูจน์ใหม่ก่อน G6b; ห้ามปลด REVIEW จากการตรวจ Hash อย่างเดียว.
 - Queue malipang-jobs must be active before the release claims ownership. A pre-paused Queue belongs to an unknown operator and MUST NOT be resumed automatically.
 - Verify exact Cloudflare account/Worker/D1/Queue/R2, token scope, fresh private backup restore and planned rollback. Keep LINE retention and staffing/HR timing within separately signed Owner limits.
 

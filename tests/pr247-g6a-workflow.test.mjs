@@ -41,11 +41,12 @@ test("G6a requires observed gate UNARMED while retaining original REVIEW",()=>{
  assert.ok(before("Deploy precisely reviewed G6a config")<before("Readback must be ON/UNARMED"));
  assert.match(text,/scripts\/pr247-readonly-snapshot.sh A_PRE/);
  assert.match(text,/scripts\/pr247-readonly-snapshot.sh A_POST/);
- assert.match(text,/sleep 60/);
+ assert.match(text,/sleep 360/);
  assert.match(text,/NO_CANARY_STARTED/);
 });
 test("ambiguous G6a is an incident and never an automatic rollback",()=>{
  assert.match(text,/DEPLOY_ACK_UNKNOWN/);
- assert.match(text,/Incomplete or ambiguous results require Owner incident review/);
+ assert.match(text,/Read-only incident guidance also available on cancel/);
+ assert.match(text,/if: always\(\)/);
  assert.doesNotMatch(text,/wrangler rollback|rollbacks create|--force/);
 });

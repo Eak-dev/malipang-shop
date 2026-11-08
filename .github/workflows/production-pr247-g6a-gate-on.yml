@@ -114,11 +114,11 @@ jobs:
           export EXPECTED_WORKER_VERSION="$POST_WORKER"
           export PRIOR_WORKER_VERSION="$G5_WORKER"
           bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/g6a-after.json"
-          sleep 60
+          sleep 360
           bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/g6a-after-observe.json"
           echo 'G6A_CONFIG_DEPLOY_VERIFIED;GATE_UNARMED;REVIEW_RETAINED;NO_CANARY_STARTED' >> "$GITHUB_STEP_SUMMARY"
-      - name: Incomplete or ambiguous results require Owner incident review
-        if: failure()
+      - name: Read-only incident guidance also available on cancel
+        if: always()
         shell: bash
         run: |
-          echo 'G6A_NO_GO. Do not rollback after a G6b claim release. Verify REVIEW/epochs/Worker before any Owner-approved response.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'G6A_OWNER_INCIDENT_POLICY: if any step failed, was cancelled or has uncertain ACK, inspect exact Worker/REVIEW/epoch/Cron/Queue before any separately approved recovery. No automatic rollback.' >> "$GITHUB_STEP_SUMMARY"

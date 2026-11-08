@@ -1,0 +1,124 @@
+name: Issue248 G6a gate-on (manual only)
+# PREPARED IN LOCAL ONLY. Do NOT merge until G4/G5 is VERIFIED_COMPLETED.
+# Deploys config-as-code gate=true and pacing=true with REVIEW retained.
+# NEVER edits B1/C1, Claim, D1, Epoch, Queue, R2 intent or business data.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main SHA for this reviewed G6a change
+        required: true
+        type: string
+      g5_sha:
+        description: Exact previously released G5 main SHA from private R2 receipt
+        required: true
+        type: string
+      g5_run_id:
+        description: Verified GitHub G5 run ID (numbers only)
+        required: true
+        type: string
+      g5_run_attempt:
+        description: Verified G5 run attempt
+        required: true
+        type: string
+      expected_g5_worker_version:
+        description: Actual G5 Worker version ID; NOT the old pre-G5 version
+        required: true
+        type: string
+      confirmation:
+        description: Type OWNER APPROVED G6A GATE ON AFTER VERIFIED G5
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  gate_on:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      G5_SHA: ${{ inputs.g5_sha }}
+      G5_RUN_ID: ${{ inputs.g5_run_id }}
+      G5_RUN_ATTEMPT: ${{ inputs.g5_run_attempt }}
+      G5_WORKER: ${{ inputs.expected_g5_worker_version }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      REVIEWED_SOURCE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Confirm exact owner-approved code/config baseline (no production mutation)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = 'OWNER APPROVED G6A GATE ON AFTER VERIFIED G5'
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ && "$G5_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git fetch --no-tags origin '+refs/pull/247/head:refs/review/pr247'
+          test "$(git rev-parse refs/review/pr247)" = "$REVIEWED_SOURCE_SHA"
+          git diff --quiet "$REVIEWED_SOURCE_SHA" HEAD -- src migrations package.json package-lock.json tsconfig.json
+          node - <<'NODE'
+          const fs=require('fs'),cp=require('child_process');
+          const old=JSON.parse(cp.execFileSync('git',['show',process.env.REVIEWED_SOURCE_SHA+':wrangler.jsonc'],{encoding:'utf8'}));
+          const now=JSON.parse(fs.readFileSync('wrangler.jsonc','utf8'));
+          if(now.vars.STABLE_RECOVERY_GATE_ENABLED!=='true'||now.vars.STABLE_SHEETS_PACING_ENABLED!=='true')
+            throw Error('G6A_CONFIG_FLAG_MISMATCH');
+          if('STABLE_SHEETS_READ_BUDGET_PER_MINUTE' in now.vars)throw Error('BUDGET_REQUIRES_SEPARATE_REVIEW');
+          delete now.vars.STABLE_RECOVERY_GATE_ENABLED;delete now.vars.STABLE_SHEETS_PACING_ENABLED;
+          if(JSON.stringify(now)!==JSON.stringify(old))throw Error('CONFIG_DRIFT_OUTSIDE_TWO_FLAGS');
+          NODE
+          npm run check > "$RUNNER_TEMP/g6a-local-check.log" 2>&1 || { tail -40 "$RUNNER_TEMP/g6a-local-check.log"; exit 1; }
+          npx wrangler deploy --dry-run > "$RUNNER_TEMP/g6a-dryrun.log" 2>&1 || { tail -35 "$RUNNER_TEMP/g6a-dryrun.log"; exit 1; }
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+      - name: Verify exact G5 receipt, D1 0023, REVIEW, Worker and active Cron/Queue
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EXPECTED_WORKER_VERSION="$G5_WORKER"
+          export PRIOR_WORKER_VERSION="$G5_WORKER"
+          export COMPLETED_BEFORE=0 OPEN_FAILED_BEFORE=0
+          bash scripts/pr247-readonly-snapshot.sh A_PRE "$RUNNER_TEMP/g6a-before.json"
+          echo "COMPLETED_BEFORE=$(jq -r '.d1.completed' "$RUNNER_TEMP/g6a-before.json")" >> "$GITHUB_ENV"
+          echo "OPEN_FAILED_BEFORE=$(jq -r '.d1.open_failed' "$RUNNER_TEMP/g6a-before.json")" >> "$GITHUB_ENV"
+          echo 'G5_VERIFIED;REVIEW_RETAINED;GATE_OFF' >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy precisely reviewed G6a config (G6a owner approval required)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          npx wrangler deploy > "$RUNNER_TEMP/g6a-deploy-private.log" 2>&1 || { echo 'DEPLOY_ACK_UNKNOWN: inspect actual Worker and REVIEW, do not retry blindly.' >&2; exit 1; }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/g6a-deployments.json"
+          jq -e '.success == true and (.result.deployments[0].versions | length) == 1 and .result.deployments[0].versions[0].percentage == 100' "$RUNNER_TEMP/g6a-deployments.json" >/dev/null
+          new_version="$(jq -r '.result.deployments[0].versions[0].version_id' "$RUNNER_TEMP/g6a-deployments.json")"
+          test "$new_version" != "$G5_WORKER" || { echo G6A_WORKER_UNCHANGED >&2; exit 1; }
+          echo "POST_WORKER=$new_version" >> "$GITHUB_ENV"
+      - name: Readback must be ON/UNARMED, with REVIEW retained and no writer admitted
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EXPECTED_WORKER_VERSION="$POST_WORKER"
+          export PRIOR_WORKER_VERSION="$G5_WORKER"
+          bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/g6a-after.json"
+          sleep 60
+          bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/g6a-after-observe.json"
+          echo 'G6A_CONFIG_DEPLOY_VERIFIED;GATE_UNARMED;REVIEW_RETAINED;NO_CANARY_STARTED' >> "$GITHUB_STEP_SUMMARY"
+      - name: Incomplete or ambiguous results require Owner incident review
+        if: failure()
+        shell: bash
+        run: |
+          echo 'G6A_NO_GO. Do not rollback after a G6b claim release. Verify REVIEW/epochs/Worker before any Owner-approved response.' >> "$GITHUB_STEP_SUMMARY"

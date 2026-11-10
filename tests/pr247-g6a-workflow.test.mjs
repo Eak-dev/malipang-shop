@@ -14,8 +14,8 @@ test("G6a manual-only and serialized with other production releases",()=>{
  assert.match(text,/cancel-in-progress: false/);
  assert.match(text,/OWNER APPROVED G6A GATE ON AFTER VERIFIED G5/);
 });
-test("G6a config is exactly gate ON/pacing ON without unapproved budget",()=>{
- assert.equal(wrangler.vars.STABLE_RECOVERY_GATE_ENABLED,"true");
+test("PR-B gate literal false prevents G6a workflow execution under wrong config",()=>{
+ assert.equal(wrangler.vars.STABLE_RECOVERY_GATE_ENABLED,"false");
  assert.equal(wrangler.vars.STABLE_SHEETS_PACING_ENABLED,"true");
  assert.equal(Object.hasOwn(wrangler.vars,"STABLE_SHEETS_READ_BUDGET_PER_MINUTE"),false);
  assert.match(text,/CONFIG_DRIFT_OUTSIDE_TWO_FLAGS/);

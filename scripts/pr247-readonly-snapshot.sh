@@ -39,6 +39,23 @@ sql="SELECT
  (SELECT count(*) FROM stable_recovery_operations WHERE state='VERIFIED') verified_ops,
  (SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') completed,
  (SELECT count(*) FROM failed_jobs WHERE status='OPEN') open_failed,
+ (SELECT count(*) FROM stable_workbook_claims c WHERE c.state='HELD' AND (
+   c.updated_at IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ',julianday(c.updated_at)) IS NOT c.updated_at
+   OR c.updated_at > strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   OR c.updated_at < strftime('%Y-%m-%dT%H:%M:%fZ','now','-15 minutes')
+ )) stale_held,
+ (SELECT count(*) FROM stable_projection_writes p WHERE p.state='IN_FLIGHT' AND NOT EXISTS (
+   SELECT 1 FROM sync_jobs j WHERE j.entity_type=p.entity_type AND j.entity_version=p.source_version
+     AND (j.entity_key=p.entity_id OR (p.projection='DETAIL' AND substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|'))
+     AND j.status='PROCESSING' AND typeof(j.lease_token)='text' AND length(j.lease_token)>0
+     AND j.updated_at IS NOT NULL
+     AND strftime('%Y-%m-%dT%H:%M:%fZ',julianday(j.updated_at))=j.updated_at
+     AND j.updated_at<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+     AND j.lease_until IS NOT NULL
+     AND strftime('%Y-%m-%dT%H:%M:%fZ',julianday(j.lease_until))=j.lease_until
+     AND j.lease_until>j.updated_at
+     AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')
+ )) unleased_inflight,
  (SELECT count(*) FROM stable_recovery_epochs e JOIN sync_jobs j ON j.entity_type=e.target_type AND j.entity_key=e.target_key AND j.entity_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND j.status='COMPLETED') canary_jobs_completed,
  (SELECT count(*) FROM stable_recovery_epochs e JOIN stable_projection_writes p ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.target_key AND p.source_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND p.projection='DAILY' AND p.state='VERIFIED') canary_daily,
  (SELECT count(*) FROM stable_recovery_epochs e JOIN stable_projection_writes p ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.target_key AND p.source_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND p.projection='EXPENSE_RAW' AND p.state='VERIFIED') canary_raw,
@@ -53,10 +70,24 @@ if [[ "$mode" == B_* ]]; then
   $wrangler r2 object get "malipang-private-backups/$G7_RECEIPT_KEY" --file="$tmp/owner-receipt.json" --remote >/dev/null
   actual="$(sha256sum "$tmp/owner-receipt.json" | cut -d' ' -f1)"
   test "$actual" = "$G7_RECEIPT_SHA256" || { echo NO_GO_RECEIPT_SHA256 >&2; exit 2; }
+  epoch_id="$(jq -er '.epoch_id | select(type == "string" and test("^[A-Za-z0-9_-]{8,128}$"))' "$tmp/owner-receipt.json")" || { echo NO_GO_G7_EPOCH_ID >&2; exit 2; }
+  # Exact, private, read-only check; epoch ID stays in runner memory and is never echoed.
+  epoch_sql="WITH target AS (SELECT * FROM stable_recovery_epochs WHERE epoch_id='$epoch_id' AND target_type='EXPENSE')
+   SELECT (SELECT count(*) FROM target) AS epoch_found,
+     (SELECT state FROM target LIMIT 1) AS epoch_state,
+     (SELECT count(*) FROM stable_recovery_operations o JOIN target e ON o.epoch_id=e.epoch_id WHERE o.state='ADMITTED') AS unverified_ops,
+     (SELECT count(*) FROM stable_recovery_operations o JOIN target e ON o.epoch_id=e.epoch_id WHERE o.state='VERIFIED') AS verified_ops,
+     (SELECT count(*) FROM sync_jobs j JOIN target e ON j.entity_type=e.target_type AND j.entity_key=e.target_key AND j.entity_version=e.target_version WHERE j.status='COMPLETED') AS job_completed,
+     (SELECT count(*) FROM stable_projection_writes p JOIN target e ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.target_key AND p.source_version=e.target_version WHERE p.projection='DAILY' AND p.state='VERIFIED') AS daily,
+     (SELECT count(*) FROM stable_projection_writes p JOIN target e ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.target_key AND p.source_version=e.target_version WHERE p.projection='EXPENSE_RAW' AND p.state='VERIFIED') AS raw,
+     (SELECT count(*) FROM stable_projection_writes p JOIN target e ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND substr(p.entity_id,1,length(e.target_key)+1)=e.target_key||'|' AND p.source_version=e.target_version WHERE p.projection='DETAIL' AND p.state='VERIFIED') AS detail"
+  $wrangler d1 execute malipang-v5-2 --remote --json --command "$epoch_sql" > "$tmp/epoch.json"
+  jq -e 'type == "array" and length == 1 and (.[0] | type) == "object" and .[0].success == true and (.[0].results | type) == "array" and (.[0].results | length) == 1 and (.[0].results[0] | type) == "object"' "$tmp/epoch.json" >/dev/null || { echo NO_GO_G7_EPOCH_PROVIDER >&2; exit 2; }
 else
   printf 'null\n' > "$tmp/owner-receipt.json"
+  printf '[{"results":[null],"success":true}]\n' > "$tmp/epoch.json"
 fi
-jq -n --slurpfile g5 "$tmp/g5.json" --slurpfile cron "$tmp/cron.json" --slurpfile queues "$tmp/queues.json" --slurpfile deploy "$tmp/deploy.json" --slurpfile d1 "$tmp/d1.json" --slurpfile status "$tmp/status.json" --slurpfile receipt "$tmp/owner-receipt.json" --arg g5sha "$G5_SHA" --arg worker "$EXPECTED_WORKER_VERSION" --arg prior "$PRIOR_WORKER_VERSION" --argjson done "$COMPLETED_BEFORE" --argjson failures "$OPEN_FAILED_BEFORE" '
+jq -n --slurpfile g5 "$tmp/g5.json" --slurpfile cron "$tmp/cron.json" --slurpfile queues "$tmp/queues.json" --slurpfile deploy "$tmp/deploy.json" --slurpfile d1 "$tmp/d1.json" --slurpfile status "$tmp/status.json" --slurpfile receipt "$tmp/owner-receipt.json" --slurpfile epoch "$tmp/epoch.json" --arg g5sha "$G5_SHA" --arg worker "$EXPECTED_WORKER_VERSION" --arg prior "$PRIOR_WORKER_VERSION" --argjson done "$COMPLETED_BEFORE" --argjson failures "$OPEN_FAILED_BEFORE" '
 {
   g5: $g5[0],
   params: {g5Sha:$g5sha, expectedWorkerVersion:$worker,priorWorkerVersion:$prior,completedBefore:$done,openFailedBefore:$failures},
@@ -67,7 +98,8 @@ jq -n --slurpfile g5 "$tmp/g5.json" --slurpfile cron "$tmp/cron.json" --slurpfil
   },
   d1: $d1[0][0].results[0],
   status: $status[0],
-  receipt: $receipt[0]
+  receipt: $receipt[0],
+  epoch: $epoch[0][0].results[0]
 }' > "$out"
 node scripts/pr247-stage-guard.mjs "$mode" "$out"
 # Only safe PASS/FAIL is emitted. Snapshot may contain operational metadata and is runner-private.

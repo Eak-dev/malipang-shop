@@ -1,0 +1,159 @@
+name: Issue248 G8 steady-state recovery (manual only)
+# LOCAL DRAFT. Owner G8 approval and verified exact G7 canary required.
+# No migration, Queue pause, Cron changes, Sheets edits or broad DLQ replay.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact reviewed PR-B SHA after Owner-authorized merge
+        type: string
+        required: true
+      g5_sha:
+        description: Exact G5 merged main SHA recorded in R2
+        type: string
+        required: true
+      g5_run_id:
+        description: Verified G5 release run ID
+        type: string
+        required: true
+      g5_run_attempt:
+        description: G5 run attempt
+        type: string
+        required: true
+      prior_g6a_worker_version:
+        description: Actual 100-percent G6a Worker version
+        type: string
+        required: true
+      g7_receipt_key:
+        description: Owner-approved private G7 receipt R2 key
+        type: string
+        required: true
+      g7_receipt_sha256:
+        description: Owner-reviewed SHA-256 of G7 receipt
+        type: string
+        required: true
+      confirmation:
+        description: Type OWNER APPROVED PR247 G8 STEADY AFTER G7 PASS
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  steady:
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      G5_SHA: ${{ inputs.g5_sha }}
+      G5_RUN_ID: ${{ inputs.g5_run_id }}
+      G5_RUN_ATTEMPT: ${{ inputs.g5_run_attempt }}
+      G6A_WORKER: ${{ inputs.prior_g6a_worker_version }}
+      G7_RECEIPT_KEY: ${{ inputs.g7_receipt_key }}
+      G7_RECEIPT_SHA256: ${{ inputs.g7_receipt_sha256 }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      REVIEWED_SOURCE_SHA: c4b4ab96e2f2cb08a8633c003294375a0f458095
+      CONFIG_BASELINE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify exact source/config and review approval (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$CONFIRMATION" = 'OWNER APPROVED PR247 G8 STEADY AFTER G7 PASS'
+          test "$GITHUB_ACTOR" = 'Eak-dev'
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ && "$G5_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git fetch --no-tags origin '+refs/pull/247/head:refs/review/pr247'
+          test "$(git rev-parse refs/review/pr247)" = "$CONFIG_BASELINE_SHA"
+          git cat-file -e "${REVIEWED_SOURCE_SHA}^{commit}"
+          git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" HEAD
+          git diff --quiet "$REVIEWED_SOURCE_SHA" HEAD -- src migrations package.json package-lock.json tsconfig.json
+          node scripts/pr247-steady-config-check.mjs
+          npm run check > "$RUNNER_TEMP/prb-check-private.log" 2>&1 || { tail -40 "$RUNNER_TEMP/prb-check-private.log"; exit 1; }
+          npx wrangler deploy --dry-run > "$RUNNER_TEMP/prb-dryrun-private.log" 2>&1 || { tail -35 "$RUNNER_TEMP/prb-dryrun-private.log"; exit 1; }
+      - name: Validate G5, exact prior G6a Worker, G7 Owner receipt and live D1 (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EXPECTED_WORKER_VERSION="$G6A_WORKER"
+          export PRIOR_WORKER_VERSION="$G6A_WORKER"
+          export COMPLETED_BEFORE=0 OPEN_FAILED_BEFORE=0
+          bash scripts/pr247-readonly-snapshot.sh B_PRE "$RUNNER_TEMP/prb-before.json"
+          echo "COMPLETED_BEFORE=$(jq -r '.d1.completed' "$RUNNER_TEMP/prb-before.json")" >> "$GITHUB_ENV"
+          echo "OPEN_FAILED_BEFORE=$(jq -r '.d1.open_failed' "$RUNNER_TEMP/prb-before.json")" >> "$GITHUB_ENV"
+          echo 'G8_OWNER_GATE_AND_G7_RECEIPT_CHECKS_PASSED_BEFORE_DEPLOY' >> "$GITHUB_STEP_SUMMARY"
+          # Counts only: preserve the exact-run baseline for manual incident review
+          # even when the runner's private temporary snapshot is removed.
+          jq -r '"G8_PRE_COMPLETED=\(.d1.completed)\nG8_PRE_OPEN_FAILED=\(.d1.open_failed)"' "$RUNNER_TEMP/prb-before.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Deploy reviewed Gate OFF with Pacing ON (G8 approval only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          # Fresh external readbacks reduce drift between G8 preflight and deploy.
+          # They are NOT an exclusive lock against a rogue external operator.
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-immediate-worker.json"
+          jq -e --arg prior "$G6A_WORKER" '.success == true and (.result.deployments[0].versions | length) == 1 and .result.deployments[0].versions[0].percentage == 100 and .result.deployments[0].versions[0].version_id == $prior' "$RUNNER_TEMP/prb-immediate-worker.json" >/dev/null || { echo G8_PRIOR_WORKER_DRIFT; exit 1; }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/prb-immediate-cron.json"
+          jq -e '.success == true and [.result.schedules[].cron] == ["*/5 * * * *"]' "$RUNNER_TEMP/prb-immediate-cron.json" >/dev/null || { echo G8_CRON_DRIFT; exit 1; }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" > "$RUNNER_TEMP/prb-immediate-queues.json"
+          jq -e '.success == true and ([.result[] | select(.queue_name == "malipang-jobs" and .settings.delivery_paused == false)] | length) == 1' "$RUNNER_TEMP/prb-immediate-queues.json" >/dev/null || { echo G8_QUEUE_DRIFT; exit 1; }
+          npx wrangler deploy > "$RUNNER_TEMP/prb-deploy-private.log" 2>&1 || {
+            echo 'DEPLOY_ACK_UNCERTAIN: no blind retry or rollback; inspect current Worker/Queue/Cron and D1 first' >&2
+            exit 1
+          }
+          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-deployed.json"
+          jq -e '.success == true and (.result.deployments[0].versions | length) == 1 and .result.deployments[0].versions[0].percentage == 100' "$RUNNER_TEMP/prb-deployed.json" >/dev/null
+          latest="$(jq -r '.result.deployments[0].versions[0].version_id' "$RUNNER_TEMP/prb-deployed.json")"
+          test -n "$latest" && test "$latest" != "$G6A_WORKER" || {
+            echo 'G8_WORKER_VERSION_NOT_VERIFIED' >&2
+            exit 1
+          }
+          echo "POST_WORKER=$latest" >> "$GITHUB_ENV"
+      - name: Verify Gate DISABLED and Pacing active, with no unsafe D1 states
+        shell: bash
+        run: |
+          set -euo pipefail
+          export EXPECTED_WORKER_VERSION="$POST_WORKER"
+          export PRIOR_WORKER_VERSION="$G6A_WORKER"
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/prb-after.json" || {
+            echo 'G8_POST_UNKNOWN: inspect exact Worker, Queue delivery field, original Queue ID and competing incident before any intervention; no blind retry/resume/rollback.' >&2
+            exit 1
+          }
+          sleep 360
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/prb-after-cron.json"
+          before_count="$(jq -r '.status.sheetPacing.totalAdmissions // 0' "$RUNNER_TEMP/prb-after.json")"
+          after_count="$(jq -r '.status.sheetPacing.totalAdmissions // 0' "$RUNNER_TEMP/prb-after-cron.json")"
+          completed_before="$(jq -r '.d1.completed' "$RUNNER_TEMP/prb-after.json")"
+          completed_after="$(jq -r '.d1.completed' "$RUNNER_TEMP/prb-after-cron.json")"
+          if [ "$after_count" -gt "$before_count" ] || [ "$completed_after" -gt "$completed_before" ]; then
+            echo 'G8_OBSERVED_ACTIVITY: verify source/provider readback before claiming normal service' >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo 'G8_NO_POSITIVE_PROGRESS_EVIDENCE: review eligible backlog and provider health; do not claim recovery' >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo 'G8_CONFIG_CHECK_PASSED_ONLY;NOT_FINANCIAL_OR_PROVIDER_PARITY_ACCEPTANCE' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Owner must continue GCP 429 monitoring, exact D1/Sheets reconciliation, DLQ HOLD, and seven-day soak.' >> "$GITHUB_STEP_SUMMARY"
+      - name: Containment instructions on ambiguous outcome (read-only)
+        if: always()
+        shell: bash
+        run: |
+          echo 'INCIDENT_POLICY: if any preflight/deploy/readback fails, inspect live Cloudflare Worker, D1, Queue, Cron, Gate, and Sheets before an Owner-approved intervention.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Never blindly deploy the old Worker, replay terminal DLQ, or release REVIEW.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'G8_QUEUE_FIELD_UNKNOWN: missing delivery_paused is NOT false. If missing or true, STOP; inspect Queue ID, exact Worker, consumer/retention and concurrent pause intent; only a scoped manual recovery with independent readback can restore explicit false.' >> "$GITHUB_STEP_SUMMARY"

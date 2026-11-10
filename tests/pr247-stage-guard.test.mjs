@@ -36,7 +36,7 @@ function fixture(mode) {
       review: isA ? 1 : 0, review_all: isA ? 1 : 0, held: 0, inflight: 0,
       epoch_total: isA ? 0 : 1, epoch_active: 0, epoch_complete: isA ? 0 : 1,
       unverified_ops: 0, verified_ops: isA ? 0 : 3,
-      completed: 3296, open_failed: 32,
+      completed: 3296, open_failed: 32, stale_held: 0, unleased_inflight: 0,
       canary_jobs_completed: isA ? 0 : 1, canary_daily: isA ? 0 : 1,
       canary_raw: isA ? 0 : 1, canary_detail: isA ? 0 : 1
     },
@@ -48,10 +48,14 @@ function fixture(mode) {
         ...(!isA && !post ? { state: "COMPLETE" } : {}) },
       sheetPacing: { mode: isA ? (post ? "UNARMED" : "DISABLED") : "OPT_IN" }
     },
+    epoch: isA ? null : {epoch_found: 1, epoch_state: "COMPLETE", unverified_ops: 0, verified_ops: 3, job_completed: 1, daily: 1, raw: 1, detail: 1},
     receipt: isA ? null : {
       state: "OWNER_VERIFIED", g7_canary_verified: true,
       provider_readback_verified: true, no_duplicate_stable_ids: true,
-      no_new_429_observed: true, owner_approved_g8: true
+      no_new_429_observed: true, owner_approved_g8: true,
+      schema: "MP248_G7_RECEIPT_V1", epoch_id: "syntheticEpoch01",
+      expected_detail_count: 1, gcp_quotas_checked: true, gcp_429_delta: 0,
+      g5_sha: G5_SHA, g6a_worker_version: G5_WORKER
     }
   };
   return structuredClone(base);
@@ -59,6 +63,10 @@ function fixture(mode) {
 for (const mode of ["A_PRE", "A_POST", "B_PRE", "B_POST"]) {
   test("positive synthetic " + mode, () => assert.deepEqual(verifyStage(mode, fixture(mode)), {ok:true,mode}));
 }
+for(const mode of ['B_PRE','B_POST'])test(mode+' rejects missing queue delivery_paused, never treats it as false',()=>{
+ const e=fixture(mode);delete e.cloudflare.queue.settings.delivery_paused;
+ assert.throws(()=>verifyStage(mode,e),/NO_GO_QUEUE_ACTIVE/);
+});
 const cases = [
   ["A_PRE", "G5 receipt is not verified", e => { e.g5.state = "PAUSE_INTENT"; }, "G5_RECEIPT"],
   ["A_PRE", "G5 SHA mismatch", e => { e.params.g5Sha = "drift"; }, "G5_PROVENANCE"],
@@ -81,16 +89,31 @@ const cases = [
   ["A_POST", "same Worker after deploy", e => { e.params.priorWorkerVersion=NEW_WORKER; }, "G6A_WORKER_NOT_CHANGED"],
   ["A_POST", "unexpected finance completion", e => { e.d1.completed=3297; }, "G6A_UNEXPECTED_COMPLETION"],
   ["A_POST", "new failed job", e => { e.d1.open_failed=33; }, "G6A_NEW_FAILURE"],
+  ["B_PRE", "foreign canary epoch", e => { e.epoch.epoch_found=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "canary epoch still ARMED", e => { e.epoch.epoch_state="ARMED"; }, "CANARY_JOURNAL"],
+  ["B_PRE", "unverified exact canary op", e => { e.epoch.unverified_ops=1; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing exact provider journal stages", e => { e.epoch.verified_ops=1; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "no owner provider receipt", e => { e.receipt=null; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "owner has not authorized G8", e => { e.receipt.owner_approved_g8=false; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "GCP metrics missing", e => { e.receipt.gcp_quotas_checked=false; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "GCP 429 observed", e => { e.receipt.gcp_429_delta=1; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 SHA provenance mismatch", e => { e.receipt.g5_sha="other"; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G6a Worker provenance mismatch", e => { e.receipt.g6a_worker_version="other"; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 detail count mismatch", e => { e.receipt.expected_detail_count=3; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 receipt epoch malformed", e => { e.receipt.epoch_id="'; DROP"; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "unclosed ARMED epoch", e => { e.d1.epoch_active=1; }, "CANARY_EPOCH_INCOMPLETE"],
   ["B_PRE", "uncertain recovery operation", e => { e.d1.unverified_ops=1; }, "CANARY_EPOCH_INCOMPLETE"],
-  ["B_PRE", "canary job incomplete", e => { e.d1.canary_jobs_completed=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing DAILY journal", e => { e.d1.canary_daily=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing RAW journal", e => { e.d1.canary_raw=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing DETAIL journal", e => { e.d1.canary_detail=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "canary job incomplete", e => { e.epoch.job_completed=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing DAILY journal", e => { e.epoch.daily=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing RAW journal", e => { e.epoch.raw=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing DETAIL journal", e => { e.epoch.detail=0; }, "CANARY_JOURNAL"],
   ["B_PRE", "new REVIEW still present", e => { e.d1.review=1; e.d1.review_all=1; }, "REVIEW_NOT_RELEASED"],
   ["B_PRE", "gate was already OFF", e => { e.status.recoveryGate.mode="DISABLED"; }, "G6A_GATE_STATE"],
+  ["B_POST", "stale HELD claim", e => { e.d1.held=1; e.d1.stale_held=1; e.status.claim={state:"HELD"}; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "IN_FLIGHT not backed by an unexpired job lease", e => { e.d1.inflight=1; e.d1.unleased_inflight=1; e.status.inFlightProjections=1; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "too many overlapping claims", e => { e.d1.held=2; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "unexpected REVIEW claim", e => { e.status.claim={state:"REVIEW"}; }, "REVIEW_NOT_RELEASED"],
+  ["B_POST", "admin state and journal mismatch", e => { e.status.inFlightProjections=2; }, "STATUS_INFLIGHT_DRIFT"],
   ["B_POST", "gate still ON", e => { e.status.recoveryGate.mode="OPT_IN"; }, "STEADY_MODE_NOT_ACTIVE"],
   ["B_POST", "new failure after gate exit", e => { e.d1.open_failed=33; }, "STEADY_NEW_FAILURE"],
 ];
@@ -108,4 +131,28 @@ test("reject malformed/untrusted numeric values", () => {
 });
 test("reject unknown mode", () => {
   assert.throws(() => verifyStage("ABORT", fixture("A_PRE")), /NO_GO_UNKNOWN_MODE/);
+});
+
+test("B_POST permits a single live HELD claim and leased journal during healthy backlog drain", () => {
+  const e=fixture("B_POST");
+  e.d1.held=1; e.d1.inflight=1;
+  e.d1.stale_held=0; e.d1.unleased_inflight=0;
+  e.status.claim={state:"HELD"};
+  e.status.inFlightProjections=1;
+  assert.deepEqual(verifyStage("B_POST",e),{ok:true,mode:"B_POST"});
+});
+test("B_PRE still refuses even an otherwise healthy HELD claim",()=>{
+ const e=fixture("B_PRE");
+ e.d1.held=1; e.status.claim={state:"HELD"};
+ assert.throws(()=>verifyStage("B_PRE",e),/NO_GO_UNSAFE_WRITER/);
+});
+
+test("B_POST accepts D1 and admin snapshots sampled seconds apart",()=>{
+ const one=fixture("B_POST");
+ one.d1.inflight=1; one.d1.unleased_inflight=0;
+ one.status.inFlightProjections=0;
+ assert.deepEqual(verifyStage("B_POST",one),{ok:true,mode:"B_POST"});
+ const two=fixture("B_POST");
+ two.d1.inflight=0; two.status.inFlightProjections=1;
+ assert.deepEqual(verifyStage("B_POST",two),{ok:true,mode:"B_POST"});
 });

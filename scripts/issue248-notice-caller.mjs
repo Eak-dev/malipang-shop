@@ -24,7 +24,7 @@ async function main(){
  if(mode==='PAUSED')id=randomBytes(24).toString('base64url');
  else {
   if(!/^[A-Za-z0-9_-]{16,128}$/.test(id||''))throw Error('AUDIT_ID_INVALID');
-  const paused=read(`${base}/${id}/00_paused_provider.json`,`${temp}/paused.json`),a1=read(`${base}/${id}/01_preimage.json`,`${temp}/a1.json`),a2=read(`${base}/${id}/02_write_intent.json`,`${temp}/a2.json`);
+  const paused=read(`${base}/${id}/00_paused_provider.json`,`${temp}/paused.json`),a1=read(`${base}/${id}/01_preimage.json`,`${temp}/a1.json`),a2=read(`${base}/${id}/02_write_intent.json`,`${temp}/a2.json`),a3=read(`${base}/${id}/03_write_ack.json`,`${temp}/a3.json`);
   if(!digits(paused.caller_run)||!digits(paused.caller_attempt)||!/^[a-f0-9]{40}$/.test(paused.caller_source_sha||''))throw Error('CALLER_PROVENANCE_INVALID');
   const info=JSON.parse(run('gh',['api',`repos/${repo}/actions/runs/${paused.caller_run}/attempts/${paused.caller_attempt}`]));
   if(info.status!=='completed'||info.conclusion!=='success'||info.event!=='workflow_dispatch'||info.path!=='.github/workflows/issue248-notice-caller.yml'||info.head_sha!==paused.caller_source_sha||String(info.id)!==paused.caller_run||String(info.run_attempt)!==paused.caller_attempt)throw Error('CALLER_RUN_UNVERIFIED');
@@ -33,7 +33,7 @@ async function main(){
   if(jobs.total_count!==1||!Array.isArray(jobs.jobs)||jobs.jobs.length!==1||jobs.jobs[0].name!=='notice-proof'||jobs.jobs[0].status!=='completed'||jobs.jobs[0].conclusion!=='success'||!Number.isSafeInteger(jobs.jobs[0].id)||!Array.isArray(jobs.jobs[0].steps)||required.some(name=>jobs.jobs[0].steps.filter(x=>x.name===name&&x.status==='completed'&&x.conclusion==='success').length!==1))throw Error('CALLER_JOB_UNVERIFIED');
   const logs=run('gh',['run','view','--job',String(jobs.jobs[0].id),'--repo',repo,'--log']);
   const matches=[...logs.matchAll(/\bMP248_PAUSED_RECEIPT_SHA256=([a-f0-9]{64})\b/g)];if(matches.length!==1||matches[0][1]!==hash(paused))throw Error('CALLER_LOG_UNVERIFIED');
-  audit=checkAudit({id,paused,audit1:a1,audit2:a2,source:e.DIAGNOSTIC_SOURCE,worker:e.DIAGNOSTIC_WORKER_VERSION,deployRun:e.DEPLOY_RUN,deployAttempt:e.DEPLOY_ATTEMPT,callerRun:paused.caller_run,callerAttempt:paused.caller_attempt,callerSource:paused.caller_source_sha});
+  audit=checkAudit({id,paused,audit1:a1,audit2:a2,audit3:a3,source:e.DIAGNOSTIC_SOURCE,worker:e.DIAGNOSTIC_WORKER_VERSION,deployRun:e.DEPLOY_RUN,deployAttempt:e.DEPLOY_ATTEMPT,callerRun:paused.caller_run,callerAttempt:paused.caller_attempt,callerSource:paused.caller_source_sha});
  }
  const nonce=randomBytes(24).toString('base64url');if(mode==='READY'&&nonce===audit.originalNonce)throw Error('NONCE_REUSED');const headers={authorization:`Bearer ${e.MALIPANG_ADMIN_TOKEN}`,'x-mp248-nonce':nonce};
  if(mode==='READY')Object.assign(headers,{'x-mp248-claim-fingerprint':audit.claim,'x-mp248-style-fingerprint':audit.style,'x-mp248-ready-time':audit.readyTime,'x-mp248-ready-status':'NORMAL'});
@@ -45,7 +45,7 @@ async function main(){
   if(ready.status!==200)throw Error('NOTICE_READINESS_UNAVAILABLE');const result=await ready.json();
   if(!result||Object.keys(result).length!==1||result.ok!==true)throw Error('NOTICE_READINESS_UNVERIFIED');
  }
- const receipt={schema:'MP248_NOTICE_CALLER_V1',phase:mode,audit_id:id,diagnostic_source:e.DIAGNOSTIC_SOURCE,worker_version:e.DIAGNOSTIC_WORKER_VERSION,deploy_run:e.DEPLOY_RUN,deploy_attempt:e.DEPLOY_ATTEMPT,caller_run:e.GITHUB_RUN_ID,caller_attempt:e.GITHUB_RUN_ATTEMPT,caller_source_sha:e.GITHUB_SHA,nonce,claim_fingerprint:body.claim_fingerprint,style_fingerprint:body.style_fingerprint,binding:body.binding};
+ const receipt={schema:'MP248_NOTICE_CALLER_V1',phase:mode,audit_id:id,diagnostic_source:e.DIAGNOSTIC_SOURCE,worker_version:e.DIAGNOSTIC_WORKER_VERSION,deploy_run:e.DEPLOY_RUN,deploy_attempt:e.DEPLOY_ATTEMPT,caller_run:e.GITHUB_RUN_ID,caller_attempt:e.GITHUB_RUN_ATTEMPT,caller_source_sha:e.GITHUB_SHA,observed_at:new Date().toISOString(),nonce,claim_fingerprint:body.claim_fingerprint,style_fingerprint:body.style_fingerprint,binding:body.binding};
  if(mode==='READY'){receipt.ready_time=audit.readyTime;receipt.readiness='READY_OBSERVED';}
  const file=`${temp}/notice-caller-receipt.json`, key=`${base}/${id}/${mode==='PAUSED'?'00_paused_provider.json':`04_ready_provider-${e.GITHUB_RUN_ID}-${e.GITHUB_RUN_ATTEMPT}.json`}`;
  writeFileSync(file,JSON.stringify(receipt),{mode:0o600});run('npx',['wrangler','r2','object','put',`malipang-private-backups/${key}`,`--file=${file}`,'--remote']);

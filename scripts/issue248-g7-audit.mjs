@@ -1,0 +1,27 @@
+// Local review candidate: strict G7 intent/outcome only. No generic R2 writer.
+import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const fail=x=>{throw Error('NO_GO_G7_AUDIT_'+x)};
+const keys=(o,k)=>o&&typeof o==='object'&&!Array.isArray(o)&&JSON.stringify(Object.keys(o).sort())===JSON.stringify([...k].sort());
+const hex=x=>typeof x==='string'&&/^[a-f0-9]{64}$/.test(x);
+const epoch=x=>typeof x==='string'&&/^g7_[a-f0-9]{48}$/.test(x);
+const timestamp=x=>typeof x==='string'&&Number.isFinite(Date.parse(x))&&new Date(x).toISOString()===x;
+const digest=x=>createHash('sha256').update(x).digest('hex');
+export function validateG7Record(raw,nonce,phase){
+ if(typeof nonce!=='string'||!/^[a-f0-9]{48}$/.test(nonce)||!['intent','outcome'].includes(phase)||typeof raw!=='string'||Buffer.byteLength(raw)>8192)fail('INPUT');
+ let r;try{r=JSON.parse(raw)}catch{fail('JSON')}if(JSON.stringify(r)!==raw)fail('CANONICAL');
+ if(phase==='intent'){
+  if(!keys(r,['schema','epoch','workbookHash','targetKeyHash','traceHash','sourceVersion','sourceSnapshotDigest','sourceRevision','targetCreatedAt','selectionSince','itemCount','providerHash','issuedAt','legacyScan','gcp429Coverage','gcp429Delta','ownerAccepted429ObservabilityRisk','auditMode'])||r.schema!=='MP248_G7_ARM_INTENT_LOCAL_V1'||!epoch(r.epoch)||r.workbookHash!=='b8df793b7aafbedea3b9eb42c3bf4d4a8098bef8b91a8a6d5ea6d50fc6e5602f'||![r.targetKeyHash,r.traceHash,r.sourceSnapshotDigest,r.providerHash].every(hex)||!Number.isSafeInteger(r.sourceVersion)||r.sourceVersion<1||!Number.isSafeInteger(r.sourceRevision)||r.sourceRevision<0||!Number.isSafeInteger(r.itemCount)||r.itemCount<1||!timestamp(r.targetCreatedAt)||!timestamp(r.selectionSince)||!timestamp(r.issuedAt)||Date.parse(r.targetCreatedAt)<Date.parse(r.selectionSince)||Date.parse(r.issuedAt)<Date.parse(r.targetCreatedAt)||r.legacyScan!=='NO_EXACT_CANDIDATE_RESIDUAL_UNKNOWN'||r.gcp429Coverage!=='PARTIAL_UNKNOWN'||r.gcp429Delta!==null||r.ownerAccepted429ObservabilityRisk!==true||r.auditMode!=='R2_SINGLE_WRITER_NONCONDITIONAL_OWNER_RISK_ACCEPTED')fail('INTENT');
+ }else if(!keys(r,['schema','epoch','intentHash','status','classification'])||r.schema!=='MP248_G7_ARM_OUTCOME_LOCAL_V1'||!epoch(r.epoch)||!hex(r.intentHash)||!((r.status==='ARM_ACKNOWLEDGED'&&r.classification==='PRESENT_MATCHING')||(r.status==='ARM_ACK_UNKNOWN'&&['PRESENT_MATCHING','ABSENT','OTHER','READBACK_UNKNOWN'].includes(r.classification))))fail('OUTCOME');
+ return r;
+}
+export async function writeG7AuditOnce({nonce,phase,raw,fetcher,account,token}){
+ const r=validateG7Record(raw,nonce,phase);if(typeof fetcher!=='function'||typeof account!=='string'||!/^[a-f0-9]{32}$/.test(account)||typeof token!=='string'||!token)fail('CONFIG');
+ const prefix='release-control/pr247/g7/arm-audit/',path=`${prefix}${nonce}-${phase}.json`,base=`https://api.cloudflare.com/client/v4/accounts/${account}/r2/buckets/malipang-private-backups/objects/`,url=key=>base+key.split('/').map(encodeURIComponent).join('/');
+ const read=async key=>{let x;try{x=await fetcher(url(key),{method:'GET',headers:{authorization:`Bearer ${token}`},signal:AbortSignal.timeout(20000),redirect:'error'})}catch{fail('GET_UNKNOWN')};if(x.status===404){let e;try{e=await x.json()}catch{fail('GET_UNKNOWN')}if(e?.success!==false||!Array.isArray(e.errors)||!e.errors.some(z=>z.code===10007))fail('GET_UNKNOWN');return null}if(x.status!==200)fail('GET_UNKNOWN');return await x.text()};
+ if(await read(path)!==null)fail('KEY_EXISTS');
+ if(phase==='outcome'){const old=await read(`${prefix}${nonce}-intent.json`);if(typeof old!=='string'||digest(old)!==r.intentHash)fail('INTENT_MISSING_OR_DIGEST');const intent=validateG7Record(old,nonce,'intent');if(intent.epoch!==r.epoch)fail('INTENT_EPOCH')}
+ let put;try{put=await fetcher(url(path),{method:'PUT',headers:{authorization:`Bearer ${token}`,'content-type':'application/octet-stream'},body:raw,signal:AbortSignal.timeout(20000),redirect:'error'})}catch{fail('PUT_UNKNOWN_NO_RETRY')};if(put.status!==200)fail('PUT_UNKNOWN_NO_RETRY');let ack;try{ack=await put.json()}catch{fail('PUT_UNKNOWN_NO_RETRY')}if(ack?.success!==true||ack.result?.key!==path||typeof ack.result?.etag!=='string'||!/^[A-Za-z0-9_."-]{1,256}$/.test(ack.result.etag))fail('PUT_UNKNOWN_NO_RETRY');if(await read(path)!==raw)fail('READBACK_UNKNOWN_NO_RETRY');return {key:path,digest:digest(raw),etag:ack.result.etag};
+}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){try{const {GITHUB_EVENT_PATH,CLOUDFLARE_ACCOUNT_ID,CLOUDFLARE_API_TOKEN}=process.env;const event=JSON.parse(readFileSync(GITHUB_EVENT_PATH,'utf8')),nonce=event?.inputs?.audit_nonce,phase=event?.inputs?.phase,encoded=event?.inputs?.record_base64;if(typeof encoded!=='string'||!/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)||encoded.length>12000)fail('ENCODING');const raw=Buffer.from(encoded,'base64').toString('utf8');if(Buffer.from(raw,'utf8').toString('base64')!==encoded)fail('ENCODING');const out=await writeG7AuditOnce({nonce,phase,raw,fetcher:fetch,account:CLOUDFLARE_ACCOUNT_ID,token:CLOUDFLARE_API_TOKEN});console.log('MP248_G7_AUDIT_SHA256='+out.digest);console.log('MP248_G7_AUDIT_KEY='+out.key);console.log('MP248_G7_AUDIT_ETAG_B64='+Buffer.from(out.etag,'utf8').toString('base64url'))}catch(e){console.error(typeof e?.message==='string'&&/^NO_GO_[A-Z0-9_]+$/.test(e.message)?e.message:'NO_GO_G7_AUDIT_UNKNOWN');process.exitCode=1}}

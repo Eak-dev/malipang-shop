@@ -56,7 +56,9 @@ export async function stableNoticePaused(env:Env,stampValue:string,identityValue
 export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string):Promise<string|null>{
  try{
   const db=env.DB,initial=scope(env),x=await snapshot(env);
-  if(env.DB!==db||scope(env)!==initial||identity(x)!==identityValue||text(x.cells[0])!==expectedStatus||text(x.cells[1])!==expectedTime)return null;
+  // The G6b operator writes the existing รายวัน B1:C1 explicitly.  A named
+  // range may move while retaining its ID; do not attest a different location.
+  if(env.DB!==db||scope(env)!==initial||identity(x)!==identityValue||x.ranges[0].sheetId!==1815870717||x.ranges[0].row!==0||x.ranges[0].column!==1||x.ranges[1].sheetId!==1815870717||x.ranges[1].row!==0||x.ranges[1].column!==2||text(x.cells[0])!==expectedStatus||text(x.cells[1])!==expectedTime)return null;
   const styles=x.cells.map(c=>[c.format,c.note,c.validation,c.textRuns,c.chips]);
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
   if(env.DB!==db||scope(env)!==initial)return null;

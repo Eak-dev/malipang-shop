@@ -2,8 +2,9 @@ name: Issue248 original notice diagnostic deploy (candidate)
 # LOCAL REVIEW CANDIDATE ONLY. NO automatic dispatch. A successful deploy is
 # not G6b. It writes private R2 intent/receipt and deploys one Worker. Wrangler
 # deploy also updates configured Queue producers/consumers and Cron triggers;
-# it may remove the explicit Queue delivery_paused field. It never manually
-# writes Sheets or D1 claims and never auto-resumes or rolls back.
+# it may remove the explicit Queue delivery_paused field. A scoped single PATCH
+# may restore explicit active status; it does not fence external actors.
+# It never writes Sheets or D1 claims and never rolls back.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +18,7 @@ on:
         type: string
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: malipang-release-control
   cancel-in-progress: false
@@ -31,6 +33,7 @@ jobs:
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
       MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      GH_TOKEN: ${{ github.token }}
       EXPECTED_SHA: ${{ inputs.expected_sha }}
       CONFIRMATION: ${{ inputs.confirmation }}
       REVIEWED_BASE: acc65da7312315d442e362d331b3be9816a3fddd
@@ -67,8 +70,10 @@ jobs:
           printf '%s\n' \
             '8a5f62ceed3cab038be2f6a927af59c4f692285a8d3cef9f2589aafba24a8409  src/admin/handler.ts' \
             '496718d42e6c49086e22990bd770f555f88203565d0dc90ccc455932b1280f60  src/admin/stable-paused-notice.ts' \
-            '16ac2dc6eba398a291d91e57abbc29ceb9f030ee71cd3cdbb7c4bb41f327b176  src/sheets/stable-edit-notice.ts' \
-            'a939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99  scripts/issue248-version-proof.mjs' | sha256sum --check
+            '79d771301b2be2e0fe9b549429abd8e84ba73cd23fbb96b15045a7ec8f9cb02a  src/sheets/stable-edit-notice.ts' \
+            'a939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99  scripts/issue248-version-proof.mjs' \
+            '3c75b14b07c715ccea25e99ae5ebfc650c21fbf8a0d61013f6bacadb53f64735  scripts/issue248-queue-proof.mjs' \
+            'b909bf631249aac620be8a538772f7b2826b45185b590f865c5d0c3e526e729c  scripts/issue248-queue-remediation.sh' | sha256sum --check
           node -e 'const v=JSON.parse(require("fs").readFileSync("wrangler.jsonc","utf8")).vars;if(v.STABLE_PHASE1_ENABLED!=="true"||v.STABLE_RECOVERY_GATE_ENABLED!=="true"||v.STABLE_SHEETS_PACING_ENABLED!=="true")process.exit(1)'
       - run: npm ci
       - name: Test exact source and dry-run
@@ -84,6 +89,8 @@ jobs:
           umask 077
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
           bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/diagnostic-before.json" >/dev/null
+      - name: Record exact Queue preimage and known release activity
+        run: bash scripts/issue248-queue-remediation.sh pre
       - name: Deploy diagnostic only
         shell: bash
         run: |
@@ -110,6 +117,8 @@ jobs:
           version="$(node scripts/issue248-version-proof.mjs "$RUNNER_TEMP/diagnostic-deploy-private.log" "$RUNNER_TEMP/diagnostic-deployments.json" "$EXPECTED_WORKER_VERSION")" || { echo 'WORKER_VERSION_UNKNOWN' >&2; exit 1; }
           echo "DIAGNOSTIC_WORKER_VERSION=$version" >> "$GITHUB_ENV"
           echo "Diagnostic Worker version: $version" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify or restore explicit active Queue under scoped evidence
+        run: bash scripts/issue248-queue-remediation.sh post
       - name: Read back guard and observe
         shell: bash
         run: |
@@ -126,4 +135,4 @@ jobs:
       - name: Incident notice
         if: always()
         run: |
-          echo 'A missing Queue delivery_paused field is UNKNOWN. This workflow never automatically resumes Queue or rolls back. Inspect current ownership and provider readback before any separate recovery.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A missing Queue delivery_paused field is UNKNOWN. A single scoped PATCH may occur only with retained preimage and durable intent; external/manual actor risk is accepted and not fenced. Inspect before any separate recovery; no rollback.' >> "$GITHUB_STEP_SUMMARY"

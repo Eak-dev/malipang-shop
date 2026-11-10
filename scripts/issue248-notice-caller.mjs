@@ -40,8 +40,13 @@ async function main(){
  const response=await fetch(new URL(mode==='PAUSED'?'/admin/stable-sync/original-paused-notice':'/admin/stable-sync/original-ready-notice',url),{headers,signal:AbortSignal.timeout(20000),redirect:'error'});
  if(response.status!==200)throw Error('PROVIDER_DIAGNOSTIC_UNAVAILABLE');
  const body=await response.json();checkDiagnostic({mode,expectedNonce:nonce,response:body,...(audit||{})});
+ if(mode==='READY'){
+  const ready=await fetch(new URL('/admin/stable-sync/notice-readiness',url),{headers:{authorization:`Bearer ${e.MALIPANG_ADMIN_TOKEN}`},signal:AbortSignal.timeout(20000),redirect:'error'});
+  if(ready.status!==200)throw Error('NOTICE_READINESS_UNAVAILABLE');const result=await ready.json();
+  if(!result||Object.keys(result).length!==1||result.ok!==true)throw Error('NOTICE_READINESS_UNVERIFIED');
+ }
  const receipt={schema:'MP248_NOTICE_CALLER_V1',phase:mode,audit_id:id,diagnostic_source:e.DIAGNOSTIC_SOURCE,worker_version:e.DIAGNOSTIC_WORKER_VERSION,deploy_run:e.DEPLOY_RUN,deploy_attempt:e.DEPLOY_ATTEMPT,caller_run:e.GITHUB_RUN_ID,caller_attempt:e.GITHUB_RUN_ATTEMPT,caller_source_sha:e.GITHUB_SHA,nonce,claim_fingerprint:body.claim_fingerprint,style_fingerprint:body.style_fingerprint,binding:body.binding};
- if(mode==='READY')receipt.ready_time=audit.readyTime;
+ if(mode==='READY'){receipt.ready_time=audit.readyTime;receipt.readiness='READY_OBSERVED';}
  const file=`${temp}/notice-caller-receipt.json`, key=`${base}/${id}/${mode==='PAUSED'?'00_paused_provider.json':`04_ready_provider-${e.GITHUB_RUN_ID}-${e.GITHUB_RUN_ATTEMPT}.json`}`;
  writeFileSync(file,JSON.stringify(receipt),{mode:0o600});run('npx',['wrangler','r2','object','put',`malipang-private-backups/${key}`,`--file=${file}`,'--remote']);
  const actual=read(key,`${temp}/notice-caller-readback.json`);if(JSON.stringify(actual)!==JSON.stringify(receipt))throw Error('RECEIPT_READBACK_FAILED');

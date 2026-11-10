@@ -61,7 +61,7 @@ jobs:
       G7_RECEIPT_KEY: ${{ inputs.g7_receipt_key }}
       G7_RECEIPT_SHA256: ${{ inputs.g7_receipt_sha256 }}
       CONFIRMATION: ${{ inputs.confirmation }}
-      REVIEWED_SOURCE_SHA: c4b4ab96e2f2cb08a8633c003294375a0f458095
+      REVIEWED_SOURCE_SHA: c5941ea3f88456c1475f367fd5c650d75e24c05e
       CONFIG_BASELINE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74
     steps:
       - uses: actions/checkout@v4

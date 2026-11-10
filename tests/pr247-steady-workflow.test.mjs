@@ -38,7 +38,7 @@ test("only config delta is literal Gate OFF / Pacing ON", () => {
   assert.throws(()=>validateSteadyConfig(base,x),/NO_GO_UNRELATED_CONFIG_DRIFT/);
 });
 test("source pin prevents unrelated runtime change",()=>{
-  assert.match(workflow,/REVIEWED_SOURCE_SHA: c4b4ab96e2f2cb08a8633c003294375a0f458095/);
+  assert.match(workflow,/REVIEWED_SOURCE_SHA: c5941ea3f88456c1475f367fd5c650d75e24c05e/);
   assert.match(workflow,/CONFIG_BASELINE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74/);
   assert.match(workflow,/git merge-base --is-ancestor "\$REVIEWED_SOURCE_SHA" HEAD/);
   assert.match(workflow,/git rev-parse refs\/review\/pr247\)" = "\$CONFIG_BASELINE_SHA"/);

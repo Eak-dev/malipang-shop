@@ -1,7 +1,7 @@
 # Issue #248 — PR-B (Steady-State) LOCAL PREPARATION ONLY
 
 Status: **LOCAL RELEASE WORKFLOW IMPLEMENTED; AWAITING INDEPENDENT REVIEW / NO-GO FOR MERGE UNTIL APPROVAL**.
-Source: reviewed diagnostic main `c4b4ab96e2f2cb08a8633c003294375a0f458095`; the unchanged configuration baseline is PR #247 `4bb84a4869920f70981477de0ef69607438e2c74`. This draft needs independent review and exact-head validation.
+Source: reviewed post-caller main `c5941ea3f88456c1475f367fd5c650d75e24c05e`; diagnostic deploy receipt still binds its earlier exact source `c4b4ab96e2f2cb08a8633c003294375a0f458095`; the unchanged configuration baseline is PR #247 `4bb84a4869920f70981477de0ef69607438e2c74`. This draft needs independent review and exact-head validation.
 Owner approval for this turn covers LOCAL preparation only. It does not authorize Push, PR creation, Merge, Deploy, Cron/Queue, D1, B1/C1, REVIEW claim release, or replay.
 
 ## Purpose and exact proposed diff
@@ -21,7 +21,7 @@ Owner approval for this turn covers LOCAL preparation only. It does not authoriz
 6. Only after distinct Owner G8 authorization, merge/rebase PR-B against actual post-G6a main and deploy gate OFF/pacing ON with manual workflow; no automatic merge.
 
 ## Required PR-B manual workflow preconditions (DoD before L1/G3)
-- Exact main/branch, no runtime diff compared to pinned diagnostic source `c4b4ab96e2f2cb08a8633c003294375a0f458095`; no concurrent Production workflow.
+- Exact main/branch, no runtime diff compared to pinned post-caller source `c5941ea3f88456c1475f367fd5c650d75e24c05e`; no concurrent Production workflow.
 - Actual deployed 100% G6a Worker Version ID must equal exact Owner-reviewed input; do not assume the GitHub commit equals deployed Worker.
 - R2 G5 durable release evidence: `VERIFIED_COMPLETED` with correct queue_id/source/old Worker, independently read back.
 - Private G7 Owner-signed evidence with SHA-256 and exact provider readback; receipt must indicate no duplicate stable IDs, no 429 observed, expense source/version and payroll/LINE unaffected, and explicit permission to start paced G8 drain. Do **not** publish raw expense IDs, amount or token.

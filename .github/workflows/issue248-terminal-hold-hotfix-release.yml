@@ -1,0 +1,142 @@
+name: Issue248 terminal hold hotfix release
+# Manual mutation only. Push registers this workflow and does not touch provider.
+# Point-in-time checks are NOT a writer freeze against Queue/Cron/external actors.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Exact independently reviewed merged main SHA', type: string, required: true}
+      g7_receipt_key: {description: 'Private existing G7 receipt R2 key', type: string, required: true}
+      g7_receipt_sha256: {description: 'Existing G7 receipt SHA-256', type: string, required: true}
+      confirmation: {description: 'Type OWNER APPROVED ISSUE248 TERMINAL HOLD HOTFIX', type: string, required: true}
+      expired_terminal_exception: {description: 'Type OWNER ACCEPTS EXPIRED TERMINAL WRITER RACE for known stale terminal item, or NONE', type: string, required: true}
+  push:
+    branches: [main]
+    paths: ['.github/workflows/issue248-terminal-hold-hotfix-release.yml']
+permissions: {contents: read, actions: read}
+concurrency:
+  group: ${{ github.event_name == 'push' && 'malipang-terminal-hotfix-registry' || 'malipang-release-control' }}
+  cancel-in-progress: false
+jobs:
+  registry:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Workflow registration only; no provider access.'
+  hotfix:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      G7_RECEIPT_KEY: ${{ inputs.g7_receipt_key }}
+      G7_RECEIPT_SHA256: ${{ inputs.g7_receipt_sha256 }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      EXPIRED_TERMINAL_EXCEPTION: ${{ inputs.expired_terminal_exception }}
+      G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+      G5_RUN_ID: '42802512915'
+      G5_RUN_ATTEMPT: '1'
+      PRIOR_WORKER_VERSION: a9cc50ba-f2f0-4cbe-a261-ff3bb65fc86c
+      BEFORE_WORKER_VERSION: 070d79d4-7787-4bcc-93a4-1c061a6d6805
+      REVIEWED_RUNTIME_SHA: aeff32eb29b921b61064c80f42f6978fdbb2d690
+      BASE_SHA: 24be2659aa9193a610ebe75553223af914b5fc15
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Verify exact reviewed source and release controls
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$GITHUB_ACTOR" = 'Eak-dev'
+          test "$CONFIRMATION" = 'OWNER APPROVED ISSUE248 TERMINAL HOLD HOTFIX'
+          [[ "$EXPIRED_TERMINAL_EXCEPTION" == 'NONE' || "$EXPIRED_TERMINAL_EXCEPTION" == 'OWNER ACCEPTS EXPIRED TERMINAL WRITER RACE' ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ && "$G7_RECEIPT_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$G7_RECEIPT_KEY" =~ ^release-control/pr247/g7/receipt_[a-f0-9]{48}\.json$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git fetch --no-tags origin '+refs/pull/268/head:refs/review/pr268'
+          test "$(git rev-parse refs/review/pr268)" = "$REVIEWED_RUNTIME_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          gh api repos/Eak-dev/malipang-shop/pulls/268 > "$RUNNER_TEMP/pr268.json"
+          jq -e --arg reviewed "$REVIEWED_RUNTIME_SHA" '.merged == true and .head.sha == $reviewed and (.merge_commit_sha | type == "string" and test("^[a-f0-9]{40}$"))' "$RUNNER_TEMP/pr268.json" >/dev/null
+          pr_merge="$(jq -r '.merge_commit_sha' "$RUNNER_TEMP/pr268.json")"
+          git merge-base --is-ancestor "$pr_merge" HEAD
+          git diff --quiet "$REVIEWED_RUNTIME_SHA" HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-readonly-snapshot.sh scripts/pr247-stage-guard.mjs scripts/pr247-g7-zero-proof.mjs scripts/issue248-version-proof.mjs
+          npm run check > "$RUNNER_TEMP/terminal-hotfix-check.log" 2>&1 || { echo HOTFIX_TESTS_FAILED; exit 1; }
+          npx wrangler deploy --dry-run > "$RUNNER_TEMP/terminal-hotfix-dryrun.log" 2>&1 || { echo HOTFIX_DRYRUN_FAILED; exit 1; }
+      - name: Check current Worker, accounting guards and writers (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export EXPECTED_WORKER_VERSION="$BEFORE_WORKER_VERSION" COMPLETED_BEFORE=0
+          HOTFIX_OBSERVATION_START="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          echo "HOTFIX_OBSERVATION_START=$HOTFIX_OBSERVATION_START" >> "$GITHUB_ENV"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT count(*) AS n FROM failed_jobs WHERE status='OPEN'" > "$RUNNER_TEMP/hotfix-open.json"
+          OPEN_FAILED_BEFORE="$(jq -er 'select(type=="array" and length==1) | .[0] | select(.success==true and .meta.changed_db==false and .meta.rows_written==0 and (.results|length)==1) | .results[0].n | select(type=="number" and .>=0 and floor==.)' "$RUNNER_TEMP/hotfix-open.json")"
+          export OPEN_FAILED_BEFORE
+          echo "OPEN_FAILED_BEFORE=$OPEN_FAILED_BEFORE" >> "$GITHUB_ENV"
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/hotfix-pre.json"
+          SQL="SELECT (SELECT count(*) FROM stable_workbook_claims) claims,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') inflight,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING' AND (lease_until IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ',lease_until) IS NULL OR lease_token IS NULL OR length(trim(lease_token))=0 OR strftime('%Y-%m-%dT%H:%M:%fZ',lease_until)>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) active_or_unbounded_leases,(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING') staff_processing,(SELECT count(*) FROM sync_jobs j WHERE j.status='PROCESSING' AND j.lease_until IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%fZ',j.lease_until) IS NOT NULL AND j.lease_token IS NOT NULL AND length(trim(j.lease_token))>0 AND strftime('%Y-%m-%dT%H:%M:%fZ',j.lease_until)<=strftime('%Y-%m-%dT%H:%M:%fZ','now')) expired_processing,(SELECT json_group_array(json_object('entity_type',j.entity_type,'entity_key',j.entity_key,'entity_version',j.entity_version,'terminal',EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=j.entity_type||':'||j.entity_key||':'||j.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES'),'source_current',EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=j.entity_key AND e.version=j.entity_version AND e.status='CONFIRMED'),'daily_verified',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND p.entity_id=j.entity_key AND p.source_version=j.entity_version AND p.spreadsheet_id='1d8Cv76JicUo7jO4KykQ35Xg60GAjMOyJCeYT92xkKL8' AND p.sheet_id=1815870717 AND p.sheet_name='รายวัน' AND p.projection='DAILY' AND p.state='VERIFIED'),'raw_verified',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND p.entity_id=j.entity_key AND p.source_version=j.entity_version AND p.spreadsheet_id='1d8Cv76JicUo7jO4KykQ35Xg60GAjMOyJCeYT92xkKL8' AND p.sheet_id=247227172 AND p.sheet_name='V52_EXPENSE_RAW' AND p.projection='EXPENSE_RAW' AND p.state='VERIFIED'),'journal_total',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')),'distinct_digests',(SELECT count(DISTINCT p.source_digest) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')),'documents',(SELECT count(*) FROM expense_documents d WHERE d.expense_id=j.entity_key OR d.document_id IN (SELECT l.document_id FROM expense_document_links l WHERE l.expense_id=j.entity_key)),'links',(SELECT count(*) FROM expense_document_links l WHERE l.expense_id=j.entity_key),'items',(SELECT count(*) FROM expense_document_items i WHERE i.expense_id=j.entity_key))) FROM (SELECT * FROM sync_jobs WHERE status='PROCESSING' AND lease_until IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%fZ',lease_until) IS NOT NULL AND lease_token IS NOT NULL AND length(trim(lease_token))>0 AND strftime('%Y-%m-%dT%H:%M:%fZ',lease_until)<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 2) j) expired_json"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$SQL" > "$RUNNER_TEMP/hotfix-writers.json"
+          pre_result="$(node scripts/issue248-terminal-hotfix-guard.mjs "$RUNNER_TEMP/hotfix-pre.json" "$RUNNER_TEMP/hotfix-writers.json")"
+          case "$pre_result" in
+            TERMINAL_HOTFIX_PRE_KNOWN_EXPIRED_RISK_ACCEPTED_OUTCOME_UNKNOWN_NOT_FREEZE|TERMINAL_HOTFIX_PRE_POINT_IN_TIME_PASS_NOT_FREEZE) printf '%s\n' "$pre_result" >> "$GITHUB_STEP_SUMMARY";;
+            *) echo HOTFIX_PRE_RESULT_UNKNOWN; exit 1;;
+          esac
+      - name: Recheck preconditions and deploy once
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          export EXPECTED_WORKER_VERSION="$BEFORE_WORKER_VERSION" COMPLETED_BEFORE=0
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/hotfix-immediate.json"
+          SQL="SELECT (SELECT count(*) FROM stable_workbook_claims) claims,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') inflight,(SELECT count(*) FROM sync_jobs WHERE status='PROCESSING' AND (lease_until IS NULL OR strftime('%Y-%m-%dT%H:%M:%fZ',lease_until) IS NULL OR lease_token IS NULL OR length(trim(lease_token))=0 OR strftime('%Y-%m-%dT%H:%M:%fZ',lease_until)>strftime('%Y-%m-%dT%H:%M:%fZ','now'))) active_or_unbounded_leases,(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING') staff_processing,(SELECT count(*) FROM sync_jobs j WHERE j.status='PROCESSING' AND j.lease_until IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%fZ',j.lease_until) IS NOT NULL AND j.lease_token IS NOT NULL AND length(trim(j.lease_token))>0 AND strftime('%Y-%m-%dT%H:%M:%fZ',j.lease_until)<=strftime('%Y-%m-%dT%H:%M:%fZ','now')) expired_processing,(SELECT json_group_array(json_object('entity_type',j.entity_type,'entity_key',j.entity_key,'entity_version',j.entity_version,'terminal',EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=j.entity_type||':'||j.entity_key||':'||j.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES'),'source_current',EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=j.entity_key AND e.version=j.entity_version AND e.status='CONFIRMED'),'daily_verified',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND p.entity_id=j.entity_key AND p.source_version=j.entity_version AND p.spreadsheet_id='1d8Cv76JicUo7jO4KykQ35Xg60GAjMOyJCeYT92xkKL8' AND p.sheet_id=1815870717 AND p.sheet_name='รายวัน' AND p.projection='DAILY' AND p.state='VERIFIED'),'raw_verified',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND p.entity_id=j.entity_key AND p.source_version=j.entity_version AND p.spreadsheet_id='1d8Cv76JicUo7jO4KykQ35Xg60GAjMOyJCeYT92xkKL8' AND p.sheet_id=247227172 AND p.sheet_name='V52_EXPENSE_RAW' AND p.projection='EXPENSE_RAW' AND p.state='VERIFIED'),'journal_total',(SELECT count(*) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')),'distinct_digests',(SELECT count(DISTINCT p.source_digest) FROM stable_projection_writes p WHERE p.entity_type=j.entity_type AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')),'documents',(SELECT count(*) FROM expense_documents d WHERE d.expense_id=j.entity_key OR d.document_id IN (SELECT l.document_id FROM expense_document_links l WHERE l.expense_id=j.entity_key)),'links',(SELECT count(*) FROM expense_document_links l WHERE l.expense_id=j.entity_key),'items',(SELECT count(*) FROM expense_document_items i WHERE i.expense_id=j.entity_key))) FROM (SELECT * FROM sync_jobs WHERE status='PROCESSING' AND lease_until IS NOT NULL AND strftime('%Y-%m-%dT%H:%M:%fZ',lease_until) IS NOT NULL AND lease_token IS NOT NULL AND length(trim(lease_token))>0 AND strftime('%Y-%m-%dT%H:%M:%fZ',lease_until)<=strftime('%Y-%m-%dT%H:%M:%fZ','now') LIMIT 2) j) expired_json"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$SQL" > "$RUNNER_TEMP/hotfix-writers-immediate.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs "$RUNNER_TEMP/hotfix-immediate.json" "$RUNNER_TEMP/hotfix-writers-immediate.json"
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          CHECK_FAILURES="SELECT count(*) n FROM failed_jobs WHERE created_at >= '$HOTFIX_OBSERVATION_START' OR (status='OPEN' AND updated_at >= '$HOTFIX_OBSERVATION_START')"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures-immediate.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures-immediate.json"
+          # These snapshots are not an exclusive freeze: a new writer may start
+          # before or during deploy. Never blindly roll back an uncertain write.
+          npx wrangler deploy > "$RUNNER_TEMP/terminal-hotfix-deploy.log" 2>&1 || { echo HOTFIX_DEPLOY_ACK_UNKNOWN_NO_RETRY; exit 1; }
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/hotfix-cf-header"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/hotfix-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/hotfix-deployed.json"
+          latest="$(node scripts/issue248-version-proof.mjs "$RUNNER_TEMP/terminal-hotfix-deploy.log" "$RUNNER_TEMP/hotfix-deployed.json" "$BEFORE_WORKER_VERSION")" || { echo HOTFIX_DEPLOY_VERSION_UNKNOWN_NO_RETRY; exit 1; }
+          echo "POST_WORKER=$latest" >> "$GITHUB_ENV"
+          echo "HOTFIX_DEPLOYED_WORKER_VERSION=$latest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify version, active Queue, flags and D1 after deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          export EXPECTED_WORKER_VERSION="$POST_WORKER" COMPLETED_BEFORE=0
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          CHECK_FAILURES="SELECT count(*) n FROM failed_jobs WHERE created_at >= '$HOTFIX_OBSERVATION_START' OR (status='OPEN' AND updated_at >= '$HOTFIX_OBSERVATION_START')"
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/hotfix-after.json" || { echo HOTFIX_POST_UNKNOWN_NO_RETRY; exit 1; }
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures.json"
+          sleep 360
+          bash scripts/pr247-readonly-snapshot.sh B_POST "$RUNNER_TEMP/hotfix-after-cron.json" || { echo HOTFIX_SOAK_UNKNOWN_NO_RETRY; exit 1; }
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures-after-cron.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures-after-cron.json"
+          echo 'HOTFIX_CONFIG_CHECK_ONLY_NOT_BACKLOG_OR_ACCOUNTING_PARITY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'CONTINUE GCP 429 MONITORING, PER-ID RECONCILIATION AND SEVEN-DAY SOAK' >> "$GITHUB_STEP_SUMMARY"
+      - name: Incident containment instructions
+        if: always()
+        run: |
+          echo 'NO BLIND RETRY, ROLLBACK OR DLQ REPLAY. Inspect exact Worker, D1, Queue, Cron and provider state before intervention.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'A nonzero precheck stops deploy; point-in-time zeros do not freeze concurrent writers.' >> "$GITHUB_STEP_SUMMARY"

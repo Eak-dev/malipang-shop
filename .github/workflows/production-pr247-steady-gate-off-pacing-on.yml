@@ -21,7 +21,7 @@ on:
         type: string
         required: true
       prior_g6a_worker_version:
-        description: Actual 100-percent G6a Worker version
+        description: Actual 100-percent verified G6a diagnostic Worker version
         type: string
         required: true
       g7_receipt_key:
@@ -38,6 +38,7 @@ on:
         required: true
 permissions:
   contents: read
+  actions: read
 concurrency:
   group: malipang-release-control
   cancel-in-progress: false
@@ -47,6 +48,7 @@ jobs:
     timeout-minutes: 35
     environment: production
     env:
+      GH_TOKEN: ${{ github.token }}
       CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
       CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
@@ -85,6 +87,10 @@ jobs:
           git cat-file -e "${REVIEWED_SOURCE_SHA}^{commit}"
           git merge-base --is-ancestor "$REVIEWED_SOURCE_SHA" HEAD
           git diff --quiet "$REVIEWED_SOURCE_SHA" HEAD -- src migrations package.json package-lock.json tsconfig.json
+          printf '%s\n' \
+            'a939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99  scripts/issue248-version-proof.mjs' \
+            '3c75b14b07c715ccea25e99ae5ebfc650c21fbf8a0d61013f6bacadb53f64735  scripts/issue248-queue-proof.mjs' \
+            'b909bf631249aac620be8a538772f7b2826b45185b590f865c5d0c3e526e729c  scripts/issue248-queue-remediation.sh' | sha256sum --check
           node scripts/pr247-steady-config-check.mjs
           npm run check > "$RUNNER_TEMP/prb-check-private.log" 2>&1 || { tail -40 "$RUNNER_TEMP/prb-check-private.log"; exit 1; }
           npx wrangler deploy --dry-run > "$RUNNER_TEMP/prb-dryrun-private.log" 2>&1 || { tail -35 "$RUNNER_TEMP/prb-dryrun-private.log"; exit 1; }
@@ -92,6 +98,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Bind G7 and live preflight to the successful diagnostic deploy's
+          # private VERIFIED receipt, not the earlier G6a Worker.
+          npx wrangler r2 object get 'malipang-private-backups/release-control/pr247/g6b-diagnostic/42816833410-1-verified.json' --file="$RUNNER_TEMP/prb-diagnostic-receipt.json" --remote >/dev/null
+          jq -e --arg worker "$G6A_WORKER" --arg g5 "$G5_SHA" '.schema=="MP248_NOTICE_DIAGNOSTIC_V1" and .state=="VERIFIED_COMPLETED" and .expected_sha=="c4b4ab96e2f2cb08a8633c003294375a0f458095" and .base_sha=="acc65da7312315d442e362d331b3be9816a3fddd" and .prior_worker_version=="e26b593e-7fa5-4492-a62f-5a0c68f3533f" and .g5_sha==$g5 and .run_id=="42816833410" and .run_attempt=="1" and .worker_version==$worker' "$RUNNER_TEMP/prb-diagnostic-receipt.json" >/dev/null || { echo G8_DIAGNOSTIC_RECEIPT_MISMATCH; exit 1; }
           export EXPECTED_WORKER_VERSION="$G6A_WORKER"
           export PRIOR_WORKER_VERSION="$G6A_WORKER"
           export COMPLETED_BEFORE=0 OPEN_FAILED_BEFORE=0
@@ -102,31 +112,33 @@ jobs:
           # Counts only: preserve the exact-run baseline for manual incident review
           # even when the runner's private temporary snapshot is removed.
           jq -r '"G8_PRE_COMPLETED=\(.d1.completed)\nG8_PRE_OPEN_FAILED=\(.d1.open_failed)"' "$RUNNER_TEMP/prb-before.json" >> "$GITHUB_STEP_SUMMARY"
+      - name: Record exact Queue preimage and known release activity
+        run: bash scripts/issue248-queue-remediation.sh pre
       - name: Deploy reviewed Gate OFF with Pacing ON (G8 approval only)
         shell: bash
         run: |
           set -euo pipefail
           test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/prb-cf-header"
           # Fresh external readbacks reduce drift between G8 preflight and deploy.
           # They are NOT an exclusive lock against a rogue external operator.
-          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-immediate-worker.json"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/prb-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-immediate-worker.json"
           jq -e --arg prior "$G6A_WORKER" '.success == true and (.result.deployments[0].versions | length) == 1 and .result.deployments[0].versions[0].percentage == 100 and .result.deployments[0].versions[0].version_id == $prior' "$RUNNER_TEMP/prb-immediate-worker.json" >/dev/null || { echo G8_PRIOR_WORKER_DRIFT; exit 1; }
-          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/prb-immediate-cron.json"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/prb-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/schedules" > "$RUNNER_TEMP/prb-immediate-cron.json"
           jq -e '.success == true and [.result.schedules[].cron] == ["*/5 * * * *"]' "$RUNNER_TEMP/prb-immediate-cron.json" >/dev/null || { echo G8_CRON_DRIFT; exit 1; }
-          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" > "$RUNNER_TEMP/prb-immediate-queues.json"
-          jq -e '.success == true and ([.result[] | select(.queue_name == "malipang-jobs" and .settings.delivery_paused == false)] | length) == 1' "$RUNNER_TEMP/prb-immediate-queues.json" >/dev/null || { echo G8_QUEUE_DRIFT; exit 1; }
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/prb-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/queues" > "$RUNNER_TEMP/prb-immediate-queues.json"
+          jq -e --arg id "$DIAGNOSTIC_QUEUE_ID" '.success == true and ([.result[] | select(.queue_name == "malipang-jobs" and .queue_id == $id and .settings.delivery_paused == false)] | length) == 1' "$RUNNER_TEMP/prb-immediate-queues.json" >/dev/null || { echo G8_QUEUE_DRIFT; exit 1; }
           npx wrangler deploy > "$RUNNER_TEMP/prb-deploy-private.log" 2>&1 || {
             echo 'DEPLOY_ACK_UNCERTAIN: no blind retry or rollback; inspect current Worker/Queue/Cron and D1 first' >&2
             exit 1
           }
-          curl -fsS --retry 0 --max-time 20 -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-deployed.json"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/prb-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/prb-deployed.json"
           jq -e '.success == true and (.result.deployments[0].versions | length) == 1 and .result.deployments[0].versions[0].percentage == 100' "$RUNNER_TEMP/prb-deployed.json" >/dev/null
-          latest="$(jq -r '.result.deployments[0].versions[0].version_id' "$RUNNER_TEMP/prb-deployed.json")"
-          test -n "$latest" && test "$latest" != "$G6A_WORKER" || {
-            echo 'G8_WORKER_VERSION_NOT_VERIFIED' >&2
-            exit 1
-          }
+          latest="$(node scripts/issue248-version-proof.mjs "$RUNNER_TEMP/prb-deploy-private.log" "$RUNNER_TEMP/prb-deployed.json" "$G6A_WORKER")" || { echo 'G8_WORKER_VERSION_NOT_VERIFIED' >&2; exit 1; }
           echo "POST_WORKER=$latest" >> "$GITHUB_ENV"
+      - name: Verify or restore explicit active Queue under scoped evidence
+        run: bash scripts/issue248-queue-remediation.sh post
       - name: Verify Gate DISABLED and Pacing active, with no unsafe D1 states
         shell: bash
         run: |
@@ -156,4 +168,4 @@ jobs:
         run: |
           echo 'INCIDENT_POLICY: if any preflight/deploy/readback fails, inspect live Cloudflare Worker, D1, Queue, Cron, Gate, and Sheets before an Owner-approved intervention.' >> "$GITHUB_STEP_SUMMARY"
           echo 'Never blindly deploy the old Worker, replay terminal DLQ, or release REVIEW.' >> "$GITHUB_STEP_SUMMARY"
-          echo 'G8_QUEUE_FIELD_UNKNOWN: missing delivery_paused is NOT false. If missing or true, STOP; inspect Queue ID, exact Worker, consumer/retention and concurrent pause intent; only a scoped manual recovery with independent readback can restore explicit false.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'G8_QUEUE_FIELD_UNKNOWN: missing delivery_paused is NOT false. Scoped single PATCH requires recorded preimage, durable intent, known-run checks and explicit readback; ambiguous ACK or competing intent means STOP.' >> "$GITHUB_STEP_SUMMARY"

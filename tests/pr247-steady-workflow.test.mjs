@@ -72,16 +72,26 @@ test("after deploy tests guard for 100% new Worker and steady modes",()=>{
   assert.match(workflow,/prb-immediate-worker.json/);
   assert.match(workflow,/deployments\[0\]\.versions/);
   assert.match(workflow,/percentage == 100/);
-  assert.match(workflow,/latest" != "\$G6A_WORKER"/);
+  assert.match(workflow,/issue248-version-proof\.mjs/);
   assert.match(workflow,/sleep 360/);
   assert.match(workflow,/G8_NO_POSITIVE_PROGRESS_EVIDENCE/);
   assert.match(guard,/STALE_WRITER_AFTER_GATE_EXIT/);
   assert.match(guard,/STEADY_MODE_NOT_ACTIVE/);
   assert.match(guard,/STEADY_NEW_FAILURE/);
 });
-test('missing Queue pause field after deployment remains an explicit manual incident',()=>{
+test('missing Queue pause field requires bounded evidence and scoped remediation',()=>{
  assert.match(workflow,/G8_QUEUE_FIELD_UNKNOWN: missing delivery_paused is NOT false/);
  assert.match(workflow,/no blind retry\/resume\/rollback/);
+ assert.match(workflow,/scripts\/issue248-queue-remediation\.sh pre/);
+ assert.match(workflow,/scripts\/issue248-queue-remediation\.sh post/);
+ assert.ok(idx("issue248-queue-remediation.sh pre")<idx("npx wrangler deploy >"));
+ assert.ok(idx("npx wrangler deploy >")<idx("issue248-queue-remediation.sh post"));
+ assert.ok(idx("issue248-queue-remediation.sh post")<idx("scripts/pr247-readonly-snapshot.sh B_POST"));
+ assert.match(workflow,/actions: read/);
+ assert.match(workflow,/GH_TOKEN: \$\{\{ github\.token \}\}/);
+ assert.match(workflow,/G8_DIAGNOSTIC_RECEIPT_MISMATCH/);
+ assert.match(workflow,/42816833410-1-verified\.json/);
+ for(const hash of ["a939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99","3c75b14b07c715ccea25e99ae5ebfc650c21fbf8a0d61013f6bacadb53f64735","b909bf631249aac620be8a538772f7b2826b45185b590f865c5d0c3e526e729c"])assert.ok(workflow.includes(hash));
  assert.match(guard,/cf\.queue\?\.settings\?\.delivery_paused === false/);
  assert.match(runbook,/Absence remains UNKNOWN/);
  assert.match(runbook,/no blind|blindly retry/);

@@ -44,7 +44,7 @@ sql="SELECT
  (SELECT count(*) FROM stable_recovery_epochs e JOIN stable_projection_writes p ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.target_key AND p.source_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND p.projection='EXPENSE_RAW' AND p.state='VERIFIED') canary_raw,
  (SELECT count(*) FROM stable_recovery_epochs e JOIN stable_projection_writes p ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND substr(p.entity_id,1,length(e.target_key)+1)=e.target_key||'|' AND p.source_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND p.projection='DETAIL' AND p.state='VERIFIED') canary_detail"
 $wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$tmp/d1.json"
-jq -e 'type == "array" and length == 1 and .[0].success == true and (.[0].results | type) == "array" and (.[0].results | length) == 1' "$tmp/d1.json" >/dev/null
+jq -e 'type == "array" and length == 1 and (.[0] | type) == "object" and .[0].success == true and (.[0].results | type) == "array" and (.[0].results | length) == 1 and (.[0].results[0] | type) == "object"' "$tmp/d1.json" >/dev/null
 curl -fsS --retry 0 --max-time 20 --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/status" > "$tmp/status.json"
 jq -e '.ok == true' "$tmp/status.json" >/dev/null
 if [[ "$mode" == B_* ]]; then

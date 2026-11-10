@@ -98,6 +98,7 @@ for (const mode of ['A_PRE','A_POST']) test(mode+' realistic Wrangler array reac
   assert.equal(result.snapshot.d1.review,1);
 });
 for (const [name,make] of [
+  ['top-level object',d=>({success:true,results:[d]})],
   ['empty array',()=>[]],
   ['multiple statements',d=>[{success:true,results:[d]},{success:true,results:[d]}]],
   ['missing result list',()=>[{success:true}]],

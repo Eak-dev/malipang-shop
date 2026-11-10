@@ -156,3 +156,24 @@ test("B_POST accepts D1 and admin snapshots sampled seconds apart",()=>{
  two.d1.inflight=0; two.status.inFlightProjections=1;
  assert.deepEqual(verifyStage("B_POST",two),{ok:true,mode:"B_POST"});
 });
+
+function riskFixture(){const e=fixture('B_PRE');e.epoch.epoch_created_at='2020-01-01T00:01:10.000Z';e.epoch.epoch_updated_at='2020-01-01T00:01:50.000Z';Object.assign(e.receipt,{schema:'MP248_G7_RECEIPT_V2_RISK_ACCEPTED',monitoring_coverage:'PARTIAL_PROJECT_UNBOUND',monitoring_project:'malipang-backend',gcp_quotas_checked:false,gcp_429_delta:null,gcp_ingestion_lag_ms:null,owner_accepted_429_observability_risk:true,limited_observed_429:false,observation_source:'GCP_UI_UNBOUND_AND_WORKER_LOGS_PARTIAL',monitoring_window_start:'2020-01-01T00:00:00.000Z',canary_started_at:'2020-01-01T00:01:00.000Z',canary_completed_at:'2020-01-01T00:02:00.000Z',monitoring_window_end:'2020-01-01T00:03:00.000Z',observed_at:'2020-01-01T00:05:00.000Z'});delete e.receipt.no_new_429_observed;return e}
+test('explicit owner accepted partial monitoring keeps provider metric unknown',()=>{const e=riskFixture();assert.equal(verifyStage('B_PRE',e).ok,true);assert.equal(e.receipt.gcp_429_delta,null);assert.equal(e.receipt.gcp_quotas_checked,false)});
+for(const [label,mutate] of [
+ ['lag falsely reported known',r=>r.gcp_ingestion_lag_ms=0],
+ ['global no-429 falsely claimed',r=>r.no_new_429_observed=true],
+ ['owner decision missing',r=>delete r.owner_accepted_429_observability_risk],
+ ['unknown delta mislabeled zero',r=>r.gcp_429_delta=0],
+ ['unbound quota falsely reported true',r=>r.gcp_quotas_checked=true],
+ ['limited observed 429',r=>r.limited_observed_429=true],
+ ['coverage not explicit',r=>r.monitoring_coverage='COMPLETE'],
+ ['wrong project',r=>r.monitoring_project='other'],
+ ['source missing',r=>delete r.observation_source],
+ ['window excludes canary',r=>r.monitoring_window_end='2020-01-01T00:01:30.000Z'],
+ ['future observation',r=>r.observed_at='2999-01-01T00:05:00.000Z'],
+ ['noncanonical timestamp',r=>r.canary_started_at='2020-01-01T00:01:00Z'],
+ ['provider readback missing',r=>r.provider_readback_verified=false],
+ ['duplicate present',r=>r.no_duplicate_stable_ids=false]
+])test('risk exception rejects '+label,()=>{const e=riskFixture();mutate(e.receipt);assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/)});
+
+test('risk exception requires D1 epoch timestamps inside the canary window',()=>{const e=riskFixture();delete e.epoch.epoch_created_at;assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/);e.epoch.epoch_created_at='2020-01-01T00:01:10.000Z';e.epoch.epoch_updated_at='2020-01-01T00:02:30.000Z';assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/)});

@@ -36,7 +36,7 @@ function fixture(mode) {
       review: isA ? 1 : 0, review_all: isA ? 1 : 0, held: 0, inflight: 0,
       epoch_total: isA ? 0 : 1, epoch_active: 0, epoch_complete: isA ? 0 : 1,
       unverified_ops: 0, verified_ops: isA ? 0 : 3,
-      completed: 3296, open_failed: 32,
+      completed: 3296, open_failed: 32, review_jobs: 0, stale_held: 0, unleased_inflight: 0,
       canary_jobs_completed: isA ? 0 : 1, canary_daily: isA ? 0 : 1,
       canary_raw: isA ? 0 : 1, canary_detail: isA ? 0 : 1
     },
@@ -48,10 +48,14 @@ function fixture(mode) {
         ...(!isA && !post ? { state: "COMPLETE" } : {}) },
       sheetPacing: { mode: isA ? (post ? "UNARMED" : "DISABLED") : "OPT_IN" }
     },
+    epoch: isA ? null : {epoch_found: 1, epoch_state: "COMPLETE", unverified_ops: 0, verified_ops: 3, job_completed: 1, daily: 1, raw: 1, detail: 1},
     receipt: isA ? null : {
       state: "OWNER_VERIFIED", g7_canary_verified: true,
       provider_readback_verified: true, no_duplicate_stable_ids: true,
-      no_new_429_observed: true, owner_approved_g8: true
+      no_new_429_observed: true, owner_approved_g8: true,
+      schema: "MP248_G7_RECEIPT_V1", epoch_id: "syntheticEpoch01",
+      expected_detail_count: 1, gcp_quotas_checked: true, gcp_429_delta: 0,
+      g5_sha: G5_SHA, g6a_worker_version: G5_WORKER
     }
   };
   return structuredClone(base);
@@ -59,6 +63,10 @@ function fixture(mode) {
 for (const mode of ["A_PRE", "A_POST", "B_PRE", "B_POST"]) {
   test("positive synthetic " + mode, () => assert.deepEqual(verifyStage(mode, fixture(mode)), {ok:true,mode}));
 }
+for(const mode of ['B_PRE','B_POST'])test(mode+' rejects missing queue delivery_paused, never treats it as false',()=>{
+ const e=fixture(mode);delete e.cloudflare.queue.settings.delivery_paused;
+ assert.throws(()=>verifyStage(mode,e),/NO_GO_QUEUE_ACTIVE/);
+});
 const cases = [
   ["A_PRE", "G5 receipt is not verified", e => { e.g5.state = "PAUSE_INTENT"; }, "G5_RECEIPT"],
   ["A_PRE", "G5 SHA mismatch", e => { e.params.g5Sha = "drift"; }, "G5_PROVENANCE"],
@@ -81,16 +89,31 @@ const cases = [
   ["A_POST", "same Worker after deploy", e => { e.params.priorWorkerVersion=NEW_WORKER; }, "G6A_WORKER_NOT_CHANGED"],
   ["A_POST", "unexpected finance completion", e => { e.d1.completed=3297; }, "G6A_UNEXPECTED_COMPLETION"],
   ["A_POST", "new failed job", e => { e.d1.open_failed=33; }, "G6A_NEW_FAILURE"],
+  ["B_PRE", "foreign canary epoch", e => { e.epoch.epoch_found=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "canary epoch still ARMED", e => { e.epoch.epoch_state="ARMED"; }, "CANARY_JOURNAL"],
+  ["B_PRE", "unverified exact canary op", e => { e.epoch.unverified_ops=1; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing exact provider journal stages", e => { e.epoch.verified_ops=1; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "no owner provider receipt", e => { e.receipt=null; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "owner has not authorized G8", e => { e.receipt.owner_approved_g8=false; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "GCP metrics missing", e => { e.receipt.gcp_quotas_checked=false; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "GCP 429 observed", e => { e.receipt.gcp_429_delta=1; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 SHA provenance mismatch", e => { e.receipt.g5_sha="other"; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G6a Worker provenance mismatch", e => { e.receipt.g6a_worker_version="other"; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 detail count mismatch", e => { e.receipt.expected_detail_count=3; }, "G7_OWNER_RECEIPT"],
+  ["B_PRE", "G7 receipt epoch malformed", e => { e.receipt.epoch_id="'; DROP"; }, "G7_OWNER_RECEIPT"],
   ["B_PRE", "unclosed ARMED epoch", e => { e.d1.epoch_active=1; }, "CANARY_EPOCH_INCOMPLETE"],
   ["B_PRE", "uncertain recovery operation", e => { e.d1.unverified_ops=1; }, "CANARY_EPOCH_INCOMPLETE"],
-  ["B_PRE", "canary job incomplete", e => { e.d1.canary_jobs_completed=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing DAILY journal", e => { e.d1.canary_daily=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing RAW journal", e => { e.d1.canary_raw=0; }, "CANARY_JOURNAL"],
-  ["B_PRE", "missing DETAIL journal", e => { e.d1.canary_detail=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "canary job incomplete", e => { e.epoch.job_completed=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing DAILY journal", e => { e.epoch.daily=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing RAW journal", e => { e.epoch.raw=0; }, "CANARY_JOURNAL"],
+  ["B_PRE", "missing DETAIL journal", e => { e.epoch.detail=0; }, "CANARY_JOURNAL"],
   ["B_PRE", "new REVIEW still present", e => { e.d1.review=1; e.d1.review_all=1; }, "REVIEW_NOT_RELEASED"],
   ["B_PRE", "gate was already OFF", e => { e.status.recoveryGate.mode="DISABLED"; }, "G6A_GATE_STATE"],
+  ["B_POST", "stale HELD claim", e => { e.d1.held=1; e.d1.stale_held=1; e.status.claim={state:"HELD"}; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "IN_FLIGHT not backed by an unexpired job lease", e => { e.d1.inflight=1; e.d1.unleased_inflight=1; e.status.inFlightProjections=1; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "too many overlapping claims", e => { e.d1.held=2; }, "STALE_WRITER_AFTER_GATE_EXIT"],
+  ["B_POST", "unexpected REVIEW claim", e => { e.status.claim={state:"REVIEW"}; }, "REVIEW_NOT_RELEASED"],
+  ["B_POST", "admin state and journal mismatch", e => { e.status.inFlightProjections=2; }, "STATUS_INFLIGHT_DRIFT"],
   ["B_POST", "gate still ON", e => { e.status.recoveryGate.mode="OPT_IN"; }, "STEADY_MODE_NOT_ACTIVE"],
   ["B_POST", "new failure after gate exit", e => { e.d1.open_failed=33; }, "STEADY_NEW_FAILURE"],
 ];
@@ -109,3 +132,85 @@ test("reject malformed/untrusted numeric values", () => {
 test("reject unknown mode", () => {
   assert.throws(() => verifyStage("ABORT", fixture("A_PRE")), /NO_GO_UNKNOWN_MODE/);
 });
+
+test("B_POST permits a single live HELD claim and leased journal during healthy backlog drain", () => {
+  const e=fixture("B_POST");
+  e.d1.held=1; e.d1.inflight=1;
+  e.d1.stale_held=0; e.d1.unleased_inflight=0;
+  e.status.claim={state:"HELD"};
+  e.status.inFlightProjections=1;
+  assert.deepEqual(verifyStage("B_POST",e),{ok:true,mode:"B_POST"});
+});
+test("B_PRE still refuses even an otherwise healthy HELD claim",()=>{
+ const e=fixture("B_PRE");
+ e.d1.held=1; e.status.claim={state:"HELD"};
+ assert.throws(()=>verifyStage("B_PRE",e),/NO_GO_UNSAFE_WRITER/);
+});
+
+test("B_POST accepts D1 and admin snapshots sampled seconds apart",()=>{
+ const one=fixture("B_POST");
+ one.d1.inflight=1; one.d1.unleased_inflight=0;
+ one.status.inFlightProjections=0;
+ assert.deepEqual(verifyStage("B_POST",one),{ok:true,mode:"B_POST"});
+ const two=fixture("B_POST");
+ two.d1.inflight=0; two.status.inFlightProjections=1;
+ assert.deepEqual(verifyStage("B_POST",two),{ok:true,mode:"B_POST"});
+});
+
+function riskFixture(){const e=fixture('B_PRE');e.epoch.epoch_created_at='2020-01-01T00:01:10.000Z';e.epoch.epoch_updated_at='2020-01-01T00:01:50.000Z';Object.assign(e.receipt,{schema:'MP248_G7_RECEIPT_V2_RISK_ACCEPTED',monitoring_coverage:'PARTIAL_PROJECT_UNBOUND',monitoring_project:'malipang-backend',gcp_quotas_checked:false,gcp_429_delta:null,gcp_ingestion_lag_ms:null,owner_accepted_429_observability_risk:true,limited_observed_429:false,observation_source:'GCP_UI_UNBOUND_AND_WORKER_LOGS_PARTIAL',monitoring_window_start:'2020-01-01T00:00:00.000Z',canary_started_at:'2020-01-01T00:01:00.000Z',canary_completed_at:'2020-01-01T00:02:00.000Z',monitoring_window_end:'2020-01-01T00:03:00.000Z',observed_at:'2020-01-01T00:05:00.000Z'});delete e.receipt.no_new_429_observed;return e}
+test('explicit owner accepted partial monitoring keeps provider metric unknown',()=>{const e=riskFixture();assert.equal(verifyStage('B_PRE',e).ok,true);assert.equal(e.receipt.gcp_429_delta,null);assert.equal(e.receipt.gcp_quotas_checked,false)});
+for(const [label,mutate] of [
+ ['lag falsely reported known',r=>r.gcp_ingestion_lag_ms=0],
+ ['global no-429 falsely claimed',r=>r.no_new_429_observed=true],
+ ['owner decision missing',r=>delete r.owner_accepted_429_observability_risk],
+ ['unknown delta mislabeled zero',r=>r.gcp_429_delta=0],
+ ['unbound quota falsely reported true',r=>r.gcp_quotas_checked=true],
+ ['limited observed 429',r=>r.limited_observed_429=true],
+ ['coverage not explicit',r=>r.monitoring_coverage='COMPLETE'],
+ ['wrong project',r=>r.monitoring_project='other'],
+ ['source missing',r=>delete r.observation_source],
+ ['window excludes canary',r=>r.monitoring_window_end='2020-01-01T00:01:30.000Z'],
+ ['future observation',r=>r.observed_at='2999-01-01T00:05:00.000Z'],
+ ['noncanonical timestamp',r=>r.canary_started_at='2020-01-01T00:01:00Z'],
+ ['provider readback missing',r=>r.provider_readback_verified=false],
+ ['duplicate present',r=>r.no_duplicate_stable_ids=false]
+])test('risk exception rejects '+label,()=>{const e=riskFixture();mutate(e.receipt);assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/)});
+
+test('risk exception requires D1 epoch timestamps inside the canary window',()=>{const e=riskFixture();delete e.epoch.epoch_created_at;assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/);e.epoch.epoch_created_at='2020-01-01T00:01:10.000Z';e.epoch.epoch_updated_at='2020-01-01T00:02:30.000Z';assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_G7_OWNER_RECEIPT/)});
+for (const mode of ['B_PRE','B_POST']) test(mode+' rejects REVIEW sync jobs and missing review evidence',()=>{
+ const e=fixture(mode);e.d1.review_jobs=1;assert.throws(()=>verifyStage(mode,e),/NO_GO_SYNC_JOBS_REVIEW/);
+ delete e.d1.review_jobs;assert.throws(()=>verifyStage(mode,e),/NO_GO_SYNC_JOBS_REVIEW/);
+});
+
+for (const mode of ['B_PRE','B_POST']) for (const bad of [null,'0',-1,1.5]) test(mode+' rejects invalid REVIEW count '+String(bad),()=>{const e=fixture(mode);e.d1.review_jobs=bad;assert.throws(()=>verifyStage(mode,e),/NO_GO_SYNC_JOBS_REVIEW/);});
+function zeroItemRiskFixture(mode='B_PRE'){
+ const e=riskFixture();if(mode==='B_POST'){e.status.recoveryGate={mode:'DISABLED'};e.cloudflare.versions[0].version_id='synthetic-new-version';e.params.expectedWorkerVersion='synthetic-new-version';e.params.priorWorkerVersion=G5_WORKER;}
+ Object.assign(e.receipt,{schema:'MP248_G7_RECEIPT_V3_ZERO_ITEM_RISK_ACCEPTED',expected_detail_count:0,detail_coverage:'NOT_EXERCISED_ZERO_ITEMS',owner_accepted_detail_coverage_risk:true,no_detail_rows_verified:true,source_snapshot_digest:'a'.repeat(64),source_revision:42});
+ Object.assign(e.epoch,{detail:0,verified_ops:2,source_matches:1,source_revision:42,cutover_active:1,pre_cutover_count:0,integrity_triggers:27,epoch_immutability_triggers:2,epoch_active_unique:1,source_item_count:0,source_document_count:0,source_link_count:0,journal_total:2,detail_any:0});e.d1.verified_ops=2;return e;
+}
+for(const mode of ['B_PRE','B_POST'])test(mode+' accepts explicitly owner-approved zero-item partial coverage with exact source',()=>{const e=zeroItemRiskFixture(mode);assert.deepEqual(verifyStage(mode,e),{ok:true,mode});assert.equal(e.receipt.detail_coverage,'NOT_EXERCISED_ZERO_ITEMS');});
+for(const [label,change] of [
+ ['missing owner decision',e=>delete e.receipt.owner_accepted_detail_coverage_risk],
+ ['claims DETAIL exercised',e=>e.receipt.detail_coverage='VERIFIED'],
+ ['no provider absence proof',e=>e.receipt.no_detail_rows_verified=false],
+ ['wrong receipt schema',e=>e.receipt.schema='MP248_G7_RECEIPT_V2_RISK_ACCEPTED'],
+ ['nonzero receipt detail',e=>e.receipt.expected_detail_count=1],
+ ['source digest malformed',e=>e.receipt.source_snapshot_digest='not-sha'],
+ ['source digest trailing newline',e=>e.receipt.source_snapshot_digest='a'.repeat(64)+'\n'],
+ ['source revision changed',e=>e.epoch.source_revision++],
+ ['missing revision',e=>delete e.receipt.source_revision],
+ ['source missing',e=>e.epoch.source_matches=0],
+ ['source item exists',e=>e.epoch.source_item_count=1],
+ ['source document exists',e=>e.epoch.source_document_count=1],
+ ['source link exists',e=>e.epoch.source_link_count=1],
+ ['DETAIL journal exists',e=>e.epoch.detail_any=1],
+ ['extra journal exists',e=>e.epoch.journal_total=3],
+ ['cutover inactive',e=>e.epoch.cutover_active=0],
+ ['legacy source',e=>e.epoch.pre_cutover_count=1],
+ ['source integrity trigger missing',e=>e.epoch.integrity_triggers=26],
+ ['epoch immutability trigger missing',e=>e.epoch.epoch_immutability_triggers=1],
+ ['active epoch unique index missing',e=>e.epoch.epoch_active_unique=0],
+ ['source DETAIL verified',e=>e.epoch.detail=1],
+ ['provider 429 claimed zero falsely',e=>e.receipt.gcp_429_delta=0],
+ ['new REVIEW job',e=>e.d1.review_jobs=1]
+])test('zero-item risk exception rejects '+label,()=>{const e=zeroItemRiskFixture();change(e);assert.throws(()=>verifyStage('B_PRE',e),/NO_GO_/);});

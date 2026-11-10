@@ -108,6 +108,9 @@ jobs:
           bash scripts/pr247-readonly-snapshot.sh B_PRE "$RUNNER_TEMP/prb-before.json"
           echo "COMPLETED_BEFORE=$(jq -r '.d1.completed' "$RUNNER_TEMP/prb-before.json")" >> "$GITHUB_ENV"
           echo "OPEN_FAILED_BEFORE=$(jq -r '.d1.open_failed' "$RUNNER_TEMP/prb-before.json")" >> "$GITHUB_ENV"
+          if jq -e '.receipt.schema == "MP248_G7_RECEIPT_V2_RISK_ACCEPTED"' "$RUNNER_TEMP/prb-before.json" >/dev/null; then
+            echo 'MONITORING_PARTIAL_OWNER_RISK_ACCEPTED_NOT_429_ZERO: Google 429 coverage and ingestion lag remain UNKNOWN.' >> "$GITHUB_STEP_SUMMARY"
+          fi
           echo 'G8_OWNER_GATE_AND_G7_RECEIPT_CHECKS_PASSED_BEFORE_DEPLOY' >> "$GITHUB_STEP_SUMMARY"
           # Counts only: preserve the exact-run baseline for manual incident review
           # even when the runner's private temporary snapshot is removed.

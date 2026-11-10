@@ -21,7 +21,7 @@ function fixture({flag='true',schema=true}={}){
  sqlite.exec(readFileSync(new URL('../migrations/0021_stable_workbook_claim.sql',import.meta.url),'utf8'));
  sqlite.exec(readFileSync(new URL('../migrations/0022_stable_claim_diagnostics.sql',import.meta.url),'utf8'));
  if(schema)sqlite.exec(readFileSync(new URL('../migrations/0023_stable_recovery_admission.sql',import.meta.url),'utf8'));
- sqlite.exec('CREATE TABLE sync_jobs(entity_type TEXT,entity_key TEXT,entity_version INT,status TEXT,last_error TEXT,PRIMARY KEY(entity_type,entity_key,entity_version)); CREATE TABLE staff_config_sync_outbox(employee_id TEXT,version INT,status TEXT,PRIMARY KEY(employee_id,version))');
+ sqlite.exec('CREATE TABLE sync_jobs(entity_type TEXT,entity_key TEXT,entity_version INT,status TEXT,last_error TEXT,PRIMARY KEY(entity_type,entity_key,entity_version)); CREATE TABLE staff_config_sync_outbox(employee_id TEXT,version INT,status TEXT,PRIMARY KEY(employee_id,version)); CREATE TABLE failed_jobs(queue_name TEXT,job_key TEXT,status TEXT,error TEXT)');
  const DB={prepare(sql){const q=sqlite.prepare(sql);let args=[];return{bind(...values){args=values;return this;},async first(){return q.get(...args)??null;},async all(){return{success:true,results:q.all(...args)};},async run(){return{success:true,meta:{changes:q.run(...args).changes}};}};}};
  const env={DB,GOOGLE_SPREADSHEET_ID:'test-book',STABLE_PHASE1_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:flag,STABLE_SHEETS_PACING_ENABLED:flag==='false'?'false':'true'};
  const oldBegin=notice.beginStableNotice,oldEnd=notice.endStableNotice,oldPace=pacing.admitPacedWorkbookOperation,oldPreflight=pacing.pacingPreflightBlocked;

@@ -24,6 +24,7 @@ export function verifyStage(mode, evidence) {
   const cf = e.cloudflare ?? {};
   const d1 = e.d1 ?? {};
   const status = e.status ?? {};
+  const epoch = e.epoch ?? {};
   const params = e.params ?? {};
   const isA = mode.startsWith("A_");
   const isPost = mode.endsWith("_POST");
@@ -46,14 +47,28 @@ export function verifyStage(mode, evidence) {
   guard(d1.migration === MIGRATION && d1.recovery_tables === 4, "MIGRATION_0023");
   for (const name of ["review", "review_all", "held", "inflight", "epoch_total",
     "epoch_active", "epoch_complete", "unverified_ops", "verified_ops",
-    "completed", "open_failed", "canary_jobs_completed",
+    "completed", "open_failed", "stale_held", "unleased_inflight", "canary_jobs_completed",
     "canary_daily", "canary_raw", "canary_detail"]) {
     guard(integer(d1[name]), "D1_NUMERIC_" + name.toUpperCase());
   }
   guard(d1.review_all === d1.review, "REVIEW_STAMP_DRIFT");
-  guard(d1.held === 0 && d1.inflight === 0, "UNSAFE_WRITER");
   guard(status?.ok === true, "ADMIN_DIAGNOSTIC_UNAVAILABLE");
-  guard(integer(status.inFlightProjections) && status.inFlightProjections === 0, "STATUS_INFLIGHT");
+  if (mode === "B_POST") {
+    // A normal paced writer may temporarily hold exactly one claim and one journal.
+    // There is NO claim lease column; stale_held uses a conservative age check.
+    // A projection is only accepted as active if its source job has an unexpired lease.
+    guard(d1.held <= 1 && d1.inflight <= 1 &&
+      d1.stale_held === 0 && d1.unleased_inflight === 0, "STALE_WRITER_AFTER_GATE_EXIT");
+    // The D1 query and admin GET are separate instants. A healthy new stage can
+    // change IN_FLIGHT 0->1 or 1->0 between requests. Both must independently
+    // respect the global single-writer bound, not have identical snapshots.
+    guard(integer(status.inFlightProjections) &&
+      status.inFlightProjections <= 1, "STATUS_INFLIGHT_DRIFT");
+  } else {
+    guard(d1.held === 0 && d1.inflight === 0, "UNSAFE_WRITER");
+    guard(integer(status.inFlightProjections) &&
+      status.inFlightProjections === 0, "STATUS_INFLIGHT");
+  }
 
   if (isA) {
     guard(d1.review === 1 && status?.claim?.state === "REVIEW" &&
@@ -72,26 +87,42 @@ export function verifyStage(mode, evidence) {
       guard(d1.open_failed <= params?.openFailedBefore, "G6A_NEW_FAILURE");
     }
   } else {
-    guard(d1.review === 0 && status?.claim == null, "REVIEW_NOT_RELEASED");
+    guard(d1.review === 0 && (mode === "B_POST"
+      ? (status?.claim == null || status?.claim?.state === "HELD")
+      : status?.claim == null), "REVIEW_NOT_RELEASED");
     guard(d1.epoch_total === 1 && d1.epoch_active === 0 &&
       d1.epoch_complete === 1 && d1.unverified_ops === 0 &&
       d1.verified_ops >= 2, "CANARY_EPOCH_INCOMPLETE");
-    guard(d1.canary_jobs_completed === 1 && d1.canary_daily === 1 &&
-      d1.canary_raw === 1 && d1.canary_detail >= 1, "CANARY_JOURNAL");
-    guard(e.receipt?.state === "OWNER_VERIFIED" &&
+    guard(epoch.epoch_found === 1 &&
+      ["COMPLETE", "CLOSED"].includes(epoch.epoch_state) &&
+      epoch.unverified_ops === 0 && integer(epoch.verified_ops) &&
+      epoch.job_completed === 1 && epoch.daily === 1 && epoch.raw === 1 &&
+      integer(epoch.detail) && epoch.detail >= 1, "CANARY_JOURNAL");
+    guard(e.receipt?.schema === "MP248_G7_RECEIPT_V1" &&
+      e.receipt?.state === "OWNER_VERIFIED" &&
       e.receipt?.g7_canary_verified === true &&
       e.receipt?.provider_readback_verified === true &&
       e.receipt?.no_duplicate_stable_ids === true &&
       e.receipt?.no_new_429_observed === true &&
+      e.receipt?.gcp_quotas_checked === true &&
+      e.receipt?.gcp_429_delta === 0 &&
+      same(e.receipt?.g5_sha, params.g5Sha) &&
+      same(e.receipt?.g6a_worker_version, params.priorWorkerVersion) &&
+      typeof e.receipt?.epoch_id === "string" &&
+      /^[A-Za-z0-9_-]{8,128}$/.test(e.receipt.epoch_id) &&
+      integer(e.receipt?.expected_detail_count) &&
+      e.receipt.expected_detail_count >= 1 &&
+      e.receipt.expected_detail_count === epoch.detail &&
+      epoch.verified_ops >= epoch.detail + 2 &&
       e.receipt?.owner_approved_g8 === true, "G7_OWNER_RECEIPT");
     if (!isPost) {
       guard(status?.recoveryGate?.mode === "OPT_IN" &&
         completedStates.includes(status?.recoveryGate?.state) &&
-        ["OPT_IN", "UNARMED"].includes(status?.sheetPacing?.mode),
+        status?.sheetPacing?.mode === "OPT_IN",
         "G6A_GATE_STATE");
     } else {
       guard(status?.recoveryGate?.mode === "DISABLED" &&
-        ["OPT_IN", "UNARMED"].includes(status?.sheetPacing?.mode),
+        status?.sheetPacing?.mode === "OPT_IN",
         "STEADY_MODE_NOT_ACTIVE");
       guard(cf.versions[0].version_id !== params?.priorWorkerVersion, "STEADY_WORKER_NOT_CHANGED");
       guard(d1.open_failed <= params?.openFailedBefore, "STEADY_NEW_FAILURE");

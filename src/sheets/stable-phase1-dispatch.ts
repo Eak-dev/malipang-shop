@@ -1,3 +1,4 @@
+import {STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
 import type {Env,SheetsSyncJob} from '../types';
 import {claimSheetSyncJob,ensureSheetSyncOutbox,syncJob,type SheetSyncOutcome} from './sync';
 import {newStableSourcePredicate} from './stable-source-cutover';
@@ -23,9 +24,15 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
  // attempt nor rewrites the job on every delivery.
  if(await stableWorkbookInReview(env)){await ensureSheetSyncOutbox(env,job);return 'BLOCKED';}
  if(await stableRecoveryGateBlocked(env,job)||await pacingPreflightBlocked(env)){await ensureSheetSyncOutbox(env,job);return 'BLOCKED';}
- if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE')return withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);
+ if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE'){try{return await withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);}catch(error){if(error instanceof Error&&error.message===STABLE_TERMINAL_HOLD)return 'BLOCKED';throw error;}}
  const lease=await claimSheetSyncJob(env,job);
- if(!lease){const current=await env.DB.prepare('SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?').bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();return current?.status==='REVIEW'?'REVIEW':current?.status==='COMPLETED'?'IGNORED':'BUSY';}
+ if(!lease){
+  // A terminal financial record blocks the atomic lease CAS; ACK this
+  // duplicate without requeueing or resolving the terminal event.
+  const current=await env.DB.prepare(`SELECT s.status,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type||':'||s.entity_key||':'||s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_hold FROM sync_jobs s WHERE s.entity_type=? AND s.entity_key=? AND s.entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string;terminal_hold:number}>();
+  if(Number(current?.terminal_hold)===1)return 'BLOCKED';
+  return current?.status==='REVIEW'?'REVIEW':current?.status==='COMPLETED'?'IGNORED':'BUSY';
+ }
  const hold=async(reason:string)=>{const r=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?").bind(reason,job.entityType,job.entityKey,job.entityVersion,lease).run();if(r.success!==true||Number(r.meta?.changes)!==1)throw Error('STABLE_JOB_HOLD_UNCERTAIN');};
  try{
   const eligible=await env.DB.prepare(`SELECT 1 AS ok WHERE ${newStableSourcePredicate(job.entityType)}`).bind(job.entityKey).first<{ok:number}>();
@@ -33,6 +40,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
   if(job.entityType==='EXPENSE'){const result=await runStableExpenseJob(env,job,lease);return result==='COMPLETED'?'PROCESSED':result==='CONTINUE'?(stablePacingConfigured(env)?'CONTINUE':'BUSY'):'REVIEW';}
   await runStablePersonalJob(env,job,lease);return 'PROCESSED';
  }catch(error){
+  if(error instanceof Error&&error.message===STABLE_TERMINAL_HOLD){return 'BLOCKED';}
   if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,STABLE_NOTICE_READ_DEFERRED].includes(error.message)){
    const r=await env.DB.prepare("UPDATE sync_jobs SET status='PENDING',attempt_count=CASE WHEN attempt_count>0 THEN attempt_count-1 ELSE 0 END,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND attempt_count>=1").bind(error.message,job.entityType,job.entityKey,job.entityVersion,lease).run();
    if(r.success!==true||Number(r.meta?.changes)!==1)throw Error('STABLE_RECOVERY_DEFER_UNCERTAIN');

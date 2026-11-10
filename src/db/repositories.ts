@@ -37,11 +37,22 @@ function failedJobKey(payload:unknown):string{
   if(job.kind==="LINE_NOTIFICATION")return`LINE_NOTIFICATION:${job.retryKey||"UNKNOWN"}`;
   return"UNKNOWN";
 }
+function isSheetSyncJob(payload:unknown):boolean{
+  const job=payload as {kind?:string;entityType?:string}|null;
+  return job?.kind==='SHEETS_SYNC';
+}
 export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
-  const now=new Date().toISOString(),jobKey=failedJobKey(payload);await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET payload_json=excluded.payload_json,error=excluded.error,status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now).run();
+  const now=new Date().toISOString(),jobKey=failedJobKey(payload);
+  // Once an OPEN sheet event is terminal, retain both its sentinel and
+  // original payload until an explicit per-item reconciliation resolves it.
+  const terminal="failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES'";
+  const preserved=isSheetSyncJob(payload)?`payload_json=CASE WHEN ${terminal} THEN failed_jobs.payload_json ELSE excluded.payload_json END,error=CASE WHEN ${terminal} THEN failed_jobs.error ELSE excluded.error END`:'payload_json=excluded.payload_json,error=excluded.error';
+  await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET ${preserved},status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now).run();
 }
 export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
-  await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId,failedJobKey(payload)).run();
+  // A duplicate success/IGNORED cannot erase a terminal sheet incident.
+  const terminalFence=isSheetSyncJob(payload)?" AND error<>'DEAD_LETTER_MAX_RETRIES'":'';
+  await env.DB.prepare(`UPDATE failed_jobs SET status='RESOLVED',resolved_at=?,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'${terminalFence}`).bind(new Date().toISOString(),new Date().toISOString(),queue,traceId,failedJobKey(payload)).run();
 }
 export async function findOpenFailedJobPayload<T>(env:Env,queue:string,traceId:string,payload:unknown):Promise<T|null>{
   const row=await env.DB.prepare(`SELECT payload_json FROM failed_jobs WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN' LIMIT 1`).bind(queue,traceId,failedJobKey(payload)).first<{payload_json:string}>();

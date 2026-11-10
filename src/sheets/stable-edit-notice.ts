@@ -52,6 +52,19 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 /** Read-only provider readiness; never grants permission to write. */
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ');}catch{return false;}}
 export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch{return false;}}
+/** Sanitized read-only G6b evidence. Never returns sheet values or identifiers. */
+export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string):Promise<string|null>{
+ try{
+  const db=env.DB,initial=scope(env),x=await snapshot(env);
+  // The G6b operator writes the existing รายวัน B1:C1 explicitly.  A named
+  // range may move while retaining its ID; do not attest a different location.
+  if(env.DB!==db||scope(env)!==initial||identity(x)!==identityValue||x.ranges[0].sheetId!==1815870717||x.ranges[0].row!==0||x.ranges[0].column!==1||x.ranges[1].sheetId!==1815870717||x.ranges[1].row!==0||x.ranges[1].column!==2||text(x.cells[0])!==expectedStatus||text(x.cells[1])!==expectedTime)return null;
+  const styles=x.cells.map(c=>[c.format,c.note,c.validation,c.textRuns,c.chips]);
+  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
+  if(env.DB!==db||scope(env)!==initial)return null;
+  return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+ }catch{return null;}
+}
 export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{}):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so
  // a single read both proves the ready state and guards the write.

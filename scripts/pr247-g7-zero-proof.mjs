@@ -30,12 +30,14 @@ export function verifyZeroEvidence({receipt:r,intentRaw,outcomeRaw,epoch,runEvid
  checkRun(runEvidence[0],r.arm_intent_run_id,r.arm_workflow_source_sha,prefix+'-intent.json',r.arm_intent_sha256);checkRun(runEvidence[1],r.arm_outcome_run_id,r.arm_workflow_source_sha,prefix+'-outcome.json',r.arm_outcome_sha256);
  return true;
 }
-function gh(args){return execFileSync('gh',['api','--hostname','github.com',...args],{encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:4_000_000,timeout:20000});}
+function gh(args,isLog=false){try{return execFileSync('gh',['api','--hostname','github.com',...args],{encoding:'utf8',stdio:['ignore','pipe','pipe'],maxBuffer:4_000_000,timeout:20000});}catch{fail(isLog?'GH_LOG_READ_UNKNOWN':'GH_API_READ_UNKNOWN');}}
 function readRun(runId){
  const base=`repos/Eak-dev/malipang-shop/actions/runs/${runId}/attempts/1`,run=JSON.parse(gh([base])),jobs=JSON.parse(gh([base+'/jobs?per_page=100']));
  if(!Array.isArray(jobs.jobs)||jobs.total_count!==1||jobs.jobs.length!==1||!Number.isSafeInteger(jobs.jobs[0]?.id))fail('GH_JOB');
  const step=jobs.jobs[0].steps?.filter(x=>x.name==='Write one scoped audit object and verify');if(step?.length!==1||!Number.isSafeInteger(step[0].number)||step[0].number<1)fail('GH_STEP');
- const log=gh([`repos/Eak-dev/malipang-shop/actions/jobs/${jobs.jobs[0].id}/steps/${step[0].number}/logs`]);return {run,jobs,log};
+ // gh otherwise refuses step logs containing terminal escape sequences. The
+ // output stays in memory and only strictly validated markers leave this path.
+ const log=gh(['--allow-escape-sequences',`repos/Eak-dev/malipang-shop/actions/jobs/${jobs.jobs[0].id}/steps/${step[0].number}/logs`],true);return {run,jobs,log};
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){try{
  const [receiptPath,intentPath,outcomePath,epochPath]=process.argv.slice(2);if(![receiptPath,intentPath,outcomePath,epochPath].every(x=>typeof x==='string'&&x))fail('ARGS');

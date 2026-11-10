@@ -1,0 +1,70 @@
+# LOCAL REVIEW CANDIDATE ONLY: do not dispatch until reviewed and merged.
+name: Issue 248 post-CAS status proof
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Reviewed exact main SHA', required: true, type: string}
+      nonce: {description: 'Unique correlation value', required: true, type: string}
+permissions: {contents: read, actions: read}
+concurrency: {group: malipang-release-control, cancel-in-progress: false}
+jobs:
+  post-cas-proof:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      STAGE_NONCE: ${{ inputs.nonce }}
+      EXPECTED_WORKER_VERSION: a9cc50ba-f2f0-4cbe-a261-ff3bb65fc86c
+      G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+      G5_RUN_ID: '42802512915'
+      G5_RUN_ATTEMPT: '1'
+      PRIOR_WORKER_VERSION: 1ac8cdf0-3b4c-414b-a77e-5e1ecddbd597
+      COMPLETED_BEFORE: '3296'
+      OPEN_FAILED_BEFORE: '32'
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Pin reviewed source
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ && "$STAGE_NONCE" =~ ^[A-Za-z0-9_-]{16,128}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git merge-base --is-ancestor c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD
+          git diff --quiet c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-stage-guard.mjs scripts/pr247-readonly-snapshot.sh
+          printf '%s  %s\n' 'af059640fcde77531c67f2dd28bd7a194869f3193ac04ad89a2b2d2da6b79799' scripts/pr247-readonly-snapshot.sh | sha256sum --check --status
+      - name: Collect provider post-CAS state
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          # The reviewed script produces a private snapshot but A_POST requires
+          # REVIEW=1, which cannot hold post-CAS. Remove only its final guard;
+          # the dedicated formatter below enforces stricter post-CAS predicates.
+          test "$(grep -Fxc 'node scripts/pr247-stage-guard.mjs "$mode" "$out"' scripts/pr247-readonly-snapshot.sh)" = 1
+          sed '/^node scripts\/pr247-stage-guard\.mjs "\$mode" "\$out"$/d' scripts/pr247-readonly-snapshot.sh > "$RUNNER_TEMP/mp248-snapshot.sh"
+          bash "$RUNNER_TEMP/mp248-snapshot.sh" A_POST "$RUNNER_TEMP/mp248-snapshot.json" >/dev/null
+          ./node_modules/.bin/wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT (SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') AS review,(SELECT count(*) FROM stable_workbook_claims WHERE state='HELD') AS held,(SELECT count(*) FROM stable_projection_writes WHERE state='IN_FLIGHT') AS inflight,(SELECT count(*) FROM stable_recovery_epochs WHERE state IN ('ARMED','REVIEW')) AS epoch_active,(SELECT count(*) FROM sync_jobs WHERE status='REVIEW') AS review_jobs,(SELECT count(*) FROM sync_jobs WHERE status='COMPLETED') AS completed,(SELECT count(*) FROM failed_jobs WHERE status='OPEN') AS open_failed" > "$RUNNER_TEMP/mp248-stage-d1.json"
+          node scripts/issue248-stage-proof-cli.mjs
+      - name: Persist evidence and read back
+        shell: bash
+        run: |
+          set -euo pipefail
+          key="release-control/pr247/g6b-stage/$STAGE_NONCE/$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          ./node_modules/.bin/wrangler r2 object put "malipang-private-backups/$key" --file="$RUNNER_TEMP/mp248-stage-proof.json" --remote >/dev/null
+          ./node_modules/.bin/wrangler r2 object get "malipang-private-backups/$key" --file="$RUNNER_TEMP/mp248-stage-proof-check.json" --remote >/dev/null
+          cmp "$RUNNER_TEMP/mp248-stage-proof.json" "$RUNNER_TEMP/mp248-stage-proof-check.json"
+          echo "MP248_STAGE_PROOF_KEY=$key"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"

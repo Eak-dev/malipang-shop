@@ -22,6 +22,7 @@ import { onlineOrderReviewSummary } from "../expense/online-order-review-reposit
 import { operationsSummary } from "../operations/summary";
 import {resumeStableCapacity} from './stable-capacity-resume';
 import {stableNoticeReady} from '../sheets/stable-edit-notice';
+import {readOriginalPausedNotice} from './stable-paused-notice';
 import {stableRecoveryGateDiagnostic,recoveryGateConfigured} from '../sheets/stable-recovery-admission';
 import {stablePacingDiagnostic,stablePacingConfigured,stablePacingValid} from '../sheets/stable-sheet-pacing';
 import {stableWorkbookInReview} from '../sheets/stable-workbook-claim';
@@ -34,6 +35,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
     }
     if(request.method==='GET'&&url.pathname==='/admin/stable-sync/notice-readiness'){const ready=env.STABLE_PHASE1_ENABLED==='true'&&await stableNoticeReady(env);return Response.json({ok:ready},{status:ready?200:503});}
+    if(request.method==='GET'&&url.pathname==='/admin/stable-sync/original-paused-notice')return await readOriginalPausedNotice(request,env);
+    if(request.method==='GET'&&url.pathname==='/admin/stable-sync/original-ready-notice')return await readOriginalPausedNotice(request,env,'READY');
     if(request.method==="GET"&&url.pathname==="/admin/readiness"){const result=await checkReadiness(env);return Response.json(result,{status:result.ok?200:503});}
     if(request.method==="GET"&&url.pathname==="/admin/operations/summary"){
       try{return Response.json(await operationsSummary(env));}catch{return Response.json({ok:false,error:"OPERATIONS_SUMMARY_UNAVAILABLE"},{status:503});}

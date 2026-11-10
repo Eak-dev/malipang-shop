@@ -1,0 +1,76 @@
+name: Issue 248 read-only original notice proof (candidate)
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Exact reviewed main SHA including this workflow', required: true, type: string}
+      diagnostic_worker_version: {description: 'Diagnostic deploy receipt Worker version', required: true, type: string}
+      mode: {description: 'PAUSED or READY', required: true, type: choice, options: [PAUSED, READY]}
+      audit_id: {description: 'Required for READY: audit ID produced by prior PAUSED run', required: false, type: string}
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  notice-proof:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      GH_TOKEN: ${{ github.token }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      DIAGNOSTIC_SOURCE: c4b4ab96e2f2cb08a8633c003294375a0f458095
+      DIAGNOSTIC_WORKER_VERSION: ${{ inputs.diagnostic_worker_version }}
+      DEPLOY_RUN: '42816833410'
+      DEPLOY_ATTEMPT: '1'
+      NOTICE_MODE: ${{ inputs.mode }}
+      AUDIT_ID: ${{ inputs.audit_id }}
+      G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+      G5_RUN_ID: '42802512915'
+      G5_RUN_ATTEMPT: '1'
+      PRIOR_WORKER_VERSION: 1ac8cdf0-3b4c-414b-a77e-5e1ecddbd597
+      COMPLETED_BEFORE: '3296'
+      OPEN_FAILED_BEFORE: '32'
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Pin exact source and live Worker
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ && "$DIAGNOSTIC_SOURCE" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git merge-base --is-ancestor "$DIAGNOSTIC_SOURCE" HEAD
+          git diff --quiet "$DIAGNOSTIC_SOURCE" HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-stage-guard.mjs scripts/pr247-readonly-snapshot.sh
+          printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/cf-header"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/deployments.json"
+          jq -e --arg version "$DIAGNOSTIC_WORKER_VERSION" '.success==true and (.result.deployments[0].versions|length)==1 and .result.deployments[0].versions[0].percentage==100 and .result.deployments[0].versions[0].version_id==$version' "$RUNNER_TEMP/deployments.json" >/dev/null
+          export EXPECTED_WORKER_VERSION="$DIAGNOSTIC_WORKER_VERSION"
+          bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/before.json" >/dev/null
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'" > "$RUNNER_TEMP/review-jobs-before.json"
+          jq -e 'length==1 and .[0].success==true and .[0].meta.changed_db==false and .[0].meta.rows_written==0 and (.[0].results|length)==1 and .[0].results[0].n==0' "$RUNNER_TEMP/review-jobs-before.json" >/dev/null
+      - name: Read diagnostic and persist supervised evidence
+        shell: bash
+        run: node scripts/issue248-notice-caller.mjs
+      - name: Guard again after observation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          export EXPECTED_WORKER_VERSION="$DIAGNOSTIC_WORKER_VERSION"
+          bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/after.json" >/dev/null
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'" > "$RUNNER_TEMP/review-jobs-after.json"
+          jq -e 'length==1 and .[0].success==true and .[0].meta.changed_db==false and .[0].meta.rows_written==0 and (.[0].results|length)==1 and .[0].results[0].n==0' "$RUNNER_TEMP/review-jobs-after.json" >/dev/null
+          echo 'Point-in-time supervised evidence only: no Sheet write, claim CAS, canary or writer fence.' >> "$GITHUB_STEP_SUMMARY"

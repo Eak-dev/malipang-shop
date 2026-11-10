@@ -1,0 +1,50 @@
+name: Issue 248 scoped G7 owner receipt writer
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Exact reviewed main SHA', required: true, type: string}
+      receipt_nonce: {description: 'Unique random receipt nonce', required: true, type: string}
+      receipt_base64: {description: 'Owner-attested canonical receipt in base64', required: true, type: string}
+  push:
+    branches: [main]
+    paths: ['.github/workflows/issue248-g7-receipt-writer.yml']
+permissions: {contents: read}
+concurrency:
+  group: ${{ github.event_name == 'push' && 'malipang-receipt-registry' || 'malipang-release-control' }}
+  cancel-in-progress: false
+jobs:
+  registry:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Workflow registration only; no write.'
+  receipt-write:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - name: Pin reviewed source
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git merge-base --is-ancestor c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD
+          git diff --quiet c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json
+      - name: Write one owner-attested receipt and verify
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/issue248-g7-receipt-writer.mjs
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"

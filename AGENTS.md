@@ -375,6 +375,15 @@ If local changes or divergent history prevent a safe fast-forward:
 - Do not rewrite existing history.
 - Start from a GitHub issue using the repository issue forms whenever possible.
 
+## Branch lifecycle and work coordination
+
+- Read `docs/BRANCH_LIFECYCLE_TH.md` and `docs/branch-lifecycle.json` before repository work. Report the Issue, coordination chat, work branch, target branch, authority and current lifecycle status.
+- New work: one Issue, one primary work branch and one PR. Register the branch with an exact observed SHA. Additional branches need a recorded dependency, reason and integration plan. This policy does not introduce Gitflow or replace the Canonical Main Gate.
+- Existing work begins in `NEEDS_AUDIT` or a documented `MIGRATION_PENDING` work item. An open PR may be recorded as `ACTIVE` but does not prove a current writer. Do not switch another chat's checkout, overwrite dirty work, close its PR or consolidate code without coordinating the writer handoff.
+- `main` is `PROTECTED`. `INTEGRATED` does not mean deletable. Only SHA-bound `DELETE_READY` records with complete evidence are deletion candidates; recheck all evidence against live source/target refs, worktrees, PR dependencies and external references immediately before an explicitly approved deletion. A changed SHA invalidates readiness. Never delete from a snapshot alone.
+- Keep local and remote records distinct. Verify a recoverable backup of the source commit and separately preserve any uncommitted/untracked work. A missing/prunable worktree is UNKNOWN, not clean. Never infer Production state from merge or lifecycle status.
+- The lifecycle workflow is advisory during rollout. It neither grants deletion authority nor blocks existing PRs. Enabling required checks, changing release controls or deleting branches are separate actions.
+
 ## Dependency policy
 
 Do not add or upgrade a dependency when the task can reasonably be completed with the existing stack.

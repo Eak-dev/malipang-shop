@@ -1405,3 +1405,8 @@ Production source at last verification:
 ```
 
 ระบบ Production ปัจจุบันถูกออกแบบให้ **ธุรกรรมร้านไม่ผูกกับ notification delivery**, **D1 ไม่ผูกกับ availability ของ Google Sheets**, และ **Employee LINE flow ไม่ผูกกับ Push quota รายเดือน** ซึ่งเป็นหลักสำคัญเพื่อให้ร้านใช้งานจริงได้ต่อเนื่องด้วยต้นทุนต่ำและสามารถกู้คืนได้โดยไม่สร้างข้อมูลซ้ำ
+
+
+## Branch lifecycle
+
+กติกาสำหรับแชท งาน และ branch: [Branch lifecycle](docs/BRANCH_LIFECYCLE_TH.md). ทะเบียนสถานะอยู่ที่ [branch-lifecycle.json](docs/branch-lifecycle.json). เริ่มแบบ report-only เพื่อให้งานที่เปิดอยู่ทยอยเข้าระบบ โดย snapshot ไม่ใช่คำอนุมัติลบ branch.

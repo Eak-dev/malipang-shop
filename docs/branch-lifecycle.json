@@ -18,10 +18,10 @@
     {
       "issue": 272,
       "title": "Branch lifecycle rollout",
-      "mode": "MIGRATION_PENDING",
-      "primary_branch": null,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-branch-lifecycle",
       "proposed_branch": "codex/docs-branch-lifecycle",
-      "reason": "Governance rollout PR; migrate other feature records incrementally."
+      "reason": "One active remote primary branch registered for governance PR #273"
     }
   ],
   "branches": [
@@ -1411,12 +1411,27 @@
       "scope": "local",
       "source": "branch-governance-clone",
       "branch": "codex/docs-branch-lifecycle",
-      "source_sha": "34475766a6af0fa15608069d464a554239a17b53",
+      "source_sha": "438df0f74e324e47b851a3c6ba4b1a430dc8c1df",
       "issues": [
         272
       ],
       "status": "ACTIVE",
-      "reason": "Owner-authorized isolated governance implementation; snapshot is the initial main base"
+      "reason": "Observed committed governance implementation; local checkout tracked separately from remote"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-branch-lifecycle",
+      "source_sha": "438df0f74e324e47b851a3c6ba4b1a430dc8c1df",
+      "issues": [
+        272
+      ],
+      "pull_requests": [
+        273
+      ],
+      "status": "ACTIVE",
+      "reason": "Governance PR #273; observed first pushed implementation commit",
+      "observed_at": "2026-11-11T02:38:50.621350+00:00"
     }
   ]
 }

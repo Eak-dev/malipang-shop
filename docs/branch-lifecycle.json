@@ -29,10 +29,10 @@
     {
       "issue": 274,
       "title": "Issue248 handoff/source audit",
-      "mode": "MIGRATION_PENDING",
-      "primary_branch": null,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-issue248-handoff-audit",
       "proposed_branch": "codex/docs-issue248-handoff-audit",
-      "reason": "Audit metadata only; code consolidation waits for Claude completion"
+      "reason": "One audit PR #275; no #248 code consolidation before Claude completion"
     }
   ],
   "branches": [
@@ -1866,13 +1866,28 @@
       "scope": "local",
       "source": "branch-governance-clone",
       "branch": "codex/docs-issue248-handoff-audit",
-      "source_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+      "source_sha": "8eb9dba3123215b42a8645669530783db9f2444a",
       "issues": [
         274
       ],
       "status": "ACTIVE",
-      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "observed_at": "2026-11-11T04:46:02.113368+00:00",
       "reason": "Isolated audit task from canonical main; no code consolidation"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-issue248-handoff-audit",
+      "source_sha": "8eb9dba3123215b42a8645669530783db9f2444a",
+      "issues": [
+        274
+      ],
+      "pull_requests": [
+        275
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-11T04:46:02.113368+00:00",
+      "reason": "Audit metadata PR #275; actual #248 consolidation waits for Claude"
     }
   ]
 }

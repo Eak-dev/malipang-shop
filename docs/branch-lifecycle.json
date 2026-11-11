@@ -4,7 +4,7 @@
   "repository": "Eak-dev/malipang-shop",
   "observed_at": "2026-11-11T02:33:09.641317+00:00",
   "canonical_main_sha": "34475766a6af0fa15608069d464a554239a17b53",
-  "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried.",
+  "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Issue #274 refreshed 19 related remote records and observed three Claude local checkouts; per-record timestamps identify incremental observations.",
   "work_items": [
     {
       "issue": 248,
@@ -13,7 +13,10 @@
       "primary_branch": null,
       "proposed_branch": "codex/restore-daily-sheet-sync-248",
       "coordination_chat": "Restore Daily Sheet Sync #248",
-      "reason": "Multiple open PRs and uncommitted local work remain. Do not rename, switch, consolidate or delete before a coordinated writer handoff."
+      "reason": "Claude release work is unfinished and may auto-resume; source snapshots are preserved, but no writer handoff is established.",
+      "handoff_status": "WAIT_FOR_CLAUDE",
+      "owner_decision": "2026-11-11: wait for Claude to finish current work before moving to one primary branch",
+      "audit_issue": 274
     },
     {
       "issue": 272,
@@ -22,6 +25,14 @@
       "primary_branch": "codex/docs-branch-lifecycle",
       "proposed_branch": "codex/docs-branch-lifecycle",
       "reason": "One active remote primary branch registered for governance PR #273"
+    },
+    {
+      "issue": 274,
+      "title": "Issue248 handoff/source audit",
+      "mode": "MIGRATION_PENDING",
+      "primary_branch": null,
+      "proposed_branch": "codex/docs-issue248-handoff-audit",
+      "reason": "Audit metadata only; code consolidation waits for Claude completion"
     }
   ],
   "branches": [
@@ -798,30 +809,87 @@
       "source": "canonical-github",
       "branch": "codex/issue248-g7-audit-relay",
       "source_sha": "95912e26122e429515972144442973b71eb194f9",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        262
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          262
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue248-gh-audit-writer",
       "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        261
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          261
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue248-post-cas-proof",
       "source_sha": "1414078390fc608e47990c0578cecfa9b6716b0c",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        259
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          259
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1099,9 +1167,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        253
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          253
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1111,9 +1196,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        254
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          254
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1123,9 +1225,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        255
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          255
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1135,9 +1254,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        266
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          266
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1147,9 +1283,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        264
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          264
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1159,9 +1312,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        263
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          263
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1171,9 +1341,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        267
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          267
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1187,7 +1374,20 @@
         260
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR / stacked dependency; wait for Claude completion before consolidation",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "NOT_PROVEN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": []
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1201,7 +1401,22 @@
         258
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR / stacked dependency; wait for Claude completion before consolidation",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "NOT_PROVEN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": []
+      },
+      "open_base_prs": [
+        260
+      ],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1211,9 +1426,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        265
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          265
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1227,7 +1459,20 @@
         271
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR / stacked dependency; wait for Claude completion before consolidation",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "NOT_PROVEN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": []
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1237,9 +1482,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        256
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          256
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1249,9 +1511,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        257
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          257
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1261,9 +1540,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        268
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          268
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1273,9 +1569,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        269
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          269
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1285,9 +1598,26 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        270
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact current source tip was merged through a PR whose merge result is reachable from main; deletion audit still pending",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "integration": {
+        "method": "EXACT_PR_MERGED_TO_MAIN",
+        "target_branch": "main",
+        "target_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+        "merged_prs": [
+          270
+        ]
+      },
+      "open_base_prs": [],
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true
+      }
     },
     {
       "scope": "remote",
@@ -1369,7 +1699,16 @@
       ],
       "status": "ACTIVE",
       "uncommitted_work": true,
-      "reason": "Tracked and untracked changes observed; preserve in-place and coordinate writer handoff"
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=46; commit ancestry alone does not dispose of dirty work.",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      }
     },
     {
       "scope": "local",
@@ -1380,8 +1719,17 @@
         248
       ],
       "status": "NEEDS_AUDIT",
-      "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "uncommitted_work": false,
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=0; commit ancestry alone does not dispose of dirty work.",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      }
     },
     {
       "scope": "local",
@@ -1392,8 +1740,17 @@
         248
       ],
       "status": "NEEDS_AUDIT",
-      "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "uncommitted_work": true,
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=5; commit ancestry alone does not dispose of dirty work.",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      }
     },
     {
       "scope": "local",
@@ -1404,8 +1761,17 @@
         248
       ],
       "status": "NEEDS_AUDIT",
-      "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "uncommitted_work": false,
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=0; commit ancestry alone does not dispose of dirty work.",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      }
     },
     {
       "scope": "local",
@@ -1432,6 +1798,81 @@
       "status": "ACTIVE",
       "reason": "Governance PR #273; observed first pushed implementation commit",
       "observed_at": "2026-11-11T02:38:50.621350+00:00"
+    },
+    {
+      "scope": "local",
+      "source": "claude-investigation",
+      "branch": "main",
+      "issues": [
+        248
+      ],
+      "source_sha": "6650030e94b53ba2605359fcc5ade4519963a51f",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "status": "PROTECTED",
+      "uncommitted_work": true,
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      },
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=1; commit ancestry alone does not dispose of dirty work."
+    },
+    {
+      "scope": "local",
+      "source": "claude-release",
+      "branch": "claude/issue248-nonfinancial-release",
+      "issues": [
+        248
+      ],
+      "source_sha": "26559dde594a100aac6bccf7aaa3bfada2d734f1",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "status": "ACTIVE",
+      "uncommitted_work": true,
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      },
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=11; commit ancestry alone does not dispose of dirty work."
+    },
+    {
+      "scope": "local",
+      "source": "claude-bridge",
+      "branch": "worktree-bridge-cse_016awLBPpADU3cfiEuwFSid9",
+      "issues": [
+        248
+      ],
+      "source_sha": "6650030e94b53ba2605359fcc5ade4519963a51f",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "status": "NEEDS_AUDIT",
+      "uncommitted_work": false,
+      "backup_snapshot": {
+        "reference": "private:issue274-backup-20261111T044210Z",
+        "manifest_sha256": "f19a50defe6508091e9ce85816941409660b5f6527f1a7b05f48bc7e3e59b221",
+        "history_restore_verified": true,
+        "archive_contents_verified": true,
+        "snapshot_stable": true,
+        "writer_quiescence": "NOT_ESTABLISHED"
+      },
+      "reason": "Owner chose WAIT_FOR_CLAUDE. Preserve checkout; dirty status entries=0; commit ancestry alone does not dispose of dirty work."
+    },
+    {
+      "scope": "local",
+      "source": "branch-governance-clone",
+      "branch": "codex/docs-issue248-handoff-audit",
+      "source_sha": "f56503fb174e2cb256eb91773b7cf639d7f95e88",
+      "issues": [
+        274
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-11T04:44:22.980282+00:00",
+      "reason": "Isolated audit task from canonical main; no code consolidation"
     }
   ]
 }

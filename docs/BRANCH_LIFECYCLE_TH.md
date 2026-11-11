@@ -70,6 +70,8 @@ Workflow `Branch lifecycle report` ใช้ pull_request และ workflow_dis
 
 ## Manual UAT และ rollback ของ tooling
 
+การตรวจทั้ง repo ใช้ `npm run check` และ `npx wrangler deploy --dry-run` ตาม AGENTS; inherited queue-remediation tests ต้องมี `jq` บน PATH ด้วย. ตัว lifecycle validator เองใช้ Node standard library เท่านั้น ไม่มีการติดตั้ง package หรือเรียกบริการ Production.
+
 1. รัน validator กับทะเบียนเริ่มต้น ต้องไม่มี DELETE_READY.
 2. เปิด PR ที่ branch ยังไม่ลงทะเบียนหรือ SHA ต่างจาก snapshot: summary ต้องแสดงคำแนะนำโดยไม่บล็อก CI เดิม.
 3. ลอง fixture readiness ที่ SHA เปลี่ยน/ไม่มี backup/มี dirty work: validator ต้องปฏิเสธ.

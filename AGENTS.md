@@ -81,9 +81,10 @@ Do not escalate routine engineering choices to the owner.
 Always read:
 
 1. `AGENTS.md`
-2. `README.md`
-3. `docs/07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md`
-4. Documentation directly relevant to the affected subsystem
+2. `docs/PROJECT_CONTEXT_TH.md`
+3. `README.md`
+4. `docs/07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md`
+5. Documentation directly relevant to the affected subsystem
 
 Read the following only when the task can affect them:
 

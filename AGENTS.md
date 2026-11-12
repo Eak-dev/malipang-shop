@@ -86,6 +86,8 @@ Always read:
 4. `docs/07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md`
 5. Documentation directly relevant to the affected subsystem
 
+For every new task or chat, read `docs/PROJECT_CONTEXT_TH.md` immediately after this file, before implementation or repository changes. For every new feature, update that file in the same change with a concise description and links to its authoritative documentation or issue. When an existing feature, architecture, configuration, or operational behavior materially changes or is removed, review and update the relevant entry in the same change. State explicitly when a task has no project-context impact; do not fabricate changes or production status. Production state requires current provider evidence, timestamps, and explicit UNKNOWNs where unverified. This is a mandatory contributor/agent workflow, not an autonomous background updater.
+
 Read the following only when the task can affect them:
 
 - `docs/01_SETUP_TH.md` for setup/environment work

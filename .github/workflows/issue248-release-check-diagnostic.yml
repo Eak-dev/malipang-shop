@@ -16,10 +16,9 @@ jobs:
   diagnose:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Job-level env may only use contexts GitHub allows there (no runner.*); paths are derived in the first step.
     env:
       DIAG_SHA: 1fead409ea36a2afa9e127ba719e36ed32e575da
-      TOOL: ${{ github.workspace }}/tool/scripts/issue248-tap-safe-summary.mjs
-      PARTS: ${{ runner.temp }}/parts.env
     steps:
       - name: Checkout pinned source under test
         uses: actions/checkout@v4
@@ -32,8 +31,10 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C subject rev-parse HEAD)" = "$DIAG_SHA"
+          TOOL="$GITHUB_WORKSPACE/tool/scripts/issue248-tap-safe-summary.mjs"; PARTS="$RUNNER_TEMP/parts.env"
           test -f "$TOOL"
           : > "$PARTS"
+          { echo "TOOL=$TOOL"; echo "PARTS=$PARTS"; } >> "$GITHUB_ENV"
           { echo "SUBJECT_SHA=$DIAG_SHA"; echo "TOOL_SHA=$(git -C tool rev-parse HEAD)"; echo "RUNNER_CPUS=$(nproc)"; echo "MEM_KB=$(awk '/MemTotal/{print $2}' /proc/meminfo)"; echo "JQ=$(jq --version)"; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/setup-node@v4
         with: {node-version: 22, cache: npm, cache-dependency-path: subject/package-lock.json}

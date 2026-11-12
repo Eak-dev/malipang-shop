@@ -13,6 +13,14 @@ const steps=W.split(/\n(?=      - )/).slice(1).map(raw=>({raw,name:/^      - (?:
 const step=prefix=>{const s=steps.find(x=>x.name.startsWith(prefix));assert.ok(s,prefix);return s.raw;};
 const runBlock=raw=>{const lines=raw.split('\n'),i=lines.findIndex(l=>l==='        run: |');assert.ok(i>=0);return lines.slice(i+1).filter(l=>l===''||l.startsWith('          ')).map(l=>l.slice(10)).join('\n')+'\n';};
 
+test('workflow file is valid for GitHub contexts: no runner.* anywhere; job-level env uses only allowed contexts',()=>{
+ // jobs.<id>.env may use github, needs, strategy, matrix, vars, secrets, inputs; runner is step-only.
+ assert.doesNotMatch(W,/\$\{\{\s*runner\./);
+ const jobEnv=/\n    env:\n((?:      .*\n)+)/.exec(W)[1];
+ for(const m of jobEnv.matchAll(/\$\{\{\s*([a-z_]+)\./g))assert.ok(['github','needs','strategy','matrix','vars','inputs'].includes(m[1]),m[1]);
+ // Every expression anywhere uses a known context.
+ for(const m of W.matchAll(/\$\{\{\s*([a-z_]+)/g))assert.ok(['github','needs','strategy','matrix','vars','inputs','steps','env','job'].includes(m[1]),m[1]);
+});
 test('workflow: no production environment, secret, credential persistence, upload or provider call',()=>{
  assert.doesNotMatch(W,/secrets\.|environment:|upload-artifact|wrangler|curl |api\.cloudflare|github\.token|GH_TOKEN/);
  assert.match(W,/^permissions: \{contents: read\}$/m);assert.equal((W.match(/persist-credentials: false/g)||[]).length,2);
@@ -21,8 +29,9 @@ test('two checkouts: the pinned source in subject/, this diagnostic commit in to
  const sha=/DIAG_SHA: ([0-9a-f]{40})/.exec(W)[1];
  assert.match(step('Checkout pinned source under test'),new RegExp(`ref: '${sha}', path: subject`));
  const tool=step('Checkout diagnostic tool');assert.match(tool,/path: tool/);assert.doesNotMatch(tool,/ref:/);
- assert.match(W,/TOOL: \$\{\{ github\.workspace \}\}\/tool\/scripts\/issue248-tap-safe-summary\.mjs/);
- assert.match(step('Exact SHA'),/test "\$\(git -C subject rev-parse HEAD\)" = "\$DIAG_SHA"\n\s+test -f "\$TOOL"/);
+ const first=step('Exact SHA');
+ assert.match(first,/TOOL="\$GITHUB_WORKSPACE\/tool\/scripts\/issue248-tap-safe-summary\.mjs"; PARTS="\$RUNNER_TEMP\/parts\.env"/);
+ assert.ok(first.indexOf('git -C subject rev-parse HEAD')<first.indexOf('test -f "$TOOL"'));assert.match(first,/echo "TOOL=\$TOOL"; echo "PARTS=\$PARTS"; \} >> "\$GITHUB_ENV"/);
  for(const n of ['Install, typecheck','Tests A','Tests B'])assert.match(step(n),/working-directory: subject/,n);
  assert.doesNotMatch(W,/node scripts\/issue248-tap-safe-summary/);assert.equal((W.match(/node "\$TOOL" /g)||[]).length,3);
  assert.match(W,/cache-dependency-path: subject\/package-lock\.json/);
@@ -37,10 +46,15 @@ test('real paths and per-part exits: subject without the tool, one failing test,
   // npm stub: ci and typecheck succeed, build:test fails (exit 2).
   writeFileSync(path.join(ws,'bin/npm'),'#!/bin/bash\ncase "$*" in "ci") exit 0;; "run typecheck") exit 0;; "run build:test") exit 2;; esac\nexit 9\n',{mode:0o755});
   assert.equal(existsSync(path.join(ws,'subject/scripts/issue248-tap-safe-summary.mjs')),false);
-  const env={PATH:path.join(ws,'bin')+':'+process.env.PATH,RUNNER_TEMP:path.join(ws,'runner'),GITHUB_STEP_SUMMARY:path.join(ws,'summary.md'),
-   TOOL:path.join(ws,'tool/scripts/issue248-tap-safe-summary.mjs'),PARTS:path.join(ws,'runner/parts.env')};
-  writeFileSync(env.PARTS,'');
+  const env={PATH:path.join(ws,'bin')+':'+process.env.PATH,RUNNER_TEMP:path.join(ws,'runner'),GITHUB_STEP_SUMMARY:path.join(ws,'summary.md'),GITHUB_WORKSPACE:ws,GITHUB_ENV:path.join(ws,'github-env')};
+  // First step as on the runner: a pinned subject commit, then TOOL/PARTS exported through GITHUB_ENV.
+  const sub=path.join(ws,'subject'),git=(...a)=>spawnSync('git',['-C',sub,...a],{encoding:'utf8'});
+  git('init','-q');git('-c','user.email=t@example.invalid','-c','user.name=t','commit','-q','--allow-empty','-m','synthetic');env.DIAG_SHA=git('rev-parse','HEAD').stdout.trim();
+  writeFileSync(path.join(ws,'bin/nproc'),'#!/bin/bash\necho 2\n',{mode:0o755});
   const run=(name,cwd)=>spawnSync('bash',['--noprofile','--norc','-c',runBlock(step(name))],{cwd,env,encoding:'utf8'});
+  const first=run('Exact SHA',ws);
+  for(const line of readFileSync(env.GITHUB_ENV,'utf8').trim().split('\n')){const i=line.indexOf('=');env[line.slice(0,i)]=line.slice(i+1);}
+  assert.equal(env.TOOL,path.join(ws,'tool/scripts/issue248-tap-safe-summary.mjs'),first.stderr);assert.equal(env.PARTS,path.join(ws,'runner/parts.env'));
   for(const n of ['Install, typecheck','Tests A','Tests B'])run(n,path.join(ws,'subject'));
   const v=run('Verdict per part',ws);
   const summary=readFileSync(env.GITHUB_STEP_SUMMARY,'utf8');

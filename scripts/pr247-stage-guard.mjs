@@ -36,8 +36,24 @@ function receiptMonitoring(r,epoch,nowMs=Date.now()) {
   return times.every(Number.isFinite) && times.every((x,i)=>i===0||x>=times[i-1]) && times[0]<times[3] && times[4]<=nowMs && Number.isFinite(epochStart) && Number.isFinite(epochEnd) && times[1]<=epochStart && epochStart<=epochEnd && epochEnd<=times[2];
 }
 
-export function verifyStage(mode, evidence) {
+// Issue 248 nonfinancial hotfix release only, B_POST only (never G8 or other callers):
+// the historical G7 receipt keeps source_revision=67 while the global revision
+// advanced with normal expense writes. With this explicit option the current
+// revision may be ahead, but only when the canary's own current source, read
+// between two equal revisions, still has the exact G7 digest and no items,
+// documents or links. Historical integrity since G7 (change-and-revert) stays
+// UNKNOWN and owner-accepted; this is not equivalent to strict equality.
+export const G7_HISTORICAL_SOURCE_REVISION = 67;
+function canaryDigestExceptionHolds(epoch, receipt) {
+  return receipt?.source_revision === G7_HISTORICAL_SOURCE_REVISION &&
+    integer(epoch.source_revision) && epoch.source_revision >= receipt.source_revision &&
+    epoch.source_bracket_revision === epoch.source_revision &&
+    epoch.source_current_digest === receipt.source_snapshot_digest &&
+    epoch.source_current_items === 0 && epoch.source_current_documents === 0 && epoch.source_current_links === 0;
+}
+export function verifyStage(mode, evidence, {canaryDigestException = false} = {}) {
   guard(["A_PRE", "A_POST", "B_PRE", "B_POST"].includes(mode), "UNKNOWN_MODE");
+  guard(canaryDigestException !== true || mode === "B_POST", "CANARY_EXCEPTION_SCOPE");
   const e = evidence ?? {};
   const release = e.g5;
   const cf = e.cloudflare ?? {};
@@ -122,7 +138,7 @@ export function verifyStage(mode, evidence) {
       epoch.job_completed === 1 && epoch.daily === 1 && epoch.raw === 1 &&
       integer(epoch.detail) && (zeroItem ? epoch.detail === 0 &&
         epoch.source_matches === 1 && integer(epoch.source_revision) &&
-        integer(e.receipt?.source_revision) && epoch.source_revision === e.receipt.source_revision &&
+        integer(e.receipt?.source_revision) && (canaryDigestException === true ? canaryDigestExceptionHolds(epoch, e.receipt) : epoch.source_revision === e.receipt.source_revision) &&
         typeof e.receipt?.source_snapshot_digest === "string" && e.receipt.source_snapshot_digest.length === 64 &&
         /^[a-f0-9]{64}$/.test(e.receipt.source_snapshot_digest) &&
         epoch.cutover_active === 1 && epoch.pre_cutover_count === 0 && epoch.integrity_triggers === 27 &&

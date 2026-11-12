@@ -1,0 +1,248 @@
+name: Issue248 nonfinancial closed-job guard release
+# Manual mutation only. Push registers this workflow and does not touch provider.
+# Point-in-time checks are NOT a writer freeze against Queue/Cron/external actors.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Exact independently reviewed merged main SHA', type: string, required: true}
+      g7_receipt_key: {description: 'Private existing G7 receipt R2 key', type: string, required: true}
+      g7_receipt_sha256: {description: 'Existing G7 receipt SHA-256', type: string, required: true}
+      confirmation: {description: 'Type OWNER APPROVED ISSUE248 NONFINANCIAL GUARD RELEASE', type: string, required: true}
+      expected_before_worker_version: {description: 'Current 100% Worker version ID read independently before dispatch', type: string, required: true}
+      attendance_review_exception: {description: 'Type OWNER ACCEPTS KNOWN ATTENDANCE REVIEW (the pinned attendance job must remain REVIEW)', type: string, required: true}
+      g7_revision_exception: {description: 'Type OWNER ACCEPTS G7 SOURCE REVISION ADVANCED HISTORICAL INTEGRITY UNKNOWN', type: string, required: true}
+      expired_terminal_exception: {description: 'Type OWNER ACCEPTS EXPIRED TERMINAL WRITER RACE for known stale terminal item, or NONE', type: string, required: true}
+  push:
+    branches: [main]
+    paths: ['.github/workflows/issue248-nonfinancial-guard-release.yml']
+permissions: {contents: read, actions: read}
+concurrency:
+  group: ${{ github.event_name == 'push' && 'malipang-nonfinancial-release-registry' || 'malipang-release-control' }}
+  cancel-in-progress: false
+jobs:
+  registry:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo 'Workflow registration only; no provider access.'
+  hotfix:
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 35
+    # Non-secret inputs and pins only. Production secrets are scoped to the
+    # provider steps below and never present while dependencies install.
+    env:
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+      G7_RECEIPT_KEY: ${{ inputs.g7_receipt_key }}
+      G7_RECEIPT_SHA256: ${{ inputs.g7_receipt_sha256 }}
+      CONFIRMATION: ${{ inputs.confirmation }}
+      EXPIRED_TERMINAL_EXCEPTION: ${{ inputs.expired_terminal_exception }}
+      ATTENDANCE_REVIEW_EXCEPTION: ${{ inputs.attendance_review_exception }}
+      MP248_G7_CANARY_DIGEST_EXCEPTION: ${{ inputs.g7_revision_exception }}
+      BEFORE_WORKER_VERSION: ${{ inputs.expected_before_worker_version }}
+      G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+      G5_RUN_ID: '42802512915'
+      G5_RUN_ATTEMPT: '1'
+      PRIOR_WORKER_VERSION: a9cc50ba-f2f0-4cbe-a261-ff3bb65fc86c
+      REVIEWED_RUNTIME_SHA: 2680c515b39a082038fdde707c236e4216290039
+      # Reviewed Worker origin (same pin as runtime-audit.yml). vars.* is not a secret and can be
+      # changed without review, so the admin token is never sent unless the URL equals this origin.
+      EXPECTED_WORKER_ORIGIN: https://malipang-backend-v5-2.eakkachai-dev.workers.dev
+      BASE_SHA: 34475766a6af0fa15608069d464a554239a17b53
+    steps:
+      - name: Validate dispatch inputs before checkout (no secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_ACTOR" = 'Eak-dev'
+          test "$CONFIRMATION" = 'OWNER APPROVED ISSUE248 NONFINANCIAL GUARD RELEASE'
+          test "$ATTENDANCE_REVIEW_EXCEPTION" = 'OWNER ACCEPTS KNOWN ATTENDANCE REVIEW'
+          test "$MP248_G7_CANARY_DIGEST_EXCEPTION" = 'OWNER ACCEPTS G7 SOURCE REVISION ADVANCED HISTORICAL INTEGRITY UNKNOWN'
+          [[ "$BEFORE_WORKER_VERSION" =~ ^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$ ]]
+          [[ "$EXPIRED_TERMINAL_EXCEPTION" == 'NONE' || "$EXPIRED_TERMINAL_EXCEPTION" == 'OWNER ACCEPTS EXPIRED TERMINAL WRITER RACE' ]]
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ && "$G7_RECEIPT_SHA256" =~ ^[a-f0-9]{64}$ ]]
+          [[ "$G7_RECEIPT_KEY" =~ ^release-control/pr247/g7/receipt_[a-f0-9]{48}\.json$ ]]
+          # The running workflow definition must be the reviewed commit itself.
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+      - uses: actions/checkout@v4
+        with: {ref: '${{ inputs.expected_sha }}', fetch-depth: 0}
+      - name: Verify exact reviewed source before installing dependencies (no production secrets)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          umask 077
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git fetch --no-tags origin '+refs/pull/271/head:refs/review/pr271'
+          test "$(git rev-parse refs/review/pr271)" = "$REVIEWED_RUNTIME_SHA"
+          git merge-base --is-ancestor "$BASE_SHA" HEAD
+          gh api repos/Eak-dev/malipang-shop/pulls/271 > "$RUNNER_TEMP/pr271.json"
+          jq -e --arg reviewed "$REVIEWED_RUNTIME_SHA" '.merged == true and .head.sha == $reviewed and (.merge_commit_sha | type == "string" and test("^[a-f0-9]{40}$"))' "$RUNNER_TEMP/pr271.json" >/dev/null
+          pr_merge="$(jq -r '.merge_commit_sha' "$RUNNER_TEMP/pr271.json")"
+          git merge-base --is-ancestor "$pr_merge" HEAD
+          # Runtime, lockfile and npm config (which decide what npm ci executes) equal reviewed PR #271.
+          git diff --quiet "$REVIEWED_RUNTIME_SHA" HEAD -- src migrations wrangler.jsonc package.json package-lock.json npm-shrinkwrap.json .npmrc tsconfig.json
+          # Release scripts (incl. the reviewed G7 canary-digest binding) are pinned by exact content.
+          printf 'ef6fce18382c6411c7071f57936ab8af310884358ef7e9c258b81577ff0dc39f  scripts/pr247-readonly-snapshot.sh\ndb1fddc488e07e59b7371a0c1a809ce14da5387a20690a5bce2860725c931f59  scripts/pr247-stage-guard.mjs\n7a8ca40515250a75f28b502aea7f7a54fbe4532e1f80aa9b905671799bbd21d7  scripts/pr247-g7-zero-proof.mjs\na939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99  scripts/issue248-version-proof.mjs\n4b1b2550b084a75c090bfa26be3f981191fd821553ae6d14a8c2de212c4aec6a  scripts/issue248-terminal-hotfix-guard.mjs\nc3ed48c025f0e4a257c8a436bd4dcc7ca20db80177d5ba2b17fb0ad0d979faaf  scripts/issue248-canary-source-digest.mjs\n7149dd3f61643e8dbcc288f362e9fbb112bf46fead89784f45bd6c6c464afe30  scripts/issue248-nonfinancial-release-guard.mjs\n8835fe0597a8d4a6d9656171deafda276ae5c13a758d25439211116e6bbfd0ba  scripts/issue248-provider-sha256.mjs\n' | sha256sum --check --strict --status
+          test "$(grep -Fxc 'node scripts/pr247-stage-guard.mjs "$mode" "$out"' scripts/pr247-readonly-snapshot.sh)" = 1
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - name: Install reviewed lockfile and run local checks (no production secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          npm ci
+          npm run check > "$RUNNER_TEMP/terminal-hotfix-check.log" 2>&1 || { echo HOTFIX_TESTS_FAILED; exit 1; }
+          npx wrangler deploy --dry-run > "$RUNNER_TEMP/terminal-hotfix-dryrun.log" 2>&1 || { echo HOTFIX_DRYRUN_FAILED; exit 1; }
+          # Lifecycle scripts ran without production secrets; prove no reviewed file changed.
+          test -z "$(git status --porcelain --untracked-files=no)"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          printf 'ef6fce18382c6411c7071f57936ab8af310884358ef7e9c258b81577ff0dc39f  scripts/pr247-readonly-snapshot.sh\ndb1fddc488e07e59b7371a0c1a809ce14da5387a20690a5bce2860725c931f59  scripts/pr247-stage-guard.mjs\n7a8ca40515250a75f28b502aea7f7a54fbe4532e1f80aa9b905671799bbd21d7  scripts/pr247-g7-zero-proof.mjs\na939610311f6d4c34f931bc4aabeca11bf81f5c4ecaee405bc2737aeec550b99  scripts/issue248-version-proof.mjs\n4b1b2550b084a75c090bfa26be3f981191fd821553ae6d14a8c2de212c4aec6a  scripts/issue248-terminal-hotfix-guard.mjs\nc3ed48c025f0e4a257c8a436bd4dcc7ca20db80177d5ba2b17fb0ad0d979faaf  scripts/issue248-canary-source-digest.mjs\n7149dd3f61643e8dbcc288f362e9fbb112bf46fead89784f45bd6c6c464afe30  scripts/issue248-nonfinancial-release-guard.mjs\n8835fe0597a8d4a6d9656171deafda276ae5c13a758d25439211116e6bbfd0ba  scripts/issue248-provider-sha256.mjs\n' | sha256sum --check --strict --status
+          # The snapshot's built-in B_POST guard counts every REVIEW job. Remove only
+          # that final line; the release guard re-runs verifyStage on a copy where
+          # exactly the verified known attendance job is excepted.
+          test "$(grep -Fxc 'node scripts/pr247-stage-guard.mjs "$mode" "$out"' scripts/pr247-readonly-snapshot.sh)" = 1
+          sed '/^node scripts\/pr247-stage-guard\.mjs "\$mode" "\$out"$/d' scripts/pr247-readonly-snapshot.sh > "$RUNNER_TEMP/release-snapshot.sh"
+          test "$(grep -c 'pr247-stage-guard' "$RUNNER_TEMP/release-snapshot.sh")" = 0
+          echo "RELEASE_SNAPSHOT_SHA256=$(sha256sum "$RUNNER_TEMP/release-snapshot.sh" | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Check current Worker, accounting guards and writers (read-only)
+        id: precheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$EXPECTED_WORKER_ORIGIN" && "${MALIPANG_WORKER_URL%/}" == "$EXPECTED_WORKER_ORIGIN" ]] || { echo WORKER_ORIGIN_MISMATCH_NO_TOKEN_SENT; exit 1; }
+          umask 077
+          test -z "$(git status --porcelain --untracked-files=no)"
+          printf '%s  %s\n' "$RELEASE_SNAPSHOT_SHA256" "$RUNNER_TEMP/release-snapshot.sh" | sha256sum --check --strict --status
+          export EXPECTED_WORKER_VERSION="$BEFORE_WORKER_VERSION" COMPLETED_BEFORE=0
+          HOTFIX_OBSERVATION_START="$(date -u +'%Y-%m-%dT%H:%M:%S.000Z')"
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          echo "HOTFIX_OBSERVATION_START=$HOTFIX_OBSERVATION_START" >> "$GITHUB_ENV"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "SELECT count(*) AS n FROM failed_jobs WHERE status='OPEN'" > "$RUNNER_TEMP/hotfix-open.json"
+          OPEN_FAILED_BEFORE="$(jq -er 'select(type=="array" and length==1) | .[0] | select(.success==true and .meta.changed_db==false and .meta.rows_written==0 and (.results|length)==1) | .results[0].n | select(type=="number" and .>=0 and floor==.)' "$RUNNER_TEMP/hotfix-open.json")"
+          export OPEN_FAILED_BEFORE
+          echo "OPEN_FAILED_BEFORE=$OPEN_FAILED_BEFORE" >> "$GITHUB_ENV"
+          bash "$RUNNER_TEMP/release-snapshot.sh" B_POST "$RUNNER_TEMP/hotfix-pre.json"
+          # Review and writer evidence are counts only: job keys, traces, leases and errors are
+          # hashed and compared inside D1. Provider errors may echo the query; emit only a code.
+          REVIEW_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-review)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$REVIEW_SQL" > "$RUNNER_TEMP/hotfix-review-pre.json" 2>/dev/null || { echo HOTFIX_REVIEW_READ_UNKNOWN; exit 1; }
+          WRITERS_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-writers)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$WRITERS_SQL" > "$RUNNER_TEMP/hotfix-writers.json" 2>/dev/null || { echo HOTFIX_WRITERS_READ_UNKNOWN; exit 1; }
+          pre_result="$(node scripts/issue248-nonfinancial-release-guard.mjs pre "$RUNNER_TEMP/hotfix-pre.json" "$RUNNER_TEMP/hotfix-writers.json" "$RUNNER_TEMP/hotfix-review-pre.json")"
+          case "$pre_result" in
+            NONFINANCIAL_RELEASE_PRE_KNOWN_EXPIRED_RISK_ACCEPTED_NOT_FREEZE|NONFINANCIAL_RELEASE_PRE_POINT_IN_TIME_PASS_NOT_FREEZE) printf '%s\n' "$pre_result" >> "$GITHUB_STEP_SUMMARY";;
+            *) echo HOTFIX_PRE_RESULT_UNKNOWN; exit 1;;
+          esac
+      - name: Recheck preconditions and deploy once
+        id: deploy
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$EXPECTED_WORKER_ORIGIN" && "${MALIPANG_WORKER_URL%/}" == "$EXPECTED_WORKER_ORIGIN" ]] || { echo WORKER_ORIGIN_MISMATCH_NO_TOKEN_SENT; exit 1; }
+          umask 077
+          test -z "$(git status --porcelain --untracked-files=no)"
+          printf '%s  %s\n' "$RELEASE_SNAPSHOT_SHA256" "$RUNNER_TEMP/release-snapshot.sh" | sha256sum --check --strict --status
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          export EXPECTED_WORKER_VERSION="$BEFORE_WORKER_VERSION" COMPLETED_BEFORE=0
+          bash "$RUNNER_TEMP/release-snapshot.sh" B_POST "$RUNNER_TEMP/hotfix-immediate.json"
+          REVIEW_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-review)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$REVIEW_SQL" > "$RUNNER_TEMP/hotfix-review-immediate.json" 2>/dev/null || { echo HOTFIX_REVIEW_READ_UNKNOWN; exit 1; }
+          WRITERS_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-writers)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$WRITERS_SQL" > "$RUNNER_TEMP/hotfix-writers-immediate.json" 2>/dev/null || { echo HOTFIX_WRITERS_READ_UNKNOWN; exit 1; }
+          node scripts/issue248-nonfinancial-release-guard.mjs pre "$RUNNER_TEMP/hotfix-immediate.json" "$RUNNER_TEMP/hotfix-writers-immediate.json" "$RUNNER_TEMP/hotfix-review-immediate.json"
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          CHECK_FAILURES="SELECT count(*) n FROM failed_jobs WHERE created_at >= '$HOTFIX_OBSERVATION_START' OR (status='OPEN' AND updated_at >= '$HOTFIX_OBSERVATION_START')"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures-immediate.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures-immediate.json"
+          # These snapshots are not an exclusive freeze: a new writer may start
+          # before or during deploy. Never blindly roll back an uncertain write.
+          npx wrangler deploy > "$RUNNER_TEMP/terminal-hotfix-deploy.log" 2>&1 || { echo HOTFIX_DEPLOY_ACK_UNKNOWN_NO_RETRY; exit 1; }
+          umask 077
+          printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$RUNNER_TEMP/hotfix-cf-header"
+          curl -fsS --retry 0 --max-time 20 --header "@$RUNNER_TEMP/hotfix-cf-header" "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/scripts/malipang-backend-v5-2/deployments" > "$RUNNER_TEMP/hotfix-deployed.json"
+          latest="$(node scripts/issue248-version-proof.mjs "$RUNNER_TEMP/terminal-hotfix-deploy.log" "$RUNNER_TEMP/hotfix-deployed.json" "$BEFORE_WORKER_VERSION")" || { echo HOTFIX_DEPLOY_VERSION_UNKNOWN_NO_RETRY; exit 1; }
+          echo "POST_WORKER=$latest" >> "$GITHUB_ENV"
+          echo "HOTFIX_DEPLOYED_WORKER_VERSION=$latest" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify version, active Queue, flags and D1 after deploy
+        id: postcheck
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$EXPECTED_WORKER_ORIGIN" && "${MALIPANG_WORKER_URL%/}" == "$EXPECTED_WORKER_ORIGIN" ]] || { echo WORKER_ORIGIN_MISMATCH_NO_TOKEN_SENT; exit 1; }
+          umask 077
+          test -z "$(git status --porcelain --untracked-files=no)"
+          printf '%s  %s\n' "$RELEASE_SNAPSHOT_SHA256" "$RUNNER_TEMP/release-snapshot.sh" | sha256sum --check --strict --status
+          export EXPECTED_WORKER_VERSION="$POST_WORKER" COMPLETED_BEFORE=0
+          [[ "$HOTFIX_OBSERVATION_START" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\.000Z$ ]]
+          CHECK_FAILURES="SELECT count(*) n FROM failed_jobs WHERE created_at >= '$HOTFIX_OBSERVATION_START' OR (status='OPEN' AND updated_at >= '$HOTFIX_OBSERVATION_START')"
+          bash "$RUNNER_TEMP/release-snapshot.sh" B_POST "$RUNNER_TEMP/hotfix-after.json" || { echo HOTFIX_POST_UNKNOWN_NO_RETRY; exit 1; }
+          REVIEW_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-review)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$REVIEW_SQL" > "$RUNNER_TEMP/hotfix-review-after.json" 2>/dev/null || { echo HOTFIX_REVIEW_READ_UNKNOWN; exit 1; }
+          node scripts/issue248-nonfinancial-release-guard.mjs post "$RUNNER_TEMP/hotfix-after.json" "$RUNNER_TEMP/hotfix-review-after.json" || { echo HOTFIX_POST_UNKNOWN_NO_RETRY; exit 1; }
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures.json"
+          sleep 360
+          bash "$RUNNER_TEMP/release-snapshot.sh" B_POST "$RUNNER_TEMP/hotfix-after-cron.json" || { echo HOTFIX_SOAK_UNKNOWN_NO_RETRY; exit 1; }
+          REVIEW_SQL="$(node scripts/issue248-nonfinancial-release-guard.mjs sql-review)"
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$REVIEW_SQL" > "$RUNNER_TEMP/hotfix-review-after-cron.json" 2>/dev/null || { echo HOTFIX_REVIEW_READ_UNKNOWN; exit 1; }
+          node scripts/issue248-nonfinancial-release-guard.mjs post "$RUNNER_TEMP/hotfix-after-cron.json" "$RUNNER_TEMP/hotfix-review-after-cron.json" || { echo HOTFIX_SOAK_UNKNOWN_NO_RETRY; exit 1; }
+          npx wrangler d1 execute malipang-v5-2 --remote --json --command "$CHECK_FAILURES" > "$RUNNER_TEMP/hotfix-new-failures-after-cron.json"
+          node scripts/issue248-terminal-hotfix-guard.mjs --failures "$RUNNER_TEMP/hotfix-new-failures-after-cron.json"
+          echo 'HOTFIX_CONFIG_CHECK_ONLY_NOT_BACKLOG_OR_ACCOUNTING_PARITY' >> "$GITHUB_STEP_SUMMARY"
+          echo 'CONTINUE GCP 429 MONITORING, PER-ID RECONCILIATION AND SEVEN-DAY SOAK' >> "$GITHUB_STEP_SUMMARY"
+      - name: Incident containment summary (claims only steps that succeeded)
+        if: always()
+        env:
+          PRECHECK_OUTCOME: ${{ steps.precheck.outcome }}
+          DEPLOY_OUTCOME: ${{ steps.deploy.outcome }}
+          POSTCHECK_OUTCOME: ${{ steps.postcheck.outcome }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          {
+            # A verified line only for a step whose outcome is success; anything else
+            # (failure, cancelled, skipped or never reached) claims nothing.
+            if [[ "${PRECHECK_OUTCOME:-}" == success ]]; then
+              echo 'PRECHECK_VERIFIED_AT_CHECK_TIME_NOT_FREEZE: canary source digest matched the G7 receipt digest and the known attendance job was the only REVIEW job.'
+            else
+              echo "PRECHECK_NOT_VERIFIED (outcome: ${PRECHECK_OUTCOME:-not run}): no canary, attendance or writer state is claimed."
+            fi
+            if [[ "${DEPLOY_OUTCOME:-}" == success ]]; then
+              echo 'DEPLOY_STEP_SUCCEEDED: the deployed version line above came from the version proof.'
+            else
+              echo "DEPLOY_NOT_CONFIRMED (outcome: ${DEPLOY_OUTCOME:-not run}): if the deploy command ran, the deployed state is UNKNOWN; inspect the provider and do not retry."
+            fi
+            if [[ "${POSTCHECK_OUTCOME:-}" == success ]]; then
+              echo 'POSTCHECK_VERIFIED_AT_CHECK_TIME_NOT_FREEZE: post-deploy and soak snapshots passed the release guard.'
+            else
+              echo "POSTCHECK_NOT_VERIFIED (outcome: ${POSTCHECK_OUTCOME:-not run})."
+            fi
+            echo 'G7_HISTORICAL_INTEGRITY_UNKNOWN_OWNER_ACCEPTED: a matching current canary digest is not evidence that no change-and-revert happened since G7 (ABA UNKNOWN); this is not the strict revision guard.'
+            echo 'ZERO_ITEM_CANARY_DETAIL_UNKNOWN: the G7 canary had no items, so itemized DETAIL projection is not verified by this workflow.'
+            echo 'KNOWN ATTENDANCE REVIEW JOB: this workflow never replays or resolves it.'
+            echo 'NO BLIND RETRY, ROLLBACK OR DLQ REPLAY. Inspect exact Worker, D1, Queue, Cron and provider state before intervention.'
+            echo 'A nonzero precheck stops deploy; point-in-time zeros do not freeze concurrent writers.'
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -10,14 +10,22 @@ done
 [[ "$G5_RUN_ID" =~ ^[0-9]+$ && "$G5_RUN_ATTEMPT" =~ ^[0-9]+$ ]] || { echo NO_GO_G5_RECEIPT_ID >&2; exit 2; }
 [[ "$EXPECTED_WORKER_VERSION" =~ ^[a-f0-9-]{30,40}$ ]] || { echo NO_GO_WORKER_VERSION_FORMAT >&2; exit 2; }
 [[ "$G5_SHA" =~ ^[a-f0-9]{40}$ ]] || { echo NO_GO_G5_SHA_FORMAT >&2; exit 2; }
+# Bearer tokens go only into mode-600 header files inside this private temp dir (never curl argv,
+# never printed); the dir is removed on every exit, including error and HUP/INT/TERM.
+for name in CLOUDFLARE_API_TOKEN MALIPANG_ADMIN_TOKEN; do
+  [[ "${!name}" != *$'\n'* && "${!name}" != *$'\r'* ]] || { echo "NO_GO_TOKEN_FORMAT_$name" >&2; exit 2; }
+done
+umask 077
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-umask 077
+trap 'exit 1' HUP INT TERM
+printf 'Authorization: Bearer %s\n' "$CLOUDFLARE_API_TOKEN" > "$tmp/cf-header"
+printf 'Authorization: Bearer %s\n' "$MALIPANG_ADMIN_TOKEN" > "$tmp/admin-header"
 wrangler=./node_modules/.bin/wrangler
 cfapi="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID"
 get_cf() {
   local suffix="$1" target="$2"
-  curl -fsS --retry 0 --max-time 20 --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "$cfapi$suffix" > "$target"
+  curl -fsS --retry 0 --max-time 20 --header "@$tmp/cf-header" "$cfapi$suffix" > "$target"
   jq -e '.success == true' "$target" >/dev/null
 }
 $wrangler r2 object get "malipang-private-backups/release-control/pr247/$G5_RUN_ID-$G5_RUN_ATTEMPT.json" --file="$tmp/g5.json" --remote >/dev/null
@@ -63,7 +71,7 @@ sql="SELECT
  (SELECT count(*) FROM stable_recovery_epochs e JOIN stable_projection_writes p ON p.spreadsheet_id=e.spreadsheet_id AND p.entity_type='EXPENSE' AND substr(p.entity_id,1,length(e.target_key)+1)=e.target_key||'|' AND p.source_version=e.target_version WHERE e.target_type='EXPENSE' AND e.state IN ('COMPLETE','CLOSED') AND p.projection='DETAIL' AND p.state='VERIFIED') canary_detail"
 $wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$tmp/d1.json"
 jq -e 'type == "array" and length == 1 and (.[0] | type) == "object" and .[0].success == true and (.[0].results | type) == "array" and (.[0].results | length) == 1 and (.[0].results[0] | type) == "object"' "$tmp/d1.json" >/dev/null
-curl -fsS --retry 0 --max-time 20 --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/status" > "$tmp/status.json"
+curl -fsS --retry 0 --max-time 20 --header "@$tmp/admin-header" "$MALIPANG_WORKER_URL/admin/stable-sync/status" > "$tmp/status.json"
 jq -e '.ok == true' "$tmp/status.json" >/dev/null
 if [[ "$mode" == B_* ]]; then
   test -n "${G7_RECEIPT_KEY:-}" && test -n "${G7_RECEIPT_SHA256:-}" || { echo NO_GO_OWNER_RECEIPT_REQUIRED >&2; exit 2; }
@@ -126,7 +134,34 @@ if [[ "$mode" == B_* ]]; then
     nonce="$(jq -er '.arm_audit_nonce | select(type == "string" and length == 48 and test("^[a-f0-9]{48}$"))' "$tmp/owner-receipt.json")" || { echo NO_GO_G7_AUDIT_NONCE >&2; exit 2; }
     $wrangler r2 object get "malipang-private-backups/release-control/pr247/g7/arm-audit/$nonce-intent.json" --file="$tmp/g7-intent.json" --remote >/dev/null
     $wrangler r2 object get "malipang-private-backups/release-control/pr247/g7/arm-audit/$nonce-outcome.json" --file="$tmp/g7-outcome.json" --remote >/dev/null
-    node scripts/pr247-g7-zero-proof.mjs "$tmp/owner-receipt.json" "$tmp/g7-intent.json" "$tmp/g7-outcome.json" "$tmp/epoch.json"
+    # Issue 248 nonfinancial hotfix release only, B_POST only: when the workflow
+    # explicitly sets the owner exception, add the canary's CURRENT source digest
+    # as separate fields. One read-only statement computes it inside D1, so no
+    # expense column leaves the provider; its revision must equal the epoch query's
+    # revision (every source write bumps it by trigger). Receipt and historical
+    # revision stay untouched. A source write after this read is NOT excluded: every
+    # later check (immediate recheck and post-deploy snapshots) recomputes it.
+    # Change-and-revert since G7 cannot be detected (historical integrity UNKNOWN,
+    # owner-accepted). Default (unset, or any mode except B_POST) stays strict.
+    zero_flag=''
+    if [[ "$mode" == B_POST && "${MP248_G7_CANARY_DIGEST_EXCEPTION:-}" == 'OWNER ACCEPTS G7 SOURCE REVISION ADVANCED HISTORICAL INTEGRITY UNKNOWN' ]]; then
+      zero_flag='--canary-digest-exception-b-post'
+      canary_key="$(jq -er '.[0].results[0].target_key | select(type == "string" and test("^exp_[A-Za-z0-9_-]{1,128}$"))' "$tmp/epoch.json")" || { echo NO_GO_G7_CANARY_TARGET >&2; exit 2; }
+      canary_version="$(jq -er '.[0].results[0].target_version | select(type == "number" and . >= 1 and floor == .)' "$tmp/epoch.json")" || { echo NO_GO_G7_CANARY_TARGET >&2; exit 2; }
+      epoch_revision="$(jq -er '.[0].results[0].source_revision | select(type == "number" and . >= 0 and floor == .)' "$tmp/epoch.json")" || { echo NO_GO_G7_CANARY_REVISION >&2; exit 2; }
+      canary_sql="$(node scripts/issue248-canary-source-digest.mjs sql "$canary_key" "$canary_version")" || { echo NO_GO_G7_CANARY_TARGET >&2; exit 2; }
+      # Provider errors may echo the query (target key); emit only a code.
+      $wrangler d1 execute malipang-v5-2 --remote --json --command "$canary_sql" > "$tmp/canary-source.json" 2>/dev/null || { rm -f "$tmp/canary-source.json"; echo NO_GO_G7_CANARY_SOURCE_READ >&2; exit 2; }
+      canary="$(node scripts/issue248-canary-source-digest.mjs digest "$tmp/canary-source.json" "$canary_key" "$canary_version" "$epoch_revision")" || { rm -f "$tmp/canary-source.json"; echo NO_GO_G7_CANARY_SOURCE >&2; exit 2; }
+      rm -f "$tmp/canary-source.json"
+      jq --argjson c "$canary" '.[0].results[0] += {source_current_digest:$c.digest,source_bracket_revision:$c.revision,source_current_items:$c.items,source_current_documents:$c.documents,source_current_links:$c.links}' "$tmp/epoch.json" > "$tmp/epoch-canary.json"
+      mv "$tmp/epoch-canary.json" "$tmp/epoch.json"
+    fi
+    if [[ -n "$zero_flag" ]]; then
+      node scripts/pr247-g7-zero-proof.mjs "$tmp/owner-receipt.json" "$tmp/g7-intent.json" "$tmp/g7-outcome.json" "$tmp/epoch.json" "$zero_flag"
+    else
+      node scripts/pr247-g7-zero-proof.mjs "$tmp/owner-receipt.json" "$tmp/g7-intent.json" "$tmp/g7-outcome.json" "$tmp/epoch.json"
+    fi
     jq '.[0].results[0] |= del(.target_key,.target_trace)' "$tmp/epoch.json" > "$tmp/epoch-sanitized.json"
     mv "$tmp/epoch-sanitized.json" "$tmp/epoch.json"
   fi

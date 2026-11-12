@@ -43,18 +43,22 @@ jobs:
         shell: bash
         run: |
           set -uo pipefail
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
           echo "NODE=$(node --version)" >> "$GITHUB_STEP_SUMMARY"
-          npm ci > "$RUNNER_TEMP/npm-ci.log" 2>&1; echo "NPM_CI_EXIT=$?" >> "$PARTS"
-          npm run typecheck > "$RUNNER_TEMP/typecheck.log" 2>&1; echo "TYPECHECK_EXIT=$?" >> "$PARTS"
-          npm run build:test > "$RUNNER_TEMP/build.log" 2>&1; echo "BUILD_TEST_EXIT=$?" >> "$PARTS"
+          rec NPM_CI npm ci > "$RUNNER_TEMP/npm-ci.log" 2>&1
+          rec TYPECHECK npm run typecheck > "$RUNNER_TEMP/typecheck.log" 2>&1
+          rec BUILD_TEST npm run build:test > "$RUNNER_TEMP/build.log" 2>&1
       - name: Tests A - plain CI environment
         if: always()
         working-directory: subject
         shell: bash
         run: |
           set -uo pipefail
-          node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/a.tap" 2>&1; echo "TESTS_A_EXIT=$?" >> "$PARTS"
-          node "$TOOL" A "$RUNNER_TEMP/a.tap" >> "$GITHUB_STEP_SUMMARY"; echo "SUMMARY_A_EXIT=$?" >> "$PARTS"
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
+          rec TESTS_A node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/a.tap" 2>&1
+          rec SUMMARY_A node "$TOOL" A "$RUNNER_TEMP/a.tap" >> "$GITHUB_STEP_SUMMARY"
       - name: Tests B - release job environment names with synthetic values
         if: always()
         working-directory: subject
@@ -77,15 +81,22 @@ jobs:
           BASE_SHA: 34475766a6af0fa15608069d464a554239a17b53
         run: |
           set -uo pipefail
-          node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/b.tap" 2>&1; echo "TESTS_B_EXIT=$?" >> "$PARTS"
-          node "$TOOL" B "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"; echo "SUMMARY_B_EXIT=$?" >> "$PARTS"
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
+          rec TESTS_B node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/b.tap" 2>&1
+          rec SUMMARY_B node "$TOOL" B "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"
           # Titles failing only with the release environment (the likely inheritance cases).
-          node "$TOOL" DIFF "$RUNNER_TEMP/a.tap" "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"; echo "SUMMARY_DIFF_EXIT=$?" >> "$PARTS"
+          rec SUMMARY_DIFF node "$TOOL" DIFF "$RUNNER_TEMP/a.tap" "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"
       - name: Verdict per part (fails the job if any part did not exit 0 or was not recorded)
         if: always()
         shell: bash
         run: |
           set -uo pipefail
-          { echo '### Exit code per part'; for p in NPM_CI TYPECHECK BUILD_TEST TESTS_A SUMMARY_A TESTS_B SUMMARY_B SUMMARY_DIFF; do v="$(grep -E "^${p}_EXIT=[0-9]+$" "$PARTS" 2>/dev/null | tail -1 | cut -d= -f2)"; echo "- ${p}: ${v:-NOT_RUN}"; done; } >> "$GITHUB_STEP_SUMMARY"
-          bad=0; for p in NPM_CI TYPECHECK BUILD_TEST TESTS_A SUMMARY_A TESTS_B SUMMARY_B SUMMARY_DIFF; do grep -qxE "${p}_EXIT=0" "$PARTS" 2>/dev/null || bad=1; done
+          # Under -e and pipefail a lookup that finds nothing must not end the step: a missing part is NOT_RUN.
+          bad=0; echo '### Exit code per part' >> "$GITHUB_STEP_SUMMARY"
+          for p in NPM_CI TYPECHECK BUILD_TEST TESTS_A SUMMARY_A TESTS_B SUMMARY_B SUMMARY_DIFF; do
+            v="$(grep -E "^${p}_EXIT=[0-9]+$" "${PARTS:-/dev/null}" 2>/dev/null | tail -1 | cut -d= -f2 || true)"
+            echo "- ${p}: ${v:-NOT_RUN}" >> "$GITHUB_STEP_SUMMARY"
+            [ "${v:-}" = 0 ] || bad=1
+          done
           exit $bad

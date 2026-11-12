@@ -36,7 +36,7 @@ test('two checkouts: the pinned source in subject/, this diagnostic commit in to
  assert.doesNotMatch(W,/node scripts\/issue248-tap-safe-summary/);assert.equal((W.match(/node "\$TOOL" /g)||[]).length,3);
  assert.match(W,/cache-dependency-path: subject\/package-lock\.json/);
 });
-test('real paths and per-part exits: subject without the tool, one failing test, a failing build; the verdict fails and lists each part',()=>{
+test('real paths and per-part exits under the runner shell (-e, pipefail): failing build and failing tests are recorded, summaries written, verdict fails',()=>{
  const ws=mkdtempSync(path.join(os.tmpdir(),'mp248-diag-'));
  try{
   for(const d of ['subject/tests','tool/scripts','bin','runner'])mkdirSync(path.join(ws,d),{recursive:true});
@@ -51,11 +51,13 @@ test('real paths and per-part exits: subject without the tool, one failing test,
   const sub=path.join(ws,'subject'),git=(...a)=>spawnSync('git',['-C',sub,...a],{encoding:'utf8'});
   git('init','-q');git('-c','user.email=t@example.invalid','-c','user.name=t','commit','-q','--allow-empty','-m','synthetic');env.DIAG_SHA=git('rev-parse','HEAD').stdout.trim();
   writeFileSync(path.join(ws,'bin/nproc'),'#!/bin/bash\necho 2\n',{mode:0o755});
-  const run=(name,cwd)=>spawnSync('bash',['--noprofile','--norc','-c',runBlock(step(name))],{cwd,env,encoding:'utf8'});
+  // Exactly how the GitHub runner runs `shell: bash`: bash --noprofile --norc -eo pipefail {0} (errexit on).
+  const run=(name,cwd)=>{const file=path.join(ws,'runner',name.replace(/[^A-Za-z]/g,'_')+'.sh');writeFileSync(file,runBlock(step(name)));return spawnSync('bash',['--noprofile','--norc','-eo','pipefail',file],{cwd,env,encoding:'utf8'});};
   const first=run('Exact SHA',ws);
   for(const line of readFileSync(env.GITHUB_ENV,'utf8').trim().split('\n')){const i=line.indexOf('=');env[line.slice(0,i)]=line.slice(i+1);}
   assert.equal(env.TOOL,path.join(ws,'tool/scripts/issue248-tap-safe-summary.mjs'),first.stderr);assert.equal(env.PARTS,path.join(ws,'runner/parts.env'));
-  for(const n of ['Install, typecheck','Tests A','Tests B'])run(n,path.join(ws,'subject'));
+  // Under errexit each step must still finish: a failing build or test is recorded, never an early exit.
+  for(const n of ['Install, typecheck','Tests A','Tests B']){const r=run(n,path.join(ws,'subject'));assert.equal(r.status,0,n+': '+r.stderr);}
   const v=run('Verdict per part',ws);
   const summary=readFileSync(env.GITHUB_STEP_SUMMARY,'utf8');
   assert.notEqual(v.status,0,'verdict must fail when any part failed');

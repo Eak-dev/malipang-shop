@@ -8,6 +8,12 @@ import {admitPacedWorkbookOperation,pacingPreflightBlocked,STABLE_SHEETS_PACING_
 
 export type StableClaimPhase='ADMISSION'|'BEGIN_NOTICE'|'OPERATION'|'END_NOTICE'|'RELEASE';
 export const STABLE_NOTICE_READ_DEFERRED='STABLE_NOTICE_READ_DEFERRED';
+export const STABLE_NONFINANCIAL_JOB_CLOSED='STABLE_NONFINANCIAL_JOB_CLOSED';
+type SheetIdentity=Extract<RecoveryIdentity,{entityType:string}>;
+async function nonfinancialJobClosed(db:D1Database,job:SheetIdentity):Promise<boolean>{
+ const row=await db.prepare("SELECT status FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?").bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string}>();
+ return row?.status==='REVIEW'||row?.status==='COMPLETED';
+}
 function readMayBeSafelyDeferred(error:unknown):boolean{
   return error instanceof SheetsHttpError && error.message==='STABLE_NOTICE_READ' &&
     (error.status===429||error.status>=500&&error.status<=599);
@@ -46,6 +52,7 @@ export async function stableWorkbookClaimOwned(env:Env,token:string):Promise<boo
 export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity):Promise<T>{
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,token=crypto.randomUUID();
   const sheetJob=identity&&'entityType' in identity?identity:undefined;
+  const guardedJob=sheetJob&&sheetJob.entityType!=='EXPENSE'&&sheetJob.entityType!=='PERSONAL_USE'?sheetJob:undefined;
   if(!book)throw new Error('STABLE_WORKBOOK_NOT_CONFIGURED');
   // Fast deny before reserving the shared workbook; the atomic D1 admission
   // below remains authoritative against concurrent queue invocations.
@@ -54,13 +61,14 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
   let claimed=false,phase:StableClaimPhase='ADMISSION',beginNoticeMayHaveWritten=false;
   try{
     const admissionSql=sheetJob?`INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at)
-      SELECT ?,?,'HELD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=? AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') ON CONFLICT DO NOTHING`:`INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at)
+      SELECT ?,?,'HELD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=? AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') ${guardedJob?"AND NOT EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type=? AND j.entity_key=? AND j.entity_version=? AND j.status IN ('REVIEW','COMPLETED'))":''} ON CONFLICT DO NOTHING`:`INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at)
       VALUES(?,?,'HELD',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now')) ON CONFLICT DO NOTHING`;
-    const args:unknown[]=sheetJob?[book,token,`${sheetJob.entityType}:${sheetJob.entityKey}:${sheetJob.entityVersion}`]:[book,token];
+    const args:unknown[]=sheetJob?[book,token,`${sheetJob.entityType}:${sheetJob.entityKey}:${sheetJob.entityVersion}`,...(guardedJob?[guardedJob.entityType,guardedJob.entityKey,guardedJob.entityVersion]:[])]:[book,token];
     const inserted=await db.prepare(admissionSql).bind(...args).run();
     if(inserted.success!==true||!Number.isSafeInteger(inserted.meta?.changes))throw new Error('STABLE_WORKBOOK_CLAIM_OUTCOME_UNKNOWN');
     if(Number(inserted.meta.changes)!==1){
       if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
+      if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
       // A held claim is temporary; a review claim waits for an operator. An
       // unreadable state is treated as temporary so it never escalates a job.
       const current=await db.prepare('SELECT state FROM stable_workbook_claims WHERE spreadsheet_id=?').bind(book).first<{state:string}>().catch(()=>null);
@@ -80,6 +88,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // Admit here (not before the notice GETs) so a safe read deferral
       // cannot strand an ADMITTED recovery epoch.
       if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
+      if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
       if(!await admitStableRecovery(env,identity,token))throw Error(STABLE_RECOVERY_BLOCKED);
       // MUST be the last instruction before returning to mutation dispatch:
       // a lost POST acknowledgement must never look like a safe read defer.
@@ -87,6 +96,9 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     });
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='OPERATION';
+    // Notice POST may already have been sent, so closed-state drift here must
+    // retain REVIEW rather than silently releasing an uncertain claim.
+    if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
     // A terminal signal after notice authorization may race a provider POST.
     // Stop subsequent stages and retain REVIEW; its provider outcome is unknown.
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
@@ -118,13 +130,13 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     // errors (including a lost POST ACK) retain the claim for review.
     if(claimed && phase==='BEGIN_NOTICE' && !beginNoticeMayHaveWritten &&
        (env.STABLE_SHEETS_PACING_ENABLED==='true' && readMayBeSafelyDeferred(error) ||
-        error instanceof Error && [STABLE_RECOVERY_BLOCKED,STABLE_TERMINAL_HOLD].includes(error.message))){
+        error instanceof Error && [STABLE_RECOVERY_BLOCKED,STABLE_TERMINAL_HOLD,STABLE_NONFINANCIAL_JOB_CLOSED].includes(error.message))){
       let released=false;
       try{
         const r=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(book,token).run();
         released=r.success===true&&Number(r.meta?.changes)===1;
       }catch{}
-      if(released){claimed=false;throw Error(error instanceof Error && [STABLE_RECOVERY_BLOCKED,STABLE_TERMINAL_HOLD].includes(error.message) ? error.message : STABLE_NOTICE_READ_DEFERRED);}
+      if(released){claimed=false;throw Error(error instanceof Error && [STABLE_RECOVERY_BLOCKED,STABLE_TERMINAL_HOLD,STABLE_NONFINANCIAL_JOB_CLOSED].includes(error.message) ? error.message : STABLE_NOTICE_READ_DEFERRED);}
     }
     if(claimed)await retainForReview(db,book,token,phase,error);
     throw error;

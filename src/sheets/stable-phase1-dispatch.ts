@@ -1,10 +1,10 @@
 import {STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
 import type {Env,SheetsSyncJob} from '../types';
-import {claimSheetSyncJob,ensureSheetSyncOutbox,syncJob,type SheetSyncOutcome} from './sync';
+import {claimSheetSyncJob,ensureSheetSyncOutbox,syncJob,STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN,type SheetSyncOutcome} from './sync';
 import {newStableSourcePredicate} from './stable-source-cutover';
 import {runStableExpenseJob} from './stable-expense-job';
 import {runStablePersonalJob} from './stable-personal-job';
-import {stableWorkbookInReview,withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './stable-workbook-claim';
+import {stableWorkbookInReview,withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED,STABLE_NONFINANCIAL_JOB_CLOSED} from './stable-workbook-claim';
 import {stableFaultReason} from './stable-fault';
 import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED} from './stable-recovery-admission';
 import {STABLE_SHEETS_PACING_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,pacingPreflightBlocked,stablePacingConfigured} from './stable-sheet-pacing';
@@ -24,7 +24,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
  // attempt nor rewrites the job on every delivery.
  if(await stableWorkbookInReview(env)){await ensureSheetSyncOutbox(env,job);return 'BLOCKED';}
  if(await stableRecoveryGateBlocked(env,job)||await pacingPreflightBlocked(env)){await ensureSheetSyncOutbox(env,job);return 'BLOCKED';}
- if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE'){try{return await withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);}catch(error){if(error instanceof Error&&error.message===STABLE_TERMINAL_HOLD)return 'BLOCKED';throw error;}}
+ if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE'){try{return await withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);}catch(error){if(error instanceof Error&&error.message===STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN)return 'REVIEW';if(error instanceof Error&&[STABLE_TERMINAL_HOLD,STABLE_NONFINANCIAL_JOB_CLOSED].includes(error.message))return 'BLOCKED';throw error;}}
  const lease=await claimSheetSyncJob(env,job);
  if(!lease){
   // A terminal financial record blocks the atomic lease CAS; ACK this

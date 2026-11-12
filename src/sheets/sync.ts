@@ -15,6 +15,9 @@ export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
+// The provider mutation has already crossed the boundary. Losing this job
+// lease must not release the workbook or resolve failure evidence.
+export const STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN='STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN';
 export type SheetSyncOutcome="PROCESSED"|"IGNORED"|"BUSY";
 interface PersonalUseProjectionRow extends Record<string,unknown>{version:unknown;sync_lease_owned?:unknown}
 class PersonalUseWriteFenceUnavailableError extends Error{
@@ -76,8 +79,9 @@ async function retainAmbiguousPersonalUseWriteFence(env:Env,job:SheetsSyncJob,le
     WHERE entity_type='PERSONAL_USE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),leaseUntil,`${PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX}${String(error)}`,job.entityKey,job.entityVersion,leaseToken).run();
   return Number(result.meta.changes||0)===1;
 }
-async function completeOwnedSheetSyncJob(env:Env,job:SheetsSyncJob,leaseToken:string):Promise<boolean>{
+async function completeOwnedSheetSyncJob(env:Env,job:SheetsSyncJob,leaseToken:string,requireVerified=false):Promise<boolean>{
   const result=await env.DB.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=?,next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?`).bind(new Date().toISOString(),job.entityType,job.entityKey,job.entityVersion,leaseToken).run();
+  if(requireVerified && (result.success!==true || !Number.isSafeInteger(result.meta?.changes)))throw Error(STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN);
   return Number(result.meta.changes||0)===1;
 }
 async function completeOwnedUndispatchedSupersededPersonalUseJob(env:Env,job:SheetsSyncJob,leaseToken:string):Promise<boolean>{
@@ -189,9 +193,15 @@ export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<
       }
       throw error;
     }finally{await safeRecordMetric(env,job.traceId,"sheets_sync_ms",Date.now()-started,{sheet,entityType:job.entityType,...(expense?{dailySheet:env.SHEET_EXPENSE_DAILY}:{})});}
-    const completed=await completeOwnedSheetSyncJob(env,job,leaseToken);if(personalUse&&!completed)return"BUSY";
+    const stableNonfinancial=env.STABLE_PHASE1_ENABLED==='true' && job.entityType!=='EXPENSE' && job.entityType!=='PERSONAL_USE';
+    let completed:boolean;try{completed=await completeOwnedSheetSyncJob(env,job,leaseToken,stableNonfinancial)}catch(error){if(stableNonfinancial)throw Error(STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN);throw error}
+    if(personalUse&&!completed)return"BUSY";
+    if(!completed && stableNonfinancial)throw Error(STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN);
     return"PROCESSED";
   }catch(error){
+    // Preserve the source job/lease for reconciliation; the shared workbook
+    // wrapper retains REVIEW, so no subsequent provider write is authorized.
+    if(error instanceof Error && error.message===STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN)throw error;
     const attemptRow=await env.DB.prepare(`SELECT attempt_count FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=? AND lease_token=?`).bind(job.entityType,job.entityKey,job.entityVersion,leaseToken).first<{attempt_count:number}>(),attempt=Math.max(retryAttempt,Number(attemptRow?.attempt_count||1)),retryError=error instanceof Error?error:new Error(String(error));
     Object.defineProperty(retryError,"retryAttempt",{value:attempt,configurable:true});
     if(personalUse&&personalUseWriteOutcomeUncertain&&personalUseAmbiguityLeaseUntil&&retryError instanceof SheetsMutationOutcomeUnknownError){

@@ -113,14 +113,15 @@ exit 14
     const out = path.join(dir, 'snapshot.json');
     const result = spawnSync('bash', [path.join(root,'scripts/pr247-readonly-snapshot.sh'), mode, out], {
       cwd: dir, encoding:'utf8', timeout: 15000,
-      env: {...process.env, PATH:path.join(dir,'bin')+':'+process.env.PATH, FIXTURE_DIR:dir,
+      // This fixture covers the default B_POST path: never inherit the release job's canary opt-in.
+      env: (({MP248_G7_CANARY_DIGEST_EXCEPTION:_releaseOptIn,...env})=>env)({...process.env, PATH:path.join(dir,'bin')+':'+process.env.PATH, FIXTURE_DIR:dir,
         CLOUDFLARE_ACCOUNT_ID:'synthetic', CLOUDFLARE_API_TOKEN:'synthetic',
         MALIPANG_ADMIN_TOKEN:'synthetic', MALIPANG_WORKER_URL:'https://synthetic.invalid',
         G5_RUN_ID:'123', G5_RUN_ATTEMPT:'1', G5_SHA:sha,
         EXPECTED_WORKER_VERSION:post?g6:g5,
         PRIOR_WORKER_VERSION:g5, COMPLETED_BEFORE:'3296', OPEN_FAILED_BEFORE:'32',
         G7_RECEIPT_KEY:'release-control/pr247/g7/synthetic.json',
-        G7_RECEIPT_SHA256:createHash('sha256').update(JSON.stringify(ownerReceipt)).digest('hex')}
+        G7_RECEIPT_SHA256:createHash('sha256').update(JSON.stringify(ownerReceipt)).digest('hex')})
     });
     return {status:result.status,stdout:result.stdout,stderr:result.stderr,
       snapshot:result.status===0?JSON.parse(readFileSync(out,'utf8')):null};

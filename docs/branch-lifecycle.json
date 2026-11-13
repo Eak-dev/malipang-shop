@@ -1713,13 +1713,25 @@
       "scope": "local",
       "source": "branch-governance-clone",
       "branch": "codex/restore-daily-sheet-sync-248",
-      "source_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+      "source_sha": "1ff410d58ec04a36b91f3eb59153fcdb722e8484",
       "issues": [
         248
       ],
       "status": "ACTIVE",
-      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "observed_at": "2026-11-13T00:15:07.271853+00:00",
       "reason": "Selected/staging primary from canonical main; existing writers have not handed off. No old tip merge or unmerged source port."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/restore-daily-sheet-sync-248",
+      "source_sha": "1ff410d58ec04a36b91f3eb59153fcdb722e8484",
+      "issues": [
+        248
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-13T00:15:07.271853+00:00",
+      "reason": "Selected/staging primary pushed from canonical main. Writer handoff incomplete; work item remains MIGRATION_PENDING. Snapshot SHA precedes its own registration commit."
     }
   ],
   "canonical_main_observed_at": "2026-11-13T00:13:34.095759+00:00"

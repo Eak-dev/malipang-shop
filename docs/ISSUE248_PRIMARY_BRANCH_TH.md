@@ -71,7 +71,7 @@ PRESERVED/EXCLUDED หมายถึงคงต้นฉบับโดยไ�
 
 ## สถานะ Production
 
-หลักฐานก่อนงานนี้: release run [43308722311](https://github.com/Eak-dev/malipang-shop/actions/runs/43308722311) deploy จาก ebc655ba แล้ว โดยขั้นตรวจหลัง deploy ไม่ครบ. รอบสร้าง branch นี้ไม่ได้ตรวจ Production สด ไม่อ้าง Production healthy, backlog หมด, acceptance/soak ผ่าน หรือ #248 เสร็จ. การสร้าง branch ไม่เปลี่ยน Worker ที่ใช้งานจริง.
+หลักฐานก่อนงานนี้: release run [43308722311](https://github.com/Eak-dev/malipang-shop/actions/runs/43308722311) deploy จาก ebc655ba แล้ว: ขั้น Recheck preconditions and deploy once สำเร็จ แต่ขั้น Verify version, active Queue, flags and D1 after deploy ล้มเหลว และ run สรุปเป็น failure; ยังไม่มีหลักฐานในงานนี้ว่าตรวจซ้ำผ่านแล้ว. รอบสร้าง branch นี้ไม่ได้ตรวจ Production สด ไม่อ้าง Production healthy, backlog หมด, acceptance/soak ผ่าน หรือ #248 เสร็จ. การสร้าง branch ไม่เปลี่ยน Worker ที่ใช้งานจริง.
 
 ## การตรวจและ rollback
 

@@ -40,3 +40,8 @@
 5. ลดการทำงานซ้ำโดยใช้ผลตรวจเดิมที่ตรงกับ SHA และสภาพปัจจุบัน แต่ไม่ข้ามการตรวจที่จำเป็นหรือกล่าวว่าผ่านเมื่อไม่มีหลักฐาน
 
 หากข้อมูลขัดกัน ให้ยึดลำดับหลักฐานใน AGENTS.md และตรวจความต่างก่อนเปลี่ยน Production; สถานะ issue หรือเอกสารเป็น snapshot ไม่ใช่หลักฐานว่า deploy สำเร็จหรือระบบใช้งานได้ในขณะนั้น
+
+
+## จุดทำงานหลักของ #248
+
+เลือก `codex/restore-daily-sheet-sync-248` เป็น selected/staging primary จาก canonical main สำหรับงานกู้ Sheets Sync #248 ตาม [แผนและหลักฐาน](ISSUE248_PRIMARY_BRANCH_TH.md) และ [source dispositions](issue248-consolidation.json). ผลของ 19 branch ที่ merge แล้วได้รับผ่าน main; รอบนี้ไม่มี runtime/config หรือฟีเจอร์อื่นเพิ่ม. Work item ยังเป็น MIGRATION_PENDING เพราะงานค้างและ writer handoff ยังไม่ครบ ไม่ได้หมายความว่า branch เก่าพร้อมลบหรือ Production ผ่าน acceptance. ตรวจ base/SHA และแผนล่าสุดจาก PR/ทะเบียนก่อนทำงานต่อ.

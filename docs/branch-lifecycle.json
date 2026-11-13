@@ -2,18 +2,21 @@
   "version": 1,
   "mode": "report-only",
   "repository": "Eak-dev/malipang-shop",
-  "observed_at": "2026-11-11T02:33:09.641317+00:00",
-  "canonical_main_sha": "34475766a6af0fa15608069d464a554239a17b53",
-  "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried.",
+  "observed_at": "2026-11-13T00:13:34.095759+00:00",
+  "canonical_main_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+  "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
   "work_items": [
     {
       "issue": 248,
       "title": "Restore Daily Sheet Sync #248",
       "mode": "MIGRATION_PENDING",
-      "primary_branch": null,
+      "primary_branch": "codex/restore-daily-sheet-sync-248",
       "proposed_branch": "codex/restore-daily-sheet-sync-248",
       "coordination_chat": "Restore Daily Sheet Sync #248",
-      "reason": "Multiple open PRs and uncommitted local work remain. Do not rename, switch, consolidate or delete before a coordinated writer handoff."
+      "reason": "Owner authorized selected primary from canonical main. The 19 results are inherited; unmerged/dirty sources excluded; no completed writer handoff or deletion readiness.",
+      "selection_status": "SELECTED_STAGING_PRIMARY",
+      "writer_handoff_received": false,
+      "consolidation_manifest": "docs/issue248-consolidation.json"
     },
     {
       "issue": 272,
@@ -33,7 +36,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -43,7 +47,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -53,7 +58,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -63,7 +69,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -73,7 +80,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -83,7 +91,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -93,7 +102,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -103,7 +113,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -113,7 +124,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -123,7 +135,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -133,7 +146,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -143,7 +157,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -153,7 +168,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -163,7 +179,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -173,7 +190,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -183,7 +201,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -193,7 +212,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -203,7 +223,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -213,7 +234,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -223,7 +245,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -233,7 +256,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -243,7 +267,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -253,7 +278,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -263,7 +289,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -273,7 +300,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -283,7 +311,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -293,7 +322,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -303,7 +333,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -313,7 +344,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -323,7 +355,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -333,7 +366,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -345,7 +379,8 @@
         243
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -357,7 +392,8 @@
         236
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -369,7 +405,8 @@
         227
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -381,7 +418,8 @@
         237
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -393,7 +431,8 @@
         226
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -405,7 +444,8 @@
         229
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -415,7 +455,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -427,7 +468,8 @@
         193
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -439,7 +481,8 @@
         199
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -449,7 +492,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -461,7 +505,8 @@
         234
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -473,7 +518,8 @@
         235
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -483,7 +529,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -493,7 +540,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -503,7 +551,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -513,7 +562,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -525,7 +575,8 @@
         194
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -535,7 +586,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -545,7 +597,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -555,7 +608,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -565,7 +619,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -575,7 +630,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -585,7 +641,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -595,7 +652,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -605,7 +663,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -615,7 +674,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -627,7 +687,8 @@
         203
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -637,7 +698,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -647,7 +709,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -657,7 +720,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -667,7 +731,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -677,7 +742,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -687,7 +753,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -697,7 +764,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -709,7 +777,8 @@
         224
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -719,7 +788,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -729,7 +799,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -739,7 +810,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -751,7 +823,8 @@
         228
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -761,7 +834,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -771,7 +845,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -781,7 +856,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -791,37 +867,80 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue248-g7-audit-relay",
       "source_sha": "95912e26122e429515972144442973b71eb194f9",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        262
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "edd88a0e40549bb54856006d27a49495176b28ed",
+        "source_tree": "8438e462190a4fc6155e2bafc42b105e03820076",
+        "merge_tree": "8438e462190a4fc6155e2bafc42b105e03820076",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue248-gh-audit-writer",
       "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        261
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "59bba076783b05eadbb669dc7beff0082b6e2997",
+        "source_tree": "36d4e80b700b60121c8a71956b3218c8e9d2954e",
+        "merge_tree": "36d4e80b700b60121c8a71956b3218c8e9d2954e",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue248-post-cas-proof",
       "source_sha": "1414078390fc608e47990c0578cecfa9b6716b0c",
-      "issues": [],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "issues": [
+        248
+      ],
+      "pull_requests": [
+        259
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "c5941ea3f88456c1475f367fd5c650d75e24c05e",
+        "source_tree": "30dda36184afd15415c745facf59eb4cf2d669d5",
+        "merge_tree": "30dda36184afd15415c745facf59eb4cf2d669d5",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -833,7 +952,8 @@
         252
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -843,7 +963,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -855,7 +976,8 @@
         222
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -867,7 +989,8 @@
         221
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -877,7 +1000,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -887,7 +1011,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -899,7 +1024,8 @@
         232
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -909,7 +1035,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -921,7 +1048,8 @@
         233
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -931,7 +1059,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -941,7 +1070,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -953,7 +1083,8 @@
         158
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -963,7 +1094,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -975,7 +1107,8 @@
         220
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -985,7 +1118,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -995,7 +1129,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1005,7 +1140,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1017,7 +1153,8 @@
         231
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1029,7 +1166,8 @@
         230
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Open PR observed; not proof of a live writer",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1039,7 +1177,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1049,7 +1188,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1059,7 +1199,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1069,7 +1210,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1079,7 +1221,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1089,7 +1232,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1099,9 +1243,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        253
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "1e2c1cc44218ec36487382e41e24a4e697aa56dc",
+        "source_tree": "ba1531030235f980113cc79f1b8968343a3a19fb",
+        "merge_tree": "ba1531030235f980113cc79f1b8968343a3a19fb",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1111,9 +1267,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        254
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "8dbd630e43d61b59c0ca0e19d2399e3d50084bd5",
+        "source_tree": "54aed7f430d7cff901e7b88f1767f25404be43a5",
+        "merge_tree": "54aed7f430d7cff901e7b88f1767f25404be43a5",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1123,9 +1291,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        255
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "acc65da7312315d442e362d331b3be9816a3fddd",
+        "source_tree": "8f39863434071e7e4f42851b2e1776fab411892c",
+        "merge_tree": "8f39863434071e7e4f42851b2e1776fab411892c",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1135,9 +1315,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        266
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "36b3c80eaf40af9b707969f81934892f487f29b9",
+        "source_tree": "3414dc3e78355730dd26bdc7b19909ef8d3a6bb1",
+        "merge_tree": "3414dc3e78355730dd26bdc7b19909ef8d3a6bb1",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1147,9 +1339,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        264
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "e68f9da59fa3ab6aa137f80a5271039a1114366b",
+        "source_tree": "6eb8ec4db19afb0c6f8fb1fa0fc35f649334ea6a",
+        "merge_tree": "6eb8ec4db19afb0c6f8fb1fa0fc35f649334ea6a",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1159,9 +1363,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        263
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "81cce5eaae8c68ad9dc3c412761f46de1872e325",
+        "source_tree": "6445782eebad9697537ba6e4413ced18b735a818",
+        "merge_tree": "6445782eebad9697537ba6e4413ced18b735a818",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1171,9 +1387,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        267
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "24be2659aa9193a610ebe75553223af914b5fc15",
+        "source_tree": "40ad47b5483a6baf62d3cb508b8b231b67fb8fe9",
+        "merge_tree": "40ad47b5483a6baf62d3cb508b8b231b67fb8fe9",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1187,7 +1415,9 @@
         260
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Not imported into selected primary. Open source PR and pending writer/policy review; see consolidation manifest.",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "disposition": "HELD_RELEASE_POLICY_REVIEW"
     },
     {
       "scope": "remote",
@@ -1201,7 +1431,9 @@
         258
       ],
       "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "reason": "Not imported into selected primary. Open source PR and pending writer/policy review; see consolidation manifest.",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "disposition": "HELD_RELEASE_POLICY_REVIEW"
     },
     {
       "scope": "remote",
@@ -1211,23 +1443,45 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        265
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "b75376e11f0163421d494b09d57996fc0fb98bca",
+        "source_tree": "a742bbd57fa616be0b069206129e41a1b3cbcb06",
+        "merge_tree": "a742bbd57fa616be0b069206129e41a1b3cbcb06",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "issue248/nonfinancial-completion-review-guard",
-      "source_sha": "a212af53392c83b21e56da6ef16cabeab917e6a7",
+      "source_sha": "2680c515b39a082038fdde707c236e4216290039",
       "issues": [
         248
       ],
       "pull_requests": [
         271
       ],
-      "status": "ACTIVE",
-      "reason": "Open PR observed; not proof of a live writer"
+      "status": "NEEDS_AUDIT",
+      "reason": "Code inclusion verified in base; release chain/postdeploy and writer clearance remain pending",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "46885c6b63e01d871855bee4f8ebc3364e9bb099",
+        "source_tree": "1215d95d59bc6814756f60b8ffa025825dbde59a",
+        "merge_tree": "1215d95d59bc6814756f60b8ffa025825dbde59a",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "RELEASE_HOLD"
     },
     {
       "scope": "remote",
@@ -1237,9 +1491,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        256
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "c4b4ab96e2f2cb08a8633c003294375a0f458095",
+        "source_tree": "a2bf2e10dc0c092e38a9c9e9065cd98a179a0721",
+        "merge_tree": "a2bf2e10dc0c092e38a9c9e9065cd98a179a0721",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1249,9 +1515,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        257
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "c9862eb443517cbc357d5e684ec9d74b375de636",
+        "source_tree": "1f0388a9860a1d862c18f8104b960c11a935d1b5",
+        "merge_tree": "1f0388a9860a1d862c18f8104b960c11a935d1b5",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1261,9 +1539,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        268
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "90a311f34c021a218f54bc8788c9a3a368b9832b",
+        "source_tree": "d58c6ff914168e25f31b0ed3dc5384002c680ebd",
+        "merge_tree": "d58c6ff914168e25f31b0ed3dc5384002c680ebd",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1273,9 +1563,21 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        269
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "3f0b7c7659bb0ce7b9b3e8751ecc6b2b89533129",
+        "source_tree": "60dec91a45f5ca125768d554799ecf8db5626f9b",
+        "merge_tree": "60dec91a45f5ca125768d554799ecf8db5626f9b",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
@@ -1285,19 +1587,32 @@
       "issues": [
         248
       ],
-      "pull_requests": [],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "pull_requests": [
+        270
+      ],
+      "status": "INTEGRATED",
+      "reason": "Exact source/merged tree equality and merge reachability verified; writer/deletion readiness remain unproven",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "34475766a6af0fa15608069d464a554239a17b53",
+        "source_tree": "144f6366f29eba33c39774a925cc75c1c5ff45f2",
+        "merge_tree": "144f6366f29eba33c39774a925cc75c1c5ff45f2",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "INHERITED_VIA_MAIN_NOT_REMERGED"
     },
     {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "main",
-      "source_sha": "34475766a6af0fa15608069d464a554239a17b53",
+      "source_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
       "issues": [],
       "pull_requests": [],
       "status": "PROTECTED",
-      "reason": "Canonical main"
+      "reason": "Canonical main",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00"
     },
     {
       "scope": "remote",
@@ -1307,7 +1622,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1317,7 +1633,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1327,7 +1644,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1337,7 +1655,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1347,7 +1666,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1357,7 +1677,8 @@
       "issues": [],
       "pull_requests": [],
       "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited"
+      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "local",
@@ -1369,7 +1690,8 @@
       ],
       "status": "ACTIVE",
       "uncommitted_work": true,
-      "reason": "Tracked and untracked changes observed; preserve in-place and coordinate writer handoff"
+      "reason": "Tracked and untracked changes observed; preserve in-place and coordinate writer handoff",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "local",
@@ -1381,7 +1703,8 @@
       ],
       "status": "NEEDS_AUDIT",
       "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "reason": "Local-only observation; worktree/dependency/integration audit pending",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "local",
@@ -1393,7 +1716,8 @@
       ],
       "status": "NEEDS_AUDIT",
       "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "reason": "Local-only observation; worktree/dependency/integration audit pending",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "local",
@@ -1405,7 +1729,8 @@
       ],
       "status": "NEEDS_AUDIT",
       "uncommitted_work": null,
-      "reason": "Local-only observation; worktree/dependency/integration audit pending"
+      "reason": "Local-only observation; worktree/dependency/integration audit pending",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "local",
@@ -1416,7 +1741,8 @@
         272
       ],
       "status": "ACTIVE",
-      "reason": "Observed committed governance implementation; local checkout tracked separately from remote"
+      "reason": "Observed committed governance implementation; local checkout tracked separately from remote",
+      "observed_at": "2026-11-11T02:33:09.641317+00:00"
     },
     {
       "scope": "remote",
@@ -1432,6 +1758,95 @@
       "status": "ACTIVE",
       "reason": "Governance PR #273; observed first pushed implementation commit",
       "observed_at": "2026-11-11T02:38:50.621350+00:00"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue248-nonfinancial-release-a3",
+      "issues": [
+        248
+      ],
+      "source_sha": "d22f806ac2f55f459c772c10421bf5c65322cffa",
+      "pull_requests": [
+        276
+      ],
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "status": "NEEDS_AUDIT",
+      "reason": "Code inclusion verified in base; release chain/postdeploy and writer clearance remain pending",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "1fead409ea36a2afa9e127ba719e36ed32e575da",
+        "source_tree": "9305f90ab483e0ed90a565525166da51d323b6f2",
+        "merge_tree": "9305f90ab483e0ed90a565525166da51d323b6f2",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "RELEASE_HOLD"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue248-release-test-env-isolation",
+      "issues": [
+        248
+      ],
+      "source_sha": "5af269150565bac2d24d2614f616d89c85b1e9a5",
+      "pull_requests": [
+        277
+      ],
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "status": "NEEDS_AUDIT",
+      "reason": "Code inclusion verified in base; release chain/postdeploy and writer clearance remain pending",
+      "integration": {
+        "target_branch": "main",
+        "target_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+        "merge_sha": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+        "source_tree": "f22a4529de347ed28c3fa7765388118215475194",
+        "merge_tree": "f22a4529de347ed28c3fa7765388118215475194",
+        "evidence": "docs/issue248-consolidation.json"
+      },
+      "disposition": "RELEASE_HOLD"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue248-release-check-diagnostic",
+      "issues": [
+        248
+      ],
+      "status": "ACTIVE",
+      "source_sha": "cea559acce62d71147f0372d60953c02a47207ba",
+      "observed_at": "2026-11-13T00:13:34.095759+00:00",
+      "disposition": "EXCLUDED_PENDING_WRITER",
+      "reason": "Not imported into selected primary. Open source PR and pending writer/policy review; see consolidation manifest.",
+      "pull_requests": [
+        278
+      ]
+    },
+    {
+      "scope": "local",
+      "source": "branch-governance-clone",
+      "branch": "codex/restore-daily-sheet-sync-248",
+      "source_sha": "1ff410d58ec04a36b91f3eb59153fcdb722e8484",
+      "issues": [
+        248
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-13T00:15:07.271853+00:00",
+      "reason": "Selected/staging primary from canonical main; existing writers have not handed off. No old tip merge or unmerged source port."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/restore-daily-sheet-sync-248",
+      "source_sha": "1ff410d58ec04a36b91f3eb59153fcdb722e8484",
+      "issues": [
+        248
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-13T00:15:07.271853+00:00",
+      "reason": "Selected/staging primary pushed from canonical main. Writer handoff incomplete; work item remains MIGRATION_PENDING. Snapshot SHA precedes its own registration commit."
     }
-  ]
+  ],
+  "canonical_main_observed_at": "2026-11-13T00:13:34.095759+00:00"
 }

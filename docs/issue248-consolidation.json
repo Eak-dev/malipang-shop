@@ -1,0 +1,758 @@
+{
+  "version": 1,
+  "issue": 248,
+  "supporting_issue": 274,
+  "authority": "DEV_OWNED",
+  "mutation_level": "L0-L1",
+  "primary_branch": "codex/restore-daily-sheet-sync-248",
+  "base_branch": "main",
+  "base_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5",
+  "observed_at": "2026-11-13T00:13:34.095759+00:00",
+  "stage": "SELECTED_STAGING_PRIMARY",
+  "writer_handoff_received": false,
+  "scope": "Inherited reviewed #248 result already on main. New diff is provenance, disposition and primary-branch metadata only; no runtime, migration, configuration, diagnostic or unrelated feature port.",
+  "allowed_changed_paths": [
+    "docs/ISSUE248_PRIMARY_BRANCH_TH.md",
+    "docs/issue248-consolidation.json",
+    "docs/branch-lifecycle.json",
+    "docs/PROJECT_CONTEXT_TH.md"
+  ],
+  "backup": {
+    "reference": "private:issue248-primary-base-20261113T001212Z",
+    "bundle_sha256": "cd4e9aeac7d88eb4796060e3ed61ea23baeeacec345fc105bf76de456e9e7e35",
+    "restored": true,
+    "fsck_passed": true,
+    "verified_commits": 20,
+    "base_sha": "aa908e2362ce79d03d961186ffb1786f6c3be9c5"
+  },
+  "sources": [
+    {
+      "branch": "codex/issue248-g7-audit-relay",
+      "source_sha": "95912e26122e429515972144442973b71eb194f9",
+      "pr": 262,
+      "merge_sha": "edd88a0e40549bb54856006d27a49495176b28ed",
+      "merge_tree": "8438e462190a4fc6155e2bafc42b105e03820076",
+      "source_tree": "8438e462190a4fc6155e2bafc42b105e03820076",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-g7-audit-writer.yml",
+        "scripts/issue248-g7-audit.mjs",
+        "tests/issue248-g7-audit.test.mjs"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "e68f9da59fa3ab6aa137f80a5271039a1114366b",
+          "subject": "Prepare safe G7 audit workflow registration (#264)",
+          "pull_requests": [
+            264
+          ]
+        },
+        {
+          "commit": "81cce5eaae8c68ad9dc3c412761f46de1872e325",
+          "subject": "Allow separately scoped zero-item canary audit (#263)",
+          "pull_requests": [
+            263
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "codex/issue248-gh-audit-writer",
+      "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
+      "pr": 261,
+      "merge_sha": "59bba076783b05eadbb669dc7beff0082b6e2997",
+      "merge_tree": "36d4e80b700b60121c8a71956b3218c8e9d2954e",
+      "source_tree": "36d4e80b700b60121c8a71956b3218c8e9d2954e",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-gh-audit-writer.yml",
+        "scripts/issue248-gh-audit.mjs",
+        "tests/issue248-gh-audit.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "codex/issue248-nonfinancial-release-a3",
+      "source_sha": "d22f806ac2f55f459c772c10421bf5c65322cffa",
+      "pr": 276,
+      "merge_sha": "1fead409ea36a2afa9e127ba719e36ed32e575da",
+      "merge_tree": "9305f90ab483e0ed90a565525166da51d323b6f2",
+      "source_tree": "9305f90ab483e0ed90a565525166da51d323b6f2",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-nonfinancial-guard-release.yml",
+        "docs/ISSUE248_G7_CANARY_DIGEST_EXCEPTION_TH.md",
+        "scripts/issue248-canary-source-digest.mjs",
+        "scripts/issue248-nonfinancial-release-guard.mjs",
+        "scripts/issue248-provider-sha256.mjs",
+        "scripts/pr247-g7-zero-proof.mjs",
+        "scripts/pr247-readonly-snapshot.sh",
+        "scripts/pr247-stage-guard.mjs",
+        "tests/issue248-g7-canary-exception-e2e.test.mjs",
+        "tests/issue248-g7-canary-exception.test.mjs",
+        "tests/issue248-g7-canary-worker-parity.test.mjs",
+        "tests/issue248-nonfinancial-release-guard.test.mjs",
+        "tests/issue248-nonfinancial-release-workflow.test.mjs",
+        "tests/issue248-snapshot-token-handling.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "codex/issue248-post-cas-proof",
+      "source_sha": "1414078390fc608e47990c0578cecfa9b6716b0c",
+      "pr": 259,
+      "merge_sha": "c5941ea3f88456c1475f367fd5c650d75e24c05e",
+      "merge_tree": "30dda36184afd15415c745facf59eb4cf2d669d5",
+      "source_tree": "30dda36184afd15415c745facf59eb4cf2d669d5",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-post-cas-proof.yml",
+        "scripts/issue248-stage-proof-cli.mjs",
+        "scripts/issue248-stage-proof.mjs",
+        "tests/issue248-stage-proof.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "codex/issue248-release-test-env-isolation",
+      "source_sha": "5af269150565bac2d24d2614f616d89c85b1e9a5",
+      "pr": 277,
+      "merge_sha": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+      "merge_tree": "f22a4529de347ed28c3fa7765388118215475194",
+      "source_tree": "f22a4529de347ed28c3fa7765388118215475194",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        "tests/pr247-snapshot-integration.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g6a-gate-on",
+      "source_sha": "7061e0222b55ada8e2b0b4156b058643164d0425",
+      "pr": 253,
+      "merge_sha": "1e2c1cc44218ec36487382e41e24a4e697aa56dc",
+      "merge_tree": "ba1531030235f980113cc79f1b8968343a3a19fb",
+      "source_tree": "ba1531030235f980113cc79f1b8968343a3a19fb",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/production-pr247-g6a-gate-on.yml",
+        "docs/ISSUE248_G6A_GATE_ON_PREP_TH.md",
+        "scripts/pr247-readonly-snapshot.sh",
+        "scripts/pr247-stage-guard.mjs",
+        "tests/pr247-g6a-workflow.test.mjs",
+        "tests/pr247-snapshot-integration.test.mjs",
+        "tests/pr247-stage-guard.test.mjs",
+        "wrangler.jsonc"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+          "subject": "test: isolate snapshot fixture from release environment (#277)",
+          "pull_requests": [
+            277
+          ]
+        },
+        {
+          "commit": "1fead409ea36a2afa9e127ba719e36ed32e575da",
+          "subject": "Prepare guarded nonfinancial release for issue 248 (#276)",
+          "pull_requests": [
+            276
+          ]
+        },
+        {
+          "commit": "24be2659aa9193a610ebe75553223af914b5fc15",
+          "subject": "Read G7 audit logs with escape handling (#267)",
+          "pull_requests": [
+            267
+          ]
+        },
+        {
+          "commit": "b75376e11f0163421d494b09d57996fc0fb98bca",
+          "subject": "Prepare guarded steady release for zero-item G7 canary (#265)",
+          "pull_requests": [
+            265
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g6a-incident-recheck",
+      "source_sha": "c6a8af9670b69ba952a3b9480fd78177dd645200",
+      "pr": 254,
+      "merge_sha": "8dbd630e43d61b59c0ca0e19d2399e3d50084bd5",
+      "merge_tree": "54aed7f430d7cff901e7b88f1767f25404be43a5",
+      "source_tree": "54aed7f430d7cff901e7b88f1767f25404be43a5",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-g6a-incident-recheck.yml",
+        "scripts/issue248-g6a-incident-recheck.sh",
+        "tests/issue248-g6a-incident-recheck.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g6b-notice-readonly-diagnostic",
+      "source_sha": "c990cc9d4b0810543ba96c0f9ae2f7b4547d6420",
+      "pr": 255,
+      "merge_sha": "acc65da7312315d442e362d331b3be9816a3fddd",
+      "merge_tree": "8f39863434071e7e4f42851b2e1776fab411892c",
+      "source_tree": "8f39863434071e7e4f42851b2e1776fab411892c",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-notice-readiness-check.yml",
+        "scripts/issue248-notice-readiness-check.sh",
+        "tests/issue248-notice-readiness-check.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g7-owner-receipt-writer",
+      "source_sha": "549b7b320023d574f442a5a98f4749a8e7fc5ed7",
+      "pr": 266,
+      "merge_sha": "36b3c80eaf40af9b707969f81934892f487f29b9",
+      "merge_tree": "3414dc3e78355730dd26bdc7b19909ef8d3a6bb1",
+      "source_tree": "3414dc3e78355730dd26bdc7b19909ef8d3a6bb1",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-g7-receipt-writer.yml",
+        "docs/ISSUE248_G7_RECEIPT_WRITER.md",
+        "scripts/issue248-g7-receipt-writer.mjs",
+        "tests/receipt-writer.test.mjs",
+        "tests/workflow-safety.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g7-register-audit-workflow",
+      "source_sha": "323c2d12e86263636511420b63de09821129bab5",
+      "pr": 264,
+      "merge_sha": "e68f9da59fa3ab6aa137f80a5271039a1114366b",
+      "merge_tree": "6eb8ec4db19afb0c6f8fb1fa0fc35f649334ea6a",
+      "source_tree": "6eb8ec4db19afb0c6f8fb1fa0fc35f649334ea6a",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-g7-audit-writer.yml",
+        "tests/issue248-g7-workflow-registration.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g7-zero-audit-writer",
+      "source_sha": "a8b4cc50c3b2e6c399d1be31638a0c765f9761bb",
+      "pr": 263,
+      "merge_sha": "81cce5eaae8c68ad9dc3c412761f46de1872e325",
+      "merge_tree": "6445782eebad9697537ba6e4413ced18b735a818",
+      "source_tree": "6445782eebad9697537ba6e4413ced18b735a818",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        "scripts/issue248-g7-audit.mjs",
+        "tests/issue248-g7-audit.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g8-gh-audit-log-fix",
+      "source_sha": "bdc3fbc48b1bddd36b97a62cb037396c6e5cccfc",
+      "pr": 267,
+      "merge_sha": "24be2659aa9193a610ebe75553223af914b5fc15",
+      "merge_tree": "40ad47b5483a6baf62d3cb508b8b231b67fb8fe9",
+      "source_tree": "40ad47b5483a6baf62d3cb508b8b231b67fb8fe9",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        "scripts/pr247-g7-zero-proof.mjs",
+        "tests/pr247-snapshot-integration.test.mjs"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+          "subject": "test: isolate snapshot fixture from release environment (#277)",
+          "pull_requests": [
+            277
+          ]
+        },
+        {
+          "commit": "1fead409ea36a2afa9e127ba719e36ed32e575da",
+          "subject": "Prepare guarded nonfinancial release for issue 248 (#276)",
+          "pull_requests": [
+            276
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/g8-zero-e68f-review",
+      "source_sha": "9f39c5455ff22973c0b5e4690329dd97b17f5d24",
+      "pr": 265,
+      "merge_sha": "b75376e11f0163421d494b09d57996fc0fb98bca",
+      "merge_tree": "a742bbd57fa616be0b069206129e41a1b3cbcb06",
+      "source_tree": "a742bbd57fa616be0b069206129e41a1b3cbcb06",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/production-pr247-steady-gate-off-pacing-on.yml",
+        "docs/ISSUE248_G8_ZERO_ITEM_CANDIDATE_20261111_TH.md",
+        "docs/ISSUE248_STEADY_PR_B_PREP_TH.md",
+        "scripts/pr247-g7-zero-proof.mjs",
+        "scripts/pr247-readonly-snapshot.sh",
+        "scripts/pr247-stage-guard.mjs",
+        "scripts/pr247-steady-config-check.mjs",
+        "tests/pr247-g6a-workflow.test.mjs",
+        "tests/pr247-g7-zero-proof.test.mjs",
+        "tests/pr247-snapshot-integration.test.mjs",
+        "tests/pr247-stage-guard.test.mjs",
+        "tests/pr247-steady-config-draft.test.mjs",
+        "tests/pr247-steady-source-pin.test.mjs",
+        "tests/pr247-steady-sql-lease.test.mjs",
+        "tests/pr247-steady-workflow.test.mjs",
+        "tests/pr247-zero-item-g8-sql.test.mjs",
+        "wrangler.jsonc"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+          "subject": "test: isolate snapshot fixture from release environment (#277)",
+          "pull_requests": [
+            277
+          ]
+        },
+        {
+          "commit": "1fead409ea36a2afa9e127ba719e36ed32e575da",
+          "subject": "Prepare guarded nonfinancial release for issue 248 (#276)",
+          "pull_requests": [
+            276
+          ]
+        },
+        {
+          "commit": "24be2659aa9193a610ebe75553223af914b5fc15",
+          "subject": "Read G7 audit logs with escape handling (#267)",
+          "pull_requests": [
+            267
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/nonfinancial-completion-review-guard",
+      "source_sha": "2680c515b39a082038fdde707c236e4216290039",
+      "pr": 271,
+      "merge_sha": "46885c6b63e01d871855bee4f8ebc3364e9bb099",
+      "merge_tree": "1215d95d59bc6814756f60b8ffa025825dbde59a",
+      "source_tree": "1215d95d59bc6814756f60b8ffa025825dbde59a",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        "docs/ISSUE248_NONFINANCIAL_REVIEW_GUARD_TH.md",
+        "src/sheets/stable-phase1-dispatch.ts",
+        "src/sheets/stable-workbook-claim.ts",
+        "src/sheets/sync.ts",
+        "tests/nonfinancial-closed-admission.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/original-notice-diagnostic-20261110",
+      "source_sha": "403dac842cbe4f6db0eb0bf64496faaee6860083",
+      "pr": 256,
+      "merge_sha": "c4b4ab96e2f2cb08a8633c003294375a0f458095",
+      "merge_tree": "a2bf2e10dc0c092e38a9c9e9065cd98a179a0721",
+      "source_tree": "a2bf2e10dc0c092e38a9c9e9065cd98a179a0721",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-original-notice-diagnostic-deploy.yml",
+        "scripts/issue248-queue-proof.mjs",
+        "scripts/issue248-queue-remediation.sh",
+        "scripts/issue248-version-proof.mjs",
+        "src/admin/handler.ts",
+        "src/admin/stable-paused-notice.ts",
+        "src/sheets/stable-edit-notice.ts",
+        "tests/issue248-diagnostic-deploy-workflow.test.mjs",
+        "tests/issue248-queue-proof.test.mjs",
+        "tests/issue248-queue-remediation.test.mjs",
+        "tests/issue248-version-proof.test.mjs",
+        "tests/mp248-notice-style-evidence.test.mjs",
+        "tests/mp248-paused-notice-candidate.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/supervised-notice-caller",
+      "source_sha": "5bf0515d59b9a8dfd7158f6b42ec2d2bf6d3994e",
+      "pr": 257,
+      "merge_sha": "c9862eb443517cbc357d5e684ec9d74b375de636",
+      "merge_tree": "1f0388a9860a1d862c18f8104b960c11a935d1b5",
+      "source_tree": "1f0388a9860a1d862c18f8104b960c11a935d1b5",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-notice-caller.yml",
+        "scripts/issue248-notice-caller-proof.mjs",
+        "scripts/issue248-notice-caller.mjs",
+        "tests/issue248-notice-caller-proof.test.mjs",
+        "tests/issue248-notice-caller.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/terminal-direct-delivery-guard",
+      "source_sha": "af696f766616f580e736bf3ad390d2a3a504b929",
+      "pr": 268,
+      "merge_sha": "90a311f34c021a218f54bc8788c9a3a368b9832b",
+      "merge_tree": "d58c6ff914168e25f31b0ed3dc5384002c680ebd",
+      "source_tree": "d58c6ff914168e25f31b0ed3dc5384002c680ebd",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        "docs/ISSUE248_TERMINAL_HOLD_LOCAL_REVIEW_TH.md",
+        "src/db/repositories.ts",
+        "src/sheets/sheet-terminal-hold.ts",
+        "src/sheets/stable-phase1-dispatch.ts",
+        "src/sheets/stable-workbook-claim.ts",
+        "src/sheets/sync.ts",
+        "tests/stable-daily-writer.test.mjs",
+        "tests/stable-recovery-admission.test.mjs",
+        "tests/terminal-sheet-hold.test.mjs"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "46885c6b63e01d871855bee4f8ebc3364e9bb099",
+          "subject": "fix: retain workbook on uncertain nonfinancial sync (#271)",
+          "pull_requests": [
+            271
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/terminal-guard-release-control",
+      "source_sha": "752283939e801f9527fe0b9fe86951a67ba892e2",
+      "pr": 269,
+      "merge_sha": "3f0b7c7659bb0ce7b9b3e8751ecc6b2b89533129",
+      "merge_tree": "60dec91a45f5ca125768d554799ecf8db5626f9b",
+      "source_tree": "60dec91a45f5ca125768d554799ecf8db5626f9b",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-terminal-hold-hotfix-release.yml",
+        "docs/ISSUE248_TERMINAL_HOTFIX_RELEASE_LOCAL_TH.md",
+        "scripts/issue248-terminal-hotfix-guard.mjs",
+        "tests/issue248-terminal-hotfix-guard.test.mjs",
+        "tests/issue248-terminal-hotfix-workflow.test.mjs"
+      ],
+      "later_path_changes": [
+        {
+          "commit": "34475766a6af0fa15608069d464a554239a17b53",
+          "subject": "Pin reviewed terminal hold merge head (#270)",
+          "pull_requests": [
+            270
+          ]
+        }
+      ],
+      "revert_subjects": []
+    },
+    {
+      "branch": "issue248/terminal-hotfix-head-repin",
+      "source_sha": "b75ca59445e57caa6c7f9f9e1ac5fd11c3551f8b",
+      "pr": 270,
+      "merge_sha": "34475766a6af0fa15608069d464a554239a17b53",
+      "merge_tree": "144f6366f29eba33c39774a925cc75c1c5ff45f2",
+      "source_tree": "144f6366f29eba33c39774a925cc75c1c5ff45f2",
+      "merge_reachable": true,
+      "tree_equal": true,
+      "changed_paths": [
+        ".github/workflows/issue248-terminal-hold-hotfix-release.yml",
+        "tests/issue248-terminal-hotfix-workflow.test.mjs"
+      ],
+      "later_path_changes": [],
+      "revert_subjects": []
+    }
+  ],
+  "pending_remote_sources": [
+    {
+      "branch": "issue248/g8-steady-draft-c4",
+      "source_sha": "cd16f1915a82f03adb3eba9cbace2c8aa270007b",
+      "pull_request": 258,
+      "disposition": "HELD_RELEASE_POLICY_REVIEW",
+      "changed_paths": [
+        ".github/workflows/production-pr247-steady-gate-off-pacing-on.yml",
+        "docs/ISSUE248_STEADY_PR_B_PREP_TH.md",
+        "scripts/pr247-readonly-snapshot.sh",
+        "scripts/pr247-stage-guard.mjs",
+        "scripts/pr247-steady-config-check.mjs",
+        "tests/pr247-g6a-workflow.test.mjs",
+        "tests/pr247-snapshot-integration.test.mjs",
+        "tests/pr247-stage-guard.test.mjs",
+        "tests/pr247-steady-config-draft.test.mjs",
+        "tests/pr247-steady-source-pin.test.mjs",
+        "tests/pr247-steady-sql-lease.test.mjs",
+        "tests/pr247-steady-workflow.test.mjs",
+        "wrangler.jsonc"
+      ],
+      "reason": "Operational G8 workflow, guard and configuration changes need semantic comparison and writer handoff"
+    },
+    {
+      "branch": "issue248/g8-monitoring-risk-v2",
+      "source_sha": "4cd00e334e7273e6b61ffb7a322f9af9c663e601",
+      "pull_request": 260,
+      "disposition": "HELD_RELEASE_POLICY_REVIEW",
+      "changed_paths": [
+        ".github/workflows/production-pr247-steady-gate-off-pacing-on.yml",
+        "docs/ISSUE248_STEADY_PR_B_PREP_TH.md",
+        "scripts/pr247-readonly-snapshot.sh",
+        "scripts/pr247-stage-guard.mjs",
+        "scripts/pr247-steady-config-check.mjs",
+        "tests/pr247-g6a-workflow.test.mjs",
+        "tests/pr247-snapshot-integration.test.mjs",
+        "tests/pr247-stage-guard.test.mjs",
+        "tests/pr247-steady-config-draft.test.mjs",
+        "tests/pr247-steady-source-pin.test.mjs",
+        "tests/pr247-steady-sql-lease.test.mjs",
+        "tests/pr247-steady-workflow.test.mjs",
+        "wrangler.jsonc"
+      ],
+      "reason": "Operational G8 workflow, guard and configuration changes need semantic comparison and writer handoff"
+    },
+    {
+      "branch": "codex/issue248-release-check-diagnostic",
+      "source_sha": "cea559acce62d71147f0372d60953c02a47207ba",
+      "pull_request": 278,
+      "disposition": "EXCLUDED_PENDING_WRITER",
+      "changed_paths": [
+        ".github/workflows/issue248-release-check-diagnostic.yml",
+        "scripts/issue248-tap-safe-summary.mjs",
+        "tests/issue248-release-check-diagnostic.test.mjs"
+      ],
+      "reason": "Historical diagnostic pinned before #277, automatic failing PR check, real provider-origin values and missing isolation assertions; do not port in this task"
+    }
+  ],
+  "local_sources": [
+    {
+      "id": "repo",
+      "branch": null,
+      "source_sha": "0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "Codex-Handoff-20261110",
+      "branch": "issue248/codex-local-handoff-20261110",
+      "source_sha": "891caaeabda072a6f47053e124534cf1b98d7f7c",
+      "dirty_entries": 46,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "PR-B-ready",
+      "branch": "issue248/local-steady-release",
+      "source_sha": "891caaeabda072a6f47053e124534cf1b98d7f7c",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "PR-A",
+      "branch": "issue248/local-g6a-prep",
+      "source_sha": "4bbc41346d15ce6883b38ffd44ad618dc9e35b27",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "PR-B",
+      "branch": "issue248/local-steady-prep",
+      "source_sha": "e35e75c3800e27bb4a581f2a9be349c3e7b76644",
+      "dirty_entries": 5,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "_chatgpt-mp-sync-investigation-20261105",
+      "branch": "main",
+      "source_sha": "6650030e94b53ba2605359fcc5ade4519963a51f",
+      "dirty_entries": 3,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-f2-release",
+      "branch": "claude/issue248-nonfinancial-release",
+      "source_sha": "26559dde594a100aac6bccf7aaa3bfada2d734f1",
+      "dirty_entries": 17,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "bridge-cse_016awLBPpADU3cfiEuwFSid9",
+      "branch": "worktree-bridge-cse_016awLBPpADU3cfiEuwFSid9",
+      "source_sha": "6650030e94b53ba2605359fcc5ade4519963a51f",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g8-zero-current-e68f",
+      "branch": "issue248/g8-zero-e68f-review",
+      "source_sha": "9f39c5455ff22973c0b5e4690329dd97b17f5d24",
+      "dirty_entries": 2,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-terminal-repin-local",
+      "branch": "issue248/terminal-hotfix-head-repin",
+      "source_sha": "b75ca59445e57caa6c7f9f9e1ac5fd11c3551f8b",
+      "dirty_entries": 4,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-nonfinancial-pr",
+      "branch": "issue248/nonfinancial-completion-review-guard",
+      "source_sha": "a212af53392c83b21e56da6ef16cabeab917e6a7",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-terminal-guard-local",
+      "branch": "issue248/terminal-direct-delivery-guard",
+      "source_sha": "af696f766616f580e736bf3ad390d2a3a504b929",
+      "dirty_entries": 1,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g8-zero-review-20261111",
+      "branch": "issue248/local-g8-review",
+      "source_sha": "edd88a0e40549bb54856006d27a49495176b28ed",
+      "dirty_entries": 20,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g8-gh-log-fix-20261111",
+      "branch": "issue248/g8-gh-audit-log-fix",
+      "source_sha": "bdc3fbc48b1bddd36b97a62cb037396c6e5cccfc",
+      "dirty_entries": 1,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-postcas-pr",
+      "branch": "codex/issue248-gh-audit-writer",
+      "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-terminal-release-local",
+      "branch": "issue248/terminal-guard-release-control",
+      "source_sha": "752283939e801f9527fe0b9fe86951a67ba892e2",
+      "dirty_entries": 1,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-prb-c4-git",
+      "branch": "issue248/g8-monitoring-risk-v2",
+      "source_sha": "4cd00e334e7273e6b61ffb7a322f9af9c663e601",
+      "dirty_entries": 1,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-pr271-doc-qa-mWcHSl",
+      "branch": "codex/issue248-atomic-state-local",
+      "source_sha": "ebc655ba2ce16dbd255be20de77e989e475893d3",
+      "dirty_entries": 40,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g8-zero-current-20261111",
+      "branch": "issue248/g8-zero-local-current",
+      "source_sha": "81cce5eaae8c68ad9dc3c412761f46de1872e325",
+      "dirty_entries": 19,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g7-relay-pr",
+      "branch": "issue248/g7-zero-audit-writer",
+      "source_sha": "a8b4cc50c3b2e6c399d1be31638a0c765f9761bb",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g7-registration-pr",
+      "branch": "issue248/g7-register-audit-workflow",
+      "source_sha": "323c2d12e86263636511420b63de09821129bab5",
+      "dirty_entries": 1,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g8-review-20261111",
+      "branch": "issue248/local-g8-review",
+      "source_sha": "edd88a0e40549bb54856006d27a49495176b28ed",
+      "dirty_entries": 14,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "mp248-g7-receipt-pr",
+      "branch": "issue248/g7-owner-receipt-writer",
+      "source_sha": "549b7b320023d574f442a5a98f4749a8e7fc5ed7",
+      "dirty_entries": 0,
+      "readable": true,
+      "disposition": "PRESERVED_EXCLUDED_PENDING_HANDOFF"
+    },
+    {
+      "id": "damaged-dev-golive",
+      "branch": null,
+      "source_sha": null,
+      "dirty_entries": null,
+      "readable": false,
+      "disposition": "UNKNOWN_DAMAGED_STORE"
+    }
+  ],
+  "unknowns": [
+    "No final writer handoff",
+    "Damaged dev-golive store remains UNKNOWN",
+    "External build/unknown-clone clearance not established",
+    "Postdeploy acceptance/reconciliation is a separate unfinished workstream"
+  ],
+  "deletion_ready": false
+}

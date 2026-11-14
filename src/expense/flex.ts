@@ -73,7 +73,8 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
     if(expense.discountAmountSatang!=null&&expense.discountAmountSatang>0)body.push(row("Discount",`${money(expense.discountAmountSatang)} THB`));
     if(expense.referenceId)body.push(row("Reference",`…${referenceSuffix(expense.referenceId)}`));
   }
-  if(expense.reviewNote&&!/document facts|visible document|confirm.*before saving|item and category|รายการ.*หมวด/i.test(expense.reviewNote))body.push(row("หมายเหตุ",expense.reviewNote));
+  const reviewNote=(expense.reviewNote||"").split(";").map(note=>note.trim()).filter(note=>note&&!(note==="Payment source must be selected"&&!expense.unresolvedRequiredFields?.includes("payment"))).join("; ");
+  if(reviewNote&&!/document facts|visible document|confirm.*before saving|item and category|รายการ.*หมวด/i.test(reviewNote))body.push(row("หมายเหตุ",reviewNote));
   const unresolved=expense.unresolvedRequiredFields||[],canSave=unresolved.length===0;
   if(unresolved.length)body.push(row("ยังต้องตรวจสอบ",unresolved.map(requiredLabel).join(" • ")));
   const required=new Set(unresolved),editActions=[

@@ -50,3 +50,7 @@
 Ownerอนุมัติ audit/preserve/deleteเฉพาะremoteที่ไม่ใช้งานโดยไม่เปลี่ยนProduction ตาม [ขอบเขตและขั้นตอน](REPO_BRANCH_CLEANUP_TH.md), [branch audit](repo-branch-audit-20261114.json) และ [สถานะissues](issue-status-20261114.json). งานไม่รวม/PRเปิด/ผู้ใช้งานและ#248ที่ยังไม่ส่งมอบต้องรักษาไว้; เป้าหมาย1branchไม่ใช่อำนาจdiscardงานค้างหรือforce-merge. อ่านlivecountsและdeletionevidenceล่าสุดก่อนดำเนินการต่อ.
 
 ผลcleanupรอบ14พ.ย.: ลบremoteเดิม76รายการและยืนยันabsenceครบ, คงbaseline57รายการเพื่อรักษางานจำเป็น. Deliverybranchชั่วคราวจะปลดหลังmerge; จำนวนสดและreceiptสุดท้ายดู [#282](https://github.com/Eak-dev/malipang-shop/issues/282). Goal1branchยังpending, ไม่มีProductionmutation.
+
+## เคลียร์28branchที่รวมแล้ว — รอบส่งมอบ14พ.ย.2026
+
+ตรวจเฉพาะ28integratedrefsตามOwnerสั่งในtask282 จากmain a4ca593. [ผลhandsoffรายbranch](integrated28-handoff-20261114.json):แชท#248ส่งมอบremote16refsแต่g6a-gate-onยังติดdamagedstore จึงเตรียม15refs;อีก13รายการคงไว้รอDeveloper/historicalowner/unknownstoreหรือprimaryที่ยังใช้. ไม่แก้featurecode, ไม่ลบlocalworktrees, ไม่เปลี่ยนProduction/scheduler. ตรวจexecutionล่าสุดใน#282ก่อนใช้snapshotเป็นสถานะสด.

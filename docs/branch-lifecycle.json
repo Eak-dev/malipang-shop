@@ -5088,6 +5088,18 @@
       "status": "ACTIVE",
       "reason": "Clean task branch from latest canonical main before initial phase2commit",
       "observed_at": "2026-11-14T12:25:14.938894+00:00"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/retire-integrated-branches-20261114",
+      "source_sha": "ccbe95c46180307a6ddd1c17a6b5458d9ffef06c",
+      "issues": [
+        282
+      ],
+      "status": "ACTIVE",
+      "reason": "Temporary phase2delivery branch;15 scoped handoffs ready;13retained. Snapshot SHA precedes its registration commit.",
+      "observed_at": "2026-11-14T12:26:51.927586+00:00"
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -20,12 +20,12 @@
     },
     {
       "issue": 282,
-      "mode": "MANAGED",
+      "mode": "MIGRATION_PENDING",
       "coordination_chat": "รีวิวและลบ branch ที่ไม่ใช้งาน",
       "coordination_thread": "01a1c330-2dcd-7750-b962-3816babbeb54",
-      "primary_branch": "codex/repo-branch-cleanup-20261114",
+      "primary_branch": null,
       "target_branch": "main",
-      "reason": "One primary metadata branch pushed for approved audit/cleanup; no Production authority"
+      "reason": "Safe deletion batch complete; one-branch goal remains pending preserved active/unmerged sources. Temporary audit delivery branch retires after final merge; final live evidence in issue282."
     }
   ],
   "branches": [
@@ -52,8 +52,8 @@
       "pull_requests": [
         9
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -79,6 +79,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -90,8 +95,8 @@
       "pull_requests": [
         10
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -117,6 +122,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -128,8 +138,8 @@
       "pull_requests": [
         94
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -155,6 +165,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -166,8 +181,8 @@
       "pull_requests": [
         90
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -193,6 +208,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -204,8 +224,8 @@
       "pull_requests": [
         118
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -231,6 +251,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -242,8 +267,8 @@
       "pull_requests": [
         116
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -269,6 +294,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -280,8 +310,8 @@
       "pull_requests": [
         117
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -307,6 +337,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -318,8 +353,8 @@
       "pull_requests": [
         115
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -345,6 +380,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -356,8 +396,8 @@
       "pull_requests": [
         99
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -383,6 +423,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -394,8 +439,8 @@
       "pull_requests": [
         87
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -421,6 +466,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -432,8 +482,8 @@
       "pull_requests": [
         88
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -459,6 +509,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -470,8 +525,8 @@
       "pull_requests": [
         89
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -497,6 +552,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -508,8 +568,8 @@
       "pull_requests": [
         91
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -535,6 +595,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -546,8 +611,8 @@
       "pull_requests": [
         92
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -573,6 +638,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -584,8 +654,8 @@
       "pull_requests": [
         81
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -611,6 +681,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -622,8 +697,8 @@
       "pull_requests": [
         73
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -649,6 +724,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -660,8 +740,8 @@
       "pull_requests": [
         40
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -687,6 +767,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -698,8 +783,8 @@
       "pull_requests": [
         70
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -725,6 +810,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -736,8 +826,8 @@
       "pull_requests": [
         68
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -763,6 +853,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -774,8 +869,8 @@
       "pull_requests": [
         79
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -801,6 +896,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -812,8 +912,8 @@
       "pull_requests": [
         80
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -839,6 +939,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -850,8 +955,8 @@
       "pull_requests": [
         144
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -877,6 +982,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -888,8 +998,8 @@
       "pull_requests": [
         64
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -915,6 +1025,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -926,8 +1041,8 @@
       "pull_requests": [
         38
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -953,6 +1068,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -964,8 +1084,8 @@
       "pull_requests": [
         41
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -991,6 +1111,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1002,8 +1127,8 @@
       "pull_requests": [
         76
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1029,6 +1154,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1040,8 +1170,8 @@
       "pull_requests": [
         78
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1067,6 +1197,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1078,8 +1213,8 @@
       "pull_requests": [
         43
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1105,6 +1240,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1116,8 +1256,8 @@
       "pull_requests": [
         84
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1143,6 +1283,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1154,8 +1299,8 @@
       "pull_requests": [
         75
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1181,6 +1326,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1307,8 +1457,8 @@
       "pull_requests": [
         103
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1334,6 +1484,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1380,8 +1535,8 @@
       "pull_requests": [
         97
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1407,6 +1562,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1458,8 +1618,8 @@
       "pull_requests": [
         159
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1485,6 +1645,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1496,8 +1661,8 @@
       "pull_requests": [
         157
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1523,6 +1688,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1534,8 +1704,8 @@
       "pull_requests": [
         129
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1561,6 +1731,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1572,8 +1747,8 @@
       "pull_requests": [
         127
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1599,6 +1774,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1628,8 +1808,8 @@
       "pull_requests": [
         198
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1655,6 +1835,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1666,8 +1851,8 @@
       "pull_requests": [
         195
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1693,6 +1878,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1704,8 +1894,8 @@
       "pull_requests": [
         197
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1731,6 +1921,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1742,8 +1937,8 @@
       "pull_requests": [
         141
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1769,6 +1964,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1780,8 +1980,8 @@
       "pull_requests": [
         95
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1807,6 +2007,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1869,8 +2074,8 @@
       "pull_requests": [
         200
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1896,6 +2101,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1924,8 +2134,8 @@
       "pull_requests": [
         205
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1951,6 +2161,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -1962,8 +2177,8 @@
       "pull_requests": [
         152
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -1989,6 +2204,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2000,8 +2220,8 @@
       "pull_requests": [
         153
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2027,6 +2247,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2038,8 +2263,8 @@
       "pull_requests": [
         150
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2065,6 +2290,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2076,8 +2306,8 @@
       "pull_requests": [
         154
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2103,6 +2333,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2114,8 +2349,8 @@
       "pull_requests": [
         151
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2141,6 +2376,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2152,8 +2392,8 @@
       "pull_requests": [
         149
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2179,6 +2419,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2213,8 +2458,8 @@
       "pull_requests": [
         173
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2240,6 +2485,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2251,8 +2501,8 @@
       "pull_requests": [
         172
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2278,6 +2528,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2323,8 +2578,8 @@
       "pull_requests": [
         85
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2350,6 +2605,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2361,8 +2621,8 @@
       "pull_requests": [
         218
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2388,6 +2648,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2399,8 +2664,8 @@
       "pull_requests": [
         102
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2426,6 +2691,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2437,8 +2707,8 @@
       "pull_requests": [
         120
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2464,6 +2734,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2577,8 +2852,8 @@
       "pull_requests": [
         212
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2604,6 +2879,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2652,8 +2932,8 @@
       "pull_requests": [
         209
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2679,6 +2959,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2727,8 +3012,8 @@
       "pull_requests": [
         131
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2754,6 +3039,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2782,8 +3072,8 @@
       "pull_requests": [
         156
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2809,6 +3099,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2820,8 +3115,8 @@
       "pull_requests": [
         142
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2847,6 +3142,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2875,8 +3175,8 @@
       "pull_requests": [
         196
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2902,6 +3202,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -2949,8 +3254,8 @@
       "pull_requests": [
         240
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -2976,6 +3281,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3043,8 +3353,8 @@
       "pull_requests": [
         12
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3070,6 +3380,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3081,8 +3396,8 @@
       "pull_requests": [
         8
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3108,6 +3423,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3119,8 +3439,8 @@
       "pull_requests": [
         155
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3146,6 +3466,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3157,8 +3482,8 @@
       "pull_requests": [
         110
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3184,6 +3509,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3195,8 +3525,8 @@
       "pull_requests": [
         108
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3222,6 +3552,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3233,8 +3568,8 @@
       "pull_requests": [
         244
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3260,6 +3595,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3738,8 +4078,8 @@
       "source_sha": "571866e8cb71fba710e6e25efc814c7d4d88f4c0",
       "issues": [],
       "pull_requests": [],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3765,6 +4105,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3776,8 +4121,8 @@
       "pull_requests": [
         147
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3803,6 +4148,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3814,8 +4164,8 @@
       "pull_requests": [
         146
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3841,6 +4191,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3852,8 +4207,8 @@
       "pull_requests": [
         145
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3879,6 +4234,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3890,8 +4250,8 @@
       "pull_requests": [
         250
       ],
-      "status": "DELETE_READY",
-      "reason": "Integrated and recoverable; no observed local ref/worktree, open PR, branch-name automation or operational dependency. Owner authorized conditional cleanup.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3917,6 +4277,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -3928,8 +4293,8 @@
       "pull_requests": [
         245
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -3955,6 +4320,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -4032,8 +4402,8 @@
       "pull_requests": [
         273
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
       "active_writer": false,
       "uncommitted_work": false,
@@ -4059,6 +4429,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {
@@ -4217,8 +4592,8 @@
       "pull_requests": [
         279
       ],
-      "status": "DELETE_READY",
-      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "status": "DELETED",
+      "reason": "Owner-approved atomic expected-SHA remote deletion; absence confirmed. Local refs/worktrees retained.",
       "active_writer": false,
       "uncommitted_work": false,
       "readiness": {
@@ -4243,6 +4618,11 @@
           "verified": true,
           "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "evidence": "docs/repo-branch-audit-20261114.json:execution; private:repo-cleanup-20261114T012535Z/deletion-receipt.json"
       }
     },
     {

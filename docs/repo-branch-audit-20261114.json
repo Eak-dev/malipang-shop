@@ -52,9 +52,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "d3bef91d541e305c39e105a8d11eb34ef607f026"
+      }
     },
     {
       "branch": "agent/codex-collaboration-guardrails",
@@ -74,9 +79,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "49edecabc18b76b5c55d79a723bbac582cdbf76e"
+      }
     },
     {
       "branch": "agent/fix-attendance-line-notification-93",
@@ -96,11 +106,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         93
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "955329cbd06ff7996a7d1ab79ee3134203457409"
+      }
     },
     {
       "branch": "agent/harden-shift-schedule",
@@ -120,9 +135,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "f7123a762879bd1bb8cf21ee22cc6958a7c82a2d"
+      }
     },
     {
       "branch": "agent/issue-114-closeout-evidence",
@@ -142,9 +162,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "bd02b1d0596a641ccc163d8970ebf1b96459ec42"
+      }
     },
     {
       "branch": "agent/issue-114-line-notification-recovery",
@@ -164,9 +189,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "a093c9a588ef0f3879c1082d6981e7f9104d7164"
+      }
     },
     {
       "branch": "agent/issue-114-notification-exhausted-accounting",
@@ -186,9 +216,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "18b3acbc3fe20a591cded99c2aec81d27e9448f5"
+      }
     },
     {
       "branch": "agent/issue-114-v1-closeout",
@@ -208,11 +243,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         114
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "f1f59257f9dc2bf686f692da5344587e3040c376"
+      }
     },
     {
       "branch": "agent/issue-98-identity-access",
@@ -232,11 +272,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         98
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "c4901bec1d0ed5f5291ebc1d0f7746d8bdc6ead9"
+      }
     },
     {
       "branch": "agent/line-notification-boundary",
@@ -256,9 +301,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "ca3bc19e5d8751c294a4b4d364132ba90cded475"
+      }
     },
     {
       "branch": "agent/payroll-weekly-sync-cycle",
@@ -278,11 +328,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         20
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "4f335726f1c301401a88ed04f8c0f82d90edfe26"
+      }
     },
     {
       "branch": "agent/prepare-shadow-launch-20260728",
@@ -302,9 +357,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "330402aea2df9a96896ed93ddd97db4c4bfd91b0"
+      }
     },
     {
       "branch": "agent/production-cutover-2026-07-29",
@@ -324,9 +384,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "313049c8fcdbcf08f866dbcebb98168b3055bf41"
+      }
     },
     {
       "branch": "agent/quota-safe-shift-sync",
@@ -346,9 +411,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "498694e9236d59ed9d0bc55ceb1a658bdd82780a"
+      }
     },
     {
       "branch": "chatgpt/close-sheets-dependency-audit",
@@ -368,11 +438,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         46
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "42d3479fc633fe4f1ce6d1e29e1f1e7d35ba2d26"
+      }
     },
     {
       "branch": "chatgpt/fix-attendance-weekly-sync-key",
@@ -392,11 +467,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         72
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "71ab69abd559edef98919eb2ca67a02322688210"
+      }
     },
     {
       "branch": "chatgpt/fix-payroll-preview-workdays",
@@ -416,11 +496,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         39
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "357e38ab9d2ef51ae2734cadc88ce92f96b730ca"
+      }
     },
     {
       "branch": "chatgpt/fix-reconcile-thursday-cycle",
@@ -440,11 +525,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         69
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "c5a084c81838e00ba97d6888af46dbb30ba02781"
+      }
     },
     {
       "branch": "chatgpt/legacy-shutdown-runbook",
@@ -464,9 +554,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "ec11f4ed020dc55f5051132cf9e11a30c3752fae"
+      }
     },
     {
       "branch": "chatgpt/legacy-v19-manifest",
@@ -486,9 +581,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "ae07f49dfcc12c06ec0c87bd21c495cb977b90bc"
+      }
     },
     {
       "branch": "chatgpt/legacy-v19-rollback-runbook",
@@ -508,9 +608,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "6e7d8ee3b02d4d2ce29237e77a5486cf3880248a"
+      }
     },
     {
       "branch": "chatgpt/line-first-hr-143",
@@ -530,11 +635,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         143
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "dedaf81ed9d0e3eadb82422819f7414b84781779"
+      }
     },
     {
       "branch": "chatgpt/payroll-thursday-wednesday",
@@ -554,11 +664,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         44
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "2eef221293c4581706674cd678aeedc69b0e8c76"
+      }
     },
     {
       "branch": "chatgpt/payroll-wednesday-release",
@@ -578,13 +693,18 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         21,
         22,
         23
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "8d0d3d7df84009d9fa065d9895db44070d5ba494"
+      }
     },
     {
       "branch": "chatgpt/production-v1-config",
@@ -604,9 +724,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "48189ce41e6e0d6377e3c77d1397fc5db47b9baf"
+      }
     },
     {
       "branch": "chatgpt/r2-evidence-retention",
@@ -626,9 +751,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "6ae0e32454c829efc809cb58b223aeb7180f0437"
+      }
     },
     {
       "branch": "chatgpt/read-only-runtime-audit",
@@ -648,11 +778,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         77
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "9058c2f3f4a56b0ab99576000ac57fa5241a45fa"
+      }
     },
     {
       "branch": "chatgpt/release-control-workflow",
@@ -672,11 +807,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         42
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "fe5353f2ac793cdb83655732ecf39b94b5131ffb"
+      }
     },
     {
       "branch": "chatgpt/runtime-audit-partial-evidence",
@@ -696,9 +836,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "d50ceebba33c1ec4b642bcf053444b707b585241"
+      }
     },
     {
       "branch": "chatgpt/sheets-dependency-inventory",
@@ -718,9 +863,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "fe14183a5fb318939913961b7c49fa8c4882bc6a"
+      }
     },
     {
       "branch": "codex/242-flat-late-50",
@@ -1569,13 +1719,18 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         248,
         272
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "ca24e9a9f267354d0acab291bf38bbdb1b5a0543"
+      }
     },
     {
       "branch": "codex/docs-context-update-policy-20261113",
@@ -1620,9 +1775,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "d20072a0f54e268b29c342786ee22392d5e2e934"
+      }
     },
     {
       "branch": "codex/docs-issue248-handoff-audit",
@@ -1833,10 +1993,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "374b06f111a71689c74e9eb77ac8c9f02b7bae5b"
+      }
     },
     {
       "branch": "codex/docs-readme-production-v5-2",
@@ -1856,12 +2021,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         93,
         96
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "1aea66968f2611aa62096d389ee6fbb696df8ae7"
+      }
     },
     {
       "branch": "codex/expense-generation-durable-queue",
@@ -2152,10 +2322,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "1e7b0d7b8f35eea22a960b169bf0ab55d0aa3407"
+      }
     },
     {
       "branch": "codex/feature-personal-use",
@@ -2175,9 +2350,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "0c38d8e2ae6130ac2fe133ca12ab79086c72deed"
+      }
     },
     {
       "branch": "codex/fix-cpf-persisted-accounting",
@@ -2197,11 +2377,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         128
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "1f22e60ac741c571ea4cc1e3b33e6fa179d09eac"
+      }
     },
     {
       "branch": "codex/fix-cpf-single-vendor",
@@ -2221,11 +2406,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         126
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "38fcffa1d56d484986507b67d383a48ded0aacb6"
+      }
     },
     {
       "branch": "codex/fix-expense-sheet-capacity-20261005",
@@ -2297,10 +2487,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "c56756e6c3f2c5c58b4900d6c9a1c2b4d916c25b"
+      }
     },
     {
       "branch": "codex/fix-expense-undo-version-collision",
@@ -2320,10 +2515,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "98a8274861ff4996b2bba6393ac25a4f8862a902"
+      }
     },
     {
       "branch": "codex/fix-expense-wallet-receipt-guards",
@@ -2343,10 +2543,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "194fb722913fe585986ace11da0d45ee292e2806"
+      }
     },
     {
       "branch": "codex/fix-hr-staff-sync-140",
@@ -2366,11 +2571,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         140
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "678bd94b205b23e13799ba590f58ec13b4b5e99d"
+      }
     },
     {
       "branch": "codex/fix-issue-93-reply-first",
@@ -2390,11 +2600,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         93
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "d06d74dc55790a8efae15595206b91e891835944"
+      }
     },
     {
       "branch": "codex/fix-november-sync-budget",
@@ -2491,10 +2706,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "782afaf3cc45166d20a5bed7e82a6e469c56aeb1"
+      }
     },
     {
       "branch": "codex/fix-online-order-paid-total",
@@ -2566,12 +2786,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         204
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "39265c518305e40670770de135793d0767f13845"
+      }
     },
     {
       "branch": "codex/fix-payroll-audited-status-2026-08-26",
@@ -2591,9 +2816,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "e0927bc3d229780cc5c033265d587de0fb7ca6d0"
+      }
     },
     {
       "branch": "codex/fix-payroll-current-sync-2026-08-26",
@@ -2613,9 +2843,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "ae07c5c157075190a8c6044292eaf4cd3ebe0d71"
+      }
     },
     {
       "branch": "codex/fix-payroll-production-scope-2026-08-26",
@@ -2635,9 +2870,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "0b34b7d22f8cdb4dc648b5e53cfe1b97a224081c"
+      }
     },
     {
       "branch": "codex/fix-payroll-readback-2026-08-26",
@@ -2657,9 +2897,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "c8a5446e00374993e8ae40f0761c5a5ad861e213"
+      }
     },
     {
       "branch": "codex/fix-payroll-status-only-2026-08-26",
@@ -2679,9 +2924,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "621ce30696aba54fa42863380cbd0ae5c2c7bcae"
+      }
     },
     {
       "branch": "codex/fix-payroll-week-2026-08-26",
@@ -2701,9 +2951,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "127f77cf005aa256bdaa4f41c697da3353e254b0"
+      }
     },
     {
       "branch": "codex/fix-personal-sync-owner-close",
@@ -2875,12 +3130,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         161
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "3424305da10793098e318b6c51952ca5f32068af"
+      }
     },
     {
       "branch": "codex/fix-personal-use-reserved-prefix-160",
@@ -2900,12 +3160,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         160
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "9138ba0aeab5f368b29483a4c7a2170ff3213ba7"
+      }
     },
     {
       "branch": "codex/fix-personal-use-sheets-ordering-162",
@@ -3067,9 +3332,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "45d2352b23b6bdc6b8be8fb59affc326d8a310fa"
+      }
     },
     {
       "branch": "codex/fix-transport-th-en-categories",
@@ -3089,10 +3359,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "99ad99ba46833076db3937e3476050eaf2b82d7e"
+      }
     },
     {
       "branch": "codex/issue-100-owner-identity",
@@ -3112,11 +3387,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         100
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "dad24a96db9a51b9e620361d80058a2e995da626"
+      }
     },
     {
       "branch": "codex/issue-119-receipt-detail",
@@ -3136,11 +3416,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         119
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "8765af0ab1ce63c5464d5e7bf6f0f0f67c94250b"
+      }
     },
     {
       "branch": "codex/issue248-g7-audit-relay",
@@ -3407,12 +3692,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         211
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "5f6cbdda57059a410ba5546324ef9acd0e2be2bb"
+      }
     },
     {
       "branch": "codex/owner-expense-corrections",
@@ -3690,12 +3980,17 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         208
       ],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "8316e441e32219660be98648493cc71374bc89e5"
+      }
     },
     {
       "branch": "codex/p0-safe-sync-admission-20261106",
@@ -3874,11 +4169,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         130
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "870817e2c4717fd8c74b30b99bb0b457787799ad"
+      }
     },
     {
       "branch": "codex/raw-inner-canonical-integration",
@@ -4076,9 +4376,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "393e6a2e5fd53cd137ca58f6e09013da815ead58"
+      }
     },
     {
       "branch": "codex/release-hr-sync-140",
@@ -4098,9 +4403,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "08c068da441465ee6d54de688eaace05d854765e"
+      }
     },
     {
       "branch": "codex/release-personal-use-157",
@@ -4191,10 +4501,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "3623255d34e134b3d6789f177681d6af0f29aa01"
+      }
     },
     {
       "branch": "codex/sheet-category-two-way-sync",
@@ -4328,10 +4643,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "096dd89d3ddd9555b0cf7e1ca0ab30f418cba24c"
+      }
     },
     {
       "branch": "codex/stable-phase1-release-fix",
@@ -4658,9 +4978,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "665ece8e229b837eaf839b3106cbddb825a11117"
+      }
     },
     {
       "branch": "deploy/malipang-v5-2-rc2",
@@ -4680,9 +5005,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "5dc0c7b2d1e0a8015f5dcc6cac04e5954b30f694"
+      }
     },
     {
       "branch": "fix/expense-dlq-recovery-loop",
@@ -4702,9 +5032,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "863b8202fd01d776a053826f73ecbc2febbaeec0"
+      }
     },
     {
       "branch": "fix/expense-insert-placeholder-count-d549f16",
@@ -4724,9 +5059,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "5eb43d232c510ddf0231ff962a06df0c307da317"
+      }
     },
     {
       "branch": "fix/expense-purchase-fk-order-ea3c79d",
@@ -4746,9 +5086,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "1879e64f92e45dd538b41aff0fab4f783566badc"
+      }
     },
     {
       "branch": "fix/stable-sync-review-release-recovery",
@@ -4768,10 +5113,15 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "102de488327daf965d5dd9aa6d2a1af3ab686d1a"
+      }
     },
     {
       "branch": "issue248/g6a-gate-on",
@@ -5569,9 +5919,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "571866e8cb71fba710e6e25efc814c7d4d88f4c0"
+      }
     },
     {
       "branch": "ops/hr-onboarding-144-final-release",
@@ -5591,9 +5946,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "440228a02cd16e5f65a283a2961e1810be0931d5"
+      }
     },
     {
       "branch": "ops/hr-onboarding-144-observable-release",
@@ -5613,11 +5973,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         143
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "aa4583b1be64c1ca91a843f038ff8f7a9cad1838"
+      }
     },
     {
       "branch": "ops/hr-onboarding-144-release",
@@ -5637,9 +6002,14 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "fa1cb047b4f1c43a644063d67ad012d40e8efd5c"
+      }
     },
     {
       "branch": "release/pr247-golive-workflow",
@@ -5659,11 +6029,16 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [
         248
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "cd3d1bf8c9111db1e7fa9e5550b7537475875de9"
+      }
     },
     {
       "branch": "release/stable-review-diagnostics-e3b7ab8",
@@ -5683,15 +6058,20 @@
       "automation_ids": [],
       "operational_refs": [],
       "holds": [],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "issues": [],
       "open_pr_checks": [],
-      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "deletion": {
+        "verified_at": "2026-11-14T01:45:59.546278+00:00",
+        "absence_verified": true,
+        "source_sha": "4cba92f5e64ce02174d3ea226a050a273c26da97"
+      }
     }
   ],
   "counts": {
     "RETAIN_PENDING_CLEARANCE": 56,
-    "DELETE_READY": 76,
+    "DELETED": 76,
     "PROTECTED": 1
   },
   "authority": "Owner explicitly authorized review, preservation and deletion of redundant/unused branches on 2026-11-14; no Production changes or disturbance of other writers",
@@ -5785,5 +6165,20 @@
     "codex/stable-phase1-operations-doc",
     "fix/stable-sync-review-release-recovery",
     "release/stable-review-diagnostics-e3b7ab8"
-  ]
+  ],
+  "execution": {
+    "started_at": "2026-11-14T01:45:55.617488+00:00",
+    "verified_at": "2026-11-14T01:45:59.546278+00:00",
+    "push_exit_code": 0,
+    "method": "git push --atomic; expected source SHA lease for every ref",
+    "readiness_pr": 283,
+    "readiness_merge": "1f184bf128b3aeee2d9cb40106bcb0c55a26d5db",
+    "production_mutations": false,
+    "local_refs_deleted": false,
+    "deleted_baseline_refs": 76,
+    "remaining_baseline_refs": 57,
+    "remaining_including_temporary_delivery_branch": 58,
+    "temporary_delivery_branch": "codex/repo-branch-cleanup-20261114",
+    "temporary_delivery_retirement": "Retire after final receipt PR merge; actual absence and recovery proof will be recorded in issue282 and final local execution report."
+  }
 }

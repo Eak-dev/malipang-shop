@@ -1,8 +1,23 @@
 {
-  "observed_at": "2026-11-14T01:31:04.254750+00:00",
+  "observed_at": "2026-11-14T01:47:38.585904+00:00",
   "repository": "Eak-dev/malipang-shop",
   "main_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
   "issues": [
+    {
+      "issue": 282,
+      "title": "[Task] Preserve active work and retire verified redundant repository branches",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "IN_PROGRESS",
+      "reason": "76 redundant baseline branches removed with recoverable history; single-branch goal pending28unmerged sources and writer/dependency clearance. This task remains open.",
+      "updated_at": "2026-11-14T01:31:57Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        283
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/282"
+    },
     {
       "issue": 274,
       "title": "[Task] Inventory and preserve #248 work before selecting one primary branch",
@@ -2109,11 +2124,11 @@
     }
   ],
   "counts": {
+    "IN_PROGRESS": 4,
     "BLOCKED": 10,
     "DONE_RECORDED": 58,
     "BACKLOG": 30,
     "PENDING_CLOSEOUT_REVIEW": 2,
-    "IN_PROGRESS": 3,
     "CLOSED_NOT_COMPLETED": 33
   },
   "caveat": "All136issues reviewed for GitHub state, body acceptance and PR references. Related PR links are explicit textual associations, not proof of feature completion. No issues auto-closed; no Production writes."

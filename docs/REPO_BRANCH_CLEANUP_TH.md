@@ -26,3 +26,9 @@ Productionอ่านอย่างเดียวเมื่อ2026-11-14T01
 ## Validation และ rollback
 
 ตรวจ JSON/lifecycle validator, lifecycle tests, scopeเอกสารเท่านั้นและdiffcheck; รัน npmcheckและwranglerdryrunตามกติกา. ไม่รันliveintegrationหรือdeploy. RollbackเอกสารคือrevertPR; refที่ลบกู้จากverifiedbundle. Final counts และ deletion receipts อยู่ใน branchaudit ที่อัปเดตหลังปฏิบัติจริง.
+
+## ผลปฏิบัติจริง
+
+ลบremoteเดิม76รายการสำเร็จแบบatomic/expectedSHA และls-remoteยืนยันabsenceครบเมื่อ 2026-11-14T01:45:59.546278+00:00. เหลือ57remoteจากbaseline133; ขณะบันทึกนี้มีdeliverybranchชั่วคราวเพิ่ม1จึงเห็น58. ไม่มีlocalref/worktree/scheduler/Production mutation. Finaldeliverybranchจะปลดหลังmergeผลส่งมอบ; ตรวจหลักฐานabsenceล่าสุดจากissue282. งานที่ยังไม่รวม28branchและPRงานเดิม27รายการคงไว้. Goal1branchยังไม่สำเร็จและไม่ปิดtask282.
+
+Validation: lifecyclevalidator/6testsผ่าน; npmcheckรอบลดconcurrency4ผ่าน1270total/1264pass/0fail/6skip โดยไม่เปลี่ยนsource/tests; รอบแรกมีmocksubprocess timeout3รายการ. WranglerdryrunและPRCIผ่าน.

@@ -44,3 +44,7 @@
 ## จุดทำงานหลักของ #248
 
 เลือก `codex/restore-daily-sheet-sync-248` เป็น selected/staging primary จาก canonical main สำหรับงานกู้ Sheets Sync #248 ตาม [แผนและหลักฐาน](ISSUE248_PRIMARY_BRANCH_TH.md) และ [source dispositions](issue248-consolidation.json). ผลของ 19 branch ที่ merge แล้วได้รับผ่าน main; รอบนี้ไม่มี runtime/config หรือฟีเจอร์อื่นเพิ่ม. Work item ยังเป็น MIGRATION_PENDING เพราะงานค้างและ writer handoff ยังไม่ครบ ไม่ได้หมายความว่า branch เก่าพร้อมลบหรือ Production ผ่าน acceptance. ตรวจ base/SHA และแผนล่าสุดจาก PR/ทะเบียนก่อนทำงานต่อ.
+
+## ตรวจ branch และ issues ทั้ง repo — 14 พ.ย. 2026
+
+Ownerอนุมัติ audit/preserve/deleteเฉพาะremoteที่ไม่ใช้งานโดยไม่เปลี่ยนProduction ตาม [ขอบเขตและขั้นตอน](REPO_BRANCH_CLEANUP_TH.md), [branch audit](repo-branch-audit-20261114.json) และ [สถานะissues](issue-status-20261114.json). งานไม่รวม/PRเปิด/ผู้ใช้งานและ#248ที่ยังไม่ส่งมอบต้องรักษาไว้; เป้าหมาย1branchไม่ใช่อำนาจdiscardงานค้างหรือforce-merge. อ่านlivecountsและdeletionevidenceล่าสุดก่อนดำเนินการต่อ.

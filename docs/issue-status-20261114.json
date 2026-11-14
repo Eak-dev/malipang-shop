@@ -1,0 +1,2120 @@
+{
+  "observed_at": "2026-11-14T01:31:04.254750+00:00",
+  "repository": "Eak-dev/malipang-shop",
+  "main_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+  "issues": [
+    {
+      "issue": 274,
+      "title": "[Task] Inventory and preserve #248 work before selecting one primary branch",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Source writer handoff and source-specific clearance incomplete",
+      "updated_at": "2026-11-11T04:41:02Z",
+      "assignees": [],
+      "open_related_prs": [
+        275
+      ],
+      "merged_related_prs": [
+        281
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/274"
+    },
+    {
+      "issue": 272,
+      "title": "[Task] Track branch lifecycle and pilot single-work-branch migration for #248",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-11-11T04:35:50Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        273
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/272"
+    },
+    {
+      "issue": 251,
+      "title": "[SHEETS][P1] Restore live sync first, then measure near-real-time freshness",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Restoration dependency248; draft diagnosticsPR252 is separate",
+      "updated_at": "2026-11-07T03:22:01Z",
+      "assignees": [],
+      "open_related_prs": [
+        252
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/251"
+    },
+    {
+      "issue": 249,
+      "title": "[CLASSIFICATION V2][P0] Isolated catalog, rules, approval contracts & synthetic eval — NO legacy edits",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-11-06T20:25:05Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/249"
+    },
+    {
+      "issue": 248,
+      "title": "[Production Change][G3 Merged; G0 Ops Partial — G4–G9 Pending] PR #247/#250 Sheets Recovery",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Deploy occurred; postdeploy verification failed and acceptance/soak not attested",
+      "updated_at": "2026-11-08T00:56:43Z",
+      "assignees": [],
+      "open_related_prs": [
+        275,
+        252
+      ],
+      "merged_related_prs": [
+        281,
+        276,
+        273,
+        271,
+        266,
+        261,
+        259,
+        250
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/248"
+    },
+    {
+      "issue": 246,
+      "title": "[Production] Release stable review diagnostics (#244 e3b7ab8) + migration 0022",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "PENDING_CLOSEOUT_REVIEW",
+      "reason": "Issue reports successful release evidence and checked gates, but remains open; reverify acceptance/closure before changing issue state",
+      "updated_at": "2026-11-05T23:28:05Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        247
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/246"
+    },
+    {
+      "issue": 242,
+      "title": "Payroll: versioned flat 50 THB lateness deduction after 5 minutes (activation pending)",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Effective date and activation scope unconfirmed; draftPR243",
+      "updated_at": "2026-11-04T12:25:32Z",
+      "assignees": [],
+      "open_related_prs": [
+        243
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/242"
+    },
+    {
+      "issue": 225,
+      "title": "Production change: guarded October expense categorization",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "IN_PROGRESS",
+      "reason": "Issue reports limited correction batches; full requested verification/closeout not independently established here",
+      "updated_at": "2026-11-02T14:00:20Z",
+      "assignees": [],
+      "open_related_prs": [
+        227,
+        226
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/225"
+    },
+    {
+      "issue": 223,
+      "title": "Guard sheet synchronization against stale row mappings",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "IN_PROGRESS",
+      "reason": "DraftPR224 and stacked projection candidates remain unmerged",
+      "updated_at": "2026-11-02T07:42:50Z",
+      "assignees": [],
+      "open_related_prs": [
+        224
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/223"
+    },
+    {
+      "issue": 219,
+      "title": "[Production] Thai and English transport expense categories",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "PENDING_CLOSEOUT_REVIEW",
+      "reason": "Issue reports successful release evidence and checked gates, but remains open; reverify acceptance/closure before changing issue state",
+      "updated_at": "2026-11-01T03:55:25Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/219"
+    },
+    {
+      "issue": 217,
+      "title": "[Investigation] Audit pre-existing daily expense row-pointer mismatches",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-10-27T10:05:23Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/217"
+    },
+    {
+      "issue": 216,
+      "title": "[Bug] Fix daily-sheet expansion atomicity and copied inputs",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-10-27T10:05:22Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/216"
+    },
+    {
+      "issue": 215,
+      "title": "[Production] Recover Super Lock reporting after interrupted daily sheet expansion",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-27T10:05:57Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/215"
+    },
+    {
+      "issue": 214,
+      "title": "[Production] Update owner-confirmed Super Lock653baht /31Aug payment facts",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-27T03:34:48Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/214"
+    },
+    {
+      "issue": 213,
+      "title": "[Production] Release PR #212 — isolated recovery and operational diagnostics",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-27T00:37:18Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        212
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/213"
+    },
+    {
+      "issue": 211,
+      "title": "[Reliability] Isolate scheduled recovery and correct operational latency diagnostics",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-27T00:38:11Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        212
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/211"
+    },
+    {
+      "issue": 210,
+      "title": "[Production Change] PR209 owner Online Order review + migration0020 — released and reconciled",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T23:01:25Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        209
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/210"
+    },
+    {
+      "issue": 208,
+      "title": "[Expense] Complete held Online Orders in owner LINE review with provenance and monitoring",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T23:01:29Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        209
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/208"
+    },
+    {
+      "issue": 207,
+      "title": "[Production] Recover one owner-approved 519 THB order to pending confirmation",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T20:54:14Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/207"
+    },
+    {
+      "issue": 206,
+      "title": "[Production] Release PR205 payment evidence guidance — code only",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T20:28:51Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        205
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/206"
+    },
+    {
+      "issue": 204,
+      "title": "fix(expense): explain Online Order payment holds and validate date provenance",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T20:22:20Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        205
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/204"
+    },
+    {
+      "issue": 202,
+      "title": "[Bug] Paid online-order totals held as missing with misleading review feedback",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "IN_PROGRESS",
+      "reason": "ImplementationPR203 open; CI passed; unmerged and no release",
+      "updated_at": "2026-10-26T13:07:47Z",
+      "assignees": [],
+      "open_related_prs": [
+        203
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/202"
+    },
+    {
+      "issue": 201,
+      "title": "[Production] PR #200 paid order total retry and two guarded draft recoveries",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-10-26T14:17:59Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        200
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/201"
+    },
+    {
+      "issue": 192,
+      "title": "[MPW][W16] ถอน Sheets และ LINE intake ที่ถูกแทนแล้ว",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:19Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/192"
+    },
+    {
+      "issue": 191,
+      "title": "[MPW][W15] ทำ UAT และเตรียม controlled rollout รายรุ่น",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:16Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [
+        127
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/191"
+    },
+    {
+      "issue": 190,
+      "title": "[MPW][W14] ซ้อม migration และพิสูจน์ reconciliation รายหมวด",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:14Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/190"
+    },
+    {
+      "issue": 189,
+      "title": "[MPW][W13] สร้าง operation receipts, audit, recovery และ TEST isolation",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:26Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/189"
+    },
+    {
+      "issue": 188,
+      "title": "[MPW][W12] ย้ายรายงาน Owner ต้นทุน เงินสด และปิดเดือน",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:01Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/188"
+    },
+    {
+      "issue": 187,
+      "title": "[MPW][W11] ย้าย HR กะ ค่าแรง และ payroll review/apply",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:58Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/187"
+    },
+    {
+      "issue": 186,
+      "title": "[MPW][W10] ย้าย expense และ personal ledger เข้าเว็บ",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:56Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/186"
+    },
+    {
+      "issue": 185,
+      "title": "[MPW][W09] สร้างแผนผลิต แผนซื้อ ใบสั่งซื้อและรับจริง",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:53Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/185"
+    },
+    {
+      "issue": 184,
+      "title": "[MPW][W08] สร้าง stock ledger, units และ recipe versions",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:51Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/184"
+    },
+    {
+      "issue": 183,
+      "title": "[MPW][W07] สร้างข้อมูลร้าน ประกาศ และคำขอของพนักงาน",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:48Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/183"
+    },
+    {
+      "issue": 182,
+      "title": "[MPW][W06] ย้ายลงเวลาและคำขอแก้ไขจาก LINE มาเว็บ",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:46Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/182"
+    },
+    {
+      "issue": 181,
+      "title": "[MPW][W05] ย้ายงาน Team stock count และข้อมูลสินค้ารายวัน",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:31Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/181"
+    },
+    {
+      "issue": 180,
+      "title": "[MPW][W04] สร้าง mobile shell และ read-only views ตามสิทธิ์",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:29Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/180"
+    },
+    {
+      "issue": 179,
+      "title": "[MPW][W03] สร้าง web authentication, sessions และ scoped authorization",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:24Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/179"
+    },
+    {
+      "issue": 178,
+      "title": "[MPW][W02] อนุมัติ architecture, permission และ data/API contracts",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:22Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/178"
+    },
+    {
+      "issue": 177,
+      "title": "[MPW][W01] ทำ source/field/LINE inventory และสิทธิ์ข้อมูลเดิม",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:19Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/177"
+    },
+    {
+      "issue": 176,
+      "title": "[MPW][W00] ยืนยัน control, baseline และเงื่อนไขเริ่มโครงการ",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:50:17Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/176"
+    },
+    {
+      "issue": 175,
+      "title": "[MPW][EPIC] MalisPang Operations Web — mobile back office project plan",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:52:49Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/175"
+    },
+    {
+      "issue": 171,
+      "title": "[P2][SHEETS][F12] Resolve failed jobs only after confirmed sync completion",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:20:00Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/171"
+    },
+    {
+      "issue": 170,
+      "title": "[P2][LINE][F11] Recover drafts when Owner notification delivery fails",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:20:02Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/170"
+    },
+    {
+      "issue": 169,
+      "title": "[P2][PARSER][F10] Validate monetary grouping and enforce a business maximum",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:19:58Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/169"
+    },
+    {
+      "issue": 168,
+      "title": "[P2][AUDIT][F9] Make PERSONAL_USE audit append-only and reconstructable",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:19:56Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/168"
+    },
+    {
+      "issue": 167,
+      "title": "[P2][SHEETS][F8] Canonicalize A1 quoting and formula comparison end-to-end",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:19:54Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/167"
+    },
+    {
+      "issue": 166,
+      "title": "[P2-CAPACITY][PERSONAL_USE][F7] Expand Sheet grid and paginate reconcile",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:19:52Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/166"
+    },
+    {
+      "issue": 165,
+      "title": "[P1][PERSONAL_USE][F6] Protect RAW row identity and fail closed on row drift",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-07T12:19:49Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/165"
+    },
+    {
+      "issue": 164,
+      "title": "[P1-POLICY][PERSONAL_USE][F5] Add draft expiry and closed-period reversal policy",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Closed-period/reversal policy requires Owner decision",
+      "updated_at": "2026-09-07T12:19:42Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/164"
+    },
+    {
+      "issue": 163,
+      "title": "[P1-DESIGN][PERSONAL_USE][F4] Preserve bank account identity separately from wallet class",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:28Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/163"
+    },
+    {
+      "issue": 162,
+      "title": "[P1][PERSONAL_USE][F3] Prevent stale Sheets versions overwriting latest state",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-09-07T10:01:48Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        174
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/162"
+    },
+    {
+      "issue": 161,
+      "title": "[P1][PERSONAL_USE][F2] Make state transitions CAS-safe and audit truthful",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-09-06T11:05:25Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        173
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/161"
+    },
+    {
+      "issue": 160,
+      "title": "[P1][PERSONAL_USE][F1] Block malformed personal commands from Expense fallback",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-09-06T05:16:56Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        172
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/160"
+    },
+    {
+      "issue": 148,
+      "title": "Fix payroll late opt-out and weekly sheet sync for 2026-08-20..26",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BACKLOG",
+      "reason": "Open issue; no completed acceptance established. Planning references and open draft plans do not prove implemented product",
+      "updated_at": "2026-09-14T10:51:25Z",
+      "assignees": [],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/148"
+    },
+    {
+      "issue": 143,
+      "title": "[HR][V1.4] LINE-first employee onboarding with Owner-managed provisioning",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-24T12:22:04Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        146,
+        144
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/143"
+    },
+    {
+      "issue": 140,
+      "title": "[BUG][HR] EMP004 exists in HR_STAFF_CONFIG but LINE registration returns STAFF_ID_NOT_FOUND",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-23T12:48:27Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        142,
+        141
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/140"
+    },
+    {
+      "issue": 139,
+      "title": "[OWNER ACCEPTANCE] Waive controlled UAT and close Online Order rollout",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:03:08Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/139"
+    },
+    {
+      "issue": 138,
+      "title": "[PROD CHANGE][Expense] Release PR #137 Online Order idempotency",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:02:36Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/138"
+    },
+    {
+      "issue": 136,
+      "title": "[BUG][Expense] Repeated Online Order ID can create another Expense from a different image",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:02:23Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        137
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/136"
+    },
+    {
+      "issue": 135,
+      "title": "[UAT][Expense] Production verification for Online Order paid fields",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:02:08Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        137
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/135"
+    },
+    {
+      "issue": 134,
+      "title": "[PROD CHANGE][Expense] Release PR #133 for Online Order paid fields",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:01:56Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        137
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/134"
+    },
+    {
+      "issue": 132,
+      "title": "[BUG][Expense] Online order with visible paid total and payment timestamp is rejected as incomplete",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-14T03:01:43Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        137,
+        133
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/132"
+    },
+    {
+      "issue": 130,
+      "title": "[Production] One-shot CPF hotfix release and bounded draft recovery",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-13T03:34:42Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        131
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/130"
+    },
+    {
+      "issue": 128,
+      "title": "[EXPENSE] Preserve canonical issuer and gross/final amounts for single-vendor documents",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-11T06:26:24Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        129
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/128"
+    },
+    {
+      "issue": 126,
+      "title": "[EXPENSE] Prevent single-vendor CPF invoices from becoming multi-seller cases",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-11T06:08:13Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        127
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/126"
+    },
+    {
+      "issue": 124,
+      "title": "[EXPENSE] Guide unresolved fields explicitly before final save",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-08T08:36:24Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        125
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/124"
+    },
+    {
+      "issue": 122,
+      "title": "Expense: choose missing payment source before confirmation",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-08T06:17:35Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        123
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/122"
+    },
+    {
+      "issue": 119,
+      "title": "[EXPENSE][V1.3] Generalize receipt extraction, improve latency, and add Purchase Items sheet",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-08-05T02:47:57Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        121,
+        120
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/119"
+    },
+    {
+      "issue": 114,
+      "title": "[EPIC][V1 CLOSEOUT] Stabilize, reconcile, and formally close V1 before V2",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T05:11:06Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        118,
+        117,
+        116,
+        115
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/114"
+    },
+    {
+      "issue": 111,
+      "title": "[EXPENSE][SHEETS] Post receipt line items as separate rows in รายวัน",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T00:06:45Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        113,
+        112
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/111"
+    },
+    {
+      "issue": 109,
+      "title": "Fix Expense draft insert placeholder mismatch",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:57Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/109"
+    },
+    {
+      "issue": 107,
+      "title": "Fix receipt expense foreign-key failure",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-30T20:29:27Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/107"
+    },
+    {
+      "issue": 106,
+      "title": "[PROD BUG] Receipt image gets no LINE response after V1.2 release",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:55Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/106"
+    },
+    {
+      "issue": 104,
+      "title": "[V1.2] Expense Document Foundation — Production + V2-ready",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-30T13:53:30Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        105
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/104"
+    },
+    {
+      "issue": 100,
+      "title": "Migrate Eak owner Staff ID from EMP_TEST to OWN001 across Production",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-30T05:09:00Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        102,
+        101
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/100"
+    },
+    {
+      "issue": 98,
+      "title": "[V1.1] Identity & Access Foundation — Staff Roles, Branch Scope, LINE HR Registration",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-29T21:45:36Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        99
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/98"
+    },
+    {
+      "issue": 96,
+      "title": "Docs: refresh README for Production V5.2 and Reply-first LINE architecture",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-29T06:29:34Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        97
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/96"
+    },
+    {
+      "issue": 93,
+      "title": "[BUG][PROD] Attendance photo can complete without LINE reply",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-29T05:17:22Z",
+      "assignees": [],
+      "open_related_prs": [
+        199
+      ],
+      "merged_related_prs": [
+        97,
+        95,
+        94
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/93"
+    },
+    {
+      "issue": 86,
+      "title": "[BUG][BLOCKER] Runtime Audit reports 21 open failed jobs before Payroll Release",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-28T12:06:45Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        87
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/86"
+    },
+    {
+      "issue": 83,
+      "title": "[P0][BUG] LINE attendance image receives no response",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:52Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/83"
+    },
+    {
+      "issue": 82,
+      "title": "[BLOCKER] Runtime Audit cannot run: GitHub Actions credential bindings are unset",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-28T05:53:53Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        85,
+        84
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/82"
+    },
+    {
+      "issue": 77,
+      "title": "[Legacy Shutdown 1/5] Add read-only Worker runtime audit workflow",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T20:56:59Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        78
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/77"
+    },
+    {
+      "issue": 74,
+      "title": "[BLOCKER] Replace Legacy cleanup responsibility with non-destructive Worker/R2 retention audit",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T20:52:25Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        81,
+        76,
+        75
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/74"
+    },
+    {
+      "issue": 72,
+      "title": "[BUG][BLOCKER] Attendance sheet sync still enqueues Monday weekly payroll key",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T20:26:56Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        73
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/72"
+    },
+    {
+      "issue": 71,
+      "title": "[BLOCKER] Investigate hidden/other-owner time-driven Apps Script trigger",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Hidden/other-owner Apps Script trigger unresolved",
+      "updated_at": "2026-09-07T12:19:36Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        75
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/71"
+    },
+    {
+      "issue": 69,
+      "title": "[BUG][BLOCKER] Sheets reconcile still uses Monday payroll cycle after #64",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T05:06:51Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        70
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/69"
+    },
+    {
+      "issue": 67,
+      "title": "[BUG][BLOCKER] main contains Production runtime config without verified cutover evidence",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:49Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        90,
+        89,
+        88
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/67"
+    },
+    {
+      "issue": 66,
+      "title": "[Legacy Shutdown 5/5] Retire deployments, archive legacy assets and close decommission",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Retirement depends on prior legacy gates",
+      "updated_at": "2026-09-07T12:19:34Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [
+        81,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/66"
+    },
+    {
+      "issue": 65,
+      "title": "[Legacy Shutdown 4/5] Controlled Stage-1 trigger shutdown with rollback window",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Trigger shutdown gates; no Production action authorized here",
+      "updated_at": "2026-09-07T12:19:32Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [
+        81,
+        80,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/65"
+    },
+    {
+      "issue": 63,
+      "title": "[Legacy Shutdown 5/5] Stage 2 — retire Legacy Web App deployment and archive the old system",
+      "github_state": "closed",
+      "state_reason": "duplicate",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as duplicate; not counted as completed feature",
+      "updated_at": "2026-07-31T03:47:02Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/63"
+    },
+    {
+      "issue": 62,
+      "title": "[Legacy Shutdown 4/5] Stage 1 — disable Legacy triggers without deleting source or deployments",
+      "github_state": "closed",
+      "state_reason": "duplicate",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as duplicate; not counted as completed feature",
+      "updated_at": "2026-07-31T03:47:00Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/62"
+    },
+    {
+      "issue": 61,
+      "title": "[Legacy Shutdown 3/5] Collect 7 consecutive days of operational parity evidence",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:47Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        81,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/61"
+    },
+    {
+      "issue": 60,
+      "title": "[Legacy Shutdown 2/5] Inventory and back up every Legacy Apps Script project, trigger and deployment",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Legacy inventory incomplete",
+      "updated_at": "2026-09-07T12:19:30Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        81,
+        80,
+        79,
+        75,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/60"
+    },
+    {
+      "issue": 59,
+      "title": "[Legacy Shutdown 1/5] Verify deployed Worker runtime, source SHA and rollback target",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-28T12:11:22Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        89,
+        85,
+        84,
+        81,
+        80,
+        78,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/59"
+    },
+    {
+      "issue": 58,
+      "title": "[BLOCKER] Legacy Apps Script 100% decommission readiness and staged shutdown",
+      "github_state": "open",
+      "state_reason": null,
+      "status": "BLOCKED",
+      "reason": "Legacy decommission/external writer and approval gates unresolved",
+      "updated_at": "2026-09-14T10:51:22Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [
+        81,
+        80,
+        79,
+        75,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/58"
+    },
+    {
+      "issue": 57,
+      "title": "[Phase 1][12] Run MalisPang Board parity UAT against D1 and Google Sheets",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:05:07Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/57"
+    },
+    {
+      "issue": 56,
+      "title": "[Phase 1][11] Build read-only Employee Config screens",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:04:51Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/56"
+    },
+    {
+      "issue": 55,
+      "title": "[Phase 1][10] Build read-only Expense screens",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:04:27Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/55"
+    },
+    {
+      "issue": 54,
+      "title": "[Phase 1][09] Build read-only Payroll review screens",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:04:05Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/54"
+    },
+    {
+      "issue": 53,
+      "title": "[Phase 1][08] Build read-only Attendance and evidence screens",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:03:42Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/53"
+    },
+    {
+      "issue": 52,
+      "title": "[Phase 1][07] Build read-only Dashboard and System Status screens",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:03:17Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/52"
+    },
+    {
+      "issue": 51,
+      "title": "[Phase 1][06] Scaffold the MalisPang Board web app, CI and preview-safe configuration",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:02:51Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/51"
+    },
+    {
+      "issue": 50,
+      "title": "[Phase 0][05] Implement read-only MalisPang Board API endpoints",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:02:25Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/50"
+    },
+    {
+      "issue": 49,
+      "title": "[Phase 0][04] Design MalisPang Board architecture, auth, RBAC and API contracts",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:02:02Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/49"
+    },
+    {
+      "issue": 48,
+      "title": "[Phase 0][03] Apply the safe MaliPang → MalisPang rename across repository-facing content",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:01:36Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/48"
+    },
+    {
+      "issue": 47,
+      "title": "[Phase 0][02] Inventory and classify the MaliPang → MalisPang naming migration",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:01:12Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/47"
+    },
+    {
+      "issue": 46,
+      "title": "[Phase 0][01] Audit every Google Sheets dependency before building MalisPang Board",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T21:16:04Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        81,
+        75,
+        68
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/46"
+    },
+    {
+      "issue": 45,
+      "title": "[EPIC] MalisPang Board Phase 0–1 — replace Google Sheets operational views with a read-only web board",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-08-05T11:00:39Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [
+        193
+      ],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/45"
+    },
+    {
+      "issue": 44,
+      "title": "Payroll cycle correction: Thursday–Wednesday, paid Wednesday",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-25T04:54:52Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        64
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/44"
+    },
+    {
+      "issue": 42,
+      "title": "Operations: manual Cloudflare release workflow for Production V1",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-24T05:32:45Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        43
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/42"
+    },
+    {
+      "issue": 39,
+      "title": "Payroll preview: align Work_Days with weekly payroll",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-24T05:22:06Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        40
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/39"
+    },
+    {
+      "issue": 37,
+      "title": "Accidental placeholder — no action",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:56:00Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/37"
+    },
+    {
+      "issue": 36,
+      "title": "[Do not use] placeholder 9",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:18:02Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/36"
+    },
+    {
+      "issue": 35,
+      "title": "[Do not use] placeholder 8",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:17:53Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/35"
+    },
+    {
+      "issue": 34,
+      "title": "Accidental placeholder — no action",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:55:34Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/34"
+    },
+    {
+      "issue": 33,
+      "title": "[Do not use] placeholder 7",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:17:44Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/33"
+    },
+    {
+      "issue": 32,
+      "title": "[Do not use] placeholder 6",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:17:31Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/32"
+    },
+    {
+      "issue": 31,
+      "title": "Accidental placeholder — no action",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:55:07Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/31"
+    },
+    {
+      "issue": 30,
+      "title": "[Do not use] placeholder 5",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:17:20Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/30"
+    },
+    {
+      "issue": 29,
+      "title": "[Do not use] placeholder 4",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:17:11Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/29"
+    },
+    {
+      "issue": 28,
+      "title": "[Do not use] placeholder 3",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:56:12Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/28"
+    },
+    {
+      "issue": 27,
+      "title": "Accidental placeholder — no action",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:54:42Z",
+      "assignees": [],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/27"
+    },
+    {
+      "issue": 26,
+      "title": "[Do not use] placeholder 2",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:56:01Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/26"
+    },
+    {
+      "issue": 25,
+      "title": "[Do not use] placeholder",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T04:55:52Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/25"
+    },
+    {
+      "issue": 24,
+      "title": "Release coordination: supersede Shadow-first sequence",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-24T05:19:07Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/24"
+    },
+    {
+      "issue": 23,
+      "title": "Production Day-1 Audit after 29 July cutover",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-31T03:46:44Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        38
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/23"
+    },
+    {
+      "issue": 22,
+      "title": "Production V1 Cutover — 29 July 2026",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:42Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        80,
+        41,
+        38
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/22"
+    },
+    {
+      "issue": 21,
+      "title": "Payroll release: จ่ายทุกวันพุธและ Preview ก่อนปิดรอบ",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-24T05:14:09Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        38
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/21"
+    },
+    {
+      "issue": 20,
+      "title": "Payroll release: รอบพฤหัส–พุธ จ่ายวันพุธ และเตรียม Release 29 Jul 2026",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-31T03:46:39Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        90,
+        89,
+        88,
+        87,
+        85,
+        84
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/20"
+    },
+    {
+      "issue": 19,
+      "title": "Payroll payday: จ่ายทุกวันพุธหลังปิดรอบวันอาทิตย์",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-31T03:46:36Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/19"
+    },
+    {
+      "issue": 17,
+      "title": "Payroll policy: wage history, automatic late/missing-punch deductions, and fixed OT",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-24T04:28:34Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [
+        18
+      ],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/17"
+    },
+    {
+      "issue": 16,
+      "title": "Production Cutover 29 Jul 2026: เปิด Payroll และระบบ V5.2 ใช้งานจริง",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:18:55Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/16"
+    },
+    {
+      "issue": 15,
+      "title": "Extended UAT Backlog: Attendance 50 รูปและ Expense เพิ่มเติม",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-31T03:46:34Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/15"
+    },
+    {
+      "issue": 14,
+      "title": "Release Candidate Shadow Audit: GO/NO-GO ก่อนเปิดจริง 29 Jul 2026",
+      "github_state": "closed",
+      "state_reason": "not_planned",
+      "status": "CLOSED_NOT_COMPLETED",
+      "reason": "Closed as not_planned; not counted as completed feature",
+      "updated_at": "2026-07-24T05:18:28Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/14"
+    },
+    {
+      "issue": 13,
+      "title": "Production Change: apply migration 0006 and deploy PR #12 in Shadow Mode",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-23T21:48:39Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/13"
+    },
+    {
+      "issue": 11,
+      "title": "Owner setup: GitHub, Codex, Apps Script, LINE and Production readiness",
+      "github_state": "closed",
+      "state_reason": "completed",
+      "status": "DONE_RECORDED",
+      "reason": "GitHub closed with state_reason=completed; this audit does not independently certify Production acceptance",
+      "updated_at": "2026-07-23T23:00:58Z",
+      "assignees": [
+        "Eak-dev"
+      ],
+      "open_related_prs": [],
+      "merged_related_prs": [],
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/11"
+    }
+  ],
+  "counts": {
+    "BLOCKED": 10,
+    "DONE_RECORDED": 58,
+    "BACKLOG": 30,
+    "PENDING_CLOSEOUT_REVIEW": 2,
+    "IN_PROGRESS": 3,
+    "CLOSED_NOT_COMPLETED": 33
+  },
+  "caveat": "All136issues reviewed for GitHub state, body acceptance and PR references. Related PR links are explicit textual associations, not proof of feature completion. No issues auto-closed; no Production writes."
+}

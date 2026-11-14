@@ -259,6 +259,8 @@ test('payment selection redelivery after a lost batch acknowledgement creates on
   h.env.DB.failAfterCommit=false;
   await handleExpensePostback(h.env,event,h.actor);
   assert.equal(h.state.row.payment_key,'transfer');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
   assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,1);
   assert.equal(h.state.queue.length,0);
 });

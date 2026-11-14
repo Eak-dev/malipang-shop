@@ -41,12 +41,12 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/fix-line-payment-review",
-      "source_sha": "82f51e693e9358b3707cabca8bfb79ad91d1a8b5",
+      "source_sha": "0c78dd0b3bd1eca85a37f5d3839de99e41da0dfd",
       "issues": [285],
       "pull_requests": [286],
       "status": "ACTIVE",
-      "observed_at": "2026-11-14T02:36:09Z",
-      "reason": "Payment review fix draft PR; snapshot precedes its registration commit."
+      "observed_at": "2026-11-14T03:05:47Z",
+      "reason": "Payment review fix draft PR; snapshot precedes this registry update. Production release is held pending safety verification."
     },
     {
       "scope": "remote",

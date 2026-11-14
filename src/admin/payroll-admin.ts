@@ -2,6 +2,7 @@ import { enqueueSheetSync } from "../db/repositories";
 import { actualOtMinutes,fixedOtSatang } from "../domain/ot";
 import { getEmployeeById } from "../payroll/repository";
 import { recalculateDailyPayroll } from "../payroll/recalculate";
+import { resolvePayrollDayContext } from "../payroll/day-context";
 import { addDays,isIsoDate,isoDateInBangkok,minutesOf } from "../shared/time";
 import type { Env,FixedOtRequestInput } from "../types";
 
@@ -27,7 +28,19 @@ export async function createFixedOtRequest(env:Env,raw:unknown):Promise<{otId:st
 }
 
 export async function finalizeFixedOt(env:Env,raw:unknown):Promise<{otId:string;status:string;version:number}>{
-  if(!raw||typeof raw!=="object")throw new Error("Invalid OT final payload");const body=raw as Record<string,unknown>,otId=String(body.otId||"").trim(),approved=body.approved===true,finalAmountBaht=body.finalAmountBaht==null?null:Number(body.finalAmountBaht),note=String(body.note||"").trim();if(!otId)throw new Error("otId is required");const row=await env.DB.prepare(`SELECT o.*,e.staff_name,e.scheduled_out FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=? LIMIT 1`).bind(otId).first<Record<string,unknown>>();if(!row)throw new Error("OT request not found");const daily=await env.DB.prepare(`SELECT time_out FROM attendance_daily WHERE employee_id=? AND work_date=?`).bind(row.employee_id,row.work_date).first<{time_out:string}>();if(approved&&!daily?.time_out)throw new Error("A valid Time_Out or attendance correction is required before final OT approval");const amountSatang=approved?(finalAmountBaht==null?Number(row.fixed_amount_satang):fixedOtSatang(finalAmountBaht)):0,minutes=actualOtMinutes(daily?.time_out||null,String(row.scheduled_out),row.planned_start?String(row.planned_start):null),status=approved?"APPROVED":"REJECTED",now=new Date().toISOString(),version=Number(row.version||0)+1;
+  if(!raw||typeof raw!=="object")throw new Error("Invalid OT final payload");
+  const body=raw as Record<string,unknown>,otId=String(body.otId||"").trim(),approved=body.approved===true,finalAmountBaht=body.finalAmountBaht==null?null:Number(body.finalAmountBaht),note=String(body.note||"").trim();
+  if(!otId)throw new Error("otId is required");
+  const row=await env.DB.prepare(`SELECT o.*,e.staff_name,e.scheduled_out FROM ot_requests o JOIN employees e ON e.employee_id=o.employee_id WHERE o.ot_id=? LIMIT 1`).bind(otId).first<Record<string,unknown>>();
+  if(!row)throw new Error("OT request not found");
+  const daily=await env.DB.prepare(`SELECT * FROM attendance_daily WHERE employee_id=? AND work_date=?`).bind(row.employee_id,row.work_date).first<Record<string,unknown>>();
+  if(approved&&!daily?.time_out)throw new Error("A valid Time_Out or attendance correction is required before final OT approval");
+  const amountSatang=approved?(finalAmountBaht==null?Number(row.fixed_amount_satang):fixedOtSatang(finalAmountBaht)):0,minutes=actualOtMinutes(daily?.time_out?String(daily.time_out):null,String(row.scheduled_out),row.planned_start?String(row.planned_start):null),status=approved?"APPROVED":"REJECTED",now=new Date().toISOString(),version=Number(row.version||0)+1;
+  // A context review must be surfaced before OT/audit/outbox writes, not after a partial approval.
+  if(daily){
+    const employee=await getEmployeeById(env,String(row.employee_id));if(!employee)throw new Error("Employee not found");
+    resolvePayrollDayContext(env,{employee,workDate:String(row.work_date),daily,timeIn:daily.time_in?String(daily.time_in):null,timeOut:daily.time_out?String(daily.time_out):null});
+  }
   await env.DB.batch([
     env.DB.prepare(`UPDATE ot_requests SET owner_final_status=?,owner_final_amount_satang=?,owner_final_at=?,actual_ot_minutes=?,status=?,note=?,version=version+1,updated_at=? WHERE ot_id=?`).bind(status,amountSatang,now,minutes,status,note||String(row.note||""),now,otId),
     env.DB.prepare(`INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?)`).bind(crypto.randomUUID(),"OT_FINALIZE",otId,note||status,JSON.stringify({status:row.status,ownerFinalStatus:row.owner_final_status,ownerFinalAmountSatang:row.owner_final_amount_satang}),JSON.stringify({status,ownerFinalAmountSatang:amountSatang,actualOtMinutes:minutes}),now)

@@ -499,10 +499,10 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     const payment=q.get("payment")||"",source=q.get("source")||"",choice=paymentOptionForPair(payment,source);
     if(!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
     const selected={...expense,paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet};
-    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND (payment_key='unconfirmed' OR source_wallet='UNCONFIRMED')`).bind(choice.paymentKey,choice.sourceWallet,new Date().toISOString(),id,to).run();
+    const changed=await env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND payment_key=? AND source_wallet=?`).bind(choice.paymentKey,choice.sourceWallet,new Date().toISOString(),id,to,expense.paymentKey,expense.sourceWallet).run();
     if(Number(changed.meta.changes||0)!==1){const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
-    if(!await confirmStoredReviewField(env,selected,"payment")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
     await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet},reason:"Payment selected from confirmation chooser"}).run();
+    if(!await confirmStoredReviewField(env,selected,"payment")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}
     await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;
   }
   if(action==="expense_set_source"){

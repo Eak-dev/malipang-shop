@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {handleExpensePostback,handleExpenseText} from '../dist/expense/service.js';
 import {expensePaymentOptions} from '../dist/expense/document.js';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {createRequire} from 'node:module';
+const line=createRequire(import.meta.url)('../dist/line/event-response.js');
 
 function harness(status='WAITING_CONFIRM',overrides={}){
   const {document,...rowOverrides}=overrides;
@@ -143,6 +145,82 @@ test('a selected payment returns to review without finalizing when another requi
   assert.equal(h.state.row.source_wallet,'SHOP_BANK');
   assert.equal(h.state.row.status,'WAITING_CONFIRM');
   assert.equal(h.state.queue.length,0);
+});
+
+test('payment confirmation works when a valid pair is already stored but review is pending',async()=>{
+  const document={review_note:'Payment source must be selected',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document});
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.status,'CONFIRMED');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+  assert.equal(h.state.queue.length,1);
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.queue.length,1);
+});
+
+test('payment chooser does not overwrite a concurrent change',async()=>{
+  const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document});
+  const prepare=h.env.DB.prepare.bind(h.env.DB);let changeOnce=true;
+  h.env.DB.prepare=sql=>{
+    const statement=prepare(sql),run=statement.run.bind(statement);
+    if(sql.startsWith('UPDATE expense_events SET payment_key=')&&changeOnce){
+      changeOnce=false;
+      statement.run=async()=>{
+        h.env.DB.sqlite.prepare("UPDATE expense_events SET payment_key='cash',source_wallet='CASH_DRAWER' WHERE expense_id='exp_1'").run();
+        return run();
+      };
+    }
+    return statement;
+  };
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,[]);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('payment selection can be retried if the review-state update loses a race',async()=>{
+  const document={review_note:'Payment source must be selected',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+  const prepare=h.env.DB.prepare.bind(h.env.DB);let failOnce=true;
+  h.env.DB.prepare=sql=>{
+    const statement=prepare(sql);
+    if(sql.startsWith('UPDATE expense_documents SET normalized_json=')&&failOnce){
+      failOnce=false;statement.run=async()=>({meta:{changes:0}});
+    }
+    return statement;
+  };
+  const event=h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK');
+  await handleExpensePostback(h.env,event,h.actor);
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  const audits=h.env.DB.sqlite.prepare("SELECT after_json FROM expense_audit_log WHERE action='EDIT' AND expense_id='exp_1'").all();
+  assert.deepEqual(JSON.parse(audits[0].after_json),{paymentKey:'transfer',sourceWallet:'SHOP_BANK'});
+  assert.equal(audits.length,1);
+  await handleExpensePostback(h.env,event,h.actor);
+  assert.equal(h.state.row.status,'CONFIRMED');
+  assert.equal(h.state.queue.length,1);
+});
+
+test('each payment option resolves pending review and preserves other outstanding fields',async()=>{
+  const messages=[],original=line.respondFlexToLineEvent;
+  line.respondFlexToLineEvent=async(_env,_event,message)=>{messages.push(message);};
+  try{
+    for(const option of expensePaymentOptions){
+      const document={review_note:'Payment source must be selected; Category needs confirmation',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment','category'],confirmedFields:[]}})};
+      const h=harness('WAITING_CONFIRM',{document});
+      await handleExpensePostback(h.env,h.event(`a=expense_set_payment&id=exp_1&payment=${option.paymentKey}&source=${option.sourceWallet}`),h.actor);
+      assert.equal(h.state.row.payment_key,option.paymentKey);
+      assert.equal(h.state.row.source_wallet,option.sourceWallet);
+      assert.equal(h.state.row.status,'WAITING_CONFIRM');
+      assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+      const output=JSON.stringify(messages.at(-1));
+      assert.doesNotMatch(output,/Payment source must be selected|วิธีชำระเงิน/);
+      assert.match(output,/หมวดหมู่/);
+      assert.equal(h.state.queue.length,0);
+    }
+  }finally{line.respondFlexToLineEvent=original;}
 });
 
 test('Cancel from the payment chooser leaves no finalized Expense',async()=>{

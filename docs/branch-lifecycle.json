@@ -7,6 +7,14 @@
   "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
   "work_items": [
     {
+      "issue": 285,
+      "mode": "MANAGED",
+      "coordination_chat": "LINE expense payment review loop",
+      "primary_branch": "codex/fix-line-payment-review",
+      "target_branch": "main",
+      "reason": "Single task branch and draft PR for payment review fix; no production release authorized."
+    },
+    {
       "issue": 248,
       "title": "Restore Daily Sheet Sync #248",
       "mode": "MIGRATION_PENDING",
@@ -29,6 +37,17 @@
     }
   ],
   "branches": [
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/fix-line-payment-review",
+      "source_sha": "82f51e693e9358b3707cabca8bfb79ad91d1a8b5",
+      "issues": [285],
+      "pull_requests": [286],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-14T02:36:09Z",
+      "reason": "Payment review fix draft PR; snapshot precedes its registration commit."
+    },
     {
       "scope": "remote",
       "source": "canonical-github",

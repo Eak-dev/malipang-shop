@@ -28,12 +28,12 @@
     },
     {
       "issue": 282,
-      "mode": "MIGRATION_PENDING",
+      "mode": "MANAGED",
       "coordination_chat": "รีวิวและลบ branch ที่ไม่ใช้งาน",
       "coordination_thread": "01a1c330-2dcd-7750-b962-3816babbeb54",
       "primary_branch": "codex/repo-branch-cleanup-20261114",
       "target_branch": "main",
-      "reason": "Owner-approved repository audit and conditional remote cleanup; metadata branch registration pending push"
+      "reason": "One primary metadata branch pushed for approved audit/cleanup; no Production authority"
     }
   ],
   "branches": [
@@ -3883,13 +3883,25 @@
       "scope": "local",
       "source": "branch-governance-clone",
       "branch": "codex/repo-branch-cleanup-20261114",
-      "source_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+      "source_sha": "1038e798653c557e8ade0f2026a1ba84a4c7954b",
       "issues": [
         282
       ],
       "status": "ACTIVE",
-      "reason": "Clean task checkout created from canonical main at this observed base before first audit commit",
-      "observed_at": "2026-11-14T01:32:24.920566+00:00"
+      "reason": "Pushed metadata audit task282. Snapshot SHA precedes its own registration commit.",
+      "observed_at": "2026-11-14T01:35:25.572816+00:00"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/repo-branch-cleanup-20261114",
+      "source_sha": "1038e798653c557e8ade0f2026a1ba84a4c7954b",
+      "issues": [
+        282
+      ],
+      "status": "ACTIVE",
+      "reason": "Pushed metadata audit task282; retained until cleanup receipts and issue report are merged. Snapshot precedes registration commit.",
+      "observed_at": "2026-11-14T01:35:25.572816+00:00"
     }
   ],
   "canonical_main_observed_at": "2026-11-14T01:31:04.254750+00:00"

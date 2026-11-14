@@ -19,14 +19,6 @@
       "consolidation_manifest": "docs/issue248-consolidation.json"
     },
     {
-      "issue": 272,
-      "title": "Branch lifecycle rollout",
-      "mode": "MANAGED",
-      "primary_branch": "codex/docs-branch-lifecycle",
-      "proposed_branch": "codex/docs-branch-lifecycle",
-      "reason": "One active remote primary branch registered for governance PR #273"
-    },
-    {
       "issue": 282,
       "mode": "MANAGED",
       "coordination_chat": "รีวิวและลบ branch ที่ไม่ใช้งาน",
@@ -1466,12 +1458,34 @@
       "pull_requests": [
         159
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "1e7b0d7b8f35eea22a960b169bf0ab55d0aa3407",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249670+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "1e7b0d7b8f35eea22a960b169bf0ab55d0aa3407",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -1614,12 +1628,34 @@
       "pull_requests": [
         198
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "c56756e6c3f2c5c58b4900d6c9a1c2b4d916c25b",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249726+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "c56756e6c3f2c5c58b4900d6c9a1c2b4d916c25b",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -1630,12 +1666,34 @@
       "pull_requests": [
         195
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "98a8274861ff4996b2bba6393ac25a4f8862a902",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249773+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "98a8274861ff4996b2bba6393ac25a4f8862a902",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -1646,12 +1704,34 @@
       "pull_requests": [
         197
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "194fb722913fe585986ace11da0d45ee292e2806",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249839+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "194fb722913fe585986ace11da0d45ee292e2806",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -1789,12 +1869,34 @@
       "pull_requests": [
         200
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "782afaf3cc45166d20a5bed7e82a6e469c56aeb1",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249898+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "782afaf3cc45166d20a5bed7e82a6e469c56aeb1",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -1822,12 +1924,34 @@
       "pull_requests": [
         205
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "39265c518305e40670770de135793d0767f13845",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249971+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "39265c518305e40670770de135793d0767f13845",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2089,12 +2213,34 @@
       "pull_requests": [
         173
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3424305da10793098e318b6c51952ca5f32068af",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250064+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "3424305da10793098e318b6c51952ca5f32068af",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2105,12 +2251,34 @@
       "pull_requests": [
         172
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "9138ba0aeab5f368b29483a4c7a2170ff3213ba7",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250128+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "9138ba0aeab5f368b29483a4c7a2170ff3213ba7",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2193,12 +2361,34 @@
       "pull_requests": [
         218
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "99ad99ba46833076db3937e3476050eaf2b82d7e",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250193+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "99ad99ba46833076db3937e3476050eaf2b82d7e",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2387,12 +2577,34 @@
       "pull_requests": [
         212
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "5f6cbdda57059a410ba5546324ef9acd0e2be2bb",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250280+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "5f6cbdda57059a410ba5546324ef9acd0e2be2bb",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2440,12 +2652,34 @@
       "pull_requests": [
         209
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "8316e441e32219660be98648493cc71374bc89e5",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250355+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "8316e441e32219660be98648493cc71374bc89e5",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2641,12 +2875,34 @@
       "pull_requests": [
         196
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3623255d34e134b3d6789f177681d6af0f29aa01",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250438+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "3623255d34e134b3d6789f177681d6af0f29aa01",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2693,12 +2949,34 @@
       "pull_requests": [
         240
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "096dd89d3ddd9555b0cf7e1ca0ab30f418cba24c",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250558+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "096dd89d3ddd9555b0cf7e1ca0ab30f418cba24c",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -2955,12 +3233,34 @@
       "pull_requests": [
         244
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "102de488327daf965d5dd9aa6d2a1af3ab686d1a",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250667+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "102de488327daf965d5dd9aa6d2a1af3ab686d1a",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -3628,12 +3928,34 @@
       "pull_requests": [
         245
       ],
-      "status": "NEEDS_AUDIT",
-      "reason": "Existing remote branch; integration and dependencies not yet audited",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "4cba92f5e64ce02174d3ea226a050a273c26da97",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.250816+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "4cba92f5e64ce02174d3ea226a050a273c26da97",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "local",
@@ -3710,12 +4032,34 @@
       "pull_requests": [
         273
       ],
-      "status": "ACTIVE",
-      "reason": "Governance PR #273; observed first pushed implementation commit",
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
       "observed_at": "2026-11-14T01:31:04.254750+00:00",
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ]
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "ca24e9a9f267354d0acab291bf38bbdb1b5a0543",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.247643+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "ca24e9a9f267354d0acab291bf38bbdb1b5a0543",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "remote",
@@ -3873,11 +4217,33 @@
       "pull_requests": [
         279
       ],
-      "review_holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "INTEGRATED",
-      "reason": "Retained pending owner/worktree clearance; see review_holds and repository audit"
+      "status": "DELETE_READY",
+      "reason": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history.",
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "374b06f111a71689c74e9eb77ac8c9f02b7bae5b",
+        "target_branch": "main",
+        "target_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+        "checked_by": "Codex live inventory and content/ancestry review",
+        "checked_at": "2026-11-14T01:43:08.249593+00:00",
+        "integration_verified": true,
+        "integration_evidence": "docs/repo-branch-audit-20261114.json: exact merged source/merge tree or direct ancestry",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/43338138437 (main6ba993ee)",
+        "worktrees_clear": true,
+        "worktree_evidence": "All95 registrations reviewed; no candidate checkout. Existing inactive local refs retained with their histories; no open PR or configured automation references this remote name. Private:repo-cleanup-20261114T012535Z",
+        "dependencies_clear": true,
+        "dependency_evidence": "Fresh all145PR inventory; candidate is neither open head nor base; no named operational reference. See audit JSON.",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "GitHub hooks/releases/tags/running actions empty; no delete/create triggers; connected Cloudflare3Workers zero Builds and2Pages no Git. Configured task and launch script references reviewed.",
+        "backup": {
+          "source_sha": "374b06f111a71689c74e9eb77ac8c9f02b7bae5b",
+          "verified": true,
+          "reference": "private:repo-cleanup-20261114T012535Z; bundle_sha256=d8a231386ad4938a0eb65f55faa2fdb71bfa0ee5db2f6b2fc7532b96c303706f; independently restored133heads and fsck"
+        }
+      }
     },
     {
       "scope": "local",
@@ -3904,5 +4270,15 @@
       "observed_at": "2026-11-14T01:35:25.572816+00:00"
     }
   ],
-  "canonical_main_observed_at": "2026-11-14T01:31:04.254750+00:00"
+  "canonical_main_observed_at": "2026-11-14T01:31:04.254750+00:00",
+  "completed_work_items": [
+    {
+      "issue": 272,
+      "title": "Branch lifecycle rollout",
+      "completed_at": "2026-11-11T04:35:50Z",
+      "former_primary_branch": "codex/docs-branch-lifecycle",
+      "evidence": "https://github.com/Eak-dev/malipang-shop/issues/272",
+      "reason": "GitHub closed/completed and PR273 merged. Historical rollout is archived; its inactive remote primary is being retired under task282."
+    }
+  ]
 }

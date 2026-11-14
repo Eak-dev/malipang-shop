@@ -8,8 +8,8 @@
 - ตรวจ 18 Git stores, 95 worktree registrations: อ่านได้42, อ่านไม่ได้/หาย53 (ไม่ถือว่า clean). 17 dirty checkouts สำรองไฟล์พร้อม hash ตรงทั้งก่อน/หลัง/ใน archive. ไม่มีการ reset/clean/switch checkout ของผู้อื่น.
 - สำรอง remote ทั้ง133refs แบบ full-history bundle; cloneคืนแยกและ fsckผ่าน, tipsตรง133/133. Source checkout และ local branches คงเดิม. Local historiesสำรองแยก18stores:กู้คืนและfsckผ่าน17stores, อีก1storeสร้างbundleไม่สำเร็จจึงเก็บต้นฉบับและไม่ลบbranchที่เกี่ยวข้อง; รายการอ่านไม่ได้หรือ verification ไม่ผ่านต้องคงไว้.
 - พบ Codex automation4รายการ (ACTIVE2/PAUSED2) และ LaunchAgentที่เกี่ยวข้อง2รายการ; ไม่เปลี่ยน schedule. GitHubไม่มี actionsรัน/คิว, hooks/releases/tagsไม่มี, ไม่พบ create/delete workflow. Cloudflareบัญชีที่เชื่อม: Worker3ตัวไม่มี Builds trigger, Pages2โครงการไม่มี Git source. ไม่รับรองระบบนอกบัญชี/เครื่องที่เข้าถึงไม่ได้.
-- Branchที่มี local refs/worktrees/open headหรือbase PR/ชื่อในruntimeautomation หรือยังพิสูจน์ integrationไม่ได้ คงไว้ทั้งหมด. #248ทั้งหมดคงไว้รอhandoffตามเงื่อนไขเดิม รวม damagedstoreของg6a-gate-on. ไม่ถือว่าการมีprocess/idleพิสูจน์writerquiescence.
-- กลุ่ม59รายการเริ่มเป็น DELETE_READY โดยตรงจาก ancestryหรือ exact mergedPR+tree equality, ไม่มี observed dependencies. เป้าหมาย1branchยังทำไม่ได้โดยรักษา27openPRและงานไม่รวมไว้ครบ; ต้องคัดและreviewงานเหล่านั้นก่อน ไม่force-mergeเพื่อให้จำนวนเหลือ1.
+- Branchที่มี worktrees/open headหรือbase PR/ชื่อในruntimeautomation หรือยังพิสูจน์ integrationไม่ได้ คงไว้ทั้งหมด. อีก17branchมีเพียงinactive localrefsแต่ไม่มีcheckout/PR/automationdependency จึงเตรียมลบเฉพาะremoteโดยเก็บlocalrefsเดิมไว้. #248ทั้งหมดคงไว้รอhandoffตามเงื่อนไขเดิม รวม damagedstoreของg6a-gate-on. ไม่ถือว่าการมีprocess/idleพิสูจน์writerquiescence.
+- กลุ่ม76รายการเริ่มเป็น DELETE_READY โดยตรงจาก ancestryหรือ exact mergedPR+tree equality, ไม่มี observed dependencies. เป้าหมาย1branchยังทำไม่ได้โดยรักษา27openPRและงานไม่รวมไว้ครบ; ต้องคัดและreviewงานเหล่านั้นก่อน ไม่force-mergeเพื่อให้จำนวนเหลือ1.
 
 ## Issues
 

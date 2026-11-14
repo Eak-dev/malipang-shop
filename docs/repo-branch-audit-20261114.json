@@ -1568,15 +1568,14 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         248,
         272
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/docs-context-update-policy-20261113",
@@ -1833,12 +1832,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/docs-readme-production-v5-2",
@@ -2153,12 +2151,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/feature-personal-use",
@@ -2299,12 +2296,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-expense-undo-version-collision",
@@ -2323,12 +2319,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-expense-wallet-receipt-guards",
@@ -2347,12 +2342,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-hr-staff-sync-140",
@@ -2496,12 +2490,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-online-order-paid-total",
@@ -2572,14 +2565,13 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         204
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-payroll-audited-status-2026-08-26",
@@ -2882,14 +2874,13 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         161
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-personal-use-reserved-prefix-160",
@@ -2908,14 +2899,13 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         160
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/fix-personal-use-sheets-ordering-162",
@@ -3098,12 +3088,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/issue-100-owner-identity",
@@ -3417,14 +3406,13 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         211
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/owner-expense-corrections",
@@ -3701,14 +3689,13 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [
         208
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/p0-safe-sync-admission-20261106",
@@ -4203,12 +4190,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/sheet-category-two-way-sync",
@@ -4341,12 +4327,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "codex/stable-phase1-release-fix",
@@ -4782,12 +4767,11 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     },
     {
       "branch": "issue248/g6a-gate-on",
@@ -5698,17 +5682,16 @@
       "worktree_count": 0,
       "automation_ids": [],
       "operational_refs": [],
-      "holds": [
-        "LOCAL_REF_OWNER_CLEARANCE"
-      ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "holds": [],
+      "status": "DELETE_READY",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "inactive_local_ref_review": "Existing local refs preserved. No checked-out worktree, open PR or automation dependency on this branch. No source file or local ref mutation; remote-only retirement does not remove local history."
     }
   ],
   "counts": {
-    "RETAIN_PENDING_CLEARANCE": 73,
-    "DELETE_READY": 59,
+    "RETAIN_PENDING_CLEARANCE": 56,
+    "DELETE_READY": 76,
     "PROTECTED": 1
   },
   "authority": "Owner explicitly authorized review, preservation and deletion of redundant/unused branches on 2026-11-14; no Production changes or disturbance of other writers",
@@ -5783,5 +5766,24 @@
     "active_process_review": "Codex processes observed in project roots; no Claude process observed in matching roots. This is a snapshot, not ownership handoff. Every branch with local refs/worktrees/open PRs retained.",
     "coordination_chat": "รีวิวและลบ branch ที่ไม่ใช้งาน",
     "coordination_thread": "01a1c330-2dcd-7750-b962-3816babbeb54"
-  }
+  },
+  "inactive_local_ref_only_candidates": [
+    "codex/docs-branch-lifecycle",
+    "codex/docs-project-context-20261113",
+    "codex/feature-owner-personal-use",
+    "codex/fix-expense-shop-bank-cash-release",
+    "codex/fix-expense-undo-version-collision",
+    "codex/fix-expense-wallet-receipt-guards",
+    "codex/fix-online-order-paid-review",
+    "codex/fix-online-order-payment-guidance",
+    "codex/fix-personal-use-cas-161",
+    "codex/fix-personal-use-reserved-prefix-160",
+    "codex/fix-transport-th-en-categories",
+    "codex/operations-reliability-observability",
+    "codex/owner-online-order-review",
+    "codex/sanitize-runtime-audit-evidence",
+    "codex/stable-phase1-operations-doc",
+    "fix/stable-sync-review-release-recovery",
+    "release/stable-review-diagnostics-e3b7ab8"
+  ]
 }

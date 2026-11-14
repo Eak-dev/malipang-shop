@@ -2775,8 +2775,8 @@
       "pull_requests": [
         262
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -2815,6 +2815,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -2828,8 +2833,8 @@
       "pull_requests": [
         261
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -2869,6 +2874,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -2882,8 +2892,8 @@
       "pull_requests": [
         259
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -2922,6 +2932,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -3739,8 +3754,8 @@
       "pull_requests": [
         254
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -3778,6 +3793,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -3791,8 +3811,8 @@
       "pull_requests": [
         255
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -3830,6 +3850,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -3843,8 +3868,8 @@
       "pull_requests": [
         266
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -3884,6 +3909,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -3897,8 +3927,8 @@
       "pull_requests": [
         264
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -3938,6 +3968,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -3951,8 +3986,8 @@
       "pull_requests": [
         263
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -3992,6 +4027,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4005,8 +4045,8 @@
       "pull_requests": [
         267
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4046,6 +4086,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4105,8 +4150,8 @@
       "pull_requests": [
         265
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4146,6 +4191,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4188,8 +4238,8 @@
       "pull_requests": [
         256
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4227,6 +4277,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4240,8 +4295,8 @@
       "pull_requests": [
         257
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4279,6 +4334,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4292,8 +4352,8 @@
       "pull_requests": [
         268
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4333,6 +4393,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4346,8 +4411,8 @@
       "pull_requests": [
         269
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4387,6 +4452,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {
@@ -4400,8 +4470,8 @@
       "pull_requests": [
         270
       ],
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "status": "DELETED",
+      "reason": "Explicit source-owner handoff; expected-SHA atomic deletion and absence confirmed; local source refs/worktrees retained",
       "observed_at": "2026-11-14T12:25:14.938894+00:00",
       "integration": {
         "target_branch": "main",
@@ -4441,6 +4511,11 @@
           "verified": true,
           "reference": "private:integrated28-20261114T121842Z/remote-before.bundle sha256=f34135197ea1e1fdd2c7a1ad7b5e55bf59782c7a1d521afe0867a26d0f202784"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "evidence": "docs/integrated28-handoff-20261114.json:execution; private:integrated28-20261114T121842Z/deletion-receipt.json"
       }
     },
     {

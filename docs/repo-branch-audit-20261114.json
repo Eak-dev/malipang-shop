@@ -3448,9 +3448,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "95912e26122e429515972144442973b71eb194f9",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "codex/issue248-gh-audit-writer",
@@ -3474,11 +3480,17 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [
         248
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "codex/issue248-nonfinancial-release-a3",
@@ -3528,11 +3540,17 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [
         248
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "1414078390fc608e47990c0578cecfa9b6716b0c",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "codex/issue248-release-check-diagnostic",
@@ -5168,9 +5186,15 @@
       "holds": [
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "c6a8af9670b69ba952a3b9480fd78177dd645200",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g6b-notice-readonly-diagnostic",
@@ -5192,9 +5216,15 @@
       "holds": [
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "c990cc9d4b0810543ba96c0f9ae2f7b4547d6420",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g7-owner-receipt-writer",
@@ -5218,11 +5248,17 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [
         248
       ],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "549b7b320023d574f442a5a98f4749a8e7fc5ed7",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g7-register-audit-workflow",
@@ -5246,9 +5282,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "323c2d12e86263636511420b63de09821129bab5",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g7-zero-audit-writer",
@@ -5272,9 +5314,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "a8b4cc50c3b2e6c399d1be31638a0c765f9761bb",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g8-gh-audit-log-fix",
@@ -5298,9 +5346,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "bdc3fbc48b1bddd36b97a62cb037396c6e5cccfc",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/g8-monitoring-risk-v2",
@@ -5471,9 +5525,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "9f39c5455ff22973c0b5e4690329dd97b17f5d24",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/nonfinancial-completion-review-guard",
@@ -5523,9 +5583,15 @@
       "holds": [
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "403dac842cbe4f6db0eb0bf64496faaee6860083",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/supervised-notice-caller",
@@ -5547,9 +5613,15 @@
       "holds": [
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "5bf0515d59b9a8dfd7158f6b42ec2d2bf6d3994e",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/terminal-direct-delivery-guard",
@@ -5573,9 +5645,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "af696f766616f580e736bf3ad390d2a3a504b929",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/terminal-guard-release-control",
@@ -5599,9 +5677,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "752283939e801f9527fe0b9fe86951a67ba892e2",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "issue248/terminal-hotfix-head-repin",
@@ -5625,9 +5709,15 @@
         "LOCAL_REF_OWNER_CLEARANCE",
         "ISSUE248_HANDOFF_PENDING"
       ],
-      "status": "RETAIN_PENDING_CLEARANCE",
+      "status": "DELETED",
       "issues": [],
-      "open_pr_checks": []
+      "open_pr_checks": [],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true,
+        "source_sha": "b75ca59445e57caa6c7f9f9e1ac5fd11c3551f8b",
+        "handoff_evidence": "docs/integrated28-handoff-20261114.json"
+      }
     },
     {
       "branch": "main",
@@ -6070,8 +6160,8 @@
     }
   ],
   "counts": {
-    "RETAIN_PENDING_CLEARANCE": 56,
-    "DELETED": 76,
+    "RETAIN_PENDING_CLEARANCE": 41,
+    "DELETED": 91,
     "PROTECTED": 1
   },
   "authority": "Owner explicitly authorized review, preservation and deletion of redundant/unused branches on 2026-11-14; no Production changes or disturbance of other writers",
@@ -6180,5 +6270,14 @@
     "remaining_including_temporary_delivery_branch": 58,
     "temporary_delivery_branch": "codex/repo-branch-cleanup-20261114",
     "temporary_delivery_retirement": "Retire after final receipt PR merge; actual absence and recovery proof will be recorded in issue282 and final local execution report."
+  },
+  "phase2_execution": {
+    "scope": 28,
+    "deleted": 15,
+    "retained": 13,
+    "verified_at": "2026-11-14T12:30:43.988009+00:00",
+    "report": "docs/integrated28-handoff-20261114.json",
+    "temporary_delivery_branch": "codex/retire-integrated-branches-20261114",
+    "final_temporary_branch_absence_evidence": "Issue282 latest execution receipt after final merge"
   }
 }

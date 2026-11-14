@@ -5,7 +5,7 @@
   "base_main": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
   "initial_remote_count": 57,
   "scope_count": 28,
-  "ready_count": 15,
+  "ready_count": 0,
   "retained_count": 13,
   "handoff_evidence": {
     "source_thread": "01a1c2e7-642f-7ca1-ac62-b6de462d5a76",
@@ -118,7 +118,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        280
+      ],
+      "required_owner": "Developer/source owner for PR280; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/fix-november-sync-budget",
@@ -126,7 +133,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        241
+      ],
+      "required_owner": "Developer/source owner for PR241; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/fix-online-order-idempotency",
@@ -134,7 +148,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        137
+      ],
+      "required_owner": "Developer/source owner for PR137; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/fix-online-order-paid-fields",
@@ -142,7 +163,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        133
+      ],
+      "required_owner": "Developer/source owner for PR133; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/fix-personal-use-sheets-ordering-162",
@@ -150,23 +178,50 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        174
+      ],
+      "required_owner": "Master owner thread01a04170-3912-7a13-9a61-cae3a6958dde; outbound handoff request awaits direct user permission"
     },
     {
       "branch": "codex/issue248-g7-audit-relay",
       "source_sha": "95912e26122e429515972144442973b71eb194f9",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        262
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "codex/issue248-gh-audit-writer",
       "source_sha": "cf4fecb420da56679915b93b24ec79e8a4aa1099",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        261
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "codex/issue248-nonfinancial-release-a3",
@@ -174,15 +229,32 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "DEVELOPER_SESSION_UNAVAILABLE",
       "status": "RETAIN",
-      "reason": "DEVELOPER_HANDOFF_PENDING"
+      "reason": "DEVELOPER_HANDOFF_PENDING",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        276
+      ],
+      "required_owner": "Developer/source owner for PR276; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/issue248-post-cas-proof",
       "source_sha": "1414078390fc608e47990c0578cecfa9b6716b0c",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        259
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "codex/issue248-release-test-env-isolation",
@@ -190,15 +262,29 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "DEVELOPER_SESSION_UNAVAILABLE",
       "status": "RETAIN",
-      "reason": "DEVELOPER_HANDOFF_PENDING"
+      "reason": "DEVELOPER_HANDOFF_PENDING",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        277
+      ],
+      "required_owner": "Developer/source owner for PR277; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/p0-safe-sync-admission-20261106",
       "source_sha": "4bb84a4869920f70981477de0ef69607438e2c74",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
-      "handoff": "NOT_OBTAINED",
+      "handoff": "NOT_OWNER_OF_PR247_SOURCE",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Thread248 explicitly cannot hand off Developer PR247/issue246 source; clean does not replace owner handoff",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        247
+      ],
+      "required_owner": "Developer of PR247/issue246; session not identified"
     },
     {
       "branch": "codex/restore-daily-sheet-sync-248",
@@ -206,7 +292,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "KEEP_REQUESTED",
       "status": "RETAIN",
-      "reason": "PRIMARY_STAGING_RETAINED_BY_WRITER"
+      "reason": "PRIMARY_STAGING_RETAINED_BY_WRITER",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        281
+      ],
+      "required_owner": "Developer/source owner for PR281; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/stable-new-records-phase1",
@@ -214,7 +307,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        238
+      ],
+      "required_owner": "Developer/source owner for PR238; GitHub account is not proof of current writer"
     },
     {
       "branch": "codex/stable-phase1-release-fix",
@@ -222,7 +322,14 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "NOT_OBTAINED",
       "status": "RETAIN",
-      "reason": "Historical source owner handoff not yet obtained; local source preserved"
+      "reason": "Historical source owner handoff not yet obtained; local source preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        239
+      ],
+      "required_owner": "Developer/source owner for PR239; GitHub account is not proof of current writer"
     },
     {
       "branch": "issue248/g6a-gate-on",
@@ -230,63 +337,140 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "REMOTE_RETIRED_BUT_STORE_UNKNOWN",
       "status": "RETAIN",
-      "reason": "DAMAGED_STORE_UNKNOWN"
+      "reason": "DAMAGED_STORE_UNKNOWN",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        253
+      ],
+      "required_owner": "Developer/source owner for PR253; GitHub account is not proof of current writer"
     },
     {
       "branch": "issue248/g6a-incident-recheck",
       "source_sha": "c6a8af9670b69ba952a3b9480fd78177dd645200",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        254
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g6b-notice-readonly-diagnostic",
       "source_sha": "c990cc9d4b0810543ba96c0f9ae2f7b4547d6420",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        255
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g7-owner-receipt-writer",
       "source_sha": "549b7b320023d574f442a5a98f4749a8e7fc5ed7",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        266
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g7-register-audit-workflow",
       "source_sha": "323c2d12e86263636511420b63de09821129bab5",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        264
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g7-zero-audit-writer",
       "source_sha": "a8b4cc50c3b2e6c399d1be31638a0c765f9761bb",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        263
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g8-gh-audit-log-fix",
       "source_sha": "bdc3fbc48b1bddd36b97a62cb037396c6e5cccfc",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        267
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/g8-zero-e68f-review",
       "source_sha": "9f39c5455ff22973c0b5e4690329dd97b17f5d24",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        265
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/nonfinancial-completion-review-guard",
@@ -294,49 +478,118 @@
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "DEVELOPER_SESSION_UNAVAILABLE",
       "status": "RETAIN",
-      "reason": "DEVELOPER_HANDOFF_PENDING"
+      "reason": "DEVELOPER_HANDOFF_PENDING",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        271
+      ],
+      "required_owner": "Developer/source owner for PR271; GitHub account is not proof of current writer"
     },
     {
       "branch": "issue248/original-notice-diagnostic-20261110",
       "source_sha": "403dac842cbe4f6db0eb0bf64496faaee6860083",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        256
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/supervised-notice-caller",
       "source_sha": "5bf0515d59b9a8dfd7158f6b42ec2d2bf6d3994e",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        257
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/terminal-direct-delivery-guard",
       "source_sha": "af696f766616f580e736bf3ad390d2a3a504b929",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        268
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/terminal-guard-release-control",
       "source_sha": "752283939e801f9527fe0b9fe86951a67ba892e2",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        269
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     },
     {
       "branch": "issue248/terminal-hotfix-head-repin",
       "source_sha": "b75ca59445e57caa6c7f9f9e1ac5fd11c3551f8b",
       "integration_proven_on": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
       "handoff": "OWNER_THREAD_DECLARATION_20261114",
-      "status": "DELETE_READY",
-      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved"
+      "status": "DELETED",
+      "reason": "Owner task explicitly retires remote push/base/resume use; local refs and source worktrees preserved",
+      "github_pr_authors": [
+        "Eak-dev"
+      ],
+      "source_prs": [
+        270
+      ],
+      "deletion": {
+        "verified_at": "2026-11-14T12:30:43.988009+00:00",
+        "absence_verified": true
+      }
     }
   ],
-  "deletion_performed": false,
-  "no_production_mutation": true
+  "deletion_performed": true,
+  "no_production_mutation": true,
+  "deleted_count": 15,
+  "execution": {
+    "verified_at": "2026-11-14T12:30:43.988009+00:00",
+    "source_count": 15,
+    "absent_count": 15,
+    "push_exit_code": 0,
+    "remaining_remote_refs": 43,
+    "method": "atomic expected-SHA lease-bound remote deletion",
+    "local_ref_or_worktree_deletion": false,
+    "production_mutation": false,
+    "remaining_excluding_temporary_delivery": 42
+  }
 }

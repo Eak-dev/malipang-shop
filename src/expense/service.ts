@@ -156,7 +156,13 @@ async function selectPaymentAtomically(env:Env,expense:LoadedExpense,to:string,p
 async function applyPaymentSelection(env:Env,event:LineEvent,expense:LoadedExpense,to:string,paymentKey:string,sourceWallet:string,traceId:string,actor?:ExpenseActor):Promise<void>{
   const result=await selectPaymentAtomically(env,expense,to,paymentKey,sourceWallet,actor);
   if(result==="invalid_document"){await respondText(env,event,"ไม่สามารถยืนยันวิธีชำระได้ กรุณาให้เจ้าของตรวจข้อมูลเอกสารก่อน",traceId);return;}
-  if(result==="stale"){const current=await findExpense(env,expense.expenseId,to);if(current)await showCurrent(env,event,current,traceId);else await respondText(env,event,"This item was not found or has expired.",traceId);return;}
+  if(result==="stale"){
+    const current=await findExpense(env,expense.expenseId,to);
+    if(!current){await respondText(env,event,"This item was not found or has expired.",traceId);return;}
+    const documents=await env.DB.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN status='WAITING_CONFIRM' THEN 1 ELSE 0 END) AS waiting FROM expense_documents WHERE expense_id=?`).bind(expense.expenseId).first<ExpenseRow>();
+    if(current.status==="WAITING_CONFIRM"&&(Number(documents?.total||0)>1||(Number(documents?.total||0)===1&&Number(documents?.waiting||0)!==1))){await respondText(env,event,"ไม่สามารถยืนยันวิธีชำระได้ กรุณาให้เจ้าของตรวจสถานะเอกสารที่แนบก่อน",traceId);return;}
+    await showCurrent(env,event,current,traceId);return;
+  }
   await showOrFinalizeCurrent(env,event,expense.expenseId,to,traceId,actor);
 }
 async function showOrFinalizeCurrent(env:Env,event:LineEvent,id:string,to:string,traceId:string,actor:ExpenseActor|undefined):Promise<void>{

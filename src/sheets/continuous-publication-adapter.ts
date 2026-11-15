@@ -21,7 +21,7 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
  const {job,lease,claim,transitionId,sheetName,intent,sourceRevision,sourceDigest,budget,oauthLease}=input,db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,policy={...continuousSheetsReadPolicy,budget,...oauthLease?{oauthLease}:{}};
  const before=decodePublicationCarrier(intent.before),after=intent.after;
  const kind=before?(after.state==='PUBLISHED'?'PUBLISH':'REVOKE'):'STAGE';
- const financial=kind==='REVOKE'&&env.CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED==='true';
+ const financial=kind==='REVOKE'&&input.financialJournalRevision!==undefined;
  if(financial&&(!Number.isSafeInteger(input.financialJournalRevision)||Number(input.financialJournalRevision)<0))throw Error('PUBLICATION_FINANCIAL_JOURNAL_INVALID');
  // Grouped PUBLISH has two post-dispatch rounds, each four batched reads,
  // one format read and two notice reads. The invocation-scoped OAuth lease

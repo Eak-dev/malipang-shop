@@ -5,6 +5,23 @@ source readers to REVOKE intent insertion, but both its configuration flag and
 separate D1 activation are off by default. It does not enable PUBLISH, REVOKE,
 FINAL, cutover, or the REVIEW worker.
 
+An additional local-only bridge selects a retained REVOKE's digest protocol
+from the immutable `financial_journal_revision` column rather than from the
+current feature flag; the flag controls new admissions. A mismatched DB
+activation and flag refuses new cancellation work. These checks are not a
+provider fence and do not make activation reversible. In particular, an older
+Worker lacking this bridge cannot process new REVOKEs after DB activation.
+Any future rollout must deploy a compatible bridge first and prove the old
+generation is drained; rollback must retain dual-protocol readers until all
+references have been handled. Do not delete the activation row to bypass it.
+
+Synthetic coverage includes a lost provider acknowledgement followed by
+turning the admission flag off and positive-only recovery of that one REVOKE,
+and legacy-intent selection after activation. It does not cover the full
+notice/FINAL lifecycle, mixed-generation rollout, real D1 or provider behavior.
+The prototype adds D1 reads to the budget, which have not been validated across
+the worst-case invocation. Keep every production gate closed.
+
 The prototype snapshots a cancelled expense and its previous-version VERIFIED
 projection/preimage manifest, with a separate monotonic journal revision. A
 PUBLISHED marker must name exactly DAILY, RAW, and its `detailCount` DETAIL

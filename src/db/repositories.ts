@@ -41,13 +41,27 @@ function isSheetSyncJob(payload:unknown):boolean{
   const job=payload as {kind?:string;entityType?:string}|null;
   return job?.kind==='SHEETS_SYNC';
 }
-export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<void>{
+export async function createFailedJob(env:Env,queue:string,traceId:string,payload:unknown,error:unknown):Promise<'RECORDED'|'ABSENT'>{
   const now=new Date().toISOString(),jobKey=failedJobKey(payload);
   // Once an OPEN sheet event is terminal, retain both its sentinel and
   // original payload until an explicit per-item reconciliation resolves it.
   const terminal="failed_jobs.status='OPEN' AND failed_jobs.error='DEAD_LETTER_MAX_RETRIES'";
   const preserved=isSheetSyncJob(payload)?`payload_json=CASE WHEN ${terminal} THEN failed_jobs.payload_json ELSE excluded.payload_json END,error=CASE WHEN ${terminal} THEN failed_jobs.error ELSE excluded.error END`:'payload_json=excluded.payload_json,error=excluded.error';
-  await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET ${preserved},status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`).bind(crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now).run();
+  const candidate=payload as {kind?:string;entityType?:string;entityKey?:unknown}|null;
+  const guarded=env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&candidate?.kind==='SHEETS_SYNC'&&candidate.entityType==='EXPENSE';
+  const conflict=`ON CONFLICT(queue_name,trace_id,job_key) DO UPDATE SET ${preserved},status='OPEN',attempt_count=failed_jobs.attempt_count+1,updated_at=excluded.updated_at,resolved_at=NULL`;
+  const args=[crypto.randomUUID(),queue,traceId,jobKey,JSON.stringify(payload),String(error),now,now];
+  if(!guarded){await env.DB.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES(?,?,?,?,?,?,'OPEN',1,?,?) ${conflict}`).bind(...args).run();return 'RECORDED';}
+  if(typeof candidate.entityKey!=='string'||!candidate.entityKey)throw Error('EXPENSE_FAILED_JOB_ID_UNCERTAIN');
+  const db=env.DB,key=candidate.entityKey,rows=await db.batch([
+   db.prepare(`INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) SELECT ?,?,?,?,?,?,'OPEN',1,?,? WHERE EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) OR EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=?) ${conflict}`).bind(...args,key,key),
+   db.prepare("SELECT EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) OR EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=?) AS present").bind(key,key)
+  ]);
+  if(env.DB!==db||rows.length!==2||rows.some(r=>r.success!==true)||!Number.isSafeInteger(rows[0]!.meta?.changes)||!Array.isArray(rows[1]!.results)||rows[1]!.results.length!==1)throw Error('EXPENSE_FAILED_JOB_UNCERTAIN');
+  const changed=Number(rows[0]!.meta.changes),present=Number((rows[1]!.results[0] as {present?:unknown}).present);
+  if(changed===1&&present===1)return 'RECORDED';
+  if(changed===0&&present===0)return 'ABSENT';
+  throw Error('EXPENSE_FAILED_JOB_UNCERTAIN');
 }
 export async function resolveFailedJobs(env:Env,queue:string,traceId:string,payload:unknown):Promise<void>{
   // A duplicate success/IGNORED cannot erase a terminal sheet incident.
@@ -91,14 +105,29 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
   const accepted:ScheduledSheetJob[]=[];
   for(let offset=0;offset<scheduled.length;offset+=50){
     const chunk=scheduled.slice(offset,offset+50);
-    const statements=chunk.map(({body:job,nextAttemptAt})=>env.DB.prepare(force
+    const statementOffsets:number[]=[],guardedIndexes=new Set<number>();
+    const statements=chunk.flatMap(({body:job,nextAttemptAt},index)=>{
+      const guarded=!force&&env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.entityType==='EXPENSE';
+      const normalValues=guarded?`SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)`:`VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`;
+      statementOffsets.push(index+guardedIndexes.size);if(guarded)guardedIndexes.add(index);
+      const insert=env.DB.prepare(force
       ?`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE ?<>'EXPENSE' AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=? AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,lease_until=NULL,lease_token=NULL WHERE sync_jobs.entity_type<>'EXPENSE' AND sync_jobs.status NOT IN ('REVIEW','PROCESSING','FAILED') AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`
-      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
-      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt,...(force?[job.entityType,`${job.entityType}:${job.entityKey}:${job.entityVersion}`]:[])));
-    const results=await env.DB.batch(statements);
+      :`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) ${normalValues} ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`)
+      .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt,...(force?[job.entityType,`${job.entityType}:${job.entityKey}:${job.entityVersion}`]:guarded?[job.entityKey]:[]));
+      return guarded?[insert,env.DB.prepare('SELECT EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) AS present').bind(job.entityKey)]:[insert];
+    });
+    const db=env.DB,results=await db.batch(statements);
     if(force){
       if(results.length!==chunk.length||results.some(r=>r.success===false||!Number.isSafeInteger(r.meta?.changes)||Number(r.meta.changes)<0||Number(r.meta.changes)>1))throw Error('SHEETS_FORCE_ENQUEUE_UNCERTAIN');
       for(let i=0;i<chunk.length;i++)if(Number(results[i]!.meta.changes)===1)accepted.push(chunk[i]!);
+    }else if(guardedIndexes.size){
+      if(env.DB!==db||results.length!==statements.length||results.some(r=>r.success!==true))throw Error('EXPENSE_PRODUCER_GUARD_UNCERTAIN');
+      for(let i=0;i<chunk.length;i++){
+        if(!guardedIndexes.has(i)){accepted.push(chunk[i]!);continue;}
+        const insertion=results[statementOffsets[i]!]!,check=results[statementOffsets[i]!+1]!;
+        if(insertion?.success!==true||!Number.isSafeInteger(insertion.meta?.changes)||Number(insertion.meta.changes)<0||Number(insertion.meta.changes)>1||check?.success!==true||!Array.isArray(check.results)||check.results.length!==1)throw Error('EXPENSE_PRODUCER_GUARD_UNCERTAIN');
+        const present=Number((check.results[0] as {present?:unknown}).present);if(present===1)accepted.push(chunk[i]!);else if(present!==0||insertion.meta.changes!==0)throw Error('EXPENSE_PRODUCER_GUARD_UNCERTAIN');
+      }
     }else accepted.push(...chunk);
   }
   await sendScheduledSheetJobs(env,accepted);

@@ -17,6 +17,13 @@ export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
+/** One atomic snapshot of both source and this version's job. This only
+ * suppresses a stale expense hint; it does not authorize source deletion. */
+export async function deletedExpenseOutboxAbsent(env:Env,job:SheetsSyncJob):Promise<boolean>{
+ if(env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED!=='true'||job.entityType!=='EXPENSE')return false;
+ const db=env.DB,result=await db.prepare("SELECT 1 AS absent WHERE NOT EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?)").bind(job.entityKey,job.entityKey,job.entityVersion).first<{absent:number}>();
+ if(env.DB!==db)throw Error('EXPENSE_OUTBOX_SOURCE_UNCERTAIN');return result?.absent===1;
+}
 // The provider mutation has already crossed the boundary. Losing this job
 // lease must not release the workbook or resolve failure evidence.
 export const STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN='STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN';
@@ -113,7 +120,9 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 /** Durable outbox row for a delivery, so acknowledging a message that cannot
  * run yet never loses the job; scheduled recovery re-sends it later. */
 export function sheetSyncOutboxStatement(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
- return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now);
+ const guarded=env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.entityType==='EXPENSE';
+ const values=guarded?`SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)`:`VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`;
+ return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) ${values} ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now,...(guarded?[job.entityKey]:[]));
 }
 export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
  const db=env.DB,result=await sheetSyncOutboxStatement(env,job,new Date(nowMs).toISOString()).run();
@@ -151,6 +160,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  if(await deletedExpenseOutboxAbsent(env,job))return 'IGNORED';
   await assertContinuousNoticeActivation(env,job);
   if(job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_LEGACY_DISABLED');
   const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;

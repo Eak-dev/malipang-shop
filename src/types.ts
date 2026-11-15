@@ -18,6 +18,8 @@ export interface Env {
   ATTENDANCE_ENABLED: string;
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
+  /** Default off: do not reconstruct expense outbox work after source removal. */
+  EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED?: string;
   STABLE_PHASE1_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;

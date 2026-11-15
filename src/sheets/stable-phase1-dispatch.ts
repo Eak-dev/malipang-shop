@@ -1,7 +1,7 @@
 import type {ReviewRequestBudget} from './review-request-budget';
 import {STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
 import type {Env,SheetsSyncJob} from '../types';
-import {claimSheetSyncJob,ensureSheetSyncOutbox,syncJob,STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN,type SheetSyncOutcome} from './sync';
+import {claimSheetSyncJob,deletedExpenseOutboxAbsent,ensureSheetSyncOutbox,syncJob,STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN,type SheetSyncOutcome} from './sync';
 import {newStableSourcePredicate} from './stable-source-cutover';
 import {runStableExpenseJob} from './stable-expense-job';
 import {runStablePersonalJob} from './stable-personal-job';
@@ -24,6 +24,7 @@ export const isStableWorkbookReview=(error:unknown):boolean=>error instanceof Er
 /** Default-off routing. An old financial record is held, never sent through
  * its legacy numeric-row writer. Other workers share the workbook claim. */
 export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,invocationBudget?:ReviewRequestBudget):Promise<StablePhase1Outcome>{
+ if(await deletedExpenseOutboxAbsent(env,job))return 'IGNORED';
  // Reject the unready experimental route before any outbox, lease, workbook
  // claim or legacy write can mutate a potentially mislabeled live binding.
  await assertContinuousNoticeActivation(env,job);
@@ -59,6 +60,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,i
   // duplicate without requeueing or resolving the terminal event.
   const current=await env.DB.prepare(`SELECT s.status,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type||':'||s.entity_key||':'||s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_hold FROM sync_jobs s WHERE s.entity_type=? AND s.entity_key=? AND s.entity_version=?`).bind(job.entityType,job.entityKey,job.entityVersion).first<{status:string;terminal_hold:number}>();
   if(Number(current?.terminal_hold)===1)return 'BLOCKED';
+  if(!current&&await deletedExpenseOutboxAbsent(env,job))return 'IGNORED';
   if(current?.status==='COMPLETED'){await recordCanaryDuplicateDelivery(env,job);return 'IGNORED';}
   return current?.status==='REVIEW'?'REVIEW':'BUSY';
  }

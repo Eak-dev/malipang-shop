@@ -8,7 +8,7 @@ import {continuousAdmissionIntegrity,continuousDailyCutoverIntegrity,continuousR
 import {stableSourceIntegrity} from './stable-source-cutover';
 import {readReviewedDailyExpenseSource} from './stable-expense-source';
 import {planStableExpenseProjections} from './stable-expense-projection-plan';
-import {verifiedInsertDailyPayment} from './insert-daily-writer';
+import {readVerifiedLegacyDailyIds,verifiedInsertDailyPayment} from './insert-daily-writer';
 import {readLegacyDailyCoverage} from './legacy-daily-coverage';
 import {verifyMixedDailyAccounting} from './mixed-daily-accounting';
 import {verifyDailyCarrierEvidence} from './daily-carrier-auth';
@@ -49,10 +49,16 @@ export async function verifyReviewedDailyProjection(env:Env,job:SheetsSyncJob,op
  const take=async()=>{const a=await getSheetGridInfo(env,target.sheet,continuousSheetsReadPolicy),f=await batchGetSheetFormulaValues(env,[range],continuousSheetsReadPolicy),e=await batchGetSheetEffectiveSerialValues(env,[range],continuousSheetsReadPolicy),b=await getSheetGridInfo(env,target.sheet,continuousSheetsReadPolicy);if(!stable()||JSON.stringify(a)!==JSON.stringify(grid)||JSON.stringify(b)!==JSON.stringify(grid)||f.length!==1||e.length!==1)throw Error('DAILY_POSITIVE_READ_UNVERIFIED');return {formula:f[0]!,effective:e[0]!};};
  const snapshot=await take(),payment=verifiedInsertDailyPayment(snapshot.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
  const payload=encodeAtomicDailyPayload({expenseId:job.entityKey,postingYear:payment.postingYear,postingMonth:payment.postingMonth,postingDay:payment.postingDay,description:record.description.trim(),amountColumn:payment.amountColumn,amountSatang:Number(source.expense.amount_satang),category:record.category.trim(),wallet:legacySourceWallet(record.paymentKey,record.sourceWallet),operationMarker:row.marker});
- const legacy=await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,target.sheet,continuousSheetsReadPolicy),formats=await getSheetCellNumberFormats(env,target.sheet,row.sheet_id,row.target_row,continuousSheetsReadPolicy);
+ const legacy=await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,target.sheet,continuousSheetsReadPolicy);
+ const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`;
+ const legacyIds=await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey);
+ // This is an additional duplicate guard for positive verification only;
+ // absence from the legacy tab can never justify dispatch or retry.
+ if(!legacyIds)return false;
+ const formats=await getSheetCellNumberFormats(env,target.sheet,row.sheet_id,row.target_row,continuousSheetsReadPolicy);
  if(!await stableNoticePaused(env,row.notice_stamp,row.notice_identity)||!await matchesCommittedDailyInsert(snapshot,coords,payload,row.before_digest,row.payload_digest)||!verifyMixedDailyAccounting(snapshot,grid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,target.sheet,row.sheet_id,grid.columnCount,snapshot.formula,{entityId:job.entityKey,operationToken,payload})||formats.length!==17||!formats.slice(0,15).every(f=>f?.type==='NUMBER'&&f.pattern==='#,##0.00')||formats[16]?.type!=='DATE'||formats[16]?.pattern!=='dd/MM/yyyy'||await readContinuousReportHealth(env)!=='OK')return false;
  const latest=await readReviewedDailyExpenseSource(env,job,operationToken);
- if(!latest||latest.revision!==source.revision||latest.digest!==source.digest||latest.fingerprint!==source.fingerprint||JSON.stringify(await take())!==JSON.stringify(snapshot)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,target.sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||!await stableNoticePaused(env,row.notice_stamp,row.notice_identity)||!stable())return false;
+ if(!latest||latest.revision!==source.revision||latest.digest!==source.digest||latest.fingerprint!==source.fingerprint||JSON.stringify(await take())!==JSON.stringify(snapshot)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,target.sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey))!==JSON.stringify(legacyIds)||!await stableNoticePaused(env,row.notice_stamp,row.notice_identity)||!stable())return false;
  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId:row.sheet_id,sheetName:row.sheet_name,version:row.source_version,sourceDigest:row.source_digest,row:snapshot.formula[row.target_row-1]??[],width:row.before_columns});
  if(!preimage||!stable())return false;
  const result=await db.batch([

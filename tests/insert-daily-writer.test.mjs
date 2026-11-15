@@ -42,6 +42,7 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim'){
  client.getSheetCellNumberFormats=async()=>[...Array.from({length:15},()=>({type:'NUMBER',pattern:'#,##0.00'})),null,{type:'DATE',pattern:mode==='bad-format'?'yyyy':'dd/MM/yyyy'}];
  client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(range=>range.includes("'รายวัน'!X")?[]:range.includes("'97_EXPENSE_CLEAN'!A2:A2")?[[reportFormula]]:range.includes("'V52_EXPENSE_RAW_ALL'!")?[[reportFormulas.raw]]:range.includes("'V52_PURCHASE_DETAIL_ALL'!")?[[reportFormulas.detail]]:range.includes("'raw_new'!")?rawF.map(r=>r.slice()):range.includes("'detail_new'!")?detailF.map(r=>r.slice()):f.map(r=>r.slice()));
  client.batchGetSheetEffectiveSerialValues=async(_env,ranges)=>ranges.map(range=>{
+  if(range.includes("'รายวัน'!X"))return [];
   if(range.includes("'97_EXPENSE_CLEAN'!")){const header=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];return rawE[1][0]==='exp_test'?[header,[(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,'exp_test','=literal',1.23,'SHOP_BANK','ingredients','V52_CONFIRMED','']]:[header];}
   if(range.includes("'V52_EXPENSE_RAW_ALL'!"))return [['Expense_ID'],...rawE.slice(1).map(r=>[r[0]])];
   if(range.includes("'V52_PURCHASE_DETAIL_ALL'!"))return [['Purchase_Item_ID','Expense_ID'],...detailE.slice(1).map(r=>[r[0],r[1]])];
@@ -68,6 +69,33 @@ test('inserts into first logical row after permanent anchor and verifies durable
  await h.run();assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_projection_preimages WHERE projection='DAILY'").get().n,1);
  await assert.rejects(h.run(),/DUPLICATE_ID/);assert.equal(h.writes(),1);
  }finally{h.close();}});
+test('writer holds when legacy X formula evaluates to its expense ID',async()=>{const h=await fixture();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['=A1']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['MALIPANG_EXPENSE:exp_test']]]:effective(env,ranges,policy);
+ await assert.rejects(h.run(),/INSERT_DAILY_LEGACY_ID_UNVERIFIED/);assert.equal(h.writes(),0);
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes WHERE projection='DAILY'").get().n,0);
+ }finally{h.close();}});
+test('writer holds when legacy X literal and effective snapshots disagree',async()=>{const h=await fixture();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['MALIPANG_EXPENSE:exp_other']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[]]:effective(env,ranges,policy);
+ await assert.rejects(h.run(),/INSERT_DAILY_LEGACY_ID_UNVERIFIED/);assert.equal(h.writes(),0);
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes WHERE projection='DAILY'").get().n,0);
+ }finally{h.close();}});
+test('writer holds a legacy X value beginning with # even when formula and effective values match',async()=>{const h=await fixture();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['#REF!']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['#REF!']]]:effective(env,ranges,policy);
+ await assert.rejects(h.run(),/INSERT_DAILY_LEGACY_ID_UNVERIFIED/);assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes WHERE projection='DAILY'").get().n,0);
+ }finally{h.close();}});
+test('writer holds if legacy X formula result changes before dispatch or after write',async()=>{for(const phase of ['before','after']){const h=await fixture();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;let reads=0;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['=A1']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[[++reads>=(phase==='before'?2:3)?'MALIPANG_EXPENSE:exp_test':'MALIPANG_EXPENSE:exp_other']]]:effective(env,ranges,policy);
+ await assert.rejects(h.run(),phase==='before'?/INSERT_DAILY_PRE_DISPATCH_CHANGED/:/INSERT_DAILY_READBACK_UNCERTAIN/);
+ assert.equal(h.writes(),phase==='before'?0:1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ }finally{h.close();}}});
 test('lost response, format mismatch or shifted-formula tampering leaves intent in flight and does not retry',async()=>{for(const mode of ['timeout','tamper','bad-format']){const h=await fixture();try{
  h.setMode(mode);await assert.rejects(h.run());assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
  await assert.rejects(h.run());assert.equal(h.writes(),1);
@@ -112,6 +140,34 @@ test('positive daily recovery verifies only exact projection and preserves REVIE
  assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_operations WHERE operation_token=?").get(h.claim).state,'ADMITTED');
  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');
  assert.equal(h.writes(),1);assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ }finally{h.close();}});
+test('positive daily recovery holds when the same expense ID is present in legacy X',async()=>{const h=await reviewedLostDaily();try{
+ const original=client.batchGetSheetFormulaValues;let legacyReads=0;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?(legacyReads++,[[['MALIPANG_EXPENSE:exp_test']]]):original(env,ranges,policy);
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ assert.equal(legacyReads,1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');assert.equal(h.writes(),1);
+ }finally{h.close();}});
+test('positive daily recovery holds for a legacy X formula evaluating to a duplicate or error',async()=>{for(const result of ['MALIPANG_EXPENSE:exp_test','#REF!','#LOADING!','#SPILL!','']){const h=await reviewedLostDaily();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['=A1']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[[result]]]:effective(env,ranges,policy);
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false,result);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('positive daily recovery holds if legacy X effective value changes while formula stays the same',async()=>{const h=await reviewedLostDaily();try{
+ const formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues;let reads=0;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[['=A1']]]:formula(env,ranges,policy);
+ client.batchGetSheetEffectiveSerialValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?[[[++reads===1?'MALIPANG_EXPENSE:exp_other':'MALIPANG_EXPENSE:exp_test']]]:effective(env,ranges,policy);
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);assert.equal(reads,2);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{h.close();}});
+test('positive daily recovery holds if legacy X changes between checks',async()=>{const h=await reviewedLostDaily();try{
+ const original=client.batchGetSheetFormulaValues;let legacyReads=0;
+ client.batchGetSheetFormulaValues=async(env,ranges,policy)=>ranges.length===1&&ranges[0].includes("'รายวัน'!X")?(++legacyReads===1?[[]]:[[['MALIPANG_EXPENSE:exp_test']]]):original(env,ranges,policy);
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ assert.equal(legacyReads,2);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');assert.equal(h.writes(),1);
  }finally{h.close();}});
 test('positive daily recovery never infers success from absence, changed formula, notice or changed source',async()=>{for(const mode of ['absent','formula','notice','source','race']){const h=await reviewedLostDaily();try{
  if(mode==='absent')h.formula()[4][24]=null;

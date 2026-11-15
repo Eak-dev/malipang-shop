@@ -59,6 +59,21 @@ async function verifyInsertedNumberFormats(env:Env,sheet:string,sheetId:number,r
  return formats.length===17&&formats.slice(0,15).every(f=>f?.type==='NUMBER'&&f.pattern==='#,##0.00')&&formats[16]?.type==='DATE'&&formats[16]?.pattern==='dd/MM/yyyy';
 }
 
+/** Formula cells in legacy X may evaluate to an ID even when their formula
+ * text contains no ID. Return null for duplicates or unresolved values. */
+export async function readVerifiedLegacyDailyIds(env:Env,range:string,rowCount:number,entityKey:string):Promise<{formula:unknown[][];effective:unknown[][]}|null>{
+ const [formula,effective]=await Promise.all([batchGetSheetFormulaValues(env,[range],continuousSheetsReadPolicy),batchGetSheetEffectiveSerialValues(env,[range],continuousSheetsReadPolicy)]);
+ const valid=(data:unknown[][][]):boolean=>Array.isArray(data)&&data.length===1&&Array.isArray(data[0])&&data[0]!.length<=rowCount&&data[0]!.every(r=>Array.isArray(r)&&r.length<=1&&(r[0]===undefined||r[0]===null||typeof r[0]==='string'||typeof r[0]==='boolean'||typeof r[0]==='number'&&Number.isFinite(r[0])));
+ if(!Number.isSafeInteger(rowCount)||rowCount<1||!valid(formula)||!valid(effective))return null;
+ const f=formula[0]!,e=effective[0]!,key=stableDailyExpenseKey(entityKey);
+ for(let i=0;i<Math.max(f.length,e.length);i++){
+  const fv=f[i]?.[0],ev=e[i]?.[0];
+  const isFormula=typeof fv==='string'&&fv.startsWith('=');
+  if(fv===key||ev===key||typeof ev==='string'&&ev.startsWith('#')||isFormula&&blank(ev)||!isFormula&&!same(fv,ev))return null;
+ }
+ return{formula:f,effective:e};
+}
+
 export function verifiedInsertDailyPayment(rows:unknown[][],key:string,year:number,month:number,day:number):ReturnType<typeof resolvePayment>{
  const payment=resolvePayment(rows.slice(0,3),key,year,month,day),amountColumn=amountCols[payment.amountColumn];
  const names:Record<string,string[]>={cash:['nonfixed'],transfer:['เงินโอน'],kbank:['kbank'],firstchoice:['firstchoice'],aeon:['aeon'],citibank:['cibitbank','citibank','citi'],ttb:['thanachart','ttb'],homepro:['homepro'],t1:['theone','the1']};
@@ -127,8 +142,8 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
   if(error instanceof Error&&/^LEGACY_COVERAGE_[A-Z_]+$/.test(error.message))throw new InsertDailyPreflightReviewError(error.message);
   throw error;
  }
- const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await beforeIntentRead(()=>batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy));
- if(legacyIds.length!==1||legacyIds[0]!.some(r=>r[0]===stableDailyExpenseKey(job.entityKey)))throw Error('INSERT_DAILY_LEGACY_ID_UNVERIFIED');
+ const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await beforeIntentRead(()=>readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey));
+ if(!legacyIds)throw Error('INSERT_DAILY_LEGACY_ID_UNVERIFIED');
  const openings=before.formula.slice(3,243).filter(r=>r[26]===payment.postingYear&&r[27]===payment.postingMonth);
  if(openings.length>1||openings.length===0&&legacy.coverage.openingSatang===null||openings.length===1&&(typeof openings[0]![28]!=='number'||!Number.isFinite(openings[0]![28])||Number(openings[0]![28])<0))throw new InsertDailyDefiniteFailure('MONTH_OPENING');
  if(!verifyMixedDailyAccounting(before,grid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage))throw Error('INSERT_DAILY_ACCOUNTING_UNVERIFIED');
@@ -168,12 +183,12 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  ]);
  if(!stable()||reserved.length!==4||reserved.some(r=>r.success!==true)||Number(reserved[0]!.meta?.changes)!==1||Number(reserved[1]!.meta?.changes)!==1||Number(reserved[2]!.meta?.changes)!==1)throw Error('INSERT_DAILY_RESERVATION_UNCERTAIN');
  const reply=await batchUpdateSpreadsheetWithReply(env,insertContinuousDailyRowRequests(sheetId,row,grid.rowCount,payload),async()=>{
-  if(!await sourceMatches()||JSON.stringify(await snapshot(grid))!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env)!=='OK'||!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
+  if(!await sourceMatches()||JSON.stringify(await snapshot(grid))!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env)!=='OK'||!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
  });
  const replies=reply&&typeof reply==='object'?(reply as {replies?:unknown[]}).replies:undefined;if(!Array.isArray(replies)||replies.length!==3||replies.some(r=>!r||typeof r!=='object'))throw Error('INSERT_DAILY_OUTCOME_UNKNOWN');
  const afterGrid={...grid,rowCount:grid.rowCount+1},after=await snapshot(afterGrid);
  if(!await verifyInsertedNumberFormats(env,sheet,sheetId,row))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
- if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||after.effective[row-1]?.[23]!==key||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
+ if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||after.effective[row-1]?.[23]!==key||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
  const verified=db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,sheetId,sheet,job.entityVersion,source.digest,claim,...args);
  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId,sheetName:sheet,version:job.entityVersion,sourceDigest:source.digest,row:after.formula[row-1]??[],width:grid.columnCount});if(!preimage||!stable())throw Error('INSERT_DAILY_PREIMAGE_UNVERIFIED');
  const result=await db.batch([verified,preimage]);if(result.length!==2||result.some(r=>r.success!==true||Number(r.meta?.changes)!==1))throw Error('INSERT_DAILY_VERIFY_UNCERTAIN');

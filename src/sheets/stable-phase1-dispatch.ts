@@ -12,6 +12,7 @@ import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {runStableExpenseCancellationJob} from './stable-expense-cancellation-job';
 import {recordCanaryDuplicateDelivery} from './canary-duplicate-receipt';
 import {normalNoticeHandoffReady} from './continuous-normal-notice-handoff';
+import {assertContinuousNoticeActivation} from './continuous-notice-activation';
 
 /** BLOCKED: the workbook claim awaits operator review. The durable outbox row
  * is kept unchanged and scheduled recovery re-sends it after the review. */
@@ -24,6 +25,7 @@ export const isStableWorkbookReview=(error:unknown):boolean=>error instanceof Er
 export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):Promise<StablePhase1Outcome>{
  // Reject the unready experimental route before any outbox, lease, workbook
  // claim or legacy write can mutate a potentially mislabeled live binding.
+ await assertContinuousNoticeActivation(env,job);
  const dailyTarget=job.entityType==='EXPENSE'?await assertContinuousDailyActivated(env):null;
  if(env.STABLE_PHASE1_ENABLED!=='true')return syncJob(env,job,attempt);
  if(env.SHEETS_SYNC_ENABLED!=='true')return 'IGNORED';
@@ -38,7 +40,15 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
   const deferred=await env.DB.prepare("SELECT attempt_count FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND last_error='NORMAL_NOTICE_HANDOFF_NOT_READY'").bind(job.entityKey,job.entityVersion).first<{attempt_count:number}>();
   if(deferred&&await normalNoticeHandoffReady(env)){
    const prior=await env.DB.prepare(`SELECT 1 AS present WHERE ? > 0 OR EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|')) OR EXISTS(SELECT 1 FROM stable_expense_cancellation_writes p WHERE p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|')) OR EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.entity_key=? OR substr(i.entity_key,1,length(?)+1)=?||'|') OR EXISTS(SELECT 1 FROM continuous_publication_intents i WHERE i.entity_id=?)`).bind(deferred.attempt_count,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityKey).first<{present:number}>();
-   if(prior){const held=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',last_error='NORMAL_NOTICE_PRIOR_REVERIFY_REQUIRED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND last_error='NORMAL_NOTICE_HANDOFF_NOT_READY'").bind(job.entityKey,job.entityVersion).run();if(held.success!==true||!Number.isSafeInteger(held.meta?.changes))throw Error('NOTICE_PRIOR_HOLD_UNCERTAIN');return held.meta.changes===1?'REVIEW':'BUSY';}
+   if(prior){
+    // Close the prior transient incident so a later, materially different
+    // hold creates its own durable owner notification even if the first was sent.
+    const result=await env.DB.batch([
+     env.DB.prepare("UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='JOB' AND state='OPEN' AND source_id IN (SELECT job_id FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND last_error='NORMAL_NOTICE_HANDOFF_NOT_READY')").bind(job.entityKey,job.entityVersion),
+     env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',last_error='NORMAL_NOTICE_PRIOR_REVERIFY_REQUIRED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND last_error='NORMAL_NOTICE_HANDOFF_NOT_READY'").bind(job.entityKey,job.entityVersion)
+    ]);
+    if(result.length!==2||result.some(x=>x.success!==true)||!Number.isSafeInteger(result[1]!.meta?.changes))throw Error('NOTICE_PRIOR_HOLD_UNCERTAIN');return result[1]!.meta.changes===1?'REVIEW':'BUSY';
+   }
   }
  }
  if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE'){try{return await withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);}catch(error){if(error instanceof Error&&error.message===STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN)return 'REVIEW';if(error instanceof Error&&[STABLE_TERMINAL_HOLD,STABLE_NONFINANCIAL_JOB_CLOSED].includes(error.message))return 'BLOCKED';throw error;}}

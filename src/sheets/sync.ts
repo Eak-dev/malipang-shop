@@ -8,6 +8,7 @@ import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 import {assertLegacyExpensePathAllowed} from './continuous-daily-route';
+import {assertContinuousNoticeActivation} from './continuous-notice-activation';
 export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
@@ -147,6 +148,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  await assertContinuousNoticeActivation(env,job);
   const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow),legacyCutoverSchema);if(!leaseToken){if(job.entityType==='EXPENSE')await assertLegacyExpensePathAllowed(env);if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}

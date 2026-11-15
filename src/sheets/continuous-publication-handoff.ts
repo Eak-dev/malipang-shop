@@ -27,7 +27,8 @@ const isError=(x:unknown)=>typeof x==='string'&&/^#(?:REF!|N\/A|ERROR!|DIV\/0!|V
 
 /** Read-only close proof for one exact publication transition. PUBLISH is
  * intentionally unavailable until its complete post-dispatch request budget
- * is proven. REVIEW with outstanding cancellation projections remains held.
+ * is proven. REVIEW of a verified REVOKE requires separate opt-in, exact
+ * recovery evidence and revalidation of its pre-existing projections.
  * This function never replays a POST or releases a job/claim. */
 export async function verifyPublicationHandoff(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,authority:NormalNoticeAuthority='REVIEW'):Promise<boolean>{
  return verifyPublicationHandoffInternal(env,job,claim,transitionId,mode,policy,authority,false);
@@ -40,7 +41,7 @@ export async function verifyPublicationHandoffCandidate(env:Env,job:SheetsSyncJo
 async function verifyPublicationHandoffInternal(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy,authority:NormalNoticeAuthority,allowPublish:boolean):Promise<boolean>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,budget=policy.budget;
  if(!book||!claim||!transitionId||!(budget instanceof ReviewRequestBudget)||!['PAUSED','REVIEW_READY'].includes(mode)||!['REVIEW','HANDOFF'].includes(authority)||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(job.entityKey)||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1)return false;
- const stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book;
+ const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED,env.CONTINUOUS_PUBLICATION_ENABLED,env.CONTINUOUS_PUBLICATION_SHEET,env.CONTINUOUS_PUBLICATION_SHEET_ID,env.CONTINUOUS_PUBLICATION_ROWS,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.SHEET_EXPENSE_DAILY,job.kind,job.entityType,job.entityKey,job.entityVersion,claim,transitionId,mode,authority]);const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
  const row=await db.prepare("SELECT i.kind,i.sheet_id,i.sheet_name,i.row_number,i.after_value,i.source_digest FROM continuous_publication_intents i JOIN continuous_publication_markers m ON m.spreadsheet_id=i.spreadsheet_id AND m.entity_id=i.entity_id AND m.sheet_id=i.sheet_id AND m.sheet_name=i.sheet_name AND m.row_number=i.row_number AND m.transition_id=i.transition_id AND m.version=i.source_version AND m.marker=i.after_value WHERE i.transition_id=? AND i.spreadsheet_id=? AND i.entity_id=? AND i.source_version=? AND i.claim_token=? AND i.state='VERIFIED'").bind(transitionId,book,job.entityKey,job.entityVersion,claim).first<Row>();
  const marker=decodePublicationCarrier(row?.after_value),target=await resolvePublicationTarget(env);
  if(!stable()||!row||!marker||!target||row.sheet_id!==target.sheetId||row.sheet_name!==target.sheetName||marker.expenseId!==job.entityKey||marker.version!==job.entityVersion||marker.state!==(row.kind==='STAGE'?'STAGED':row.kind==='PUBLISH'?'PUBLISHED':'REVOKED'))return false;
@@ -79,7 +80,7 @@ async function verifyPublicationHandoffInternal(env:Env,job:SheetsSyncJob,claim:
  }
  if(await readContinuousReportHealth(env,{expenseId:job.entityKey,absent:true,absentFromViews:true},{dailySheet:daily.title},policy,snapshot)!=='OK'||!await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority))return false;
  const after=await capturePublicationBatchSnapshot(env,specs,budget),latest=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority);
- return stable()&&JSON.stringify(snapshot)===JSON.stringify(after)&&JSON.stringify(source)===JSON.stringify(latest)&&await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority);
+ if(!stable()||JSON.stringify(snapshot)!==JSON.stringify(after)||JSON.stringify(source)!==JSON.stringify(latest)||!await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority))return false;return stable();
 }
 
 /** Read-only proof for a VERIFIED PUBLISH handoff. This never grants write

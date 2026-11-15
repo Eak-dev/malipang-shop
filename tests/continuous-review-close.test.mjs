@@ -107,3 +107,9 @@ test('normal HANDOFF retains claim if another REVIEW appears after READY',async(
 
 test('HANDOFF lost TIME_VERIFIED transaction ACK resumes from exact durable state without POST replay',async()=>{const h=fixture('HANDOFF');try{assert.equal(await h.runOnce(),'IN_PROGRESS');h.DB.failAfterCommit=true;assert.equal(await h.runOnce(),'IN_PROGRESS');h.DB.failAfterCommit=false;assert.equal(h.sqlite.prepare('SELECT state FROM continuous_review_notice_close').get().state,'TIME_VERIFIED');assert.equal(h.get().writes,1);assert.equal(await h.runOnce(),'IN_PROGRESS');assert.equal(h.get().writes,2);}finally{h.close();}});
 test('HANDOFF lost STATUS_ACKED acknowledgement resumes from exact durable state without POST replay',async()=>{const h=fixture('HANDOFF');try{assert.equal(await h.runOnce(),'IN_PROGRESS');assert.equal(await h.runOnce(),'IN_PROGRESS');h.setMode('ack-lost-after');assert.equal(await h.runOnce(),'IN_PROGRESS');assert.equal(h.sqlite.prepare('SELECT state FROM continuous_review_notice_close').get().state,'STATUS_ACKED');assert.equal(h.get().writes,2);h.setMode('ok');assert.equal(await h.runOnce(),'RESUMED');assert.equal(h.get().writes,2);}finally{h.close();}});
+
+test('review close continues unchanged before the revoke-review migration is installed',async()=>{const h=fixture();try{
+ const {readFileSync}=await import('node:fs');const original=readFileSync(new URL('../migrations/0040_continuous_review_notice_close.sql',import.meta.url),'utf8'),start=original.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_review_close_insert'),end=original.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_review_close_transition',start);
+ h.sqlite.exec('DROP TRIGGER continuous_review_close_insert');h.sqlite.exec(original.slice(start,end));h.sqlite.exec('DROP TABLE continuous_revoke_review_close_activation');
+ assert.equal(await h.run(),'RESUMED');assert.equal(h.get().writes,2);
+ }finally{h.close();}});

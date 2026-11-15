@@ -39,6 +39,30 @@ test('mixed batch does not claim single-message budget evidence',async()=>{
   await worker.queue({queue:'malipang-jobs',messages:[mk('exp_a'),mk('exp_b')]},h.env,{});assert.equal(captured.length,2);assert.ok(captured.every(x=>x.bindingBudget===undefined));
  }finally{dispatch.dispatchStablePhase1=old;h.close();}
 });
+test('paced ten-expense batch meters the one selected writer and accounts for park overhead',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1;let captured,acks=0;
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book',NOTICE_QUEUE:{async send(){}}});h.env.JOB_QUEUE.send=async()=>{};
+  dispatch.dispatchStablePhase1=async(env,_job,_attempt,budget)=>{captured=budget;assert.ok(budget.bindingBudget.attests(env.DB,env.JOB_QUEUE,env.NOTICE_QUEUE));assert.equal(budget.bindingBudget.snapshot().used.d1,3);const t=budget.bindingBudget.reservePost(1,0,1,0);budget.bindingBudget.activatePost(t);await Promise.resolve();await env.DB.prepare('SELECT 1').first();budget.bindingBudget.activateTail(t);return 'BLOCKED';};
+  const messages=Array.from({length:10},(_,i)=>({body:{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${i}`,entityVersion:1,traceId:'fixture'},attempts:1,ack(){acks++;},retry(){assert.fail('unexpected retry');}}));
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});assert.ok(captured);assert.equal(acks,10);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE status='PENDING'").get().n,9);assert.equal(captured.bindingBudget.snapshot().used.d1,4);
+ }finally{dispatch.dispatchStablePhase1=old;h.close();}
+});
+test('failed park never grants budget or dispatches the selected writer',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1;let calls=0,acks=0,retries=0;
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book'});h.DB.failAt=0;dispatch.dispatchStablePhase1=async()=>{calls++;return 'BLOCKED';};
+  const messages=Array.from({length:3},(_,i)=>({body:{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${i}`,entityVersion:1,traceId:'fixture'},attempts:1,ack(){acks++;},retry(){retries++;}}));
+  await worker.queue({queue:'malipang-jobs',messages},h.env,{});assert.equal(calls,0);assert.equal(acks,1);assert.equal(retries,2);
+ }finally{dispatch.dispatchStablePhase1=old;h.close();}
+});
+test('mixed expense and attendance batch preserves existing fairness and wraps only selected expense',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1,seen=[];
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book',NOTICE_QUEUE:{async send(){}}});h.env.JOB_QUEUE.send=async()=>{};
+  dispatch.dispatchStablePhase1=async(env,job,_attempt,budget)=>{seen.push({type:job.entityType,metered:!!budget?.bindingBudget,wrapped:env.DB!==h.DB});return 'BLOCKED';};
+  const mk=(entityType,id)=>({body:{kind:'SHEETS_SYNC',entityType,entityKey:id,entityVersion:1,traceId:'fixture'},attempts:1,ack(){},retry(){assert.fail('unexpected retry');}});
+  for(let i=0;i<2;i++)await worker.queue({queue:'malipang-jobs',messages:[mk('EXPENSE','exp_a'),mk('ATTENDANCE_EVENT','att_a')]},h.env,{});
+  assert.deepEqual(seen,[{type:'EXPENSE',metered:true,wrapped:true},{type:'ATTENDANCE_EVENT',metered:false,wrapped:false}]);
+ }finally{dispatch.dispatchStablePhase1=old;h.close();}
+});
 test('single expense handler retains error-tail D1 and queue capacity after post exhaustion',async()=>{
  const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),repos=require('../dist/db/repositories.js'),alerts=require('../dist/line/sync-failure-alerts.js'),old=[dispatch.dispatchStablePhase1,repos.createFailedJob,alerts.wakeSyncFailureAlerts];let captured,retries=0,sends=0;
  try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true'});h.env.JOB_QUEUE.send=async()=>{sends++;};

@@ -1,16 +1,21 @@
 # Invocation binding budget — local prototype only
 
 The PUBLISH runtime gate remains closed. This local-only prototype wraps D1
-and queue bindings for a single expense message when publication is enabled;
-mixed batches are unchanged. The PUBLISH adapter requires all three bindings
+and queue bindings for an expense message when publication is enabled and
+either it is the only message, or valid pacing selects it from a workbook-only
+batch whose other messages were parked successfully. The latter conservatively
+charges three D1 calls for target lookup, fairness and parking before the wrap.
+LINE-containing, malformed, invalid-pacing and failed-park batches cannot use
+that proof. The PUBLISH adapter requires all three bindings
 to be wrappers of the same invocation tracker, then reserves a provisional
 150 D1 calls and 2 queue calls for verification and a separate 20 D1 calls and
 2 queue calls for error handling before creating its intent. It enters the
 verification scope only after the provider POST returns. This is not a
 deployment plan or evidence that these provisional limits cover all paths.
 
-Focused tests exercise the actual queue handler with one synthetic expense
-and with a mixed batch, plus a grouped PUBLISH adapter with sufficient and
+Focused tests exercise the actual queue handler with one synthetic expense,
+a ten-expense paced batch, expense/attendance fairness and a failed park,
+plus a grouped PUBLISH adapter with sufficient and
 insufficient capacity, a lost provider reply, and postimage verification
 failure. They use a local SQLite fixture and mocked provider. Exhaustion or
 uncertain provider results remain held; these tests do not authorize retry.
@@ -37,9 +42,10 @@ single message. A separate queue would need routing, ownership and recovery.
 
 Before this prototype could support PUBLISH, independently verify that every
 actual D1 and queue call for that invocation uses the same wrapped environment,
-including captured references, error handling and all callbacks. Mixed
-batches deliberately have no such proof and could starve until an isolated
-delivery occurs; no PUBLISH gate has been opened. Establish actual worst-case
+including captured references, error handling and all callbacks. Mixed LINE
+batches deliberately have no such proof; no PUBLISH gate has been opened.
+Sustained LINE-prioritized traffic can still delay expense jobs, even though
+the workbook-only mixed case no longer requires a singleton. Establish actual worst-case
 reservations and whether failure-reporting work can complete after a quota
 error. Sessions, R2, HTTP, Durable Objects, Workers limits, wall time,
 retry/error branches, scheduled and separate notice-worker invocations each

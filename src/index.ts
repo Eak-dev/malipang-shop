@@ -45,7 +45,7 @@ export default{
     // invocation. Mixed batches retain their prior behavior and cannot use
     // this evidence to enable PUBLISH. The hard PUBLISH gate remains closed.
     const single=batch.queue==='malipang-jobs'&&batch.messages.length===1?batch.messages[0]?.body:undefined;
-    const bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
+    let bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
     if(bindingBudget){const scope=bindingBudget.invocationScope();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
     if(batch.queue==="malipang-jobs-dlq"){
       for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;
@@ -108,6 +108,16 @@ export default{
         parkedReady.set(m,ok);
        }
       }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
+    }
+    // A paced workbook-only batch also has one writer. Account conservatively
+    // for the three possible pre-wrap D1 calls (recovery target, fairness CAS,
+    // parked batch). All other messages are already persisted; their only
+    // remaining action here is ack/retry. Never grant this evidence to a LINE
+    // batch, invalid pacing, a failed park, unknown job, or an HR writer.
+    const selected=chosenSheet?.body as WorkbookQueueJob|undefined;
+    if(!bindingBudget&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&batch.queue==='malipang-jobs'&&stablePacingValid(env)&&!includesLine&&!parkedBatchFailed&&selected?.kind==='SHEETS_SYNC'&&selected.entityType==='EXPENSE'&&batch.messages.every(m=>isWorkbookQueueJob(m.body as WorkbookQueueJob))&&parked.every(m=>parkedReady.get(m)===true)){
+      bindingBudget=new InvocationBindingBudget({d1:850,queue:8});for(let i=0;i<3;i++)bindingBudget.consume('d1');const scope=bindingBudget.invocationScope();
+      env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};
     }
     try{await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation',bindingBudget):undefined;
       // If parked outbox persistence failed, do not spend an expense writer's

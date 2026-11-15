@@ -88,6 +88,7 @@ function durableIncidentText(row:DurableIncident):string{
    : reason==='CONTINUOUS_NOTICE_PROOF_UNVERIFIED'?'ตรวจผลการซิงก์ใน Sheets ไม่ผ่านหลังลองตรวจซ้ำ (รหัส CONTINUOUS_NOTICE_PROOF_UNVERIFIED)'
    : reason==='CONTINUOUS_NOTICE_RUNNER_STALLED'?'งานตรวจสถานะซิงก์ค้าง ผลใน Sheets ยังไม่ชัดเจน (รหัส CONTINUOUS_NOTICE_RUNNER_STALLED)'
    : reason==='REVOKE_REVIEW_CLEANUP_COUNT_CHANGED'?'จำนวนรายการรอตรวจเปลี่ยนระหว่างอัปเดตสถานะชีต ระบบจึงพักซิงก์ไว้ (รหัส REVOKE_REVIEW_CLEANUP_COUNT_CHANGED)'
+   : reason==='REVOKE_REVIEW_RUNNER_HELD'?'ตรวจผลการยกเลิกใน Sheets ไม่ครบ ระบบจึงพักซิงก์ไว้ (รหัส REVOKE_REVIEW_RUNNER_HELD)'
    : reason==='CONTINUOUS_SYNC_LEASE_EXPIRED_UNCERTAIN'?'งานซิงก์หมดเวลาการประมวลผล ผลใน Sheets ยังไม่ชัดเจน (รหัส CONTINUOUS_SYNC_LEASE_EXPIRED_UNCERTAIN)'
    : status==='401'||status==='403'?'สิทธิ์เข้าถึง Sheets ไม่ผ่าน':status==='429'?'Sheets จำกัดจำนวนคำขอชั่วคราว':
      status&&Number(status)>=500?'บริการ Sheets ขัดข้องชั่วคราว':

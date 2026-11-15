@@ -2,22 +2,24 @@ import {applyPendingUndoAfterNotice,recordDeferredUndoApplyIssue,sweepPendingUnd
 import type {Env} from './types';
 import {normalNoticeHandoffEnabled} from './sheets/continuous-normal-notice-handoff';
 import {runNoticeDispatch} from './sheets/continuous-notice-dispatch';
+import {runRevokeReviewDispatch,sweepRevokeReviewDispatch} from './sheets/continuous-revoke-review-dispatch';
 import {wakeSyncFailureAlerts} from './line/sync-failure-alerts';
 import {issueNoticeProbe,verifyNoticeProbe} from './sheets/continuous-notice-readiness';
 
-type NoticeMessage={dispatchId:string}|{probeId:string};
+type NoticeMessage={dispatchId:string}|{probeId:string}|{revokeReviewDispatchId:string};
 /** Isolated entrypoint: no batch may share a phase's request budget. */
 export default {
  async queue(batch:MessageBatch<NoticeMessage>,env:Env):Promise<void>{
   if(batch.queue!=='malipang-continuous-notice-phases'||batch.messages.length!==1){for(const message of batch.messages)message.retry();return;}
   const message=batch.messages[0]!;
   if(!normalNoticeHandoffEnabled(env)){if(message.body&&'probeId' in message.body)message.ack();else message.retry();return;}
-  try{if('probeId' in message.body){await verifyNoticeProbe(env,message.body.probeId);message.ack();}else {const result=await runNoticeDispatch(env,message.body?.dispatchId);if(result==='DISABLED'||result==='RUNNING')message.retry({delaySeconds:60});else {if(result==='DONE'||result==='DUPLICATE')try{await applyPendingUndoAfterNotice(env,message.body?.dispatchId);}catch{await recordDeferredUndoApplyIssue(env,message.body?.dispatchId);}message.ack();}}}catch{message.retry();}
+  try{if('probeId' in message.body){await verifyNoticeProbe(env,message.body.probeId);message.ack();}else if('revokeReviewDispatchId' in message.body){const result=await runRevokeReviewDispatch(env,message.body.revokeReviewDispatchId);if(result==='DISABLED'||result==='RUNNING')message.retry({delaySeconds:60});else message.ack();}else {const result=await runNoticeDispatch(env,message.body?.dispatchId);if(result==='DISABLED'||result==='RUNNING')message.retry({delaySeconds:60});else {if(result==='DONE'||result==='DUPLICATE')try{await applyPendingUndoAfterNotice(env,message.body?.dispatchId);}catch{await recordDeferredUndoApplyIssue(env,message.body?.dispatchId);}message.ack();}}}catch{message.retry();}
  },
  async scheduled(_event:ScheduledController,env:Env):Promise<void>{
   if(!normalNoticeHandoffEnabled(env)||!env.GOOGLE_SPREADSHEET_ID)return;
   try{await sweepPendingUndoAfterNotice(env);}catch{console.error('DEFERRED_UNDO_SWEEP_UNAVAILABLE');}
   if(!env.NOTICE_QUEUE)return;
+  try{await sweepRevokeReviewDispatch(env);}catch{console.error('revoke-review-dispatch-unavailable');}
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
   try{await issueNoticeProbe(env,'NOTICE_CRON');}catch{/* Missing proof keeps the gate closed. */}
   // A stale runner is never stolen: it is held and surfaced as an incident.

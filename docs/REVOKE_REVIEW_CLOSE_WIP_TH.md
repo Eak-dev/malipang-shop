@@ -6,7 +6,7 @@
 
 ยังไม่พร้อมเปิดใช้:
 
-- ยังไม่มี scheduler หรือ route ที่เรียก positive recovery และ REVIEW close ให้ครบลำดับ
+- มี candidate dedicated dispatch บน notice worker/queue เดิม (ปิดค่าเริ่มต้น); ยังต้องตรวจ provider จริง งบ D1 และสถานะค้างทุก phase ก่อนเปิดใช้
 - เพิ่ม candidate ที่ rearm epoch REVIEW → ARMED เฉพาะ REVOKE เดิมเมื่อ positive proof, inactive lease และ source revision ตรงกันใน D1; ยังไม่ต่อ scheduler หรือทดสอบ provider จริง
 - มีต้นแบบ guarded cleanup คง claim และใช้ nonce จน status ถูกอ่านกลับแล้วเท่านั้นก่อนปล่อย claim; หากจำนวน REVIEW เปลี่ยนระหว่าง cleanup จะคง claim และสร้าง incident แจ้งเหตุหนึ่งครั้ง ไม่ replay ผลไม่ชัด ยังต้องตรวจอิสระและทดสอบ provider จริง
 - ค่า source revision ระดับระบบยังอาจเปลี่ยนเมื่อเอกสารไม่เกี่ยวข้องเข้ามาระหว่าง REVOKE ทำให้ต้องพักตรวจหลังส่ง POST และ fingerprint candidate ยังต้องผ่านการทบทวนและผสานแบบครบเส้นทาง

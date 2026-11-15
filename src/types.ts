@@ -23,6 +23,7 @@ export interface Env {
   CONTINUOUS_PUBLICATION_ENABLED?: string;
   CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED?: string;
   CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED?: string;
+  CONTINUOUS_REVOKE_REVIEW_RUNNER_ENABLED?: string;
   CONTINUOUS_UNDO_SERIALIZATION_ENABLED?: string;
   CONTINUOUS_PUBLICATION_SHEET?: string;
   CONTINUOUS_PUBLICATION_SHEET_ID?: string;
@@ -43,7 +44,7 @@ export interface Env {
   CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED?: string;
   CONTINUOUS_NOTICE_DISPATCH_ENABLED?: string;
   CONTINUOUS_NOTICE_DEPLOYMENT_ID?: string;
-  NOTICE_QUEUE?: Queue<{dispatchId:string}|{probeId:string}>;
+  NOTICE_QUEUE?: Queue<{dispatchId:string}|{probeId:string}|{revokeReviewDispatchId:string}>;
   /** Opt-in D1-serialized pacing for Google Sheets projection operations. */
   STABLE_SHEETS_PACING_ENABLED?: string;
   STABLE_SHEETS_READ_BUDGET_PER_MINUTE?: string;

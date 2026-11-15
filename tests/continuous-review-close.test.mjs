@@ -110,6 +110,6 @@ test('HANDOFF lost STATUS_ACKED acknowledgement resumes from exact durable state
 
 test('review close continues unchanged before the revoke-review migration is installed',async()=>{const h=fixture();try{
  const {readFileSync}=await import('node:fs');const original=readFileSync(new URL('../migrations/0040_continuous_review_notice_close.sql',import.meta.url),'utf8'),start=original.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_review_close_insert'),end=original.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_review_close_transition',start);
- h.sqlite.exec('DROP TRIGGER continuous_review_close_insert');h.sqlite.exec(original.slice(start,end));h.sqlite.exec('DROP TABLE continuous_revoke_review_close_activation');
+ h.sqlite.exec('DROP TRIGGER continuous_review_close_insert');h.sqlite.exec(original.slice(start,end));const oldStatus=readFileSync(new URL('../migrations/0044_continuous_notice_status_attempt.sql',import.meta.url),'utf8'),a=oldStatus.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_insert'),b=oldStatus.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_no_update',a);h.sqlite.exec('DROP TRIGGER continuous_notice_status_attempt_insert');h.sqlite.exec(oldStatus.slice(a,b));h.sqlite.exec('DROP TABLE continuous_revoke_review_close_activation');
  assert.equal(await h.run(),'RESUMED');assert.equal(h.get().writes,2);
  }finally{h.close();}});

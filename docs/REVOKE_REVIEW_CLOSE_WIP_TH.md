@@ -8,6 +8,6 @@
 
 - ยังไม่มี scheduler หรือ route ที่เรียก positive recovery และ REVIEW close ให้ครบลำดับ
 - รองรับเฉพาะ epoch ที่ยัง ARMED; หาก epoch เป็น REVIEW หลัง expired-lease recovery ต้องมีกระบวนการกู้ที่พิสูจน์ผลเดิมก่อน เพราะ schema เดิมไม่อนุญาต REVIEW กลับเป็น ARMED
-- เมื่อ job นี้เป็น REVIEW รายการสุดท้าย notice อาจยังแสดงว่ามีรายการรอตรวจหลัง job กลับเป็น PENDING เพราะเลือกข้อความก่อน D1 commit ต้องเพิ่ม guarded cleanup โดยคง claim จนแก้ข้อความสำเร็จและใช้ nonce เฉพาะครั้ง เพื่อไม่ให้ POST ที่ตอบช้าทับ notice ของงานถัดไป ห้ามแก้ด้วยการเขียน status ซ้ำหลังปล่อย claim
+- มีต้นแบบ guarded cleanup คง claim และใช้ nonce จน status ถูกอ่านกลับแล้วเท่านั้นก่อนปล่อย claim; ทดสอบ timeout และ POST ตอบช้าด้วย provider จำลองแล้ว แต่ยังต้องตรวจอิสระและทดสอบ provider จริงก่อนเปิดใช้
 - ค่า source revision ระดับระบบยังอาจเปลี่ยนเมื่อเอกสารไม่เกี่ยวข้องเข้ามาระหว่าง REVOKE ทำให้ต้องพักตรวจหลังส่ง POST และ fingerprint candidate ยังต้องผ่านการทบทวนและผสานแบบครบเส้นทาง
 - ยังต้องพิสูจน์สิทธิ์เขียน พฤติกรรม provider การป้องกัน writer อื่น และผลรายงานของไฟล์จริง รวมถึง migration และทดสอบระบบจริงก่อนเปิด gate

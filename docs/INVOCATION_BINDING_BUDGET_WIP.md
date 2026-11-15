@@ -1,7 +1,17 @@
 # Invocation binding budget — local prototype only
 
-The PUBLISH runtime gate remains closed. This standalone prototype is not
-wired into any Worker, queue, D1 or Sheets call and is not a deployment plan.
+The PUBLISH runtime gate remains closed. This local-only prototype wraps D1
+and queue bindings for a single expense message when publication is enabled;
+mixed batches are unchanged. The PUBLISH adapter reserves a provisional 150
+D1 calls and 2 queue calls before creating its intent and enters the reserved
+scope only after the provider POST returns. This is not a deployment plan or
+evidence that these provisional limits cover all paths.
+
+Focused tests exercise the actual queue handler with one synthetic expense
+and with a mixed batch, plus a grouped PUBLISH adapter with sufficient and
+insufficient capacity, a lost provider reply, and postimage verification
+failure. They use a local SQLite fixture and mocked provider. Exhaustion or
+uncertain provider results remain held; these tests do not authorize retry.
 
 `InvocationBindingBudget` provides a shared counter for D1 and Queue binding
 calls. One `db.batch()` counts as one D1 invocation query, consistent with
@@ -18,14 +28,14 @@ It can still spend D1 and queue calls elsewhere in the same invocation.
 LINE/HR throughput and does not itself account for D1 operations within the
 single message. A separate queue would need routing, ownership and recovery.
 
-Before this prototype could support PUBLISH, integration must ensure that all
-actual D1 and queue calls for the entire invocation use the same counter,
-reserve before any potentially ambiguous provider write, and pass the
-privileged post-write wrapper to every verification/handoff path. Existing
-closures retain `env`, so merely constructing the wrapper does not accomplish
-that. Raw binding references, sessions, R2, HTTP, Durable Objects, Workers
-limits, wall time, retry/error branches, scheduled and separate notice-worker
-invocations each need explicit scope and proof. A post-write reservation is
-not a promise that Sheets, D1 or the queue will respond successfully. Tests
-are synthetic and do not establish paid-plan status, live quotas, end-to-end
-recovery, supported D1 binding compatibility or provider behavior.
+Before this prototype could support PUBLISH, independently verify that every
+actual D1 and queue call for that invocation uses the same wrapped environment,
+including captured references, error handling and all callbacks. Mixed
+batches deliberately have no such proof and could starve until an isolated
+delivery occurs; no PUBLISH gate has been opened. Establish actual worst-case
+reservations and whether failure-reporting work can complete after a quota
+error. Sessions, R2, HTTP, Durable Objects, Workers limits, wall time,
+retry/error branches, scheduled and separate notice-worker invocations each
+need explicit scope and proof. A post-write reservation is not a promise that
+Sheets, D1 or the queue will respond. Tests are synthetic and do not establish
+live quotas, end-to-end recovery, binding compatibility or provider behavior.

@@ -18,6 +18,8 @@ export type PublicationExecutor={
  commit:()=>Promise<boolean>;
  /** Release reservations after a POST has returned or its outcome is held. */
  release?:()=>void;
+ /** Release invocation-level reserves after positive recovery or failure. */
+ finalize?:()=>void;
 };
 
 export function validPublicationBefore(column:PublicationColumn,intent:PublicationIntent):boolean{
@@ -43,11 +45,13 @@ export async function executePublicationIntent(intent:PublicationIntent,io:Publi
  const operation=request(intent);
  if(!validPublicationBefore(await io.read(),intent)||!await io.guard('BEFORE'))throw Error('PUBLICATION_PREFLIGHT_UNVERIFIED');
  try{
-  if(!await io.persist())throw Error('PUBLICATION_INTENT_UNVERIFIED');
-  if(!validPublicationBefore(await io.read(),intent)||!await io.guard('BEFORE'))throw Error('PUBLICATION_DISPATCH_UNVERIFIED');
-  try{await io.dispatch(operation);}catch{throw Error('PUBLICATION_OUTCOME_UNKNOWN');}
- }finally{io.release?.();}
- await recoverPublicationIntent(intent,io);
+  try{
+   if(!await io.persist())throw Error('PUBLICATION_INTENT_UNVERIFIED');
+   if(!validPublicationBefore(await io.read(),intent)||!await io.guard('BEFORE'))throw Error('PUBLICATION_DISPATCH_UNVERIFIED');
+   try{await io.dispatch(operation);}catch{throw Error('PUBLICATION_OUTCOME_UNKNOWN');}
+  }finally{io.release?.();}
+  await recoverPublicationIntent(intent,io);
+ }finally{io.finalize?.();}
 }
 
 /** Read-only on Sheets: only the complete exact positive postimage permits a

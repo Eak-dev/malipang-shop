@@ -1,4 +1,5 @@
 import {ReviewRequestBudget} from './sheets/review-request-budget';
+import {InvocationBindingBudget} from './sheets/invocation-binding-budget';
 import { AttendanceCoordinator } from "./durable/attendance-coordinator";
 import { handleAdmin } from "./admin/handler";
 import { createFailedJob,InboundBusyError,resolveFailedJobs } from "./db/repositories";
@@ -40,6 +41,12 @@ export default{
     return new Response("Not found",{status:404});
   },
   async queue(batch:MessageBatch<QueueJob>,env:Env,ctx:ExecutionContext):Promise<void>{
+    // Experimental accounting only for one expense message in this exact
+    // invocation. Mixed batches retain their prior behavior and cannot use
+    // this evidence to enable PUBLISH. The hard PUBLISH gate remains closed.
+    const single=batch.queue==='malipang-jobs'&&batch.messages.length===1?batch.messages[0]?.body:undefined;
+    const bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
+    if(bindingBudget){const scope=()=>bindingBudget.activePost();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
     if(batch.queue==="malipang-jobs-dlq"){
       for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;
         if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}
@@ -102,7 +109,7 @@ export default{
        }
       }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
     }
-    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation'):undefined;
+    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation',bindingBudget):undefined;
       // If parked outbox persistence failed, do not spend an expense writer's
       // budget alongside individual HR fallback checks in this invocation.
       if(parkedBatchFailed&&message===chosenSheet&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){

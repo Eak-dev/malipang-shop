@@ -24,3 +24,18 @@ test('queue entry passes one publication budget through dispatch and counts cont
   await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});assert.equal(captured.used,48);assert.equal(captured.queueUsed,1);assert.equal(sends,1);assert.equal(acks,1);
  }finally{dispatch.dispatchStablePhase1=old;h.close();}
 });
+test('single expense handler meters D1 and queue calls in the same invocation',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1;let captured,acks=0;
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true'});h.env.JOB_QUEUE.send=async()=>{};
+  dispatch.dispatchStablePhase1=async(env,_job,_attempt,budget)=>{captured=budget;await env.DB.prepare('SELECT 1 AS n').first();await env.DB.batch([env.DB.prepare('SELECT 2'),env.DB.prepare('SELECT 3')]);return 'CONTINUE';};
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:1,traceId:'synthetic'},message={body:job,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected retry');}};
+  await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});assert.ok(captured.bindingBudget);assert.deepEqual(captured.bindingBudget.snapshot().used,{d1:2,queue:1});assert.equal(acks,1);
+ }finally{dispatch.dispatchStablePhase1=old;h.close();}
+});
+test('mixed batch does not claim single-message budget evidence',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1,captured=[];
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true'});dispatch.dispatchStablePhase1=async(_env,_job,_attempt,budget)=>{captured.push(budget);return 'BLOCKED';};
+  const mk=(id)=>({body:{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:id,entityVersion:1,traceId:'synthetic'},attempts:1,ack(){},retry(){assert.fail('unexpected retry');}});
+  await worker.queue({queue:'malipang-jobs',messages:[mk('exp_a'),mk('exp_b')]},h.env,{});assert.equal(captured.length,2);assert.ok(captured.every(x=>x.bindingBudget===undefined));
+ }finally{dispatch.dispatchStablePhase1=old;h.close();}
+});

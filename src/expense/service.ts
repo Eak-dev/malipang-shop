@@ -1,4 +1,4 @@
-import { createFailedJob,enqueueSheetSync } from "../db/repositories";
+import { createFailedJob,enqueueSheetSync,InboundBusyError } from "../db/repositories";
 import { respondFlexToLineEvent,respondTextToLineEvent } from "../line/event-response";
 import { randomId,sha256Hex } from "../shared/ids";
 import { addDays,isIsoDate,isoDateInBangkok } from "../shared/time";
@@ -408,7 +408,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     if(linkedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:linkedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
     if(linkedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:linkedOrderId,documentType:document.documentType,documentId,now}));
     try{await env.DB.batch(linkedStatements);}
-    catch(error){if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
+    catch(error){if(String(error).includes("publication source is resolving"))throw new InboundBusyError();if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");

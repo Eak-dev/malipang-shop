@@ -57,3 +57,7 @@ test('a real persistence failure still fails the inbound event rather than being
   assert.equal(r.h.sqlite.prepare('SELECT COUNT(*) n FROM expense_events').get().n,1);
  }finally{r.h.close();}
 });
+test('inbound busy retains uploaded image and marks event retryable',async t=>{const r=await imageRun(t);try{
+ const {createRequire}=await import('node:module'),require=createRequire(import.meta.url),service=require('../dist/expense/service.js'),{InboundBusyError}=require('../dist/db/repositories.js');const evidence=[];r.h.env.EVIDENCE.put=async(...args)=>{evidence.push(args);};t.mock.method(service,'handleExpenseImage',async()=>{throw new InboundBusyError();});
+ const event=r.h.event('fixture_owner',{timestamp:Date.parse('2026-10-27T05:00:00Z'),message:{id:'revoke-busy-image',type:'image'}});await assert.rejects(processInbound({...r.job,event,traceId:'revoke-busy'},r.h.env,{}),e=>e instanceof InboundBusyError);assert.equal(evidence.length,1);assert.match(evidence[0][0],/revoke-busy-image/);assert.ok(evidence[0][1].byteLength>0);assert.equal(r.h.sqlite.prepare("SELECT status FROM inbound_events WHERE message_id='revoke-busy-image'").get().status,'FAILED');
+ }finally{r.h.close();}});

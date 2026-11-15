@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {normalNoticeHandoffEnabled,hasNormalNoticeHandoff,finishFinalNormalStage} from './continuous-normal-notice-handoff';
 import {readStableExpenseSource} from './stable-expense-source';
 import {planStableExpenseProjections} from './stable-expense-projection-plan';
 import {writeNewExpenseLedgerUnderClaim} from './stable-expense-ledger-writer';
@@ -8,7 +9,7 @@ import {withStableWorkbookClaim} from './stable-workbook-claim';
 import {stableWorkbookClaimOwned} from './stable-workbook-claim';
 import {verifyStableExpenseProjections} from './stable-expense-final-check';
 import {admitStableRecovery,recoveryGateConfigured,recoveryGateValid} from './stable-recovery-admission';
-import {SheetsHttpError,SheetsReadNetworkError} from './client';
+import {SheetsHttpError,SheetsReadNetworkError,continuousSheetsReadPolicy,getSpreadsheetSheetProperties} from './client';
 import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from './google-auth';
 import {OperationTimeoutError} from '../shared/async';
 import {assertContinuousDailyActivated} from './continuous-daily-route';
@@ -16,6 +17,16 @@ import {chooseContinuousDailyCutover,continuousAdmissionIntegrity,continuousDail
 import {InsertDailyDefiniteFailure,InsertDailyPendingCancellationError,InsertDailyPreflightReviewError,insertDailyExpenseUnderClaim} from './insert-daily-writer';
 import {writeCarrierLedgerUnderClaim} from './atomic-expense-ledger-writer';
 import {executeUnwrittenExpenseCancellation} from './unwritten-expense-cancellation-candidate';
+import {resolvePublicationTarget} from './continuous-publication-route';
+import {publicationOperationUnderClaim} from './continuous-publication-operation';
+import {decodePublicationCarrier} from './continuous-publication-template';
+import {readPublicationAccountingEvidence,type PublicationAccountingTarget} from './publication-accounting-evidence';
+import {verifyPublicationFinalGuard} from './continuous-publication-final-guard';
+import {ReviewRequestBudget} from './review-request-budget';
+import {planPublicationSnapshot} from './publication-snapshot-plan';
+import {capturePublicationBatchSnapshot} from './publication-batch-snapshot';
+import {normalNoticeHandoffReady} from './continuous-normal-notice-handoff';
+import {publicationHandoffHooks} from './publication-handoff-hooks';
 
 /** These codes apply only before notice-mutation authorization. OAuth only
  * exchanges a token; it is not a Sheets business write. */
@@ -124,8 +135,10 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
  // This gate must run before acquiring the workbook claim, which itself
  // changes D1 and the owner notice. A mislabeled test binding must not touch
  // Production even when the experimental route is accidentally enabled.
- const scope=()=>JSON.stringify([env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
+ const scope=()=>JSON.stringify([env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,env.CONTINUOUS_REVIEW_CLOSE_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
  const target=await assertContinuousDailyActivated(env),targetScope=scope();
+ const publicationTarget=await resolvePublicationTarget(env);
+ if(publicationTarget&&(!target||env.STABLE_SHEETS_PACING_ENABLED!=='true'||!normalNoticeHandoffEnabled(env)||!await normalNoticeHandoffReady(env)))throw Error('PUBLICATION_ROUTE_DISABLED');
  return withStableWorkbookClaim(env,async claim=>{
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,source=await readStableExpenseSource(env,job,lease,claim);
@@ -147,22 +160,40 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   }
   if(dailyChoice?.status==='CONTINUOUS'&&(dailyChoice.sheet!==target?.sheet||dailyChoice.sheetId!==target.sheetId))throw Error('CONTINUOUS_DAILY_TARGET_CHANGED');
   const projections=planStableExpenseProjections(source);
+  const publicationBudget=publicationTarget&&dailyChoice?.status==='CONTINUOUS'?new ReviewRequestBudget(40):undefined;
+  let publication:PublicationAccountingTarget|undefined;
+  const verifyPublicationTarget=async()=>JSON.stringify(await resolvePublicationTarget(env))===JSON.stringify(publicationTarget)&&targetScope===scope();
+  if(publicationTarget&&publicationBudget){
+   const prior=await db.prepare("SELECT marker,row_number FROM continuous_publication_markers WHERE spreadsheet_id=? AND entity_id=?").bind(book,job.entityKey).first<{marker:string;row_number:number}>();
+   if(!prior){
+    const journals=await db.prepare("SELECT 1 AS found FROM stable_projection_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND (entity_id=? OR substr(entity_id,1,length(?)+1)=?||'|') LIMIT 1").bind(book,job.entityKey,job.entityKey,job.entityKey).first<{found:number}>();
+    if(journals)throw Error('PUBLICATION_UNJOURNALED_CARRIER');
+    const hooks=publicationHandoffHooks(env,job,claim,lease,source.revision,'STAGE');
+    const staged=await publicationOperationUnderClaim(env,'STAGE',{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,detailCount:projections.details.length,target:publicationTarget,budget:publicationBudget,verifyTarget:verifyPublicationTarget,verifyProjections:async()=>false,...hooks});
+    if(staged.state!=='STAGED')throw Error('PUBLICATION_STAGE_UNVERIFIED');
+    const handoff=await db.prepare("SELECT transition_id FROM continuous_publication_markers WHERE spreadsheet_id=? AND entity_id=? AND state='STAGED'").bind(book,job.entityKey).first<{transition_id:string}>();if(!handoff||!await hooks.verifyHandoff(handoff.transition_id))throw Error('PUBLICATION_STAGE_CONTINUE_UNCERTAIN');return 'CONTINUE';
+   }
+   const marker=decodePublicationCarrier(prior.marker);
+   if(!marker||marker.expenseId!==job.entityKey||marker.version!==job.entityVersion||marker.detailCount!==projections.details.length||!['STAGED','PUBLISHED'].includes(marker.state)||!Number.isSafeInteger(prior.row_number))throw Error('PUBLICATION_MARKER_UNVERIFIED');
+   publication={sheet:publicationTarget.sheetName,sheetId:publicationTarget.sheetId,rows:publicationTarget.rows,row:prior.row_number,expected:marker,sourceDigest:source.digest};
+  }
   const recorded=await db.prepare("SELECT entity_id,projection,sheet_id,sheet_name,source_version,source_digest,state,operation_token FROM stable_projection_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND (entity_id=? OR substr(entity_id,1,length(?)+1)=?||'|')").bind(book,job.entityKey,job.entityKey,job.entityKey).all<{entity_id:string;projection:string;sheet_id:number;sheet_name:string;source_version:number;source_digest:string;state:string;operation_token?:string}>();
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
   if(recorded.success!==true||!Array.isArray(recorded.results))throw Error('STABLE_EXPENSE_JOURNAL_UNVERIFIED');
   const journals=recorded.results,expected=[{id:job.entityKey,projection:'DAILY'},{id:job.entityKey,projection:'EXPENSE_RAW'},...projections.details.map(item=>({id:`${job.entityKey}|${item.itemId}`,projection:'DETAIL'}))];
   if(journals.some(j=>j.state!=='VERIFIED'||j.source_version!==job.entityVersion||j.source_digest!==source.digest||!expected.some(e=>e.id===j.entity_id&&e.projection===j.projection)))throw Error('STABLE_EXPENSE_JOURNAL_CONFLICT');
   const missing=expected.find(e=>!journals.some(j=>j.entity_id===e.id&&j.projection===e.projection));
+  if(publication&&missing&&publication.expected.state!=='STAGED')throw Error('PUBLICATION_MARKER_UNVERIFIED');
   try{
    if(missing?.projection==='DAILY'){
-    if(target&&dailyChoice?.status==='CONTINUOUS')await insertDailyExpenseUnderClaim(env,job,lease,claim,source,target.sheet,target.sheetId);
+    if(target&&dailyChoice?.status==='CONTINUOUS')await insertDailyExpenseUnderClaim(env,job,lease,claim,source,target.sheet,target.sheetId,publication,publicationBudget);
     else await writeNewDailyUnderClaim(env,job,lease,claim,source);
    }
    else if(missing?.projection==='EXPENSE_RAW'){
-    if(target&&dailyChoice?.status==='CONTINUOUS')await writeCarrierLedgerUnderClaim(env,job,lease,claim,source,'EXPENSE_RAW');
+    if(target&&dailyChoice?.status==='CONTINUOUS')await writeCarrierLedgerUnderClaim(env,job,lease,claim,source,'EXPENSE_RAW',undefined,publication,publicationBudget);
     else await writeNewExpenseLedgerUnderClaim(env,job,lease,claim,source,'EXPENSE_RAW');
    }else if(missing?.projection==='DETAIL'){
-    if(target&&dailyChoice?.status==='CONTINUOUS')await writeCarrierLedgerUnderClaim(env,job,lease,claim,source,'DETAIL',missing.id.slice(job.entityKey.length+1));
+    if(target&&dailyChoice?.status==='CONTINUOUS')await writeCarrierLedgerUnderClaim(env,job,lease,claim,source,'DETAIL',missing.id.slice(job.entityKey.length+1),publication,publicationBudget);
     else await writeNewExpenseLedgerUnderClaim(env,job,lease,claim,source,'DETAIL',missing.id.slice(job.entityKey.length+1));
    }
   }catch(error){
@@ -200,26 +231,44 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    return 'CAPACITY_REVIEW';
   }
   if(missing){
+   if(normalNoticeHandoffEnabled(env)){if(await hasNormalNoticeHandoff(env,claim,job))return 'CONTINUE';throw Error('NORMAL_NOTICE_HANDOFF_MISSING');}
    // A verified projection is durable before yielding. A new invocation gets
    // a fresh subrequest budget and rechecks source and every journal. Never
    // resume an ambiguous IN_FLIGHT write.
-   const next=await db.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='STABLE_STAGE_CONTINUE' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity} AND EXISTS(SELECT 1 FROM stable_source_revision r WHERE r.singleton=1 AND r.revision=?) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD') AND EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')`).bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,book,missing.id,missing.projection,job.entityVersion,source.digest).run();
+   const nextStatement=db.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='STABLE_STAGE_CONTINUE' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity} AND EXISTS(SELECT 1 FROM stable_source_revision r WHERE r.singleton=1 AND r.revision=?) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD') AND EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')`).bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,book,missing.id,missing.projection,job.entityVersion,source.digest);
+   const next=await nextStatement.run();
    if(next.success!==true||Number(next.meta?.changes)!==1)throw Error('STABLE_EXPENSE_CONTINUE_UNCERTAIN');
    return 'CONTINUE';
   }
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
-  await verifyStableExpenseProjections(env,job,source,journals);
+  if(publication&&publicationTarget&&publicationBudget&&publication.expected.state==='STAGED'){
+   const hooks=publicationHandoffHooks(env,job,claim,lease,source.revision,'PUBLISH');
+   await publicationOperationUnderClaim(env,'PUBLISH',{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,detailCount:projections.details.length,target:publicationTarget,budget:publicationBudget,verifyTarget:verifyPublicationTarget,verifyProjections:(phase,after,row,pending,snapshot,oauthLease)=>verifyPublicationFinalGuard(env,job,source,journals,publicationTarget,claim,phase,after,row,publicationBudget,pending,snapshot,oauthLease),...hooks});
+   const handoff=await db.prepare("SELECT transition_id FROM continuous_publication_markers WHERE spreadsheet_id=? AND entity_id=? AND state='PUBLISHED'").bind(book,job.entityKey).first<{transition_id:string}>();if(!handoff||!await hooks.verifyHandoff(handoff.transition_id))throw Error('PUBLICATION_PUBLISH_CONTINUE_UNCERTAIN');return 'CONTINUE';
+  }
+  if(publication&&!await verifyPublicationTarget())throw Error('PUBLICATION_TARGET_CHANGED');
+  const policy=publicationBudget?{...continuousSheetsReadPolicy,budget:publicationBudget}:continuousSheetsReadPolicy;
+  const finalSnapshot=publication&&publicationTarget&&publicationBudget?await capturePublicationBatchSnapshot(env,await planPublicationSnapshot(env,await getSpreadsheetSheetProperties(env,policy),publicationTarget),publicationBudget):undefined;
+  const publicationEvidence=publication?await readPublicationAccountingEvidence(env,publication,policy,finalSnapshot):undefined;
+  await verifyStableExpenseProjections(env,job,source,journals,publicationEvidence?{...publicationEvidence,phase:'PUBLISHED'}:undefined,policy,finalSnapshot);
+  if(publication&&!await verifyPublicationTarget())throw Error('PUBLICATION_TARGET_CHANGED');
   const latest=await readStableExpenseSource(env,job,lease,claim);if(!latest||latest.revision!==source.revision||latest.digest!==source.digest||latest.fingerprint!==source.fingerprint)throw Error('STABLE_EXPENSE_SOURCE_CHANGED');
   if(!await stableWorkbookClaimOwned(env,claim))throw Error('STABLE_EXPENSE_CLAIM_CHANGED');
+  if(normalNoticeHandoffEnabled(env)){
+   const manifest=journals.map(({entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token})=>({entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token})).sort((a,b)=>a.projection.localeCompare(b.projection)||a.entity_id.localeCompare(b.entity_id));
+   await finishFinalNormalStage(env,job,claim,lease,'CONFIRM',source.revision,source.digest,JSON.stringify(manifest));return 'CONTINUE';
+  }
   const itemKeys=JSON.stringify(projections.details.map(item=>`${job.entityKey}|${item.itemId}`));
+  const publicationFinalGuard=publication?" AND EXISTS(SELECT 1 FROM continuous_publication_markers p JOIN continuous_publication_intents i ON i.transition_id=p.transition_id AND i.state='VERIFIED' AND i.kind='PUBLISH' WHERE p.spreadsheet_id=? AND p.entity_id=? AND p.sheet_id=? AND p.sheet_name=? AND p.row_number=? AND p.version=? AND p.state='PUBLISHED' AND p.marker=i.after_value AND i.source_digest=?) AND NOT EXISTS(SELECT 1 FROM continuous_publication_intents pending WHERE pending.spreadsheet_id=? AND pending.entity_id=? AND pending.state IN ('IN_FLIGHT','REVIEW'))":'';
   const completed=await db.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL
    WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity}
    AND EXISTS(SELECT 1 FROM stable_source_revision r WHERE r.singleton=1 AND r.revision=?)
    AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD')
    AND ${newStableSourcePredicate('EXPENSE')}
    AND (SELECT count(*) FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection IN ('DAILY','EXPENSE_RAW') AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')=2
-   AND (SELECT count(*) FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.projection='DETAIL' AND p.entity_id IN (SELECT value FROM json_each(?)) AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')=?`)
-   .bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,source.digest,book,itemKeys,job.entityVersion,source.digest,projections.details.length).run();
+   AND (SELECT count(*) FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.projection='DETAIL' AND p.entity_id IN (SELECT value FROM json_each(?)) AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')=?
+   AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.projection='DETAIL' AND substr(p.entity_id,1,length(?)+1)=?||'|' AND p.entity_id NOT IN (SELECT value FROM json_each(?))) ${publicationFinalGuard}`)
+   .bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,source.digest,book,itemKeys,job.entityVersion,source.digest,projections.details.length,book,job.entityKey,job.entityKey,itemKeys,...(publication?[book,job.entityKey,publication.sheetId,publication.sheet,publication.row,job.entityVersion,publication.sourceDigest,book,job.entityKey]:[])).run();
   if(completed.success!==true||Number(completed.meta?.changes)!==1)throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
   return 'COMPLETED';
  },job,target?async(claim,error)=>{

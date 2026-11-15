@@ -12,21 +12,21 @@ export async function dailyCancelTombstone(operationToken:string):Promise<string
 /** Only the target carrier, its calculated cells and later running balances
  * in the same month may differ. All other values and formulas are bound to
  * the pre-dispatch image; accounting must independently verify masked cells. */
-export async function dailyCancelMaskedDigest(snapshot:CancelSnapshot,c:CancelCoordinates):Promise<string>{
+export async function dailyCancelMaskedDigest(snapshot:CancelSnapshot,c:CancelCoordinates,publication=false):Promise<string>{
  if(!validCoords(c)||!validSnapshot(snapshot,c))throw Error('DAILY_CANCEL_EVIDENCE_INVALID');
  const data=[snapshot.formula,snapshot.effective].map((grid,kind)=>Array.from({length:c.rowCount},(_,r)=>Array.from({length:c.columnCount},(_,col)=>{
-  const masked=kind===0?r===c.row-1&&col===24:r===c.row-1&&cancelledDailyEffectiveCells.has(col)||r>=c.row&&(col===9||col===18)&&snapshot.effective[r]?.[0]===c.year&&snapshot.effective[r]?.[1]===c.month;
+  const masked=kind===0?r===c.row-1&&col===24:r===c.row-1&&(cancelledDailyEffectiveCells.has(col)||publication&&col===25)||r>=c.row&&(col===9||col===18)&&snapshot.effective[r]?.[0]===c.year&&snapshot.effective[r]?.[1]===c.month;
   const v=grid[r]?.[col];return masked||blank(v)?null:v;
  })));
- return hash(JSON.stringify(['daily-cancel-before-v1',c.sheetId,c.row,c.rowCount,c.columnCount,c.year,c.month,data]));
+ return hash(JSON.stringify([publication?'daily-cancel-before-publication-v1':'daily-cancel-before-v1',c.sheetId,c.row,c.rowCount,c.columnCount,c.year,c.month,data]));
 }
 
 /** Positive postimage only; callers additionally verify accounting, source,
  * exact journal/claim/epoch, notice and grid stability before recording it. */
-export async function matchesCommittedDailyCancellation(snapshot:CancelSnapshot,c:CancelCoordinates,entityId:string,tombstone:string,maskedBeforeDigest:string):Promise<boolean>{
+export async function matchesCommittedDailyCancellation(snapshot:CancelSnapshot,c:CancelCoordinates,entityId:string,tombstone:string,maskedBeforeDigest:string,publication=false):Promise<boolean>{
  if(!validCoords(c)||!validSnapshot(snapshot,c)||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(entityId)||!/^MPD1_CANCELLED_[0-9a-f]{64}$/.test(tombstone)||!/^[0-9a-f]{64}$/.test(maskedBeforeDigest))return false;
  const row=c.row-1,f=snapshot.formula[row]??[],e=snapshot.effective[row]??[];
- if(f[24]!==tombstone||e[24]!==tombstone||!blank(e[4])||[...cancelledDailyEffectiveCells].some(col=>col!==24&&!blank(e[col])))return false;
+ if(f[24]!==tombstone||e[24]!==tombstone||!blank(e[4])||publication&&!blank(e[25])||[...cancelledDailyEffectiveCells].some(col=>col!==24&&!blank(e[col])))return false;
  if(snapshot.formula.filter(r=>r[24]===tombstone).length!==1||snapshot.formula.some(r=>decodeAtomicDailyPayload(r[24])?.expenseId===entityId))return false;
- return await dailyCancelMaskedDigest(snapshot,c)===maskedBeforeDigest;
+ return await dailyCancelMaskedDigest(snapshot,c,publication)===maskedBeforeDigest;
 }

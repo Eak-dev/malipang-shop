@@ -54,7 +54,7 @@ test('retained workbook review and terminal sheet failure emit durable distinct 
  }finally{h.close();}});
 
 test('workbook alerts explain recognized causes and do not expose unknown error contents',async()=>{
- for(const [reason,expected] of [['SHEETS_MUTATION_OUTCOME_UNKNOWN:TIMEOUT',/ยังยืนยันผลไม่ได้/],['SHEETS_READ:HTTP_403',/สิทธิ์เข้าถึง Sheets ไม่ผ่าน/],['SHEETS_READ:HTTP_429',/จำกัดจำนวนคำขอ/],['private provider token',/ยังระบุสาเหตุที่แน่ชัดไม่ได้/]]){
+ for(const [reason,expected] of [['SHEETS_MUTATION_OUTCOME_UNKNOWN:TIMEOUT',/ยังยืนยันผลไม่ได้/],['SHEETS_READ:HTTP_403',/สิทธิ์เข้าถึง Sheets ไม่ผ่าน/],['SHEETS_READ:HTTP_429',/จำกัดจำนวนคำขอ/],['CONTINUOUS_NOTICE_FAILURE:STOPPED:GOOGLE_OAUTH_CREDENTIAL_INVALID',/GOOGLE_OAUTH_CREDENTIAL_INVALID/],['CONTINUOUS_NOTICE_FAILURE:UNKNOWN:SHEETS_MUTATION_OUTCOME_UNKNOWN',/ผลคำสั่ง Sheets ยังไม่ชัดเจน/],['CONTINUOUS_NOTICE_OUTCOME_UNKNOWN',/ส่งคำสั่งสถานะไป Sheets แล้ว/],['CONTINUOUS_NOTICE_PROOF_UNVERIFIED',/ตรวจผลการซิงก์ใน Sheets ไม่ผ่าน/],['CONTINUOUS_NOTICE_RUNNER_STALLED',/งานตรวจสถานะซิงก์ค้าง/],['private provider token',/ยังระบุสาเหตุที่แน่ชัดไม่ได้/]]){
   const h=fixture();try{
    h.sqlite.prepare("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at,review_reason) VALUES('book','token','REVIEW','now','now',?)").run(reason);
    assert.equal(await sweepSyncFailureAlerts(h.env),1);assert.match(h.sent[0].messages[0].text,expected);

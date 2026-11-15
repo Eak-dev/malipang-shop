@@ -91,3 +91,8 @@ function admitPreCutoverForTest(h,digest='a'.repeat(64)){
 test('admitted pre-cutover first attempt can cancel only for exact digest',async()=>{for(const digest of ['a'.repeat(64),'c'.repeat(64)]){const h=fixture();try{
  admitPreCutoverForTest(h,digest);const c=await buildUnwrittenExpenseCancellationCandidate(h.env,h.input());if(digest[0]==='a'){await h.DB.batch(c.statements);assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CANCELLED')}else{await assert.rejects(h.DB.batch(c.statements));assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CONFIRMED')}
 }finally{h.close()}}});
+
+test('deferred oversized Sheets response retains the exact safe error code',async()=>{const h=fixture();try{
+ h.env.LINE_OWNER_USER_ID='';assert.equal(await executeUnwrittenExpenseCancellation(h.env,{...h.input(),reason:'SHEETS_READ',errorCode:'SHEETS_READ_RESPONSE_TOO_LARGE'}),true);
+ h.env.LINE_OWNER_USER_ID='owner';assert.equal(await recoverDeferredAutoCancelAlerts(h.env),1);assert.match(h.notifications[0].messages[0].text,/SHEETS_READ_RESPONSE_TOO_LARGE/);assert.equal(await recoverDeferredAutoCancelAlerts(h.env),0);
+}finally{h.close()}});

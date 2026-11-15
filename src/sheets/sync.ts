@@ -138,9 +138,11 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
    ? legacyCutoverSchema?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers WHERE spreadsheet_id=?)":" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers)")
     :" AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers')"
    :'';
-  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence;
+  const normalNoticeFence=job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_normal_notice_handoffs h JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.operation_token=h.operation_token WHERE h.spreadsheet_id=? AND h.expense_id=sync_jobs.entity_key AND h.source_version=sync_jobs.entity_version AND c.state='HELD' AND c.phase='END_NOTICE_PENDING')":" AND 0"):'';
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence+normalNoticeFence;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
   if(job.entityType==='EXPENSE'&&legacyCutoverSchema===true&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }

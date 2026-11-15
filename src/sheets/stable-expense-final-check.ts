@@ -1,4 +1,4 @@
-import {continuousSheetsReadPolicy} from './client';
+import {continuousSheetsReadPolicy,type ContinuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSheetGridInfo} from './client';
 import {columnName,findMonthBlocks,legacySourceWallet,resolvePayment} from './daily-expense';
@@ -16,18 +16,23 @@ import {continuousDailyCutoverIntegrity} from './continuous-daily-cutover';
 import {stableSourceIntegrity} from './stable-source-cutover';
 import {readContinuousReportHealth} from './continuous-report-health';
 import {readLegacyDailyCoverage,type LegacyDailySnapshot} from './legacy-daily-coverage';
+import {publicationSnapshotRange,type PublicationBatchSnapshot} from './publication-batch-snapshot';
+import type {DailyPublicationAccountingEvidence} from './mixed-daily-accounting';
 
 const rawHeaders=['Expense_ID','Transaction_Date','Description','Amount_Baht','Payment_Key','Source_Wallet','Category','Status','Message_ID','Trace_ID','Submitted_By_Staff_ID','Branch_ID','Document_ID','Document_Type','Vendor','Document_Number','Order_ID'];
 const detailHeaders=['Purchase_Item_ID','Expense_ID','Document_ID','วันที่ซื้อ','บริษัท/ร้านค้า','เลขที่เอกสาร','รายการสินค้า','จำนวน','หน่วย','ราคาต่อหน่วย','ส่วนลดรายการ','จำนวนเงินรายการ','ส่วนลด/ปรับยอดระดับเอกสาร','ยอดจ่ายจริงของ Expense','หมวด','สาขา','สถานะ','Evidence ref (private)','Created_At','Updated_At / Cancelled_At'];
 type Journal={entity_id:string;projection:string;sheet_id:number;sheet_name:string;source_version:number;source_digest:string;state:string;operation_token?:string};
+export type PublicationFinalEvidence=DailyPublicationAccountingEvidence&{phase:'STAGED'|'PUBLISHED'};
 
 /** Verify the complete current workbook immediately before closing a staged
  * expense. Journal evidence alone cannot prove that a person did not edit an
  * earlier projection between stages. */
-export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,source:StableExpenseSource,journals:Journal[]):Promise<void>{
+export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,source:StableExpenseSource,journals:Journal[],publication?:PublicationFinalEvidence,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,snapshot?:PublicationBatchSnapshot):Promise<void>{
  const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,env.SHEET_EXPENSE_RAW,env.SHEET_PURCHASE_DETAILS,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.EXTERNAL_API_TIMEOUT_MS,env.STABLE_PHASE1_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]),initialScope=scope(),db=env.DB;
  const target=await assertContinuousDailyActivated(env),dailyJournal=journals.find(j=>j.entity_id===job.entityKey&&j.projection==='DAILY'),daily=dailyJournal?.sheet_name||env.SHEET_EXPENSE_DAILY;
  const atomic=!!target&&daily===target.sheet;
+ const publicationCopy=publication?{...publication,markers:new Map(publication.markers)}:undefined;
+ if(publicationCopy&&(!atomic||!['STAGED','PUBLISHED'].includes(publicationCopy.phase)||publicationCopy.allowAbsentStaged!==undefined||publicationCopy.markers.get(job.entityKey)?.state!==publicationCopy.phase||publicationCopy.markers.get(job.entityKey)?.version!==job.entityVersion))throw Error('STABLE_FINAL_PUBLICATION');
  if(daily!==env.SHEET_EXPENSE_DAILY&&!atomic)throw Error('STABLE_FINAL_DAILY_TARGET');
  if(atomic&&dailyJournal?.sheet_id!==target!.sheetId)throw Error('STABLE_FINAL_DAILY_TARGET');
  const plan=planStableExpenseProjections(source),rawTarget=atomic?resolveCarrierLedgerTarget(env,'EXPENSE_RAW'):null,detailTarget=atomic?resolveCarrierLedgerTarget(env,'DETAIL'):null,raw=rawTarget?.sheet||env.SHEET_EXPENSE_RAW,detail=detailTarget?.sheet||env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ';
@@ -35,19 +40,19 @@ export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,s
  if(names.some(x=>!x)||new Set(names).size!==names.length)throw Error('STABLE_FINAL_SHEET_ALIAS');
  const expected=[{id:job.entityKey,projection:'DAILY',sheet:daily},{id:job.entityKey,projection:'EXPENSE_RAW',sheet:raw},...plan.details.map(x=>({id:`${job.entityKey}|${x.itemId}`,projection:'DETAIL',sheet:detail}))];
  if(journals.length!==expected.length||expected.some(e=>journals.filter(j=>j.entity_id===e.id&&j.projection===e.projection&&j.sheet_name===e.sheet&&j.source_version===job.entityVersion&&j.source_digest===source.digest&&j.state==='VERIFIED').length!==1))throw Error('STABLE_FINAL_JOURNAL');
- const grids=await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?continuousSheetsReadPolicy:undefined)));
+ const grids=snapshot?names.map(name=>{const s=snapshot.metadata.find(x=>x.title===name);if(!s)throw Error('STABLE_FINAL_GRID');return{sheetId:s.sheetId,rowCount:s.rowCount,columnCount:s.columnCount};}):await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?policy:undefined)));
  if(grids.some(g=>g.rowCount>5000||g.columnCount>100)||grids[0]!.columnCount<25||grids[1]!.columnCount<rawHeaders.length||plan.details.length&&grids[2]!.columnCount<detailHeaders.length)throw Error('STABLE_FINAL_GRID');
  for(const e of expected){const grid=grids[names.indexOf(e.sheet)]!,j=journals.find(x=>x.entity_id===e.id&&x.projection===e.projection)!;if(j.sheet_id!==grid.sheetId)throw Error('STABLE_FINAL_GRID');}
  const ranges=names.map((name,i)=>`'${name.replace(/'/g,"''")}'!A1:${columnName(grids[i]!.columnCount)}${grids[i]!.rowCount}`);
- const formula=await batchGetSheetFormulaValues(env,ranges,atomic?continuousSheetsReadPolicy:undefined),effective=await batchGetSheetEffectiveSerialValues(env,atomic?ranges:[ranges[0]!],atomic?continuousSheetsReadPolicy:undefined);
- const after=await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?continuousSheetsReadPolicy:undefined)));
+ const formula=snapshot?grids.map(g=>publicationSnapshotRange(snapshot,g.sheetId,1,g.rowCount,1,g.columnCount,'FORMULA')):await batchGetSheetFormulaValues(env,ranges,atomic?policy:undefined),effective=snapshot?grids.slice(0,atomic?grids.length:1).map(g=>publicationSnapshotRange(snapshot,g.sheetId,1,g.rowCount,1,g.columnCount,'EFFECTIVE')):await batchGetSheetEffectiveSerialValues(env,atomic?ranges:[ranges[0]!],atomic?policy:undefined);
+ const after=snapshot?grids:await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?policy:undefined)));
  if(formula.length!==names.length||effective.length!==(atomic?names.length:1)||JSON.stringify(grids)!==JSON.stringify(after)||formula.some((rows,i)=>rows.length>grids[i]!.rowCount||rows.some(row=>!Array.isArray(row)||row.length>grids[i]!.columnCount))||effective.some((rows,i)=>rows.length>grids[i]!.rowCount||rows.some(row=>!Array.isArray(row)||row.length>grids[i]!.columnCount)))throw Error('STABLE_FINAL_READ');
  const d=formula[0]!,v=effective[0]!,e=source.expense,date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(e.transaction_date||''));if(!date)throw Error('STABLE_FINAL_DATE');let legacy:LegacyDailySnapshot|undefined;
  if(atomic){
   if(!dailyJournal)throw Error('STABLE_FINAL_DAILY_TARGET');
   const payment=resolvePayment(d.slice(0,3),plan.record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
-  legacy=await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,daily,atomic?continuousSheetsReadPolicy:undefined);
-  await verifyInsertedDailyFinalSnapshot(env,job,source,daily,grids[0]!.sheetId,grids[0]!,{formula:d,effective:v},dailyJournal,legacy.coverage);
+  legacy=await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,daily,atomic?policy:undefined,snapshot);
+  await verifyInsertedDailyFinalSnapshot(env,job,source,daily,grids[0]!.sheetId,grids[0]!,{formula:d,effective:v},dailyJournal,legacy.coverage,publicationCopy,policy);
  }else{
  const payment=resolvePayment(d.slice(0,3),plan.record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3])),blocks=findMonthBlocks(d).filter(b=>b.month===payment.postingMonth),key=stableDailyExpenseKey(job.entityKey),found=d.flatMap((row,i)=>row[23]===key?[i+1]:[]);
  if(blocks.length!==1||found.length!==1)throw Error('STABLE_FINAL_DAILY_ID');
@@ -72,7 +77,18 @@ export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,s
   if(rawHeaders.some((h,i)=>formula[1]![0]?.[i]!==h)||planStableLedgerRow(formula[1]!,job.entityKey,plan.raw,false).status!=='PRESENT')throw Error('STABLE_FINAL_RAW');
   if(plan.details.length&&(detailHeaders.some((h,i)=>formula[2]![0]?.[i]!==h)||plan.details.some(item=>planStableLedgerRow(formula[2]!,item.itemId,item.values,false).status!=='PRESENT')))throw Error('STABLE_FINAL_DETAIL');
  }
- if(legacy&&JSON.stringify(await readLegacyDailyCoverage(env,legacy.coverage.year,legacy.coverage.month,daily,atomic?continuousSheetsReadPolicy:undefined))!==JSON.stringify(legacy))throw Error('STABLE_FINAL_LEGACY_CHANGED');
- if(atomic&&await readContinuousReportHealth(env,{expenseId:job.entityKey,transactionDate:plan.record.transactionDate,amountSatang:Number(source.expense.amount_satang),wallet:plan.record.sourceWallet,category:plan.record.category,itemIds:plan.details.map(item=>item.itemId)})!=='OK')throw Error('STABLE_FINAL_REPORT_UNVERIFIED');
+ if(legacy&&JSON.stringify(await readLegacyDailyCoverage(env,legacy.coverage.year,legacy.coverage.month,daily,atomic?policy:undefined,snapshot))!==JSON.stringify(legacy))throw Error('STABLE_FINAL_LEGACY_CHANGED');
+ if(atomic){
+  const report=publicationCopy?.phase==='STAGED'?{expenseId:job.entityKey,absent:true as const,absentFromViews:true}:{expenseId:job.entityKey,transactionDate:plan.record.transactionDate,amountSatang:Number(source.expense.amount_satang),wallet:plan.record.sourceWallet,category:plan.record.category,itemIds:plan.details.map(item=>item.itemId)};
+  if(await readContinuousReportHealth(env,report,publicationCopy?{dailySheet:daily}:undefined,policy,snapshot)!=='OK')throw Error('STABLE_FINAL_REPORT_UNVERIFIED');
+ }
  if(env.DB!==db||scope()!==initialScope)throw Error('STABLE_FINAL_SCOPE_CHANGED');
+}
+
+/** Separate post-publication readback. It repeats source projections,
+ * preimages, accounting, installed formulas and exact report item coverage;
+ * the caller must independently re-read the published marker immediately
+ * before and after this check. */
+export async function verifyStableExpensePostpublication(env:Env,job:SheetsSyncJob,source:StableExpenseSource,journals:Journal[],publication:DailyPublicationAccountingEvidence):Promise<void>{
+ await verifyStableExpenseProjections(env,job,source,journals,{...publication,phase:'PUBLISHED'});
 }

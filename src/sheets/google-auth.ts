@@ -1,7 +1,29 @@
 import type { Env } from "../types";
+import type {ReviewRequestBudget} from "./review-request-budget";
 import { fetchWithTimeout,OperationTimeoutError,withTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
-let cache:{token:string;expiresAt:number}|null=null;
+let cache:{token:string;expiresAt:number;email:string;key:string}|null=null;
+export class GoogleOAuthLeaseError extends Error{constructor(code:'GOOGLE_OAUTH_LEASE_SCOPE_CHANGED'|'GOOGLE_OAUTH_LEASE_EXPIRED'|'GOOGLE_OAUTH_LEASE_INVALID'|'GOOGLE_OAUTH_LEASE_UNAVAILABLE'){super(code);this.name='GoogleOAuthLeaseError';}}
+/** A request-scoped token, never serialized or logged. It must outlive the
+ * complete bounded phase and cannot silently refresh after provider dispatch. */
+export class GoogleOAuthLease{
+ #token:string;#email:string;#key:string;#book:string;#expiresAt:number;#deadline:number;
+ constructor(token:string,email:string,key:string,book:string,expiresAt:number,deadline:number){this.#token=token;this.#email=email;this.#key=key;this.#book=book;this.#expiresAt=expiresAt;this.#deadline=deadline;}
+ tokenFor(env:Env):string{
+  if(env.GOOGLE_SERVICE_ACCOUNT_EMAIL!==this.#email||env.GOOGLE_PRIVATE_KEY_BASE64!==this.#key||env.GOOGLE_SPREADSHEET_ID!==this.#book)throw new GoogleOAuthLeaseError('GOOGLE_OAUTH_LEASE_SCOPE_CHANGED');
+  if(Date.now()>=this.#deadline||this.#expiresAt<=this.#deadline+60000)throw new GoogleOAuthLeaseError('GOOGLE_OAUTH_LEASE_EXPIRED');
+  return this.#token;
+ }
+}
+/** The lease deadline bounds token usage across all pre/post reads. Network
+ * failures or deadline expiry still hold the operation; they never authorize
+ * retry. This does not alter the default unleased authentication path. */
+export async function createGoogleOAuthLease(env:Env,budget:ReviewRequestBudget,durationMs:number):Promise<GoogleOAuthLease>{
+ if(!Number.isSafeInteger(durationMs)||durationMs<1000||durationMs>60000)throw new GoogleOAuthLeaseError('GOOGLE_OAUTH_LEASE_INVALID');
+ const email=env.GOOGLE_SERVICE_ACCOUNT_EMAIL,key=env.GOOGLE_PRIVATE_KEY_BASE64,book=env.GOOGLE_SPREADSHEET_ID,token=await getGoogleAccessToken(env,budget),deadline=Date.now()+durationMs;
+ if(typeof email!=='string'||typeof key!=='string'||typeof book!=='string'||!book||env.GOOGLE_SERVICE_ACCOUNT_EMAIL!==email||env.GOOGLE_PRIVATE_KEY_BASE64!==key||env.GOOGLE_SPREADSHEET_ID!==book||!cache||cache.token!==token||cache.expiresAt<=deadline+60000)throw new GoogleOAuthLeaseError('GOOGLE_OAUTH_LEASE_UNAVAILABLE');
+ return new GoogleOAuthLease(token,email,key,book,cache.expiresAt,deadline);
+}
 /** Keep provider response bodies out of exceptions and owner alerts. */
 export class GoogleOAuthHttpError extends Error{
   constructor(public readonly status:number){super(`GOOGLE_OAUTH_HTTP_${status}`);this.name='GoogleOAuthHttpError';}
@@ -34,8 +56,9 @@ async function readOAuthBody(res:Response,remainingMs:number):Promise<unknown>{
     try{reader.releaseLock();}catch{}
   }
 }
-export async function getGoogleAccessToken(env:Env):Promise<string>{
-  if(cache&&cache.expiresAt>Date.now()+60000)return cache.token;
+export async function getGoogleAccessToken(env:Env,budget?:ReviewRequestBudget,lease?:GoogleOAuthLease):Promise<string>{
+  if(lease)return lease.tokenFor(env);
+  if(cache&&cache.email===env.GOOGLE_SERVICE_ACCOUNT_EMAIL&&cache.key===env.GOOGLE_PRIVATE_KEY_BASE64&&cache.expiresAt>Date.now()+60000)return cache.token;
   let assertion:string;
   try{
     if(typeof env.GOOGLE_SERVICE_ACCOUNT_EMAIL!=='string'||!env.GOOGLE_SERVICE_ACCOUNT_EMAIL.trim()||typeof env.GOOGLE_PRIVATE_KEY_BASE64!=='string'||!env.GOOGLE_PRIVATE_KEY_BASE64.trim())throw Error('invalid');
@@ -43,7 +66,7 @@ export async function getGoogleAccessToken(env:Env):Promise<string>{
     const key=await importKey(env.GOOGLE_PRIVATE_KEY_BASE64),sig=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(input));assertion=`${input}.${b64url(new Uint8Array(sig))}`;
   }catch{throw new GoogleOAuthPreflightError('GOOGLE_OAUTH_CREDENTIAL_INVALID');}
   let res:Response;const timeoutMs=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),startedAt=Date.now();
-  try{res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion})},timeoutMs,"Google OAuth");}
+  try{budget?.consumeRead();res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion}),...(budget?{redirect:"error" as RequestRedirect}:{})},timeoutMs,"Google OAuth");}
   catch(error){if(error instanceof TypeError)throw new GoogleOAuthPreflightError('GOOGLE_OAUTH_NETWORK');throw error;}
   if(!res.ok){try{await Promise.race([res.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);}catch{}throw new GoogleOAuthHttpError(res.status);}
   const data=await readOAuthBody(res,Math.max(1,Math.floor(timeoutMs-(Date.now()-startedAt))));
@@ -51,5 +74,5 @@ export async function getGoogleAccessToken(env:Env):Promise<string>{
   const {access_token:token,expires_in:expires}=data as {access_token?:unknown;expires_in?:unknown};
   // Google documents a maximum OAuth access-token size of 2,048 bytes.
   if(typeof token!=='string'||!token||token.length>2048||!/^[\x21-\x7e]+$/.test(token)||typeof expires!=='number'||!Number.isFinite(expires)||expires<=0||expires>31536000)throw new GoogleOAuthPreflightError('GOOGLE_OAUTH_RESPONSE_INVALID');
-  cache={token,expiresAt:Date.now()+expires*1000};return token;
+  cache={token,expiresAt:Date.now()+expires*1000,email:env.GOOGLE_SERVICE_ACCOUNT_EMAIL,key:env.GOOGLE_PRIVATE_KEY_BASE64};return token;
 }

@@ -5,6 +5,10 @@ import {stableDailyExpenseKey} from './daily-stable-row-plan';
 import type {VerifiedLegacyCoverage} from './legacy-daily-coverage';
 
 type Snapshot={formula:unknown[][];effective:unknown[][]};
+/** The caller must independently verify the complete publication column,
+ * including malformed/duplicate/missing markers, before constructing this
+ * evidence. This verifier never reads Sheets or authorizes publication. */
+export type DailyPublicationAccountingEvidence={sheet:string;rows:number;markers:ReadonlyMap<string,{state:'STAGED'|'PUBLISHED'|'REVOKED';version:number}>;allowAbsentStaged?:string};
 const blank=(v:unknown)=>v===undefined||v===null||v==='';
 const same=(a:unknown,b:unknown)=>blank(a)&&blank(b)||a===b;
 const money=(v:unknown):v is number=>typeof v==='number'&&Number.isFinite(v)&&v>=0&&Number.isSafeInteger(Math.round(v*100))&&Math.abs(v*100-Math.round(v*100))<0.0001;
@@ -18,8 +22,9 @@ const columns:Record<string,number>={F:5,G:6,H:7,K:10,L:11,M:12,N:13,O:14,P:15,Q
  * only if its formula and effective running balance match the combined old
  * and new monthly accounting; the original draft J will fail when it omits
  * nonzero legacy spending. */
-export function verifyMixedDailyAccounting(snapshot:Snapshot,rowCount:number,columnCount:number,year:number,month:number,legacy:VerifiedLegacyCoverage):boolean{
+export function verifyMixedDailyAccounting(snapshot:Snapshot,rowCount:number,columnCount:number,year:number,month:number,legacy:VerifiedLegacyCoverage,publication?:DailyPublicationAccountingEvidence):boolean{
  if(!legacy||legacy.status!=='VERIFIED'||legacy.year!==year||legacy.month!==month||!Number.isSafeInteger(legacy.legacyDebitSatang)||legacy.legacyDebitSatang<0||legacy.openingSatang!==null&&(!Number.isSafeInteger(legacy.openingSatang)||legacy.openingSatang<0)||!Number.isSafeInteger(rowCount)||rowCount<4||rowCount>5000||!Number.isSafeInteger(columnCount)||columnCount<29||columnCount>100||snapshot.formula.length>rowCount||snapshot.effective.length>rowCount)return false;
+ if(publication&&(typeof publication.sheet!=='string'||!publication.sheet.trim()||publication.sheet!==publication.sheet.trim()||publication.sheet.length>80||!Number.isSafeInteger(publication.rows)||publication.rows<2||publication.rows>5000||!(publication.markers instanceof Map)||publication.markers.size>publication.rows-1||[...publication.markers.entries()].some(([id,m])=>typeof id!=='string'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(id)||!m||!['STAGED','PUBLISHED','REVOKED'].includes(m.state)||!Number.isSafeInteger(m.version)||m.version<(m.state==='REVOKED'?2:1))))return false;
  const {formula,effective}=snapshot,openings:number[]=[];
  for(let i=3;i<Math.min(243,rowCount);i++){
   const f=formula[i]??[],e=effective[i]??[];
@@ -27,17 +32,27 @@ export function verifyMixedDailyAccounting(snapshot:Snapshot,rowCount:number,col
  }
  if(openings.length>1||openings.length===0&&legacy.openingSatang===null)return false;
  const opening=openings.length===1?openings[0]!:legacy.openingSatang!;
- let spent=0;const ids=new Set<string>(),dynamic=appendDailyRowFormulas();
+ let spent=0;const ids=new Set<string>(),dynamic=appendDailyRowFormulas(publication),publicationIds=new Set<string>();
  for(let i=3;i<rowCount;i++){
   const f=formula[i]??[],e=effective[i]??[],v=f[24],carrier=decodeAtomicDailyPayload(v),cancelled=typeof v==='string'&&/^MPD1_CANCELLED_[0-9a-f]{64}$/.test(v);
-  const literal=atomicDailyRowFormulas(i+1),validCarrierFormula=[dynamic,literal].some(template=>Object.entries(template).every(([c,x])=>f[Number(c)]===x));
+  const literal=atomicDailyRowFormulas(i+1,publication),validCarrierFormula=[dynamic,literal].some(template=>Object.entries(template).every(([c,x])=>f[Number(c)]===x));
   if(f.length>columnCount||e.length>columnCount||i>=243&&[26,27,28].some(c=>!blank(f[c])))return false;
   if(carrier){
    const id=stableDailyExpenseKey(carrier.expenseId),col=columns[carrier.amountColumn];
+   if(!blank(f[4]))return false;
+   if(publication){
+    const marker=publication.markers.get(carrier.expenseId);
+    if(!marker||!['STAGED','PUBLISHED','REVOKED'].includes(marker.state)||!Number.isSafeInteger(carrier.publicationVersion)||!Number.isSafeInteger(marker.version)||marker.version!==carrier.publicationVersion!+(marker.state==='REVOKED'?1:0)||e[25]!==marker.state)return false;
+    publicationIds.add(carrier.expenseId);
+    if(marker.state!=='PUBLISHED'){
+     if(ids.has(id)||col===undefined||!same(v,e[24])||!validCarrierFormula||[0,1,2,3,4,...amounts,8,9,17,18,20,21,22,23].some(c=>!blank(e[c])))return false;
+     ids.add(id);continue;
+    }
+   }
    if(ids.has(id)||col===undefined||!same(v,e[24])||!same(id,e[23])||!validCarrierFormula||e[0]!==carrier.postingYear||e[1]!==carrier.postingMonth||e[2]!==carrier.postingDay||e[3]!==carrier.description||e[col]!==carrier.amountSatang/100||amounts.some(c=>c!==col&&!blank(e[c]))||e[21]!==carrier.category||e[22]!==carrier.wallet||!blank(e[4]))return false;
    ids.add(id);
   }else if(cancelled){
-   if(!same(v,e[24])||!validCarrierFormula||[0,1,2,3,4,...amounts,8,9,17,18,20,21,22,23].some(c=>!blank(e[c])))return false;
+   if(!blank(f[4])||!same(v,e[24])||!validCarrierFormula||[0,1,2,3,4,...amounts,8,9,17,18,20,21,22,23].some(c=>!blank(e[c])))return false;
    continue;
   }else if(!blank(v)||!blank(e[24])||!blank(f[23])||!blank(e[23]))return false;
   const hasMoney=amounts.some(c=>!blank(e[c])||!blank(f[c])&&typeof f[c]!=='string')||!blank(e[4])||!blank(f[4]);
@@ -55,5 +70,7 @@ export function verifyMixedDailyAccounting(snapshot:Snapshot,rowCount:number,col
   if(!eq(e[9],opening-legacy.legacyDebitSatang-spent)||!eq(e[18],opening-legacy.legacyDebitSatang-spent-credit))return false;
   if(e[20]!==Math.floor((date.getTime()-Date.UTC(1899,11,30))/86400000))return false;
  }
+ if(publication&&publication.allowAbsentStaged!==undefined&&(publication.markers.get(publication.allowAbsentStaged)?.state!=='STAGED'||publicationIds.has(publication.allowAbsentStaged)))return false;
+ if(publication&&[...publication.markers.entries()].some(([id,marker])=>marker.state!=='REVOKED'&&!publicationIds.has(id)&&!(marker.state==='STAGED'&&id===publication.allowAbsentStaged)))return false;
  return true;
 }

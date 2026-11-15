@@ -108,7 +108,7 @@ export default{
    await withStableWorkbookClaim(env,()=>processStaffConfigSyncJob(env,job),job);
   }else await processStaffConfigSyncJob(env,job);}else{const outcome=env.STABLE_PHASE1_ENABLED==='true'?await dispatchStablePhase1(env,job,attempt):await syncJob(env,job,attempt);if(outcome==="BUSY"||outcome==='CONTINUE'){
  const delay=outcome==='CONTINUE'?90:await operationalBusyDelay(env,job);
- await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'){await wakeSyncFailureAlerts(env);message.ack();return;}if(outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,'CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED'].includes(error.message)){
+ await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'||outcome==='DEFERRED'){await wakeSyncFailureAlerts(env);message.ack();return;}if(outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,'CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED'].includes(error.message)){
   if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}
   message.ack();return;
  }if(isStableWorkbookBusy(error)||(error instanceof Error&&[STABLE_SHEETS_PACING_BLOCKED,STABLE_NOTICE_READ_DEFERRED].includes(error.message))){

@@ -1,6 +1,13 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {combinedLedgerSpillFormulas,rewriteLedgerConsumerFormula} from '../scripts/combined-ledger-report-formulas.mjs';
 const names={rawNew:'raw_new',detailNew:'detail_new',rawCombined:'raw_all',detailCombined:'detail_all'};
+test('publication views mask complete staged rows and propagate daily identity errors',()=>{
+ const f=combinedLedgerSpillFormulas({...names,rawOldRows:1000,rawNewRows:1000,detailOldRows:1000,detailNewRows:1000,publishedDaily:'daily_new'});
+ assert.match(f.raw,/FILTER\('raw_new'!A2:R/);assert.match(f.raw,/MATCH\("MALIPANG_EXPENSE:"&'raw_new'!\$A\$2:\$A,'daily_new'!\$X\$4:\$X/);
+ assert.match(f.detail,/FILTER\('detail_new'!A2:T/);assert.match(f.detail,/MATCH\("MALIPANG_EXPENSE:"&'detail_new'!\$B\$2:\$B,'daily_new'!\$X\$4:\$X/);
+ assert.match(f.raw,/ISERROR\('daily_new'!\$X\$4:\$X\)/);assert.match(f.detail,/ISERROR\('daily_new'!\$X\$4:\$X\)/);
+ assert.doesNotMatch(f.raw,/IFNA\(FILTER/);assert.doesNotMatch(f.detail,/IFNA\(FILTER/);
+});
 test('raw combined projection includes owner-editable R and both sources at the verified capacity',()=>{
  const f=combinedLedgerSpillFormulas({...names,rawOldRows:1000,rawNewRows:1500,detailOldRows:1000,detailNewRows:1300});
  assert.match(f.raw,/VSTACK\('V52_EXPENSE_RAW'!A1:R,'raw_new'!A2:R\)/);

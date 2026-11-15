@@ -12,10 +12,27 @@ function duplicateDetails(detail){return `OR(${duplicatePairs(detail)},${duplica
 
 /** Each helper is a new empty tab with >= oldRows+newRows-1 rows; both tabs
  * reserve columns A:R for RAW (including editable R) or A:T for DETAIL. */
-export function combinedLedgerSpillFormulas({rawNew,detailNew,rawCombined,detailCombined,rawOldRows,rawNewRows,detailOldRows,detailNewRows}){
- distinct(['V52_EXPENSE_RAW','รายละเอียดการซื้อ',rawNew,detailNew,rawCombined,detailCombined]);
+export function combinedLedgerSpillFormulas({rawNew,detailNew,rawCombined,detailCombined,rawOldRows,rawNewRows,detailOldRows,detailNewRows,publishedDaily}){
+ distinct(['V52_EXPENSE_RAW','รายละเอียดการซื้อ',rawNew,detailNew,rawCombined,detailCombined,...publishedDaily?[publishedDaily]:[]]);
  const r=quote(rawNew),d=quote(detailNew);quote(rawCombined);quote(detailCombined);
  [rawOldRows,rawNewRows,detailOldRows,detailNewRows].forEach(bounds);
+ if(publishedDaily){
+  const daily=quote(publishedDaily),visible=`${daily}!$X$4:$X`,dailyError=`SUMPRODUCT(ARRAYFORMULA(--ISERROR(${visible})))>0`;
+  // Stage/undo visibility is keyed only by the DAILY X column. FILTER removes
+  // the entire unpublished row including RAW's owner-editable R, while the
+  // original legacy tab and all manually entered DAILY rows remain intact.
+  // Do not IFNA the FILTER result: that could replace an actual error in a
+  // populated cell with a blank row. Count first, then filter only if needed.
+  const part=(sheet,id,width,end)=>{
+   const ids=`${sheet}!$${id}$2:$${id}`,keep=`ARRAYFORMULA((${ids}<>"")*ISNUMBER(MATCH("MALIPANG_EXPENSE:"&${ids},${visible},0)))`;
+   return `IF(SUMPRODUCT(${keep})=0,MAKEARRAY(1,${width},LAMBDA(rr,cc,"")),FILTER(${sheet}!A2:${end},${keep}))`;
+  };
+  return {
+   raw:`=IF(OR(${duplicateRaw(r)},${dailyError}),NA(),VSTACK(${rawOld}!A1:R,${part(r,'A',18,'R')}))`,
+   detail:`=IF(OR(${duplicateDetails(d)},${dailyError}),NA(),VSTACK(${detailOld}!A1:T,${part(d,'B',20,'T')}))`,
+   rawRows:rawOldRows+rawNewRows-1,detailRows:detailOldRows+detailNewRows-1
+  };
+ }
  return{
   raw:`=IF(${duplicateRaw(r)},NA(),VSTACK(${rawOld}!A1:R,${r}!A2:R))`,
   detail:`=IF(${duplicateDetails(d)},NA(),VSTACK(${detailOld}!A1:T,${d}!A2:T))`,

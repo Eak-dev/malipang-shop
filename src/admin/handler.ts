@@ -29,6 +29,11 @@ import {stableWorkbookInReview} from '../sheets/stable-workbook-claim';
 import {inspectRecoveryProvider} from './stable-recovery-provider';
 import {operateContinuousCutover} from './continuous-cutover-operator';
 import {operateContinuousCanary} from './continuous-canary-operator';
+import {prepareProviderCanary,stepProviderCanary} from '../sheets/continuous-provider-canary';
+import {ReviewRequestBudget} from '../sheets/review-request-budget';
+import {SheetsHttpError,SheetsReadNetworkError,SheetsMutationOutcomeUnknownError} from '../sheets/client';
+import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from '../sheets/google-auth';
+import {OperationTimeoutError} from '../shared/async';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -36,7 +41,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
   // Prevent an old or mixed deployment from executing a cutover/canary step.
   // The authenticated caller pins the Worker version obtained independently
   // from Cloudflare; an absent/malformed metadata binding fails closed.
-  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary'].includes(url.pathname);
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary'].includes(url.pathname);
   const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
   if(guardedMutation){
@@ -110,6 +115,15 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-cutover'){
       const body=await request.json().catch(()=>({})) as {action?:unknown;expenseIds?:unknown};
       return Response.json({...await operateContinuousCutover(env,body.action,body.expenseIds),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/provider-canary'){
+      if(env.CONTINUOUS_PROVIDER_CANARY_ENABLED!=='true')return Response.json({ok:false,error:'PROVIDER_CANARY_DISABLED',servedVersion:served},{status:409,headers:{'cache-control':'no-store'}});
+      const body=await request.json().catch(()=>({})) as {action?:unknown;canaryId?:unknown};
+      try{
+        if(body.action==='prepare'){const canaryId=await prepareProviderCanary(env,new ReviewRequestBudget(40));return Response.json({ok:!!canaryId,canaryId,servedVersion:served},{status:canaryId?200:409,headers:{'cache-control':'no-store'}});}
+        if(body.action==='step'&&typeof body.canaryId==='string'){const outcome=await stepProviderCanary(env,body.canaryId,new ReviewRequestBudget(40));return Response.json({ok:outcome==='COMPLETE',outcome,servedVersion:served},{headers:{'cache-control':'no-store'}});}
+        return Response.json({ok:false,error:'PROVIDER_CANARY_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
+      }catch(error){const code=error instanceof SheetsMutationOutcomeUnknownError?'SHEETS_MUTATION_OUTCOME_UNKNOWN':error instanceof SheetsReadNetworkError?'SHEETS_READ_NETWORK':error instanceof SheetsHttpError?`SHEETS_HTTP_${error.status}`:error instanceof GoogleOAuthHttpError?`GOOGLE_OAUTH_HTTP_${error.status}`:error instanceof GoogleOAuthPreflightError?error.code:error instanceof OperationTimeoutError?'TIMEOUT':'PROVIDER_CANARY_UNCERTAIN';return Response.json({ok:false,error:code,servedVersion:served},{status:503,headers:{'cache-control':'no-store'}});}
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-canary'){
       const body=await request.json().catch(()=>({})) as {action?:unknown};

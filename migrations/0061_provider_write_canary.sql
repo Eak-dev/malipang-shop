@@ -1,0 +1,17 @@
+-- Explicit, disabled-by-default one-shot permission canary. No worker or
+-- scheduler is enabled by this migration; no existing cells are targeted.
+CREATE TABLE IF NOT EXISTS continuous_provider_canary_activation(singleton INTEGER PRIMARY KEY CHECK(singleton=1),activated_at TEXT NOT NULL);
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_activation_no_update BEFORE UPDATE ON continuous_provider_canary_activation BEGIN SELECT RAISE(ABORT,'canary activation immutable'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_activation_no_delete BEFORE DELETE ON continuous_provider_canary_activation BEGIN SELECT RAISE(ABORT,'canary activation retained'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_activation_no_replace BEFORE INSERT ON continuous_provider_canary_activation WHEN EXISTS(SELECT 1 FROM continuous_provider_canary_activation WHERE singleton=NEW.singleton OR rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'canary activation collision'); END;
+CREATE TABLE IF NOT EXISTS continuous_provider_canary(
+ canary_id TEXT PRIMARY KEY,spreadsheet_id TEXT NOT NULL,sheet_id INTEGER NOT NULL CHECK(sheet_id>0),title TEXT NOT NULL,nonce TEXT NOT NULL,credential_fingerprint TEXT NOT NULL CHECK(length(credential_fingerprint)=64 AND credential_fingerprint NOT GLOB '*[^0-9a-f]*'),worker_version TEXT NOT NULL,
+ state TEXT NOT NULL CHECK(state IN ('PREPARED','CREATE_IN_FLIGHT','CREATED','INSERT_IN_FLIGHT','VERIFIED','DELETE_IN_FLIGHT','COMPLETE')),
+ created_at TEXT NOT NULL,updated_at TEXT NOT NULL,
+ UNIQUE(spreadsheet_id,sheet_id),UNIQUE(spreadsheet_id,title)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS continuous_provider_canary_one_open ON continuous_provider_canary(spreadsheet_id) WHERE state<>'COMPLETE';
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_insert BEFORE INSERT ON continuous_provider_canary WHEN NEW.state<>'PREPARED' OR NOT EXISTS(SELECT 1 FROM continuous_provider_canary_activation WHERE singleton=1) OR length(NEW.canary_id)<>36 OR length(NEW.nonce)<>32 OR NEW.nonce GLOB '*[^0-9a-f]*' OR NEW.title<>'__sync_canary_'||NEW.nonce BEGIN SELECT RAISE(ABORT,'canary requires activation and unique identity'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_transition BEFORE UPDATE ON continuous_provider_canary WHEN NEW.canary_id IS NOT OLD.canary_id OR NEW.spreadsheet_id IS NOT OLD.spreadsheet_id OR NEW.sheet_id IS NOT OLD.sheet_id OR NEW.title IS NOT OLD.title OR NEW.nonce IS NOT OLD.nonce OR NEW.credential_fingerprint IS NOT OLD.credential_fingerprint OR NEW.worker_version IS NOT OLD.worker_version OR NEW.created_at IS NOT OLD.created_at OR NOT ((OLD.state='PREPARED' AND NEW.state='CREATE_IN_FLIGHT') OR (OLD.state='CREATE_IN_FLIGHT' AND NEW.state='CREATED') OR (OLD.state='CREATED' AND NEW.state='INSERT_IN_FLIGHT') OR (OLD.state='INSERT_IN_FLIGHT' AND NEW.state='VERIFIED') OR (OLD.state='VERIFIED' AND NEW.state='DELETE_IN_FLIGHT') OR (OLD.state='DELETE_IN_FLIGHT' AND NEW.state='COMPLETE')) BEGIN SELECT RAISE(ABORT,'canary transition invalid'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_no_delete BEFORE DELETE ON continuous_provider_canary BEGIN SELECT RAISE(ABORT,'canary retained'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_provider_canary_no_replace BEFORE INSERT ON continuous_provider_canary WHEN EXISTS(SELECT 1 FROM continuous_provider_canary c WHERE c.canary_id=NEW.canary_id OR c.rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'canary collision'); END;

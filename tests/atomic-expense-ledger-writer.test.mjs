@@ -109,7 +109,7 @@ for(const projection of ['EXPENSE_RAW','DETAIL'])test(`${projection} positive re
  h.setMode('timeout');await assert.rejects(h.run(),/lost response/);holdLedgerReview(h,1);
  const budget={},policy={kind:'continuous-expense',budget},seen=new Set();
  for(const name of ['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues']){const next=client[name];client[name]=async(...args)=>{assert.equal(args[2],policy,name);seen.add(name);return next(...args);};}
- const nextHealth=health.readContinuousReportHealth;health.readContinuousReportHealth=async(...args)=>{assert.equal(args[2],policy);seen.add('health');return nextHealth(...args);};
+ const nextHealth=health.readContinuousReportHealth;health.readContinuousReportHealth=async(...args)=>{assert.equal(args[3],policy);seen.add('health');return nextHealth(...args);};
  const nextNotice=notice.stableNoticePaused;notice.stableNoticePaused=async(...args)=>{assert.equal(args[3],budget);seen.add('notice');return nextNotice(...args);};
  assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined,'PAUSED',policy),true);
  assert.deepEqual([...seen].sort(),['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','health','notice'].sort());

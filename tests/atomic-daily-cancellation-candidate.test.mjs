@@ -58,7 +58,7 @@ test('Undo positive recovery forwards its request policy to every nested reader'
  const budget={},policy={kind:'continuous-expense',budget},seen=new Set();
  for(const name of ['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues']){const next=client[name];client[name]=async(...args)=>{assert.equal(args[2],policy,name);seen.add(name);return next(...args);};}
  const nextLegacy=legacy.readLegacyDailyCoverage;legacy.readLegacyDailyCoverage=async(...args)=>{assert.equal(args[4],policy);seen.add('legacy');return nextLegacy(...args);};
- const nextHealth=health.readContinuousReportHealth;health.readContinuousReportHealth=async(...args)=>{assert.equal(args[2],policy);seen.add('health');return nextHealth(...args);};
+ const nextHealth=health.readContinuousReportHealth;health.readContinuousReportHealth=async(...args)=>{assert.equal(args[3],policy);seen.add('health');return nextHealth(...args);};
  const nextNotice=notice.stableNoticePaused;notice.stableNoticePaused=async(...args)=>{assert.equal(args[3],budget);seen.add('notice');return nextNotice(...args);};
  assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123','PAUSED',policy),true);
  assert.deepEqual([...seen].sort(),['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','legacy','health','notice'].sort());

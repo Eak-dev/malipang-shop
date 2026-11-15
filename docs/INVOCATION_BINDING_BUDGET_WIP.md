@@ -2,16 +2,23 @@
 
 The PUBLISH runtime gate remains closed. This local-only prototype wraps D1
 and queue bindings for a single expense message when publication is enabled;
-mixed batches are unchanged. The PUBLISH adapter reserves a provisional 150
-D1 calls and 2 queue calls before creating its intent and enters the reserved
-scope only after the provider POST returns. This is not a deployment plan or
-evidence that these provisional limits cover all paths.
+mixed batches are unchanged. The PUBLISH adapter requires all three bindings
+to be wrappers of the same invocation tracker, then reserves a provisional
+150 D1 calls and 2 queue calls for verification and a separate 20 D1 calls and
+2 queue calls for error handling before creating its intent. It enters the
+verification scope only after the provider POST returns. This is not a
+deployment plan or evidence that these provisional limits cover all paths.
 
 Focused tests exercise the actual queue handler with one synthetic expense
 and with a mixed batch, plus a grouped PUBLISH adapter with sufficient and
 insufficient capacity, a lost provider reply, and postimage verification
 failure. They use a local SQLite fixture and mocked provider. Exhaustion or
 uncertain provider results remain held; these tests do not authorize retry.
+The mocked 500-detail verifier groups 501 preimage checks into one D1 batch;
+this is not a measurement of the complete invocation, provider latency, CPU,
+or the actual number of D1 calls on every failure path. A synthetic exhausted
+post budget still leaves separate quota for the real claim's REVIEW transition
+and a mocked queue error-notification path.
 
 `InvocationBindingBudget` provides a shared counter for D1 and Queue binding
 calls. One `db.batch()` counts as one D1 invocation query, consistent with

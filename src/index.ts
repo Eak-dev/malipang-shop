@@ -46,7 +46,7 @@ export default{
     // this evidence to enable PUBLISH. The hard PUBLISH gate remains closed.
     const single=batch.queue==='malipang-jobs'&&batch.messages.length===1?batch.messages[0]?.body:undefined;
     const bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
-    if(bindingBudget){const scope=()=>bindingBudget.activePost();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
+    if(bindingBudget){const scope=bindingBudget.invocationScope();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
     if(batch.queue==="malipang-jobs-dlq"){
       for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;
         if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}
@@ -109,7 +109,7 @@ export default{
        }
       }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
     }
-    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation',bindingBudget):undefined;
+    try{await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation',bindingBudget):undefined;
       // If parked outbox persistence failed, do not spend an expense writer's
       // budget alongside individual HR fallback checks in this invocation.
       if(parkedBatchFailed&&message===chosenSheet&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
@@ -155,7 +155,7 @@ export default{
   message.ack();return;
  }if(isStableWorkbookBusy(error)||(error instanceof Error&&[STABLE_SHEETS_PACING_BLOCKED,STABLE_NOTICE_READ_DEFERRED].includes(error.message))){
  const delay=await operationalBusyDelay(env,job);
- if(job.kind==='STAFF_CONFIG_SYNC')await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).send(job,{delaySeconds:delay});else {invocationBudget?.consumeQueue();await env.JOB_QUEUE.send(job,{delaySeconds:delay});}message.ack();return;}if(isStableWorkbookReview(error)){/* An existing review is already durable; avoid a wake-up for every blocked duplicate. */if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}message.ack();return;}if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}if(job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC')await wakeSyncFailureAlerts(env,invocationBudget);const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
+ if(job.kind==='STAFF_CONFIG_SYNC')await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).send(job,{delaySeconds:delay});else {invocationBudget?.consumeQueue();await env.JOB_QUEUE.send(job,{delaySeconds:delay});}message.ack();return;}if(isStableWorkbookReview(error)){/* An existing review is already durable; avoid a wake-up for every blocked duplicate. */if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}message.ack();return;}if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}if(job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC')await wakeSyncFailureAlerts(env,invocationBudget);const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));}finally{bindingBudget?.releaseRecovery();}
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
     ctx.waitUntil(runScheduledMaintenance(env));

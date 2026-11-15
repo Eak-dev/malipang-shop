@@ -34,6 +34,7 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
  const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.STABLE_PHASE1_ENABLED,env.STABLE_SHEETS_PACING_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
  const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
  if(!book||!lease||!claim||!transitionId||!sheetName||!(budget instanceof ReviewRequestBudget)||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||job.entityKey!==after.expenseId||job.entityVersion!==after.version||!Number.isSafeInteger(sourceRevision)||sourceRevision<0||!/^[0-9a-f]{64}$/.test(sourceDigest)||typeof input.verifyTarget!=='function'||typeof input.verifyProjections!=='function')throw Error('PUBLICATION_ADAPTER_INVALID');
+ if(kind==='PUBLISH'&&(!budget.bindingBudget||budget.scope!=='invocation'||!budget.bindingBudget.attests(db,env.JOB_QUEUE,env.NOTICE_QUEUE)))throw Error('PUBLICATION_BINDING_SCOPE_UNVERIFIED');
  let currentSnapshot:PublicationBatchSnapshot|undefined,initialSnapshot=input.initialSnapshot,bindingToken:object|null=null;
  const guard=async(phase:'BEFORE'|'AFTER')=>{
   if(!stable()||!await input.verifyTarget()||!await stableWorkbookClaimOwned(env,claim,budget,oauthLease))return false;
@@ -60,7 +61,7 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
   if(!budget.reserveMutation()){budget.releasePost();throw Error('PUBLICATION_BUDGET_MUTATION');}
   // Prototype conservative bound, not a provider or worst-case proof. Only
   // the single-message queue path provides a shared binding counter.
-  if(kind==='PUBLISH'&&budget.bindingBudget){bindingToken=budget.bindingBudget.reservePost(150,2);if(!bindingToken)throw Error('PUBLICATION_BINDING_BUDGET');}
+  if(kind==='PUBLISH'&&budget.bindingBudget){bindingToken=budget.bindingBudget.reservePost(150,2,20,2);if(!bindingToken)throw Error('PUBLICATION_BINDING_BUDGET');}
   const result=await db.prepare(financial?`INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at,financial_journal_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?)`:`INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(transitionId,book,job.entityKey,intent.sheetId,sheetName,intent.row,kind,job.entityVersion,sourceRevision,sourceDigest,claim,lease,state,beforeNonce,after.nonce,after.detailCount,intent.before,encodePublicationCarrier(after),...(financial?[input.financialJournalRevision]:[])).run();
   return stable()&&result.success===true&&Number(result.meta?.changes)===1;
  };
@@ -91,5 +92,5 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
   ]);
   return stable()&&result.length===4&&result.every(x=>x.success===true)&&Number(result[0]!.meta?.changes)===1&&Number(result[2]!.meta?.changes)===1;
  };
- return{read,guard,persist,dispatch,commit,release:()=>{budget.releaseMutation();budget.releasePost();},finalize:()=>{if(bindingToken){budget.bindingBudget!.releasePost(bindingToken);bindingToken=null;}}};
+ return{read,guard,persist,dispatch,commit,release:()=>{budget.releaseMutation();budget.releasePost();},finalize:()=>{if(bindingToken){budget.bindingBudget!.activateTail(bindingToken);bindingToken=null;}}};
 }

@@ -39,3 +39,12 @@ test('mixed batch does not claim single-message budget evidence',async()=>{
   await worker.queue({queue:'malipang-jobs',messages:[mk('exp_a'),mk('exp_b')]},h.env,{});assert.equal(captured.length,2);assert.ok(captured.every(x=>x.bindingBudget===undefined));
  }finally{dispatch.dispatchStablePhase1=old;h.close();}
 });
+test('single expense handler retains error-tail D1 and queue capacity after post exhaustion',async()=>{
+ const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),repos=require('../dist/db/repositories.js'),alerts=require('../dist/line/sync-failure-alerts.js'),old=[dispatch.dispatchStablePhase1,repos.createFailedJob,alerts.wakeSyncFailureAlerts];let captured,retries=0,sends=0;
+ try{Object.assign(h.env,{CONTINUOUS_PUBLICATION_ENABLED:'true',STABLE_PHASE1_ENABLED:'true'});h.env.JOB_QUEUE.send=async()=>{sends++;};
+  dispatch.dispatchStablePhase1=async(env,_job,_attempt,budget)=>{captured=budget;const t=budget.bindingBudget.reservePost(1,0,2,1);budget.bindingBudget.activatePost(t);try{await env.DB.prepare('SELECT 1').first();await env.DB.prepare('SELECT 2').first();}finally{budget.bindingBudget.activateTail(t);}};
+  repos.createFailedJob=async(env)=>{await env.DB.prepare('SELECT 3').first();};alerts.wakeSyncFailureAlerts=async(env)=>{await env.JOB_QUEUE.send({kind:'SYNC_ALERT_SWEEP',traceId:'fixture'});};
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:1,traceId:'synthetic'},message={body:job,attempts:1,ack(){assert.fail('unexpected ack');},retry(){retries++;}};
+  await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});assert.equal(retries,1);assert.equal(sends,1);assert.deepEqual(captured.bindingBudget.snapshot().used,{d1:2,queue:1});assert.deepEqual(captured.bindingBudget.snapshot().reserved,{d1:0,queue:0});
+ }finally{[dispatch.dispatchStablePhase1,repos.createFailedJob,alerts.wakeSyncFailureAlerts]=old;h.close();}
+});

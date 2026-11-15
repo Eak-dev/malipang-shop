@@ -45,7 +45,7 @@ export async function stableWorkbookClaimOwned(env:Env,token:string,budget?:Revi
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED;if(!book||!token)return false;
   const row=await db.prepare("SELECT 1 AS ok,notice_stamp,notice_identity FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(book,token).first<{ok:number;notice_stamp:string|null;notice_identity:string|null}>();
   if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag||row?.ok!==1)return false;
- return flag==='true'?!!row.notice_stamp&&!!row.notice_identity&&await stableNoticePaused(env,row.notice_stamp,row.notice_identity,budget,oauthLease)&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag:true;
+  return flag==='true'?!!row.notice_stamp&&!!row.notice_identity&&await stableNoticePaused(env,row.notice_stamp,row.notice_identity,budget,oauthLease)&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag:true;
 }
 
 /** A durable guard for one workbook operation. It does not itself stop a
@@ -94,9 +94,10 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // The pre-image is verified and no provider POST has been sent yet.
       // Admit here (not before the notice GETs) so a safe read deferral
       // cannot strand an ADMITTED recovery epoch.
-      if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
+      const terminalAtAdmission=!!sheetJob&&sheetJob.entityType==='EXPENSE'&&recoveryGateConfigured(env);
+      if(sheetJob&&!terminalAtAdmission&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
       if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
-      if(!await admitStableRecovery(env,identity,token))throw Error(STABLE_RECOVERY_BLOCKED);
+      if(!await admitStableRecovery(env,identity,token)){if(terminalAtAdmission&&sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);throw Error(STABLE_RECOVERY_BLOCKED);}
       // MUST be the last instruction before returning to mutation dispatch:
       // a lost POST acknowledgement must never look like a safe read defer.
       beginNoticeMayHaveWritten=true;

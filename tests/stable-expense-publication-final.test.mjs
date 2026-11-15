@@ -6,7 +6,7 @@ const client=require('../dist/sheets/client.js'),route=require('../dist/sheets/c
 const {verifyStableExpenseProjections,verifyStableExpensePostpublication}=require('../dist/sheets/stable-expense-final-check.js');
 
 test('staged final verifies raw/detail preimages and their absence; published check verifies exact report identity',async()=>{
- const changes=[[client,'getSheetGridInfo'],[client,'batchGetSheetFormulaValues'],[client,'batchGetSheetEffectiveSerialValues'],[route,'assertContinuousDailyActivated'],[insert,'verifyInsertedDailyFinalSnapshot'],[ledger,'resolveCarrierLedgerTarget'],[ledger,'verifyCarrierLedgerSnapshot'],[planner,'planStableExpenseProjections'],[daily,'resolvePayment'],[legacy,'readLegacyDailyCoverage'],[health,'readContinuousReportHealth']];
+ const changes=[[client,'getSheetGridInfo'],[client,'batchGetSheetFormulaValues'],[client,'batchGetSheetEffectiveSerialValues'],[route,'assertContinuousDailyActivated'],[insert,'verifyInsertedDailyFinalSnapshot'],[ledger,'resolveCarrierLedgerTarget'],[ledger,'indexCarrierLedgerSnapshot'],[planner,'planStableExpenseProjections'],[daily,'resolvePayment'],[legacy,'readLegacyDailyCoverage'],[health,'readContinuousReportHealth']];
  const originals=changes.map(([o,k])=>o[k]);let report,phase,digestStatements=0,tamper=false;
  try{
   route.assertContinuousDailyActivated=async()=>({sheet:'draft',sheetId:2});
@@ -15,7 +15,7 @@ test('staged final verifies raw/detail preimages and their absence; published ch
   legacy.readLegacyDailyCoverage=async()=>({coverage:{status:'VERIFIED',year:2026,month:11}});
   insert.verifyInsertedDailyFinalSnapshot=async(...args)=>{phase=args[9]?.phase;};
   ledger.resolveCarrierLedgerTarget=(_env,type)=>type==='EXPENSE_RAW'?{sheet:'raw',sheetId:3}:{sheet:'detail',sheetId:4};
-  ledger.verifyCarrierLedgerSnapshot=(snapshot,_rows,_columns,type,expected)=>{if(tamper&&type==='DETAIL')throw Error('TAMPERED_DETAIL');assert.equal(expected.expenseId,'exp_test');return 2;};
+  ledger.indexCarrierLedgerSnapshot=(_snapshot,_rows,_columns,type)=>({find(expected){if(tamper&&type==='DETAIL')throw Error('TAMPERED_DETAIL');assert.equal(expected.expenseId,'exp_test');return 2;}});
   client.getSheetGridInfo=async(_env,name)=>name==='draft'?{sheetId:2,rowCount:5,columnCount:29}:name==='raw'?{sheetId:3,rowCount:2,columnCount:26}:{sheetId:4,rowCount:2,columnCount:26};
   client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(()=>[[],['carrier']]);
   client.batchGetSheetEffectiveSerialValues=async(_env,ranges)=>ranges.map(()=>[[],['carrier']]);

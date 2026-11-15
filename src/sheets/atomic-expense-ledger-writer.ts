@@ -42,9 +42,12 @@ function validRow(snapshot:Snapshot,row:number,projection:CarrierLedger):Carrier
 }
 /** Pure snapshot/identity check used both immediately after write and by a
  * future final verifier. It does not authorize writes or release any hold. */
-export function verifyCarrierLedgerSnapshot(snapshot:Snapshot,rowCount:number,columnCount:number,projection:CarrierLedger,expected:CarrierLedgerRow):number{
+export type CarrierLedgerSnapshotIndex={find(expected:CarrierLedgerRow):number};
+/** Validate the entire immutable in-memory snapshot once, then look up any
+ * number of expected items without rescanning its rows. */
+export function indexCarrierLedgerSnapshot(snapshot:Snapshot,rowCount:number,columnCount:number,projection:CarrierLedger):CarrierLedgerSnapshotIndex{
  if(rowCount<2||rowCount>5000||columnCount!==26||snapshot.formula.length>rowCount||snapshot.effective.length>rowCount||headers(projection).some((v,i)=>snapshot.formula[0]?.[i]!==v)||(projection==='EXPENSE_RAW'&&snapshot.formula[0]?.[17]!=='Sales_Addback_Basis'))throw Error('LEDGER_CARRIER_SNAPSHOT');
- let found=0;const identities=new Set<string>(),nonces=new Set<string>();
+ const identities=new Map<string,{row:number;carrier:CarrierLedgerRow}>(),nonces=new Set<string>();
  for(let i=1;i<rowCount;i++){
   const f=snapshot.formula[i]??[],e=snapshot.effective[i]??[],y=f[25];if(f.length>columnCount||e.length>columnCount)throw Error('LEDGER_CARRIER_SNAPSHOT');
   if(marker(y,i+1)){
@@ -52,10 +55,17 @@ export function verifyCarrierLedgerSnapshot(snapshot:Snapshot,rowCount:number,co
    nonces.add(y.slice(-32));continue;
   }
   const parsed=validRow(snapshot,i+1,projection);if(!parsed)throw Error('LEDGER_CARRIER_ROW_UNVERIFIED');
-  const id=projection==='EXPENSE_RAW'?parsed.expenseId:parsed.itemId;if(identities.has(id))throw Error('LEDGER_CARRIER_DUPLICATE');identities.add(id);
-  if(id===(projection==='EXPENSE_RAW'?expected.expenseId:expected.itemId)){const comparable={...parsed};if(expected.writeMarker===undefined)delete comparable.writeMarker;if(expected.cancelMarker===undefined)delete comparable.cancelMarker;if(encodeLedgerCarrier(comparable)!==encodeLedgerCarrier(expected))throw Error('LEDGER_CARRIER_IDENTITY');found=i+1;}
+  const id=projection==='EXPENSE_RAW'?parsed.expenseId:parsed.itemId;if(identities.has(id))throw Error('LEDGER_CARRIER_DUPLICATE');identities.set(id,{row:i+1,carrier:parsed});
  }
- return found;
+ return {find(expected:CarrierLedgerRow):number{
+  const found=identities.get(projection==='EXPENSE_RAW'?expected.expenseId:expected.itemId);if(!found)return 0;
+  const comparable={...found.carrier};if(expected.writeMarker===undefined)delete comparable.writeMarker;if(expected.cancelMarker===undefined)delete comparable.cancelMarker;
+  if(encodeLedgerCarrier(comparable)!==encodeLedgerCarrier(expected))throw Error('LEDGER_CARRIER_IDENTITY');return found.row;
+ }};
+}
+/** Backward-compatible single lookup for individual writer/recovery paths. */
+export function verifyCarrierLedgerSnapshot(snapshot:Snapshot,rowCount:number,columnCount:number,projection:CarrierLedger,expected:CarrierLedgerRow):number{
+ return indexCarrierLedgerSnapshot(snapshot,rowCount,columnCount,projection).find(expected);
 }
 
 /** Gated new-helper-sheet writer. No plain old RAW/detail row is changed.

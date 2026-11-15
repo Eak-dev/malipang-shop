@@ -5,7 +5,7 @@ import { createFailedJob,InboundBusyError,resolveFailedJobs } from "./db/reposit
 import { runScheduledMaintenance } from "./operations/maintenance";
 import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
-import { ensureSheetSyncOutbox,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
+import { ensureSheetSyncOutbox,sheetSyncOutboxStatement,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import {dispatchStablePhase1,isStableWorkbookBusy,isStableWorkbookReview} from './sheets/stable-phase1-dispatch';
 import {withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './sheets/stable-workbook-claim';
 import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget,reserveArmedTargetRedelivery} from './sheets/stable-recovery-admission';
@@ -73,17 +73,49 @@ export default{
     if(stablePacingConfigured(env)&&!stablePacingValid(env))console.error('stable-sheets-pacing-invalid-config');
     const includesLine=batch.messages.some(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='LINE_EVENT'||j.kind==='LINE_NOTIFICATION'||j.kind==='SYNC_ALERT_SWEEP';});
     const canaryTarget=recoveryGateConfigured(env)?await activeStableRecoveryTarget(env):null;
-    const chosenSheet=paceBatch&&!includesLine?batch.messages.find(m=>{
-      const j=m.body as WorkbookQueueJob;
-      return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));
-    }):null;
+    let chosenSheet:Message<QueueJob>|null=null;
+    if(paceBatch&&!includesLine){
+      const eligible=batch.messages.filter(m=>{const j=m.body as WorkbookQueueJob;return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));});
+      const expense=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='SHEETS_SYNC'&&j.entityType==='EXPENSE';});
+      const other=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='STAFF_CONFIG_SYNC'||j.kind==='SHEETS_SYNC'&&j.entityType!=='EXPENSE';});
+      if(!recoveryGateConfigured(env)&&expense&&other){
+       // A shared D1 CAS prevents either stream from monopolizing sustained
+       // mixed batches. If unavailable, park both; never spend the writer budget.
+       try{const turn=await env.DB.prepare("INSERT INTO workbook_batch_fairness(singleton,expense_turn) VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET expense_turn=1-expense_turn RETURNING expense_turn").first<{expense_turn:number}>();if(turn?.expense_turn===1)chosenSheet=expense;else if(turn?.expense_turn===0)chosenSheet=other;}catch{/* park both until fairness state is available */}
+      }else chosenSheet=eligible[0]??null;
+    }
+    // Persist parked workbook hints together. Each Sheets insert is
+    // idempotent; staff-config retains its existing exact-outbox check. A
+    // failed or unknown batch retries only those original queue messages.
+    const parked=paceBatch?batch.messages.filter(m=>m!==chosenSheet&&isWorkbookQueueJob(m.body as WorkbookQueueJob)):[];
+    const parkedReady=new Map<Message<QueueJob>,boolean>();let parkedBatchFailed=false;
+    if(parked.length){
+      const db=env.DB,now=new Date().toISOString();
+      try{
+       const statements=parked.map(m=>{const j=m.body as WorkbookQueueJob;if(j.kind==='SHEETS_SYNC')return sheetSyncOutboxStatement(env,j,now);if(j.kind==='STAFF_CONFIG_SYNC')return db.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(j.employeeId,j.version);throw Error('PARKED_WORKBOOK_BATCH_INVALID');});
+       const results=await db.batch(statements);
+       if(env.DB!==db||results.length!==parked.length||results.some((r,i)=>r.success===false||((parked[i]!.body as WorkbookQueueJob).kind==='SHEETS_SYNC'&&(!Number.isSafeInteger(r.meta?.changes)||Number(r.meta.changes)<0||Number(r.meta.changes)>1))))throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+       for(let i=0;i<parked.length;i++){
+        const m=parked[i]!,j=m.body as WorkbookQueueJob,r=results[i]!;
+        const ok=j.kind==='SHEETS_SYNC'||Array.isArray(r.results)&&r.results.length===1&&(r.results[0] as {present?:number}).present===1;
+        parkedReady.set(m,ok);
+       }
+      }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
+    }
     await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation'):undefined;
+      // If parked outbox persistence failed, do not spend an expense writer's
+      // budget alongside individual HR fallback checks in this invocation.
+      if(parkedBatchFailed&&message===chosenSheet&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
+       try{await ensureSheetSyncOutbox(env,job);if(isRecoveryTarget(job,canaryTarget)&&await reserveArmedTargetRedelivery(env,job,90))await env.JOB_QUEUE.send(job,{delaySeconds:90});message.ack();}catch{message.retry({delaySeconds:90});}return;
+      }
       if(paceBatch&&isWorkbookQueueJob(job)&&message!==chosenSheet){
         try{
-          if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
-          else if(job.kind==='STAFF_CONFIG_SYNC'){
-            const persisted=await env.DB.prepare("SELECT 1 present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();
-            if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');
+          if(parkedReady.get(message)!==true){
+            // Preserve independent HR/staff behavior if a shared batch fails;
+            // expense hints retry without touching their provider operation.
+            if(!parkedBatchFailed||job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE')throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+            if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
+            else {const persisted=await env.DB.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');}
           }
           // A canary that shares a batch with LINE must not be ACK-parked
           // forever while the broad recovery cron is disabled. Re-send only

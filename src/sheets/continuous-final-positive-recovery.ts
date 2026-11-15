@@ -3,7 +3,7 @@ import type {ContinuousSheetsReadPolicy} from './client';
 import {readFinalHandoffExpenseSource} from './stable-expense-source';
 import {readCancelledExpenseSource} from './cancelled-expense-source';
 import {verifyStableExpenseProjections} from './stable-expense-final-check';
-import {verifyStableCancellationFinal,type CancelProjection,type CancelWrite} from './stable-cancellation-final-check';
+import {verifyStableCancellationFinal,indexCancellationJournal,type CancelProjection,type CancelWrite} from './stable-cancellation-final-check';
 import {reviewedNoticeMatches,type ReviewedNoticeMode} from './continuous-reviewed-notice';
 
 type Projection=CancelProjection&{operation_token:string};
@@ -23,7 +23,8 @@ export async function verifyFinalHandoff(env:Env,job:SheetsSyncJob,token:string,
   if(results.length!==2||results.some(r=>r.success!==true||!Array.isArray(r.results)))return null;
   const projections=results[0]!.results as Projection[],writes=results[1]!.results as CancelWrite[];
   if(!projections.length||projections.length>502||writes.length>502)return null;
-  const manifest=projections.map(p=>{const w=writes.find(x=>x.entity_id===p.entity_id&&x.projection===p.projection);if(proof.operation_kind==='CANCEL'&&!w)throw Error('FINAL_HANDOFF_JOURNAL');return {entity_id:p.entity_id,projection:p.projection,sheet_id:p.sheet_id,sheet_name:p.sheet_name,source_version:p.source_version,source_digest:p.source_digest,operation_token:p.operation_token,...(w?{cancel_operation_token:w.operation_token,cancel_preimage_digest:w.preimage_digest}:{})};}).sort((a,b)=>a.projection.localeCompare(b.projection)||a.entity_id.localeCompare(b.entity_id));
+  const writeIndex=proof.operation_kind==='CANCEL'?indexCancellationJournal(projections,writes):null;if(proof.operation_kind==='CANCEL'&&!writeIndex)throw Error('FINAL_HANDOFF_JOURNAL');
+  const manifest=projections.map(p=>{const w=writeIndex?.get(JSON.stringify([p.entity_id,p.projection]));if(proof.operation_kind==='CANCEL'&&!w)throw Error('FINAL_HANDOFF_JOURNAL');return {entity_id:p.entity_id,projection:p.projection,sheet_id:p.sheet_id,sheet_name:p.sheet_name,source_version:p.source_version,source_digest:p.source_digest,operation_token:p.operation_token,...(w?{cancel_operation_token:w.operation_token,cancel_preimage_digest:w.preimage_digest}:{})};}).sort((a,b)=>a.projection.localeCompare(b.projection)||a.entity_id.localeCompare(b.entity_id));
   if(JSON.stringify(manifest)!==proof.journal_manifest||proof.operation_kind==='CONFIRM'&&writes.length||proof.operation_kind==='CANCEL'&&writes.length!==projections.length)return null;
   return {projections,writes};
  };

@@ -10,7 +10,7 @@ import {planStableExpenseProjections} from './stable-expense-projection-plan';
 import type {StableExpenseSource} from './stable-expense-source';
 import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {verifyInsertedDailyFinalSnapshot} from './insert-daily-writer';
-import {resolveCarrierLedgerTarget,verifyCarrierLedgerSnapshot} from './atomic-expense-ledger-writer';
+import {resolveCarrierLedgerTarget,indexCarrierLedgerSnapshot,type CarrierLedgerSnapshotIndex} from './atomic-expense-ledger-writer';
 import type {CarrierLedgerRow} from './atomic-expense-ledger-template';
 import {continuousDailyCutoverIntegrity} from './continuous-daily-cutover';
 import {stableSourceIntegrity} from './stable-source-cutover';
@@ -39,10 +39,11 @@ export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,s
  const names=[daily,raw,...plan.details.length?[detail]:[]];
  if(names.some(x=>!x)||new Set(names).size!==names.length)throw Error('STABLE_FINAL_SHEET_ALIAS');
  const expected=[{id:job.entityKey,projection:'DAILY',sheet:daily},{id:job.entityKey,projection:'EXPENSE_RAW',sheet:raw},...plan.details.map(x=>({id:`${job.entityKey}|${x.itemId}`,projection:'DETAIL',sheet:detail}))];
- if(journals.length!==expected.length||expected.some(e=>journals.filter(j=>j.entity_id===e.id&&j.projection===e.projection&&j.sheet_name===e.sheet&&j.source_version===job.entityVersion&&j.source_digest===source.digest&&j.state==='VERIFIED').length!==1))throw Error('STABLE_FINAL_JOURNAL');
+ const journalKey=(id:string,projection:string)=>JSON.stringify([id,projection]),journalByKey=new Map<string,Journal>();for(const j of journals){const k=journalKey(j.entity_id,j.projection);if(journalByKey.has(k))throw Error('STABLE_FINAL_JOURNAL');journalByKey.set(k,j);}
+ if(journals.length!==expected.length||expected.some(e=>{const j=journalByKey.get(journalKey(e.id,e.projection));return !j||j.sheet_name!==e.sheet||j.source_version!==job.entityVersion||j.source_digest!==source.digest||j.state!=='VERIFIED';}))throw Error('STABLE_FINAL_JOURNAL');
  const grids=snapshot?names.map(name=>{const s=snapshot.metadata.find(x=>x.title===name);if(!s)throw Error('STABLE_FINAL_GRID');return{sheetId:s.sheetId,rowCount:s.rowCount,columnCount:s.columnCount};}):await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?policy:undefined)));
  if(grids.some(g=>g.rowCount>5000||g.columnCount>100)||grids[0]!.columnCount<25||grids[1]!.columnCount<rawHeaders.length||plan.details.length&&grids[2]!.columnCount<detailHeaders.length)throw Error('STABLE_FINAL_GRID');
- for(const e of expected){const grid=grids[names.indexOf(e.sheet)]!,j=journals.find(x=>x.entity_id===e.id&&x.projection===e.projection)!;if(j.sheet_id!==grid.sheetId)throw Error('STABLE_FINAL_GRID');}
+ for(const e of expected){const grid=grids[names.indexOf(e.sheet)]!,j=journalByKey.get(journalKey(e.id,e.projection))!;if(j.sheet_id!==grid.sheetId)throw Error('STABLE_FINAL_GRID');}
  const ranges=names.map((name,i)=>`'${name.replace(/'/g,"''")}'!A1:${columnName(grids[i]!.columnCount)}${grids[i]!.rowCount}`);
  const formula=snapshot?grids.map(g=>publicationSnapshotRange(snapshot,g.sheetId,1,g.rowCount,1,g.columnCount,'FORMULA')):await batchGetSheetFormulaValues(env,ranges,atomic?policy:undefined),effective=snapshot?grids.slice(0,atomic?grids.length:1).map(g=>publicationSnapshotRange(snapshot,g.sheetId,1,g.rowCount,1,g.columnCount,'EFFECTIVE')):await batchGetSheetEffectiveSerialValues(env,atomic?ranges:[ranges[0]!],atomic?policy:undefined);
  const after=snapshot?grids:await Promise.all(names.map(name=>getSheetGridInfo(env,name,atomic?policy:undefined)));
@@ -65,9 +66,9 @@ export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,s
  if(atomic){
   if(!rawTarget||grids[1]!.sheetId!==rawTarget.sheetId||plan.details.length&&(!detailTarget||grids[2]!.sheetId!==detailTarget.sheetId))throw Error('STABLE_FINAL_CARRIER_TARGET');
   const expectedRows:CarrierLedgerRow[]=[{projection:'EXPENSE_RAW',expenseId:job.entityKey,itemId:'',confirmedVersion:job.entityVersion,status:'CONFIRMED',cancelVersion:null,cancelledAt:'',values:plan.raw},...plan.details.map(item=>({projection:'DETAIL' as const,expenseId:job.entityKey,itemId:item.itemId,confirmedVersion:job.entityVersion,status:'CONFIRMED' as const,cancelVersion:null,cancelledAt:'',values:item.values}))];
-  const evidenceStatements:D1PreparedStatement[]=[];
+  const evidenceStatements:D1PreparedStatement[]=[],indexes=new Map<'EXPENSE_RAW'|'DETAIL',CarrierLedgerSnapshotIndex>();
   for(const item of expectedRows){
-   const index=item.projection==='EXPENSE_RAW'?1:2,entity=item.projection==='EXPENSE_RAW'?job.entityKey:`${job.entityKey}|${item.itemId}`,j=journals.find(x=>x.entity_id===entity&&x.projection===item.projection),row=verifyCarrierLedgerSnapshot({formula:formula[index]!,effective:effective[index]!},grids[index]!.rowCount,grids[index]!.columnCount,item.projection,item);
+   const index=item.projection==='EXPENSE_RAW'?1:2,entity=item.projection==='EXPENSE_RAW'?job.entityKey:`${job.entityKey}|${item.itemId}`,j=journalByKey.get(journalKey(entity,item.projection));let carrierIndex=indexes.get(item.projection);if(!carrierIndex){carrierIndex=indexCarrierLedgerSnapshot({formula:formula[index]!,effective:effective[index]!},grids[index]!.rowCount,grids[index]!.columnCount,item.projection);indexes.set(item.projection,carrierIndex);}const row=carrierIndex.find(item);
    if(!row||!j?.operation_token)throw Error('STABLE_FINAL_CARRIER_IDENTITY');
    const cells=Array.from({length:26},(_,i)=>formula[index]![row-1]?.[i]===undefined||formula[index]![row-1]?.[i]===''?null:formula[index]![row-1]![i]),digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(cells)))),v=>v.toString(16).padStart(2,'0')).join('');
    evidenceStatements.push(db.prepare(`SELECT 1 AS ok FROM stable_expense_projection_preimages p JOIN atomic_daily_marker_reservations m ON m.spreadsheet_id=p.spreadsheet_id AND m.sheet_id=p.sheet_id AND m.entity_id=p.entity_id AND m.source_version=p.source_version WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.sheet_id=? AND p.sheet_name=? AND p.source_version=? AND p.source_digest=? AND p.preimage_width=26 AND p.preimage_digest=? AND m.operation_token=? AND ${stableSourceIntegrity} AND ${continuousDailyCutoverIntegrity}`).bind(env.GOOGLE_SPREADSHEET_ID,entity,item.projection,grids[index]!.sheetId,names[index],job.entityVersion,source.digest,digest,j.operation_token));

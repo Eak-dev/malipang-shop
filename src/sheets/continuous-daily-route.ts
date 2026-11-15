@@ -17,11 +17,16 @@ export function continuousDailyTarget(env:Env):{sheet:string;sheetId:number}|nul
 export async function inspectLegacyExpenseCutover(env:Env):Promise<boolean>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.CONTINUOUS_DAILY_ENABLED;
  const stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.CONTINUOUS_DAILY_ENABLED===flag;
- const schema=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers'").first<{name:string}>();
- if(!stable())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
- if(schema===null)return false;
- if(schema.name!=='continuous_daily_cutovers')throw Error('CONTINUOUS_DAILY_NOT_READY');
- const existing=book?await db.prepare('SELECT state FROM continuous_daily_cutovers WHERE spreadsheet_id=? LIMIT 1').bind(book).first<{state:string}>():await db.prepare('SELECT state FROM continuous_daily_cutovers LIMIT 1').first<{state:string}>();
+ let existing:{state:string}|null;
+ try{existing=book?await db.prepare('SELECT state FROM continuous_daily_cutovers WHERE spreadsheet_id=? LIMIT 1').bind(book).first<{state:string}>():await db.prepare('SELECT state FROM continuous_daily_cutovers LIMIT 1').first<{state:string}>();}
+ catch(error){
+  // Older installations may not have the table. A failed query alone is not
+  // absence: verify schema explicitly before allowing the legacy route.
+  const schema=await db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers'").first<{name:string}>();
+  if(!stable())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
+  if(schema===null)return false;
+  throw Error('CONTINUOUS_DAILY_NOT_READY');
+ }
  if(!stable())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
  if(existing!==null)throw Error('CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED');
  return true;

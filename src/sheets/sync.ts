@@ -112,9 +112,12 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 }
 /** Durable outbox row for a delivery, so acknowledging a message that cannot
  * run yet never loses the job; scheduled recovery re-sends it later. */
+export function sheetSyncOutboxStatement(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
+ return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now);
+}
 export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
-  const now=new Date(nowMs).toISOString();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+ const db=env.DB,result=await sheetSyncOutboxStatement(env,job,new Date(nowMs).toISOString()).run();
+ if(env.DB!==db||result.success===false||!Number.isSafeInteger(result.meta?.changes)||Number(result.meta.changes)<0||Number(result.meta.changes)>1)throw Error('SHEET_SYNC_OUTBOX_UNCERTAIN');
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now(),legacyCutoverSchema?:boolean):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
@@ -148,8 +151,8 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
-  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_LEGACY_DISABLED');
   await assertContinuousNoticeActivation(env,job);
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_LEGACY_DISABLED');
   const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow),legacyCutoverSchema);if(!leaseToken){if(job.entityType==='EXPENSE')await assertLegacyExpensePathAllowed(env);if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}

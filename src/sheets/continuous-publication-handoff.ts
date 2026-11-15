@@ -11,7 +11,7 @@ import {planPublicationSnapshot} from './publication-snapshot-plan';
 import {capturePublicationBatchSnapshot,publicationSnapshotRange} from './publication-batch-snapshot';
 import {decodeAtomicDailyPayload} from './atomic-daily-template';
 import {decodeLedgerCarrier} from './atomic-expense-ledger-template';
-import {verifyCarrierLedgerSnapshot} from './atomic-expense-ledger-writer';
+import {indexCarrierLedgerSnapshot} from './atomic-expense-ledger-writer';
 import {authenticateCarrierLedgerSnapshot} from './atomic-expense-ledger-auth';
 import {pendingDailyCancellations,verifyDailyCarrierEvidence} from './daily-carrier-auth';
 import {verifyMixedDailyAccounting} from './mixed-daily-accounting';
@@ -59,9 +59,9 @@ export async function verifyPublicationHandoff(env:Env,job:SheetsSyncJob,claim:s
   const f=publicationSnapshotRange(snapshot,grid.sheetId,1,grid.rowCount,1,grid.columnCount,'FORMULA'),e=publicationSnapshotRange(snapshot,grid.sheetId,1,grid.rowCount,1,grid.columnCount,'EFFECTIVE'),snap={formula:f,effective:e};
   const group=records.results.filter(p=>p.projection===projection);if(group.some(p=>p.sheet_id!==grid.sheetId||p.sheet_name!==name))return false;
   const found=f.flatMap((r,i)=>{const carrier=decodeLedgerCarrier(r[25]);if(!carrier||carrier.projection!==projection||carrier.expenseId!==job.entityKey)return[];return[{entity:projection==='DETAIL'?`${carrier.expenseId}|${carrier.itemId}`:carrier.expenseId,carrier,index:i}];});
-  if(found.length!==group.length||group.some(p=>found.filter(x=>x.entity===p.entity_id).length!==1))return false;
-  for(const item of found)if(verifyCarrierLedgerSnapshot(snap,grid.rowCount,grid.columnCount,projection,item.carrier)!==item.index+1)return false;
-  if(!found.length&&verifyCarrierLedgerSnapshot(snap,grid.rowCount,grid.columnCount,projection,{projection,expenseId:'exp_guard_no_match',itemId:'item_guard_no_match',confirmedVersion:1,status:'CONFIRMED',cancelVersion:null,cancelledAt:'',values:[]})!==0)return false;
+  const foundIds=new Set(found.map(x=>x.entity));if(foundIds.size!==found.length||found.length!==group.length||group.some(p=>!foundIds.has(p.entity_id)))return false;
+  const index=indexCarrierLedgerSnapshot(snap,grid.rowCount,grid.columnCount,projection);
+  for(const item of found)if(index.find(item.carrier)!==item.index+1)return false;
   await authenticateCarrierLedgerSnapshot(env,snap,grid.rowCount,projection,grid.title,grid.sheetId);
  }
  if(await readContinuousReportHealth(env,{expenseId:job.entityKey,absent:true,absentFromViews:true},{dailySheet:daily.title},policy,snapshot)!=='OK'||!await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority))return false;

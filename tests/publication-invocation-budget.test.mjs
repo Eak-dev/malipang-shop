@@ -13,8 +13,8 @@ test('invocation notice reserves all postreads before dispatch and counts OAuth 
  }finally{globalThis.fetch=originalFetch;h.close();}
 });
 test('publication mode fails before any legacy expense sync can write',async()=>{
- const {syncJob}=require('../dist/sheets/sync.js');
- await assert.rejects(syncJob({CONTINUOUS_PUBLICATION_ENABLED:'true'},{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_x',entityVersion:1}),/PUBLICATION_LEGACY_DISABLED/);
+ const {syncJob}=require('../dist/sheets/sync.js'),activation=require('../dist/sheets/continuous-notice-activation.js'),old=activation.assertContinuousNoticeActivation;
+ try{activation.assertContinuousNoticeActivation=async()=>{};await assert.rejects(syncJob({CONTINUOUS_PUBLICATION_ENABLED:'true'},{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_x',entityVersion:1}),/PUBLICATION_LEGACY_DISABLED/);}finally{activation.assertContinuousNoticeActivation=old;}
 });
 test('queue entry passes one publication budget through dispatch and counts continuation enqueue',async()=>{
  const h=expenseSqlite(),worker=require('../dist/index.js').default,dispatch=require('../dist/sheets/stable-phase1-dispatch.js'),old=dispatch.dispatchStablePhase1;let captured,sends=0,acks=0;

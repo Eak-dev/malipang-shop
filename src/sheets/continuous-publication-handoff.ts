@@ -30,13 +30,21 @@ const isError=(x:unknown)=>typeof x==='string'&&/^#(?:REF!|N\/A|ERROR!|DIV\/0!|V
  * is proven. REVIEW with outstanding cancellation projections remains held.
  * This function never replays a POST or releases a job/claim. */
 export async function verifyPublicationHandoff(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,authority:NormalNoticeAuthority='REVIEW'):Promise<boolean>{
+ return verifyPublicationHandoffInternal(env,job,claim,transitionId,mode,policy,authority,false);
+}
+
+/** Read-only PUBLISH candidate. This is not wired to the runtime notice close. */
+export async function verifyPublicationHandoffCandidate(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,authority:NormalNoticeAuthority='REVIEW'):Promise<boolean>{
+ return verifyPublicationHandoffInternal(env,job,claim,transitionId,mode,policy,authority,true);
+}
+async function verifyPublicationHandoffInternal(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy,authority:NormalNoticeAuthority,allowPublish:boolean):Promise<boolean>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,budget=policy.budget;
  if(!book||!claim||!transitionId||!(budget instanceof ReviewRequestBudget)||!['PAUSED','REVIEW_READY'].includes(mode)||!['REVIEW','HANDOFF'].includes(authority)||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(job.entityKey)||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1)return false;
  const stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book;
  const row=await db.prepare("SELECT i.kind,i.sheet_id,i.sheet_name,i.row_number,i.after_value,i.source_digest FROM continuous_publication_intents i JOIN continuous_publication_markers m ON m.spreadsheet_id=i.spreadsheet_id AND m.entity_id=i.entity_id AND m.sheet_id=i.sheet_id AND m.sheet_name=i.sheet_name AND m.row_number=i.row_number AND m.transition_id=i.transition_id AND m.version=i.source_version AND m.marker=i.after_value WHERE i.transition_id=? AND i.spreadsheet_id=? AND i.entity_id=? AND i.source_version=? AND i.claim_token=? AND i.state='VERIFIED'").bind(transitionId,book,job.entityKey,job.entityVersion,claim).first<Row>();
  const marker=decodePublicationCarrier(row?.after_value),target=await resolvePublicationTarget(env);
  if(!stable()||!row||!marker||!target||row.sheet_id!==target.sheetId||row.sheet_name!==target.sheetName||marker.expenseId!==job.entityKey||marker.version!==job.entityVersion||marker.state!==(row.kind==='STAGE'?'STAGED':row.kind==='PUBLISH'?'PUBLISHED':'REVOKED'))return false;
- if(row.kind==='PUBLISH')return verifyPublishedHandoff(env,job,claim,transitionId,mode,policy,authority,row,marker,target);
+ if(row.kind==='PUBLISH')return allowPublish&&verifyPublishedHandoff(env,job,claim,transitionId,mode,policy,authority,row,marker,target);
  const source=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority);
  if(!source||source.kind!==row.kind||source.digest!==row.source_digest||!stable())return false;
  const [records,cancels]=await Promise.all([

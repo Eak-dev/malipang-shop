@@ -121,7 +121,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const body=await request.json().catch(()=>({})) as {action?:unknown;canaryId?:unknown};
       try{
         if(body.action==='prepare'){const canaryId=await prepareProviderCanary(env,new ReviewRequestBudget(40));return Response.json({ok:!!canaryId,canaryId,servedVersion:served},{status:canaryId?200:409,headers:{'cache-control':'no-store'}});}
-        if(body.action==='step'&&typeof body.canaryId==='string'){const outcome=await stepProviderCanary(env,body.canaryId,new ReviewRequestBudget(40));return Response.json({ok:outcome==='COMPLETE',outcome,servedVersion:served},{headers:{'cache-control':'no-store'}});}
+        if(body.action==='step'&&typeof body.canaryId==='string'){const outcome=await stepProviderCanary(env,body.canaryId,new ReviewRequestBudget(40));return Response.json({ok:outcome==='VERIFIED',outcome,servedVersion:served},{headers:{'cache-control':'no-store'}});}
         return Response.json({ok:false,error:'PROVIDER_CANARY_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
       }catch(error){const code=error instanceof SheetsMutationOutcomeUnknownError?'SHEETS_MUTATION_OUTCOME_UNKNOWN':error instanceof SheetsReadNetworkError?'SHEETS_READ_NETWORK':error instanceof SheetsHttpError?`SHEETS_HTTP_${error.status}`:error instanceof GoogleOAuthHttpError?`GOOGLE_OAUTH_HTTP_${error.status}`:error instanceof GoogleOAuthPreflightError?error.code:error instanceof OperationTimeoutError?'TIMEOUT':'PROVIDER_CANARY_UNCERTAIN';return Response.json({ok:false,error:code,servedVersion:served},{status:503,headers:{'cache-control':'no-store'}});}
     }

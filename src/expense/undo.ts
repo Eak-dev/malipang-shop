@@ -34,6 +34,9 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{aud
           WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version'))`)
       .bind(now,input.expenseId,auditId)
   ];
+  if(options?.pendingRequestId){
+    statements.splice(1,0,env.DB.prepare("INSERT INTO continuous_pending_undo_apply_auth(request_id,audit_id,created_at) SELECT ?,?,? WHERE changes()=1").bind(options.pendingRequestId,auditId,now));
+  }
   if(env.SHEETS_SYNC_ENABLED==="true")statements.push(
     env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token)
       SELECT ?,'EXPENSE',e.expense_id,e.version,?,'PENDING',0,?,?,NULL,NULL
@@ -48,7 +51,7 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{aud
   statements.push(env.DB.prepare(`SELECT e.version FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
     WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`).bind(auditId));
   const results=await env.DB.batch<{version:number}>(statements);
-  if(Number(results[1]?.meta.changes||0)!==1)return null;
+  if(Number(results[options?.pendingRequestId?2:1]?.meta.changes||0)!==1)return null;
   const version=Number(results[results.length-1]?.results?.[0]?.version);
   if(!Number.isSafeInteger(version)||version<1)throw new Error("Expense Undo committed without a valid sync version");
   return version;

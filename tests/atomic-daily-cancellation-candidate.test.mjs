@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {createHash} from 'node:crypto';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 import {cutoverReadySql} from './helpers/cutover-ready.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),notice=require('../dist/sheets/stable-edit-notice.js'),route=require('../dist/sheets/continuous-daily-route.js'),legacy=require('../dist/sheets/legacy-daily-coverage.js'),health=require('../dist/sheets/continuous-report-health.js'),{cancelAtomicDailyCandidateUnderClaim}=require('../dist/sheets/atomic-daily-cancellation-candidate.js'),{verifyStableCancellationFinal}=require('../dist/sheets/stable-cancellation-final-check.js'),{atomicDailyRowFormulas,atomicDailyMarker,encodeAtomicDailyPayload}=require('../dist/sheets/atomic-daily-template.js'),{appendDailyRowFormulas}=require('../dist/sheets/append-daily-template.js'),{continuousDailyHelperFormulas}=require('../dist/sheets/continuous-daily-plan.js');
+const {verifyReviewedDailyCancellation}=require('../dist/sheets/continuous-daily-cancel-positive-recovery.js');
 function fixture(mixed=false){
  const h=expenseSqlite(),old={getSheetGridInfo:client.getSheetGridInfo,batchGetSheetFormulaValues:client.batchGetSheetFormulaValues,batchGetSheetEffectiveSerialValues:client.batchGetSheetEffectiveSerialValues,batchUpdateSpreadsheetWithReply:client.batchUpdateSpreadsheetWithReply,notice:notice.stableNoticePaused,activated:route.assertContinuousDailyActivated,target:route.continuousDailyTarget,legacy:legacy.readLegacyDailyCoverage,health:health.readContinuousReportHealth},prepare=h.DB.prepare,batch=h.DB.batch;
  health.readContinuousReportHealth=async()=> 'OK';
@@ -39,6 +40,59 @@ test('final cancellation verification rejects an unrelated forged active carrier
 test('unknown provider result leaves IN_FLIGHT and never resends',async()=>{const h=fixture();try{
  h.setMode('timeout');await assert.rejects(h.run(),/lost response/);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');await assert.rejects(h.run(),/ATOMIC_CANCEL_PRIOR_INTENT_REVIEW/);assert.equal(h.writes(),1);
 }finally{h.close()}});
+async function reviewedLostUndo(setup){
+ const h=fixture(true),original=h.f[3][24];if(setup)setup(h);h.setMode('timeout');await assert.rejects(h.run(),/lost response/);
+ h.env.STABLE_RECOVERY_GATE_ENABLED='true';h.env.STABLE_SHEETS_PACING_ENABLED='true';
+ h.sqlite.exec("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-undo','book','ARMED','EXPENSE','exp_test',2,'now','now'); INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('claim-token-123','epoch-undo','ADMITTED','now'); UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION' WHERE spreadsheet_id='book'; UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW' WHERE job_id='job'");
+ return {...h,original,job:{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_test',entityVersion:2,traceId:'trace'}};
+}
+function addLinkedCancelEvidence(h){h.sqlite.exec("INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at) VALUES('doc_linked','doc_message','owner','RECEIPT','CANCELLED','now'); INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,created_at) VALUES('link_1','exp_test','doc_linked','SUPPORTING_DOCUMENT','MANUAL','now'); INSERT INTO expense_document_items(item_id,document_id,description,created_at,updated_at) VALUES('item_linked','doc_linked','before','now','now')");}
+function addOtherExpense(h){h.sqlite.exec("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_other','other_message','owner','other',100,'transfer','SHOP_BANK','ingredients','2026-10-09','CONFIRMED','now',1)");}
+test('positive Undo recovery tolerates unrelated earlier source changes but retains REVIEW',async()=>{const h=await reviewedLostUndo(addLinkedCancelEvidence);try{
+ addOtherExpense(h);assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),true);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_expense_cancellation_writes").get().state,'VERIFIED');assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims").get().state,'REVIEW');assert.equal(h.writes(),1);
+ }finally{h.close();}});
+test('positive Undo recovery refuses changed target and linked document or item',async()=>{for(const mutation of ["UPDATE expense_events SET description='changed' WHERE expense_id='exp_test'","UPDATE expense_documents SET status='CHANGED' WHERE document_id='doc_linked'","UPDATE expense_document_items SET description='changed' WHERE item_id='item_linked'","DELETE FROM expense_document_links WHERE link_id='link_1'"]){const h=await reviewedLostUndo(addLinkedCancelEvidence);try{
+ h.sqlite.exec(mutation);assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),false);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('positive Undo recovery refuses a source mutation between read and CAS',async()=>{const h=await reviewedLostUndo(addLinkedCancelEvidence);try{
+ let reads=0;notice.stableNoticePaused=async()=>{if(++reads===2)h.sqlite.exec("UPDATE expense_document_items SET description='racing' WHERE item_id='item_linked'");return true;};
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),false);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{h.close();}});
+test('positive Undo recovery safely retries read-only after an unrelated source races the CAS',async()=>{const h=await reviewedLostUndo();try{
+ let checks=0;notice.stableNoticePaused=async()=>{if(++checks===2)addOtherExpense(h);return true;};
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),false);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),true);assert.equal(h.writes(),1);
+ }finally{h.close();}});
+test('positive Undo recovery verifies captured tombstone without releasing claim or job',async()=>{const h=await reviewedLostUndo();try{
+ const evidence=h.sqlite.prepare('SELECT * FROM continuous_daily_cancel_evidence').get();assert.equal(evidence.tombstone,h.f[3][24]);
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),true);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'VERIFIED');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id='epoch-undo'").get().state,'ARMED');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_operations WHERE operation_token='claim-token-123'").get().state,'ADMITTED');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),1);
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),false);
+ assert.throws(()=>h.sqlite.exec("UPDATE continuous_daily_cancel_evidence SET masked_before_digest='"+'a'.repeat(64)+"'"),/immutable/);
+ assert.throws(()=>h.sqlite.exec('DELETE FROM continuous_daily_cancel_evidence'),/retained/);
+ }finally{h.close();}});
+test('positive Undo recovery never retries or verifies absent tombstones, changed data, source or notice',async()=>{for(const mode of ['uncommitted','formula','balance','source','notice','racing-sheet','grid']){const h=await reviewedLostUndo();try{
+ if(mode==='uncommitted')h.f[3][24]=h.original;
+ if(mode==='formula')h.f[4][3]='changed';
+ if(mode==='balance')h.e[3][9]=900;
+ if(mode==='source')h.sqlite.exec("UPDATE expense_events SET description='changed' WHERE expense_id='exp_test'");
+ if(mode==='notice')notice.stableNoticePaused=async()=>false;
+ if(mode==='grid')client.getSheetGridInfo=async()=>({sheetId:9,rowCount:11,columnCount:29});
+ if(mode==='racing-sheet'){const original=client.batchGetSheetFormulaValues;let reads=0;client.batchGetSheetFormulaValues=async(...args)=>{if(++reads===2)h.f[4][3]='changed';return original(...args);};}
+ assert.equal(await verifyReviewedDailyCancellation(h.env,h.job,'claim-token-123'),false,mode);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('daily Undo evidence requires an exact cancellation journal and cannot be inserted alone',()=>{const h=fixture(true);try{
+ assert.throws(()=>h.sqlite.prepare("INSERT INTO continuous_daily_cancel_evidence(spreadsheet_id,entity_id,cancellation_version,previous_version,operation_token,sheet_id,sheet_name,target_row,row_count,column_count,posting_year,posting_month,source_revision,source_fingerprint,original_digest,masked_before_digest,tombstone,created_at) VALUES('book','exp_fake',2,1,'claim-token-123',9,'carrier',4,10,29,2026,10,0,?,?,?,?,'now')").run('d'.repeat(64),'a'.repeat(64),'b'.repeat(64),'MPD1_CANCELLED_'+'c'.repeat(64)),/requires exact intent/);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM continuous_daily_cancel_evidence').get().n,0);
+ }finally{h.close();}});
 test('changed original row and mismatched real cutover fail before provider write',async()=>{const h=fixture();try{
  h.f[3][3]='=changed';await assert.rejects(h.run(),/ATOMIC_CANCEL_BEFORE_UNVERIFIED/);assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_cancellation_writes').get().n,0);
  h.env.RUNTIME_MODE='production';h.unmockGate();await assert.rejects(h.run(),/CONTINUOUS_DAILY_NOT_READY/);assert.equal(h.writes(),0);

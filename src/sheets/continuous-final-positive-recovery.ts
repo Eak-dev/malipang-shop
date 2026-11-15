@@ -47,20 +47,23 @@ export async function verifyFinalHandoffCandidate(env:Env,job:SheetsSyncJob,toke
   const journals=await readJournals();if(!journals||!await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF'))return false;
   const publication=env.CONTINUOUS_PUBLICATION_ENABLED==='true'?await finalPublicationSnapshot(env,job,proof,policy):null;
   if(env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&!publication)return false;
+  let sourceStillMatches:()=>Promise<boolean>;
   if(proof.operation_kind==='CONFIRM'){
    const source=await readFinalHandoffExpenseSource(env,job,token);if(!source||source.digest!==proof.source_digest)return false;
    await verifyStableExpenseProjections(env,job,source,journals.projections,publication?{...publication.evidence,phase:'PUBLISHED'}:undefined,policy,publication?.snapshot);
-   const latest=await readFinalHandoffExpenseSource(env,job,token);if(!latest||latest.digest!==source.digest||latest.revision!==source.revision||latest.fingerprint!==source.fingerprint)return false;
+   sourceStillMatches=async()=>{const latest=await readFinalHandoffExpenseSource(env,job,token);return !!latest&&latest.digest===source.digest&&latest.revision===source.revision&&latest.fingerprint===source.fingerprint;};
+   if(!await sourceStillMatches())return false;
   }else{
    const source=await readCancelledExpenseSource(env,job,token,undefined,'HANDOFF');if(!source||source.digest!==proof.source_digest)return false;
    const row=await db.prepare("SELECT updated_at FROM expense_events WHERE expense_id=? AND version=? AND status='CANCELLED'").bind(job.entityKey,job.entityVersion).first<{updated_at:string}>();if(!row||typeof row.updated_at!=='string')return false;
    const after=publication?await capturePublicationBatchSnapshot(env,publication.specs,policy.budget!):undefined;
    if(publication&&JSON.stringify(publication.snapshot)!==JSON.stringify(after))return false;
    await verifyStableCancellationFinal(env,job,journals.projections,journals.writes,row.updated_at,token,publication?.evidence,policy,publication&&after?{before:publication.snapshot,after}:undefined);
-   const latest=await readCancelledExpenseSource(env,job,token,undefined,'HANDOFF');if(!latest||latest.digest!==source.digest||latest.revision!==source.revision)return false;
+   sourceStillMatches=async()=>{const latest=await readCancelledExpenseSource(env,job,token,undefined,'HANDOFF');return !!latest&&latest.digest===source.digest&&latest.revision===source.revision;};
+   if(!await sourceStillMatches())return false;
   }
   if(publication){const after=await capturePublicationBatchSnapshot(env,publication.specs,policy.budget!);if(JSON.stringify(publication.snapshot)!==JSON.stringify(after)||!await finalPublicationSnapshot(env,job,proof,policy,after))return false;}
-  return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&!!await readJournals()&&await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF');
+  return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&!!await readJournals()&&(!publication||await sourceStillMatches())&&await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF');
  }catch(error){throw error;}
 }
 

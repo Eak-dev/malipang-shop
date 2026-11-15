@@ -17,6 +17,9 @@ import {pendingDailyCancellations,verifyDailyCarrierEvidence} from './daily-carr
 import {verifyMixedDailyAccounting} from './mixed-daily-accounting';
 import {readLegacyDailyCoverage} from './legacy-daily-coverage';
 import {readContinuousReportHealth} from './continuous-report-health';
+import {readPublicationHandoffExpenseSource} from './stable-expense-source';
+import {verifyStableExpenseProjections} from './stable-expense-final-check';
+import {planStableExpenseProjections} from './stable-expense-projection-plan';
 
 type Row={kind:'STAGE'|'PUBLISH'|'REVOKE';sheet_id:number;sheet_name:string;row_number:number;after_value:string;source_digest:string};
 type Projection={entity_id:string;projection:'DAILY'|'EXPENSE_RAW'|'DETAIL';state:string;source_version:number;sheet_id:number;sheet_name:string};
@@ -32,7 +35,8 @@ export async function verifyPublicationHandoff(env:Env,job:SheetsSyncJob,claim:s
  const stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book;
  const row=await db.prepare("SELECT i.kind,i.sheet_id,i.sheet_name,i.row_number,i.after_value,i.source_digest FROM continuous_publication_intents i JOIN continuous_publication_markers m ON m.spreadsheet_id=i.spreadsheet_id AND m.entity_id=i.entity_id AND m.sheet_id=i.sheet_id AND m.sheet_name=i.sheet_name AND m.row_number=i.row_number AND m.transition_id=i.transition_id AND m.version=i.source_version AND m.marker=i.after_value WHERE i.transition_id=? AND i.spreadsheet_id=? AND i.entity_id=? AND i.source_version=? AND i.claim_token=? AND i.state='VERIFIED'").bind(transitionId,book,job.entityKey,job.entityVersion,claim).first<Row>();
  const marker=decodePublicationCarrier(row?.after_value),target=await resolvePublicationTarget(env);
- if(!stable()||!row||!marker||!target||row.kind==='PUBLISH'||row.sheet_id!==target.sheetId||row.sheet_name!==target.sheetName||marker.expenseId!==job.entityKey||marker.version!==job.entityVersion||marker.state!==(row.kind==='STAGE'?'STAGED':'REVOKED'))return false;
+ if(!stable()||!row||!marker||!target||row.sheet_id!==target.sheetId||row.sheet_name!==target.sheetName||marker.expenseId!==job.entityKey||marker.version!==job.entityVersion||marker.state!==(row.kind==='STAGE'?'STAGED':row.kind==='PUBLISH'?'PUBLISHED':'REVOKED'))return false;
+ if(row.kind==='PUBLISH')return verifyPublishedHandoff(env,job,claim,transitionId,mode,policy,authority,row,marker,target);
  const source=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority);
  if(!source||source.kind!==row.kind||source.digest!==row.source_digest||!stable())return false;
  const [records,cancels]=await Promise.all([
@@ -67,4 +71,25 @@ export async function verifyPublicationHandoff(env:Env,job:SheetsSyncJob,claim:s
  if(await readContinuousReportHealth(env,{expenseId:job.entityKey,absent:true,absentFromViews:true},{dailySheet:daily.title},policy,snapshot)!=='OK'||!await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority))return false;
  const after=await capturePublicationBatchSnapshot(env,specs,budget),latest=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority);
  return stable()&&JSON.stringify(snapshot)===JSON.stringify(after)&&JSON.stringify(source)===JSON.stringify(latest)&&await reviewedNoticeMatches(env,claim,source.noticeStamp,source.noticeIdentity,mode,policy,authority);
+}
+
+/** Read-only proof for a VERIFIED PUBLISH handoff. This never grants write
+ * authority or releases the notice claim; the close transaction must do that. */
+async function verifyPublishedHandoff(env:Env,job:SheetsSyncJob,claim:string,transitionId:string,mode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy,authority:NormalNoticeAuthority,row:Row,marker:NonNullable<ReturnType<typeof decodePublicationCarrier>>,target:{sheetId:number;sheetName:string;rows:number}):Promise<boolean>{
+ if(authority!=='HANDOFF'||!(policy.budget instanceof ReviewRequestBudget))return false;
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book;
+ const source=await readPublicationHandoffExpenseSource(env,job,claim,transitionId);
+ const noticeSource=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority);
+ if(!source||!noticeSource||source.digest!==row.source_digest||noticeSource.digest!==source.digest||noticeSource.revision!==source.revision||noticeSource.kind!=='PUBLISH'||planStableExpenseProjections(source).details.length!==marker.detailCount||!stable())return false;
+ const readJournals=async()=>{
+  const result=await db.batch([db.prepare("SELECT entity_id,projection,state,source_version,source_digest,sheet_id,sheet_name,operation_token FROM stable_projection_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND (entity_id=? OR substr(entity_id,1,length(?)+1)=?||'|') ORDER BY projection,entity_id").bind(book,job.entityKey,job.entityKey,job.entityKey),db.prepare("SELECT 1 AS found FROM stable_expense_cancellation_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND (entity_id=? OR substr(entity_id,1,length(?)+1)=?||'|') LIMIT 1").bind(book,job.entityKey,job.entityKey,job.entityKey)]);
+  if(!stable()||result.length!==2||result.some(x=>x.success!==true||!Array.isArray(x.results))||result[1]!.results!.length||result[0]!.results!.length>502)return null;
+  return result[0]!.results! as Parameters<typeof verifyStableExpenseProjections>[3];
+ };
+ const journals=await readJournals();if(!journals||!await reviewedNoticeMatches(env,claim,noticeSource.noticeStamp,noticeSource.noticeIdentity,mode,policy,authority))return false;
+ const metadata=await getSpreadsheetSheetProperties(env,policy),specs=await planPublicationSnapshot(env,metadata,target),snapshot=await capturePublicationBatchSnapshot(env,specs,policy.budget);
+ const evidence=await readPublicationAccountingEvidence(env,{sheet:target.sheetName,sheetId:target.sheetId,rows:target.rows,row:row.row_number,expected:marker,sourceDigest:source.digest},policy,snapshot);
+ await verifyStableExpenseProjections(env,job,source,journals,{...evidence,phase:'PUBLISHED'},policy,snapshot);
+ const after=await capturePublicationBatchSnapshot(env,specs,policy.budget),latest=await readPublicationHandoffExpenseSource(env,job,claim,transitionId),latestNotice=await readReviewedPublicationSource(env,job,claim,transitionId,{sheetId:row.sheet_id,sheetName:row.sheet_name,row:row.row_number},authority),latestJournals=await readJournals();
+ return stable()&&JSON.stringify(snapshot)===JSON.stringify(after)&&!!latest&&latest.fingerprint===source.fingerprint&&latest.revision===source.revision&&latest.digest===source.digest&&JSON.stringify(noticeSource)===JSON.stringify(latestNotice)&&JSON.stringify(journals)===JSON.stringify(latestJournals)&&await reviewedNoticeMatches(env,claim,noticeSource.noticeStamp,noticeSource.noticeIdentity,mode,policy,authority);
 }

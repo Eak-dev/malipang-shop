@@ -1,7 +1,8 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),deferred=require('../dist/expense/deferred-undo.js');
-function fixture(active,start=true,detailCount=0){
+function fixture(active,start=true,detailCount=0,activateCutover=false){
  const h=expenseSqlite(),s=h.sqlite,nonce='a'.repeat(32),next='b'.repeat(32),digest='c'.repeat(64),empty='PUB0_2_'+nonce,staged=`PUB1␟MALIPANG_EXPENSE:exp_one␟1␟${next}␟STAGED␟${detailCount}`,published=`PUB1␟MALIPANG_EXPENSE:exp_one␟1␟${'d'.repeat(32)}␟PUBLISHED␟${detailCount}`;
+ if(activateCutover)s.exec("UPDATE stable_sync_cutover SET state='ACTIVE',activated_at='now' WHERE singleton=1");
  s.exec("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_one','m1','owner','x',100,'cash','cash','ingredients','2026-11-15','CONFIRMED','now',1),('exp_other','m2','owner','y',100,'cash','cash','ingredients','2026-11-15','CONFIRMED','now',1); INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,lease_token,lease_until) VALUES('j','EXPENSE','exp_one',1,'t','PROCESSING','now','lease-token','2999-01-01T00:00:00.000Z'); INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','stage-token','HELD','now','now')");
  const revision=s.prepare('SELECT revision FROM stable_source_revision WHERE singleton=1').get().revision,insert=s.prepare("INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at) VALUES(?,'book','exp_one',20,'pub',2,?,1,?,?,?,'lease-token',?,?,?,?,?,?,'IN_FLIGHT','now','now')");
  insert.run('stage-op','STAGE',revision,digest,'stage-token','EMPTY',nonce,next,detailCount,empty,staged);s.exec("UPDATE continuous_publication_intents SET state='VERIFIED' WHERE transition_id='stage-op'");s.prepare("INSERT INTO continuous_publication_markers(spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,version,state,marker,transition_id,created_at,updated_at) VALUES('book','exp_one',20,'pub',2,1,'STAGED',?,'stage-op','now','now')").run(staged);s.exec("UPDATE stable_workbook_claims SET operation_token='claim-token' WHERE operation_token='stage-token'");
@@ -42,7 +43,7 @@ test('PUBLISH verification does not release source until its held claim is close
 test('Undo that commits first prevents a later PUBLISH intent for the old version',async()=>{const h=fixture(true,false);try{
  const result=await deferred.requestConfirmedExpenseUndo(h.env,input);assert.deepEqual(result,{kind:'UNDONE',version:2});assert.equal(h.sqlite.prepare("SELECT status FROM expense_events WHERE expense_id='exp_one'").get().status,'CANCELLED');assert.throws(()=>h.startPublish(),/publication requires owned live claim/);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM continuous_publication_intents WHERE kind='PUBLISH'").get().n,0);
  }finally{h.close();}});
-async function finishSyntheticPublication(h){
+async function finishSyntheticPublication(h,beforeClose){
  const readiness=require('../dist/sheets/continuous-notice-readiness.js'),notice=require('../dist/sheets/stable-edit-notice.js'),client=require('../dist/sheets/client.js'),proof=require('../dist/sheets/continuous-publication-handoff.js'),{finishVerifiedNormalStage}=require('../dist/sheets/continuous-normal-notice-handoff.js'),{closeReviewedContinuousExpense}=require('../dist/sheets/continuous-review-close.js'),{ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js');
  const originals=[[readiness,'noticeReadinessFingerprint'],[readiness,'noticeReadinessReady'],[readiness,'noticeReadinessSql'],[notice,'stableNoticeStyleFingerprint'],[client,'batchUpdateSpreadsheetWithReply'],[proof,'verifyPublicationHandoff']].map(([o,k])=>[o,k,o[k]]);let status='พักแก้ไฟล์',time='stamp';
  try{
@@ -56,6 +57,7 @@ async function finishSyntheticPublication(h){
   const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_one',entityVersion:1,traceId:'fixture'};
   await finishVerifiedNormalStage(h.env,prefix,{job,claim:'claim-token',entity:'publish-op',projection:'PUBLICATION',kind:'CONFIRM'},'lease-token',intent.source_revision);
   const dispatch=h.sqlite.prepare('SELECT dispatch_id FROM continuous_notice_dispatches').get().dispatch_id;assert.equal(await deferred.applyPendingUndoAfterNotice(h.env,dispatch),'NONE');
+  if(beforeClose)await beforeClose();
   proof.verifyPublicationHandoff=async()=>true;notice.stableNoticeStyleFingerprint=async(_env,id,s,t)=>id==='identity'&&status===s&&time===t?'e'.repeat(64):null;
   client.batchUpdateSpreadsheetWithReply=async(_env,requests,before)=>{await before();const f=requests[0].findReplace,isTime=f.range.startColumnIndex===2;assert.equal(isTime?time:status,f.find);if(isTime)time=f.replacement;else status=f.replacement;return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};};
   let outcome;for(let i=0;i<5;i++){outcome=await closeReviewedContinuousExpense(h.env,job,'claim-token',new ReviewRequestBudget(40),'HANDOFF');if(outcome!=='IN_PROGRESS')break;}assert.equal(outcome,'RESUMED');return dispatch;
@@ -110,4 +112,11 @@ test('deferred receipt Undo cancels its own documents without mutating shared do
  h.startPublish();assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});const dispatch=await finishSyntheticPublication(h);assert.equal(await deferred.applyPendingUndoAfterNotice(h.env,dispatch),'APPLIED');
  assert.deepEqual(h.sqlite.prepare("SELECT document_id,status FROM expense_documents ORDER BY document_id").all().map(x=>({...x})),[{document_id:'doc_a',status:'CANCELLED'},{document_id:'doc_b',status:'CANCELLED'},{document_id:'doc_shared',status:'CONFIRMED'}]);
  assert.equal(h.sqlite.prepare("SELECT status FROM expense_events WHERE expense_id='exp_other'").get().status,'CONFIRMED');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_document_items").get().n,3);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_document_links").get().n,2);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE entity_key='exp_one' AND entity_version=2 AND status='PENDING'").get().n,1);
+ }finally{h.close();}});
+
+test('PUBLISH handoff source requires exact transition, claim, version and active cutover',async()=>{const h=fixture(true,true,0,true);try{
+ await finishSyntheticPublication(h,async()=>{const read=require('../dist/sheets/stable-expense-source.js').readPublicationHandoffExpenseSource,job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_one',entityVersion:1};
+  const source=await read(h.env,job,'claim-token','publish-op');assert.ok(source);assert.equal(source.expense.expense_id,'exp_one');
+  assert.equal(await read(h.env,job,'claim-token','wrong'),null);assert.equal(await read(h.env,job,'wrong','publish-op'),null);assert.equal(await read(h.env,{...job,entityVersion:2},'claim-token','publish-op'),null);
+ });
  }finally{h.close();}});

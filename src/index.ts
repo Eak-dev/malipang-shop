@@ -4,7 +4,7 @@ import { createFailedJob,InboundBusyError,resolveFailedJobs } from "./db/reposit
 import { runScheduledMaintenance } from "./operations/maintenance";
 import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
-import { ensureSheetSyncOutbox,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
+import { ensureSheetSyncOutbox,sheetSyncOutboxStatement,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import {dispatchStablePhase1,isStableWorkbookBusy,isStableWorkbookReview} from './sheets/stable-phase1-dispatch';
 import {withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './sheets/stable-workbook-claim';
 import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget,reserveArmedTargetRedelivery} from './sheets/stable-recovery-admission';
@@ -72,17 +72,49 @@ export default{
     if(stablePacingConfigured(env)&&!stablePacingValid(env))console.error('stable-sheets-pacing-invalid-config');
     const includesLine=batch.messages.some(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='LINE_EVENT'||j.kind==='LINE_NOTIFICATION'||j.kind==='SYNC_ALERT_SWEEP';});
     const canaryTarget=recoveryGateConfigured(env)?await activeStableRecoveryTarget(env):null;
-    const chosenSheet=paceBatch&&!includesLine?batch.messages.find(m=>{
-      const j=m.body as WorkbookQueueJob;
-      return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));
-    }):null;
+    let chosenSheet:Message<QueueJob>|null=null;
+    if(paceBatch&&!includesLine){
+      const eligible=batch.messages.filter(m=>{const j=m.body as WorkbookQueueJob;return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));});
+      const expense=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='SHEETS_SYNC'&&j.entityType==='EXPENSE';});
+      const other=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='STAFF_CONFIG_SYNC'||j.kind==='SHEETS_SYNC'&&j.entityType!=='EXPENSE';});
+      if(!recoveryGateConfigured(env)&&expense&&other){
+       // A shared D1 CAS prevents either stream from monopolizing sustained
+       // mixed batches. If unavailable, park both; never spend the writer budget.
+       try{const turn=await env.DB.prepare("INSERT INTO workbook_batch_fairness(singleton,expense_turn) VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET expense_turn=1-expense_turn RETURNING expense_turn").first<{expense_turn:number}>();if(turn?.expense_turn===1)chosenSheet=expense;else if(turn?.expense_turn===0)chosenSheet=other;}catch{/* park both until fairness state is available */}
+      }else chosenSheet=eligible[0]??null;
+    }
+    // Persist parked workbook hints together. Each Sheets insert is
+    // idempotent; staff-config retains its existing exact-outbox check. A
+    // failed or unknown batch retries only those original queue messages.
+    const parked=paceBatch?batch.messages.filter(m=>m!==chosenSheet&&isWorkbookQueueJob(m.body as WorkbookQueueJob)):[];
+    const parkedReady=new Map<Message<QueueJob>,boolean>();let parkedBatchFailed=false;
+    if(parked.length){
+      const db=env.DB,now=new Date().toISOString();
+      try{
+       const statements=parked.map(m=>{const j=m.body as WorkbookQueueJob;if(j.kind==='SHEETS_SYNC')return sheetSyncOutboxStatement(env,j,now);if(j.kind==='STAFF_CONFIG_SYNC')return db.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(j.employeeId,j.version);throw Error('PARKED_WORKBOOK_BATCH_INVALID');});
+       const results=await db.batch(statements);
+       if(env.DB!==db||results.length!==parked.length||results.some((r,i)=>r.success===false||((parked[i]!.body as WorkbookQueueJob).kind==='SHEETS_SYNC'&&(!Number.isSafeInteger(r.meta?.changes)||Number(r.meta.changes)<0||Number(r.meta.changes)>1))))throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+       for(let i=0;i<parked.length;i++){
+        const m=parked[i]!,j=m.body as WorkbookQueueJob,r=results[i]!;
+        const ok=j.kind==='SHEETS_SYNC'||Array.isArray(r.results)&&r.results.length===1&&(r.results[0] as {present?:number}).present===1;
+        parkedReady.set(m,ok);
+       }
+      }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
+    }
     await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);
+      // If parked outbox persistence failed, do not spend an expense writer's
+      // budget alongside individual HR fallback checks in this invocation.
+      if(parkedBatchFailed&&message===chosenSheet&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
+       try{await ensureSheetSyncOutbox(env,job);if(isRecoveryTarget(job,canaryTarget)&&await reserveArmedTargetRedelivery(env,job,90))await env.JOB_QUEUE.send(job,{delaySeconds:90});message.ack();}catch{message.retry({delaySeconds:90});}return;
+      }
       if(paceBatch&&isWorkbookQueueJob(job)&&message!==chosenSheet){
         try{
-          if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
-          else if(job.kind==='STAFF_CONFIG_SYNC'){
-            const persisted=await env.DB.prepare("SELECT 1 present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();
-            if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');
+          if(parkedReady.get(message)!==true){
+            // Preserve independent HR/staff behavior if a shared batch fails;
+            // expense hints retry without touching their provider operation.
+            if(!parkedBatchFailed||job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE')throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+            if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
+            else {const persisted=await env.DB.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');}
           }
           // A canary that shares a batch with LINE must not be ACK-parked
           // forever while the broad recovery cron is disabled. Re-send only
@@ -108,7 +140,9 @@ export default{
    await withStableWorkbookClaim(env,()=>processStaffConfigSyncJob(env,job),job);
   }else await processStaffConfigSyncJob(env,job);}else{const outcome=env.STABLE_PHASE1_ENABLED==='true'?await dispatchStablePhase1(env,job,attempt):await syncJob(env,job,attempt);if(outcome==="BUSY"||outcome==='CONTINUE'){
  const delay=outcome==='CONTINUE'?90:await operationalBusyDelay(env,job);
- await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'){await wakeSyncFailureAlerts(env);message.ack();return;}if(outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,'CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED'].includes(error.message)){
+ await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'||outcome==='DEFERRED'){await wakeSyncFailureAlerts(env);message.ack();return;}if(outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&error.message==='CONTINUOUS_NOTICE_ACTIVATION_BLOCKED'&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
+  try{await ensureSheetSyncOutbox(env,job);const held=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',last_error='CONTINUOUS_NOTICE_ACTIVATION_BLOCKED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_alert_incidents') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='sync_jobs' AND name IN ('sync_alert_job_insert','sync_alert_job_update','sync_alert_job_complete','sync_alert_job_delete'))=4").bind(job.entityKey,job.entityVersion).run();if(held.success!==true||!Number.isSafeInteger(held.meta?.changes))throw Error('NOTICE_ACTIVATION_HOLD_UNCERTAIN');if(held.meta.changes===1)await wakeSyncFailureAlerts(env);else {const state=await env.DB.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?").bind(job.entityKey,job.entityVersion).first<{status:string}>();if(!state||state.status==='PENDING')throw Error('NOTICE_ACTIVATION_HOLD_UNCERTAIN');}message.ack();}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});}return;
+ }if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,'CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED'].includes(error.message)){
   if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}
   message.ack();return;
  }if(isStableWorkbookBusy(error)||(error instanceof Error&&[STABLE_SHEETS_PACING_BLOCKED,STABLE_NOTICE_READ_DEFERRED].includes(error.message))){

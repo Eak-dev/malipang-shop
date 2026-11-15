@@ -96,6 +96,7 @@ export async function admitStableRecovery(env:Env,job:RecoveryIdentity|undefined
   if(!recoveryGateValid(env))return false;
   const target=identityOf(job);
   if(!target||!operationToken)return false;
+  const terminalFence=target.entityType==='EXPENSE'?"AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=? AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')":'';
   const result=await env.DB.prepare(`INSERT INTO stable_recovery_operations
    (operation_token,epoch_id,state,admitted_at)
    SELECT ?, e.epoch_id,'ADMITTED',strftime('%Y-%m-%dT%H:%M:%fZ','now')
@@ -103,8 +104,8 @@ export async function admitStableRecovery(env:Env,job:RecoveryIdentity|undefined
    WHERE e.spreadsheet_id=? AND e.state='ARMED' AND
    e.target_type=? AND e.target_key=? AND e.target_version=?
    AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=e.spreadsheet_id AND c.operation_token=? AND c.state='HELD' AND c.notice_stamp IS NULL)
-   AND NOT EXISTS(SELECT 1 FROM stable_recovery_operations old WHERE old.epoch_id=e.epoch_id AND old.state='ADMITTED')`)
-   .bind(operationToken,env.GOOGLE_SPREADSHEET_ID,target.entityType,target.entityKey,target.entityVersion,operationToken).run();
+   AND NOT EXISTS(SELECT 1 FROM stable_recovery_operations old WHERE old.epoch_id=e.epoch_id AND old.state='ADMITTED') ${terminalFence}`)
+   .bind(operationToken,env.GOOGLE_SPREADSHEET_ID,target.entityType,target.entityKey,target.entityVersion,operationToken,...(terminalFence?[`${target.entityType}:${target.entityKey}:${target.entityVersion}`]:[])).run();
   if(result.success!==true||!Number.isSafeInteger(result.meta?.changes))throw Error('STABLE_RECOVERY_ADMISSION_UNKNOWN');
   return result.meta.changes===1;
 }

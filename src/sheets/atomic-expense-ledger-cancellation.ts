@@ -1,3 +1,4 @@
+import {normalNoticeHandoffEnabled,finishVerifiedNormalStage} from './continuous-normal-notice-handoff';
 import {continuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetGridInfo} from './client';
@@ -64,6 +65,8 @@ export async function cancelCarrierLedgerUnderClaim(env:Env,job:SheetsSyncJob,le
  for(let i=0;i<grid.rowCount;i++)for(let c=0;c<26;c++){if(i===index&&c===25)continue;if(!same(before.formula[i]?.[c],after.formula[i]?.[c]))throw Error('LEDGER_CANCEL_READBACK_UNCERTAIN');if(i===index&&(c===(projection==='DETAIL'?16:7)||(projection==='DETAIL'&&c===19)))continue;if(!same(before.effective[i]?.[c],after.effective[i]?.[c]))throw Error('LEDGER_CANCEL_READBACK_UNCERTAIN');}
  if(verifyCarrierLedgerSnapshot(after,grid.rowCount,26,projection,cancelled)!==index+1)throw Error('LEDGER_CANCEL_READBACK_UNCERTAIN');
  await authenticateCarrierLedgerSnapshot(env,after,grid.rowCount,projection,sheet,sheetId,{entityId:entity,version:job.entityVersion,claim,payload:change.replacement,kind:'CANCELLED'});if(!await sourceValid())throw Error('LEDGER_CANCEL_READBACK_UNCERTAIN');
- const verified=await db.prepare(`UPDATE stable_expense_cancellation_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection=? AND cancellation_version=? AND previous_version=? AND preimage_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,entity,projection,job.entityVersion,previous.previous_version,previous.preimage_digest,claim,...args).run();
+ const verifiedStatement=db.prepare(`UPDATE stable_expense_cancellation_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection=? AND cancellation_version=? AND previous_version=? AND preimage_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,entity,projection,job.entityVersion,previous.previous_version,previous.preimage_digest,claim,...args);
+ if(normalNoticeHandoffEnabled(env)){await finishVerifiedNormalStage(env,[verifiedStatement],{job,claim,entity,projection,kind:'CANCEL'},lease,cancelledSource.revision);return;}
+ const verified=await verifiedStatement.run();
  if(verified.success!==true||Number(verified.meta?.changes)!==1||!stable())throw Error('LEDGER_CANCEL_VERIFY_UNCERTAIN');
 }

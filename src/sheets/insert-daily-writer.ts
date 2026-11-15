@@ -1,4 +1,5 @@
-import {continuousSheetsReadPolicy} from './client';
+import {normalNoticeHandoffEnabled,finishVerifiedNormalStage} from './continuous-normal-notice-handoff';
+import {continuousSheetsReadPolicy,type ContinuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetCellNumberFormats,getSheetGridInfo,SheetsHttpError,SheetsReadNetworkError} from './client';
 import {OperationTimeoutError} from '../shared/async';
@@ -54,15 +55,15 @@ async function beforeIntentRead<T>(read:()=>Promise<T>):Promise<T>{
   throw error;
  }
 }
-async function verifyInsertedNumberFormats(env:Env,sheet:string,sheetId:number,row:number):Promise<boolean>{
- const formats=await getSheetCellNumberFormats(env,sheet,sheetId,row,continuousSheetsReadPolicy);
+async function verifyInsertedNumberFormats(env:Env,sheet:string,sheetId:number,row:number,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<boolean>{
+ const formats=await getSheetCellNumberFormats(env,sheet,sheetId,row,policy);
  return formats.length===17&&formats.slice(0,15).every(f=>f?.type==='NUMBER'&&f.pattern==='#,##0.00')&&formats[16]?.type==='DATE'&&formats[16]?.pattern==='dd/MM/yyyy';
 }
 
 /** Formula cells in legacy X may evaluate to an ID even when their formula
  * text contains no ID. Return null for duplicates or unresolved values. */
-export async function readVerifiedLegacyDailyIds(env:Env,range:string,rowCount:number,entityKey:string):Promise<{formula:unknown[][];effective:unknown[][]}|null>{
- const [formula,effective]=await Promise.all([batchGetSheetFormulaValues(env,[range],continuousSheetsReadPolicy),batchGetSheetEffectiveSerialValues(env,[range],continuousSheetsReadPolicy)]);
+export async function readVerifiedLegacyDailyIds(env:Env,range:string,rowCount:number,entityKey:string,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<{formula:unknown[][];effective:unknown[][]}|null>{
+ const [formula,effective]=await Promise.all([batchGetSheetFormulaValues(env,[range],policy),batchGetSheetEffectiveSerialValues(env,[range],policy)]);
  const valid=(data:unknown[][][]):boolean=>Array.isArray(data)&&data.length===1&&Array.isArray(data[0])&&data[0]!.length<=rowCount&&data[0]!.every(r=>Array.isArray(r)&&r.length<=1&&(r[0]===undefined||r[0]===null||typeof r[0]==='string'||typeof r[0]==='boolean'||typeof r[0]==='number'&&Number.isFinite(r[0])));
  if(!Number.isSafeInteger(rowCount)||rowCount<1||!valid(formula)||!valid(effective))return null;
  const f=formula[0]!,e=effective[0]!,key=stableDailyExpenseKey(entityKey);
@@ -83,7 +84,7 @@ export function verifiedInsertDailyPayment(rows:unknown[][],key:string,year:numb
 }
 
 /** Read-only final verification for a previously VERIFIED inserted carrier. */
-export async function verifyInsertedDailyFinalSnapshot(env:Env,job:SheetsSyncJob,source:StableExpenseSource,sheet:string,sheetId:number,grid:Grid,snapshot:Snapshot,journal:{state:string;source_version:number;source_digest:string;sheet_id:number;sheet_name:string;operation_token?:string},legacy:VerifiedLegacyCoverage):Promise<void>{
+export async function verifyInsertedDailyFinalSnapshot(env:Env,job:SheetsSyncJob,source:StableExpenseSource,sheet:string,sheetId:number,grid:Grid,snapshot:Snapshot,journal:{state:string;source_version:number;source_digest:string;sheet_id:number;sheet_name:string;operation_token?:string},legacy:VerifiedLegacyCoverage,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<void>{
  if(journal.state!=='VERIFIED'||journal.source_version!==job.entityVersion||journal.source_digest!==source.digest||journal.sheet_id!==sheetId||journal.sheet_name!==sheet||!journal.operation_token||grid.sheetId!==sheetId)throw Error('INSERT_DAILY_FINAL_JOURNAL');
  const record=planStableExpenseProjections(source).record,date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(record.transactionDate);if(!date||!paymentOptionForPair(record.paymentKey,record.sourceWallet))throw Error('INSERT_DAILY_FINAL_SOURCE');
  const payment=verifiedInsertDailyPayment(snapshot.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
@@ -92,7 +93,7 @@ export async function verifyInsertedDailyFinalSnapshot(env:Env,job:SheetsSyncJob
  const actual=found.length===1?decodeAtomicDailyPayload(snapshot.formula[found[0]!]![24]):null;
  const payload=encodeAtomicDailyPayload({expenseId:job.entityKey,postingYear:payment.postingYear,postingMonth:payment.postingMonth,postingDay:payment.postingDay,description:record.description.trim(),amountColumn:payment.amountColumn,amountSatang:Number(source.expense.amount_satang),category:record.category.trim(),wallet:legacySourceWallet(record.paymentKey,record.sourceWallet),...(actual?.operationMarker?{operationMarker:actual.operationMarker}:{})});
  if(found.length!==1||snapshot.formula[found[0]!]![24]!==payload||snapshot.effective[found[0]!]![24]!==payload||snapshot.effective[found[0]!]![23]!==stableDailyExpenseKey(job.entityKey))throw Error('INSERT_DAILY_FINAL_IDENTITY');
- if(!await verifyInsertedNumberFormats(env,sheet,sheetId,found[0]!+1))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
+ if(!await verifyInsertedNumberFormats(env,sheet,sheetId,found[0]!+1,policy))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
  const row=snapshot.formula[found[0]!]??[],cells=Array.from({length:grid.columnCount},(_,i)=>row[i]===undefined||row[i]===''?null:row[i]),digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(cells)))),v=>v.toString(16).padStart(2,'0')).join('');
  const evidence=await env.DB.prepare(`SELECT 1 AS ok FROM stable_expense_projection_preimages p JOIN atomic_daily_marker_reservations m ON m.spreadsheet_id=p.spreadsheet_id AND m.sheet_id=p.sheet_id AND m.entity_id=p.entity_id AND m.source_version=p.source_version WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection='DAILY' AND p.sheet_id=? AND p.sheet_name=? AND p.source_version=? AND p.source_digest=? AND p.preimage_width=? AND p.preimage_digest=? AND m.operation_token=? AND substr(m.marker,1,7)='INSERT_' AND ${stableSourceIntegrity} AND ${continuousDailyCutoverIntegrity}`).bind(env.GOOGLE_SPREADSHEET_ID,job.entityKey,sheetId,sheet,job.entityVersion,source.digest,grid.columnCount,digest,journal.operation_token).first<{ok:number}>();
  if(evidence?.ok!==1)throw Error('INSERT_DAILY_FINAL_PREIMAGE');
@@ -191,5 +192,6 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||after.effective[row-1]?.[23]!==key||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
  const verified=db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,sheetId,sheet,job.entityVersion,source.digest,claim,...args);
  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId,sheetName:sheet,version:job.entityVersion,sourceDigest:source.digest,row:after.formula[row-1]??[],width:grid.columnCount});if(!preimage||!stable())throw Error('INSERT_DAILY_PREIMAGE_UNVERIFIED');
+ if(normalNoticeHandoffEnabled(env)){await finishVerifiedNormalStage(env,[verified,preimage],{job,claim,entity:job.entityKey,projection:'DAILY',kind:'CONFIRM'},lease,source.revision);return;}
  const result=await db.batch([verified,preimage]);if(result.length!==2||result.some(r=>r.success!==true||Number(r.meta?.changes)!==1))throw Error('INSERT_DAILY_VERIFY_UNCERTAIN');
 }

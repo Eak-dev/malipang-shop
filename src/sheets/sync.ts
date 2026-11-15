@@ -8,6 +8,7 @@ import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 import {assertLegacyExpensePathAllowed} from './continuous-daily-route';
+import {assertContinuousNoticeActivation} from './continuous-notice-activation';
 export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
@@ -111,9 +112,12 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 }
 /** Durable outbox row for a delivery, so acknowledging a message that cannot
  * run yet never loses the job; scheduled recovery re-sends it later. */
+export function sheetSyncOutboxStatement(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
+ return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now);
+}
 export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
-  const now=new Date(nowMs).toISOString();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+ const db=env.DB,result=await sheetSyncOutboxStatement(env,job,new Date(nowMs).toISOString()).run();
+ if(env.DB!==db||result.success===false||!Number.isSafeInteger(result.meta?.changes)||Number(result.meta.changes)<0||Number(result.meta.changes)>1)throw Error('SHEET_SYNC_OUTBOX_UNCERTAIN');
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now(),legacyCutoverSchema?:boolean):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
@@ -138,13 +142,16 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
    ? legacyCutoverSchema?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers WHERE spreadsheet_id=?)":" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers)")
     :" AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers')"
    :'';
-  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence;
+  const normalNoticeFence=job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_normal_notice_handoffs h JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.operation_token=h.operation_token WHERE h.spreadsheet_id=? AND h.expense_id=sync_jobs.entity_key AND h.source_version=sync_jobs.entity_version AND c.state='HELD' AND c.phase='END_NOTICE_PENDING')":" AND 0"):'';
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence+normalNoticeFence;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
   if(job.entityType==='EXPENSE'&&legacyCutoverSchema===true&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  await assertContinuousNoticeActivation(env,job);
   const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow),legacyCutoverSchema);if(!leaseToken){if(job.entityType==='EXPENSE')await assertLegacyExpensePathAllowed(env);if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}

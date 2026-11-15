@@ -1,5 +1,6 @@
 import {hasTerminalSheetHold,STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
 import type {Env} from '../types';
+import {hasNormalNoticeHandoff,normalNoticeHandoffReady,wakeNormalNoticeHandoff} from './continuous-normal-notice-handoff';
 import {beginStableNotice,endStableNotice,stableNoticePaused} from './stable-edit-notice';
 import {stableFaultReason} from './stable-fault';
 import {SheetsHttpError} from './client';
@@ -51,11 +52,13 @@ export async function stableWorkbookClaimOwned(env:Env,token:string):Promise<boo
  * verified; an exception retains the claim for review rather than retrying. */
 export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity,onUntouchedNoticeFailure?:(token:string,error:unknown)=>Promise<{value:T}|null>):Promise<T>{
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,gateSetting=env.STABLE_RECOVERY_GATE_ENABLED,pacingSetting=env.STABLE_SHEETS_PACING_ENABLED,token=crypto.randomUUID();
-  const untouchedScope=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag&&env.STABLE_RECOVERY_GATE_ENABLED===gateSetting&&env.STABLE_SHEETS_PACING_ENABLED===pacingSetting;
+  const handoffFlag=env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED;
+  const untouchedScope=()=>env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED===handoffFlag&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag&&env.STABLE_RECOVERY_GATE_ENABLED===gateSetting&&env.STABLE_SHEETS_PACING_ENABLED===pacingSetting;
   const sheetJob=identity&&'entityType' in identity?identity:undefined;
   const boundedNotice=sheetJob?.entityType==='EXPENSE'&&env.CONTINUOUS_DAILY_ENABLED==='true';
   const guardedJob=sheetJob&&sheetJob.entityType!=='EXPENSE'&&sheetJob.entityType!=='PERSONAL_USE'?sheetJob:undefined;
   if(!book)throw new Error('STABLE_WORKBOOK_NOT_CONFIGURED');
+  if(handoffFlag==='true'&&sheetJob?.entityType==='EXPENSE'&&!await normalNoticeHandoffReady(env))throw Error('NORMAL_NOTICE_HANDOFF_NOT_READY');
   // Fast deny before reserving the shared workbook; the atomic D1 admission
   // below remains authoritative against concurrent queue invocations.
   if(await stableRecoveryGateBlocked(env,identity))throw Error(STABLE_RECOVERY_BLOCKED);
@@ -89,9 +92,10 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // The pre-image is verified and no provider POST has been sent yet.
       // Admit here (not before the notice GETs) so a safe read deferral
       // cannot strand an ADMITTED recovery epoch.
-      if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
+      const terminalAtAdmission=!!sheetJob&&sheetJob.entityType==='EXPENSE'&&recoveryGateConfigured(env);
+      if(sheetJob&&!terminalAtAdmission&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
       if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
-      if(!await admitStableRecovery(env,identity,token))throw Error(STABLE_RECOVERY_BLOCKED);
+      if(!await admitStableRecovery(env,identity,token)){if(terminalAtAdmission&&sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);throw Error(STABLE_RECOVERY_BLOCKED);}
       // MUST be the last instruction before returning to mutation dispatch:
       // a lost POST acknowledgement must never look like a safe read defer.
       beginNoticeMayHaveWritten=true;
@@ -107,6 +111,13 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     const result=await operation(token);
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
+    if(handoffFlag==='true'&&sheetJob?.entityType==='EXPENSE'){
+      if(env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED!==handoffFlag)throw Error('NORMAL_NOTICE_HANDOFF_SCOPE_CHANGED');
+      if(result==='CONTINUE'&&await hasNormalNoticeHandoff(env,token,sheetJob)){claimed=false;await wakeNormalNoticeHandoff(env,token,sheetJob);return result;}
+      // FINAL and no-journal exits need their own durable evidence design.
+      // Never fall through to the legacy two-cell notice writer in opt-in mode.
+      throw Error('NORMAL_NOTICE_HANDOFF_UNSUPPORTED_STAGE');
+    }
     phase='END_NOTICE';
     if(flag==='true')await endStableNotice(env,token,boundedNotice);
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);

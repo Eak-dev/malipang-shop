@@ -20,15 +20,22 @@ export async function authenticateCarrierLedgerSnapshot(env:Env,snapshot:Snapsho
  ]);
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||pr?.success!==true||cr?.success!==true||wr?.success!==true||!Array.isArray(pr.results)||!Array.isArray(cr.results)||!Array.isArray(wr.results)||pr.results.length>rowCount||cr.results.length>rowCount||wr.results.length>rowCount*2)throw Error('LEDGER_AUTH_READ');
  const projections=pr.results as P[],cancels=cr.results as C[],proofs=wr.results as W[],seen=new Set<string>();
+ // Index once instead of scanning every journal/evidence list per carrier.
+ // JSON tuple keys avoid delimiter collisions across otherwise valid IDs.
+ const projectionByEntity=new Map<string,P>(),cancelByEntity=new Map<string,C>(),proofKeys=new Set<string>();
+ for(const p of projections){if(projectionByEntity.has(p.entity_id))throw Error('LEDGER_AUTH_JOURNAL');projectionByEntity.set(p.entity_id,p);}
+ for(const c of cancels){if(cancelByEntity.has(c.entity_id))throw Error('LEDGER_AUTH_JOURNAL');cancelByEntity.set(c.entity_id,c);}
+ const proofKey=(entity:string,kind:'CONFIRM'|'CANCEL',version:number,operation:string,marker:string)=>JSON.stringify([entity,kind,version,operation,marker]);
+ for(const w of proofs)proofKeys.add(proofKey(w.entity_id,w.operation_kind,w.source_version,w.operation_token,w.marker));
  for(let i=1;i<rowCount;i++){
   const f=snapshot.formula[i]??[],value=f[25],row=decodeLedgerCarrier(value);if(!row)continue;
   if(row.projection!==projection)throw Error('LEDGER_AUTH_ROW');const entity=projection==='DETAIL'?`${row.expenseId}|${row.itemId}`:row.expenseId;
   if(seen.has(entity))throw Error('LEDGER_AUTH_DUPLICATE');seen.add(entity);
-  const ps=projections.filter(p=>p.entity_id===entity),cs=cancels.filter(c=>c.entity_id===entity);if(ps.length!==1||cs.length>1)throw Error('LEDGER_AUTH_JOURNAL');
-  const p=ps[0]!,c=cs[0],isPending=!!pending&&pending.entityId===entity&&pending.payload===value&&pending.kind===row.status;
+  const p=projectionByEntity.get(entity),c=cancelByEntity.get(entity);if(!p)throw Error('LEDGER_AUTH_JOURNAL');
+  const isPending=!!pending&&pending.entityId===entity&&pending.payload===value&&pending.kind===row.status;
   if(p.marker_count!==1||p.source_version!==row.confirmedVersion||!/^[A-Za-z0-9_-]{1,128}$/.test(p.operation_token))throw Error('LEDGER_AUTH_MARKER');
-  if(row.writeMarker&&!proofs.some(w=>w.entity_id===entity&&w.operation_kind==='CONFIRM'&&w.source_version===p.source_version&&w.operation_token===p.operation_token&&w.marker===row.writeMarker))throw Error('LEDGER_AUTH_MARKER');
-  if(row.cancelMarker&&(!c||!proofs.some(w=>w.entity_id===entity&&w.operation_kind==='CANCEL'&&w.source_version===c.cancellation_version&&w.operation_token===c.operation_token&&w.marker===row.cancelMarker)))throw Error('LEDGER_AUTH_MARKER');
+  if(row.writeMarker&&!proofKeys.has(proofKey(entity,'CONFIRM',p.source_version,p.operation_token,row.writeMarker)))throw Error('LEDGER_AUTH_MARKER');
+  if(row.cancelMarker&&(!c||!proofKeys.has(proofKey(entity,'CANCEL',c.cancellation_version,c.operation_token,row.cancelMarker))))throw Error('LEDGER_AUTH_MARKER');
   if(row.status==='CONFIRMED'&&p.state==='IN_FLIGHT'){
    if(!isPending||pending!.claim!==p.operation_token||pending!.version!==p.source_version||c)throw Error('LEDGER_AUTH_IN_FLIGHT');continue;
   }
@@ -40,5 +47,6 @@ export async function authenticateCarrierLedgerSnapshot(env:Env,snapshot:Snapsho
   }else if(c)throw Error('LEDGER_AUTH_CANCEL');
   if(await digest(original)!==p.preimage_digest)throw Error('LEDGER_AUTH_PREIMAGE');
  }
- if(projections.some(p=>!seen.has(p.entity_id))||cancels.some(c=>!seen.has(c.entity_id)))throw Error('LEDGER_AUTH_MISSING');
+ for(const id of projectionByEntity.keys())if(!seen.has(id))throw Error('LEDGER_AUTH_MISSING');
+ for(const id of cancelByEntity.keys())if(!seen.has(id))throw Error('LEDGER_AUTH_MISSING');
 }

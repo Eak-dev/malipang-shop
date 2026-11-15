@@ -1,3 +1,4 @@
+import {normalNoticeHandoffEnabled,finishVerifiedNormalStage} from './continuous-normal-notice-handoff';
 import {continuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetGridInfo} from './client';
@@ -101,6 +102,8 @@ export async function cancelAtomicDailyCandidateUnderClaim(env:Env,job:SheetsSyn
  if(!Array.isArray(responses)||responses.length!==1||!change||change.valuesChanged!==1||change.occurrencesChanged!==1||Number(change.formulasChanged??0)!==0)throw Error('ATOMIC_CANCEL_OUTCOME_UNKNOWN');
  const after=await snapshot(),result=after.effective[index]??[];
  if(after.formula[index]?.[24]!==tombstone||result[24]!==tombstone||!blank(result[4])||[...affected].some(c=>c!==24&&!blank(result[c]))||!unchangedExceptCancellation(before,after,grid.rowCount,grid.columnCount,index+1,payload.postingYear,payload.postingMonth)||!accounting(after)||!await tombstonesVerified(after,true)||dynamic&&!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,undefined,pending,{...cancelling,tombstone})||JSON.stringify(await readLegacyDailyCoverage(env,payload.postingYear,payload.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||!await sourceValid())throw Error('ATOMIC_CANCEL_READBACK_UNCERTAIN');
- const verified=await db.prepare(`UPDATE stable_expense_cancellation_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND cancellation_version=? AND previous_version=? AND preimage_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,job.entityVersion,row.previous_version,row.preimage_digest,claim,...args).run();
+ const verifiedStatement=db.prepare(`UPDATE stable_expense_cancellation_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND cancellation_version=? AND previous_version=? AND preimage_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,job.entityVersion,row.previous_version,row.preimage_digest,claim,...args);
+ if(normalNoticeHandoffEnabled(env)){await finishVerifiedNormalStage(env,[verifiedStatement],{job,claim,entity:job.entityKey,projection:'DAILY',kind:'CANCEL'},lease,cancelledSource.revision);return;}
+ const verified=await verifiedStatement.run();
  if(verified.success!==true||Number(verified.meta?.changes)!==1||!stable())throw Error('ATOMIC_CANCEL_VERIFY_UNCERTAIN');
 }

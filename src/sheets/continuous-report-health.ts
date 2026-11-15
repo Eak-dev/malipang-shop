@@ -1,4 +1,4 @@
-import {continuousSheetsReadPolicy} from './client';
+import {continuousSheetsReadPolicy,type ContinuousSheetsReadPolicy} from './client';
 import type {Env} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSpreadsheetSheetProperties} from './client';
 import {columnName} from './daily-expense';
@@ -17,7 +17,7 @@ type FormulaGroup={sheet:SheetProperty;minRow:number;maxRow:number;minColumn:num
 /** Check every exact formula installed by the REPORTS cutover against its
  * durable manifest. DAILY_J is deliberately excluded: row insertions in the
  * daily sheet legitimately move those formulas after cutover. */
-export async function verifyInstalledReportFormulas(env:Env,allSheets:SheetProperty[]):Promise<SheetProperty[]>{
+export async function verifyInstalledReportFormulas(env:Env,allSheets:SheetProperty[],policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<SheetProperty[]>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book)throw Error('REPORT_HEALTH_MANIFEST');
  const record=await db.prepare("SELECT manifest_json,manifest_digest,cell_count FROM continuous_report_cutover_attempts WHERE spreadsheet_id=? AND stage='REPORTS' AND state='VERIFIED'").bind(book).first<{manifest_json:string;manifest_digest:string;cell_count:number}>();
  if(!record||typeof record.manifest_json!=='string'||!/^[0-9a-f]{64}$/.test(record.manifest_digest)||await sha256(record.manifest_json)!==record.manifest_digest||!Number.isSafeInteger(record.cell_count)||record.cell_count<1||record.cell_count>1000)throw Error('REPORT_HEALTH_MANIFEST');
@@ -32,7 +32,7 @@ export async function verifyInstalledReportFormulas(env:Env,allSheets:SheetPrope
   else groups.set(e.sheetId,{sheet:found[0]!,minRow:e.row,maxRow:e.row,minColumn:e.column,maxColumn:e.column,entries:[e]});
  }
  const grouped=[...groups.values()];if(grouped.length>10)throw Error('REPORT_HEALTH_MANIFEST');
- const values=await batchGetSheetFormulaValues(env,grouped.map(g=>`${quote(g.sheet.title)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`),continuousSheetsReadPolicy);
+ const values=await batchGetSheetFormulaValues(env,grouped.map(g=>`${quote(g.sheet.title)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`),policy);
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||values.length!==grouped.length)throw Error('REPORT_HEALTH_READ');
  for(let i=0;i<grouped.length;i++){
   const g=grouped[i]!,rows=values[i];if(!Array.isArray(rows)||rows.length>g.maxRow-g.minRow+1||rows.some(r=>!Array.isArray(r)||r.length>g.maxColumn-g.minColumn+1))throw Error('REPORT_HEALTH_READ');
@@ -67,7 +67,7 @@ export function verifyContinuousReportRows(rows:ReportRows,expected?:ReportExpec
 
 /** Bounded health read; errors, missing rows, duplicate IDs and report spill
  * capacity are held. This is a point-in-time check, not a collaborator lock. */
-export async function readContinuousReportHealth(env:Env,expected?:ReportExpectation):Promise<'OK'|'CAPACITY'>{
+export async function readContinuousReportHealth(env:Env,expected?:ReportExpectation,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<'OK'|'CAPACITY'>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,raw=env.CONTINUOUS_RAW_SHEET,detail=env.CONTINUOUS_DETAIL_SHEET;
  if(!book||!raw||!detail||env.SHEET_EXPENSE_RAW!=='V52_EXPENSE_RAW'||(env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ')!=='รายละเอียดการซื้อ')throw Error('REPORT_HEALTH_SCOPE');
  const manifest=await db.prepare("SELECT manifest_json,manifest_digest FROM continuous_report_cutover_attempts WHERE spreadsheet_id=? AND stage='VIEWS' AND state='VERIFIED'").bind(book).first<{manifest_json:string;manifest_digest:string}>();
@@ -77,15 +77,15 @@ export async function readContinuousReportHealth(env:Env,expected?:ReportExpecta
  if(!Array.isArray(entries)||entries.length!==4)throw Error('REPORT_HEALTH_MANIFEST');
  const names=[env.SHEET_EXPENSE_RAW,raw,env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',detail,rawView,detailView,clean];
  const select=(all:SheetProperty[])=>names.map(n=>{const matches=all.filter(x=>x.title===n);if(matches.length!==1)throw Error('REPORT_HEALTH_TARGET');return matches[0]!;});
- const allSheets=await getSpreadsheetSheetProperties(env,continuousSheetsReadPolicy),grids=select(allSheets);
+ const allSheets=await getSpreadsheetSheetProperties(env,policy),grids=select(allSheets);
  for(const [index,title] of [[1,raw],[3,detail],[4,rawView],[5,detailView]] as const){const found=entries.filter(x=>x.title===title);if(found.length!==1||found[0]!.sheetId!==grids[index]!.sheetId||found[0]!.kind!==(index<4?'LEDGER':'VIEW'))throw Error('REPORT_HEALTH_TARGET');}
  if(new Set(grids.map(g=>g.sheetId)).size!==names.length||grids.slice(0,4).some(g=>g.rowCount>5000)||grids[4]!.rowCount<grids[0]!.rowCount+grids[1]!.rowCount-1||grids[5]!.rowCount<grids[2]!.rowCount+grids[3]!.rowCount-1||grids[6]!.rowCount!==4500||grids[6]!.columnCount<8)throw Error('REPORT_HEALTH_CAPACITY');
  const expectedFormula=combinedLedgerSpillFormulas({rawNew:raw,detailNew:detail,rawCombined:rawView,detailCombined:detailView,rawOldRows:grids[0]!.rowCount,rawNewRows:grids[1]!.rowCount,detailOldRows:grids[2]!.rowCount,detailNewRows:grids[3]!.rowCount});
- const formulas=await batchGetSheetFormulaValues(env,[`'${rawView}'!A1`,`'${detailView}'!A1`],continuousSheetsReadPolicy);
+ const formulas=await batchGetSheetFormulaValues(env,[`'${rawView}'!A1`,`'${detailView}'!A1`],policy);
  if(formulas.length!==2||formulas[0]?.[0]?.[0]!==expectedFormula.raw||formulas[1]?.[0]?.[0]!==expectedFormula.detail)throw Error('REPORT_HEALTH_FORMULA');
- const reportSheets=await verifyInstalledReportFormulas(env,allSheets);
- const values=await batchGetSheetEffectiveSerialValues(env,[`'${clean}'!A1:H4500`,`'${rawView}'!A1:A${grids[4]!.rowCount}`,`'${detailView}'!A1:B${grids[5]!.rowCount}`],continuousSheetsReadPolicy);
- const allAgain=await getSpreadsheetSheetProperties(env,continuousSheetsReadPolicy),again=select(allAgain),reportsAgain=reportSheets.map(s=>allAgain.find(x=>x.sheetId===s.sheetId&&x.title===s.title));
+ const reportSheets=await verifyInstalledReportFormulas(env,allSheets,policy);
+ const values=await batchGetSheetEffectiveSerialValues(env,[`'${clean}'!A1:H4500`,`'${rawView}'!A1:A${grids[4]!.rowCount}`,`'${detailView}'!A1:B${grids[5]!.rowCount}`],policy);
+ const allAgain=await getSpreadsheetSheetProperties(env,policy),again=select(allAgain),reportsAgain=reportSheets.map(s=>allAgain.find(x=>x.sheetId===s.sheetId&&x.title===s.title));
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.CONTINUOUS_RAW_SHEET!==raw||env.CONTINUOUS_DETAIL_SHEET!==detail||JSON.stringify(grids)!==JSON.stringify(again)||JSON.stringify(reportSheets)!==JSON.stringify(reportsAgain)||values.length!==3||values[1]?.[0]?.[0]!=='Expense_ID'||values[2]?.[0]?.[0]!=='Purchase_Item_ID')throw Error('REPORT_HEALTH_READ');
  const status=verifyContinuousReportRows({clean:values[0]!,rawIds:values[1]!,detailIds:values[2]!},expected);if(status==='INVALID')throw Error('REPORT_HEALTH_UNVERIFIED');return status;
 }

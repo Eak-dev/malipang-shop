@@ -31,6 +31,12 @@ export interface Env {
   STABLE_CANCELLATION_PREIMAGE_ENABLED?: string;
   /** Optional, default-off durable one-workbook-operation recovery canary. */
   STABLE_RECOVERY_GATE_ENABLED?: string;
+  /** Unwired, default-off positive-only reviewed expense notice closure. */
+  CONTINUOUS_REVIEW_CLOSE_ENABLED?: string;
+  CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED?: string;
+  CONTINUOUS_NOTICE_DISPATCH_ENABLED?: string;
+  CONTINUOUS_NOTICE_DEPLOYMENT_ID?: string;
+  NOTICE_QUEUE?: Queue<{dispatchId:string}|{probeId:string}>;
   /** Opt-in D1-serialized pacing for Google Sheets projection operations. */
   STABLE_SHEETS_PACING_ENABLED?: string;
   STABLE_SHEETS_READ_BUDGET_PER_MINUTE?: string;

@@ -1,4 +1,5 @@
 import type {Env,SheetsSyncJob} from '../types';
+import {normalNoticeHandoffEnabled,hasNormalNoticeHandoff,finishFinalNormalStage} from './continuous-normal-notice-handoff';
 import {readStableExpenseSource} from './stable-expense-source';
 import {planStableExpenseProjections} from './stable-expense-projection-plan';
 import {writeNewExpenseLedgerUnderClaim} from './stable-expense-ledger-writer';
@@ -124,7 +125,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
  // This gate must run before acquiring the workbook claim, which itself
  // changes D1 and the owner notice. A mislabeled test binding must not touch
  // Production even when the experimental route is accidentally enabled.
- const scope=()=>JSON.stringify([env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
+ const scope=()=>JSON.stringify([env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,env.CONTINUOUS_REVIEW_CLOSE_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
  const target=await assertContinuousDailyActivated(env),targetScope=scope();
  return withStableWorkbookClaim(env,async claim=>{
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
@@ -200,10 +201,12 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    return 'CAPACITY_REVIEW';
   }
   if(missing){
+   if(normalNoticeHandoffEnabled(env)){if(await hasNormalNoticeHandoff(env,claim,job))return 'CONTINUE';throw Error('NORMAL_NOTICE_HANDOFF_MISSING');}
    // A verified projection is durable before yielding. A new invocation gets
    // a fresh subrequest budget and rechecks source and every journal. Never
    // resume an ambiguous IN_FLIGHT write.
-   const next=await db.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='STABLE_STAGE_CONTINUE' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity} AND EXISTS(SELECT 1 FROM stable_source_revision r WHERE r.singleton=1 AND r.revision=?) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD') AND EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')`).bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,book,missing.id,missing.projection,job.entityVersion,source.digest).run();
+   const nextStatement=db.prepare(`UPDATE sync_jobs SET status='PENDING',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error='STABLE_STAGE_CONTINUE' WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity} AND EXISTS(SELECT 1 FROM stable_source_revision r WHERE r.singleton=1 AND r.revision=?) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD') AND EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')`).bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,book,missing.id,missing.projection,job.entityVersion,source.digest);
+   const next=await nextStatement.run();
    if(next.success!==true||Number(next.meta?.changes)!==1)throw Error('STABLE_EXPENSE_CONTINUE_UNCERTAIN');
    return 'CONTINUE';
   }
@@ -211,6 +214,10 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   await verifyStableExpenseProjections(env,job,source,journals);
   const latest=await readStableExpenseSource(env,job,lease,claim);if(!latest||latest.revision!==source.revision||latest.digest!==source.digest||latest.fingerprint!==source.fingerprint)throw Error('STABLE_EXPENSE_SOURCE_CHANGED');
   if(!await stableWorkbookClaimOwned(env,claim))throw Error('STABLE_EXPENSE_CLAIM_CHANGED');
+  if(normalNoticeHandoffEnabled(env)){
+   const manifest=journals.map(({entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token})=>({entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token})).sort((a,b)=>a.projection.localeCompare(b.projection)||a.entity_id.localeCompare(b.entity_id));
+   await finishFinalNormalStage(env,job,claim,lease,'CONFIRM',source.revision,source.digest,JSON.stringify(manifest));return 'CONTINUE';
+  }
   const itemKeys=JSON.stringify(projections.details.map(item=>`${job.entityKey}|${item.itemId}`));
   const completed=await db.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL
    WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${stableSourceIntegrity}

@@ -1,0 +1,27 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "malipang-continuous-notice-candidate",
+  "main": "src/continuous-notice-worker.ts",
+  "compatibility_date": "2026-07-20",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "d1_databases": [{"binding":"DB","database_name":"malipang-v5-2","database_id":"1a0744d4-5df7-41e9-b92d-4ccb732ac77a","migrations_dir":"migrations"}],
+  "queues": {
+    "producers": [{"binding":"NOTICE_QUEUE","queue":"malipang-continuous-notice-phases"},{"binding":"JOB_QUEUE","queue":"malipang-jobs"}],
+    "consumers": [{"queue":"malipang-continuous-notice-phases","max_batch_size":1,"max_batch_timeout":1,"max_retries":3,"max_concurrency":1}]
+  },
+  "triggers": {"crons":["* * * * *"]},
+  "vars": {
+    "APP_ENV":"production",
+    "RUNTIME_MODE":"production",
+    "SHEETS_SYNC_ENABLED":"false",
+    "STABLE_PHASE1_ENABLED":"false",
+    "STABLE_RECOVERY_GATE_ENABLED":"false",
+    "STABLE_SHEETS_PACING_ENABLED":"false",
+    "CONTINUOUS_DAILY_ENABLED":"false",
+    "CONTINUOUS_REVIEW_CLOSE_ENABLED":"false",
+    "CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED":"false",
+    "CONTINUOUS_NOTICE_DISPATCH_ENABLED":"false",
+    "SHEET_EXPENSE_DAILY":"รายวัน"
+  }
+}

@@ -1,4 +1,5 @@
 import type { Env } from "../types";
+import type {ReviewRequestBudget} from "./review-request-budget";
 import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
@@ -35,24 +36,28 @@ export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClai
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
 /** Explicit opt-in for continuous expense operations. Other callers retain the
  * pre-existing read behavior, including their own retry and body handling. */
-export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense'};
+export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense';readonly budget?:ReviewRequestBudget};
 export const continuousSheetsReadPolicy:ContinuousSheetsReadPolicy=Object.freeze({kind:'continuous-expense'});
 async function readContinuousSheetsBody(response:Response,remainingMs:number,label:string):Promise<Uint8Array>{
   try{return await readSheetsBody(response,remainingMs,label);}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
 }
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,readMutationReply=false,readPolicy?:ContinuousSheetsReadPolicy,boundedMutationError=false):Promise<Response>{
-  const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,readMutationReply=false,readPolicy?:ContinuousSheetsReadPolicy,boundedMutationError=false,mutationBudget?:ReviewRequestBudget):Promise<Response>{
+  const budget=readPolicy?.budget??mutationBudget;
+  const token=await getGoogleAccessToken(env,budget),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
+  const ticket=mutation?budget?.claimMutation():undefined;
+  try{
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet
   // request can be dispatched, so that wait is outside the mutation fence.
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),label=`Google Sheets ${init.method||"GET"}`;let deadline=0;
-  const send=()=>{deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},timeout,label);};
+  const send=()=>{if(ticket)ticket.consume();else budget?.consumeRead();deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers,...(budget?{redirect:"error" as RequestRedirect}:{})},timeout,label);};
   const idempotentRead=!mutation&&(init.method||"GET")==="GET";
   let res:Response;try{res=idempotentRead?await retryIdempotentRead(send,env.STABLE_SHEETS_PACING_ENABLED!=='true',!!readPolicy):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);if(readPolicy&&error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
   if(!res.ok){let body="";try{body=readPolicy?new TextDecoder().decode(await readContinuousSheetsBody(res,deadline-Date.now(),label)):readMutationReply||boundedMutationError?new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),label)):await res.text();}catch(error){if(readMutationReply||boundedMutationError)throw new SheetsMutationOutcomeUnknownError(error);if(readPolicy)throw error;}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}
   if(readMutationReply){try{const body=await readSheetsBody(res,deadline-Date.now(),label);return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}}
   if(readPolicy){const body=await readContinuousSheetsBody(res,deadline-Date.now(),label);return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}return res;
+  }finally{ticket?.release();}
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
 /** Used only by continuous-expense/cutover notice writes. */
@@ -63,9 +68,9 @@ export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMu
 /** Only for operations whose provider reply is needed to distinguish a
  * conditional no-op from an applied mutation. A malformed/lost reply must be
  * treated by the caller as an uncertain mutation, never blindly retried. */
-export async function batchUpdateSpreadsheetWithReply(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<unknown>{
+export async function batchUpdateSpreadsheetWithReply(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch,budget?:ReviewRequestBudget):Promise<unknown>{
   if(!requests.length)throw Error('SHEETS_EMPTY_CONDITIONAL_MUTATION');
-  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch,true);
+  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch,true,undefined,false,budget);
   try{return await response.json();}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
 }
 export async function getSheetValues(env:Env,range:string,readPolicy?:ContinuousSheetsReadPolicy):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"},false,undefined,false,readPolicy).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}

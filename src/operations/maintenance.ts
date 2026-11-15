@@ -7,6 +7,7 @@ import { refreshCurrentEmployeeWages } from "../payroll/repository";
 import { recoverPendingStaffConfigSyncs } from "../sheets/staff-config";
 import { armNextContinuousExpense,holdContinuousHistoricalExpenses,holdContinuousUndoVersionGaps,holdContinuousConfirmationVersionGaps,holdContinuousExpenseHistory,holdContinuousExpiredLease } from "../sheets/continuous-normal-recovery";
 import type { Env } from "../types";
+import {issueNoticeProbe,watchdogNoticeWorker} from "../sheets/continuous-notice-readiness";
 
 export const maintenanceSteps=["inbound_leases","payroll","sheets_recovery","staff_config_recovery","line_notification_recovery","evidence_retention"] as const;
 export type MaintenanceStep=typeof maintenanceSteps[number];
@@ -22,7 +23,10 @@ export async function runScheduledMaintenance(env:Env):Promise<void>{
     staff_config_recovery:()=>recoverPendingStaffConfigSyncs(env),
     line_notification_recovery:async()=>{
       // A failed sweep must not prevent existing notification delivery recovery.
-      let sweepFailed=false,deferredFailed=false;try{if(await sweepSyncFailureAlerts(env)===null)console.error('sync-alert-unavailable',{reason:'DISABLED_OR_SCHEMA_UNVERIFIED'});}catch{sweepFailed=true;}
+      let sweepFailed=false,deferredFailed=false;
+      try{await watchdogNoticeWorker(env);}catch{console.error('notice-watchdog-unavailable');}
+      try{await issueNoticeProbe(env,'MAIN_CRON');}catch{console.error('notice-main-probe-unavailable');}
+      try{if(await sweepSyncFailureAlerts(env)===null)console.error('sync-alert-unavailable',{reason:'DISABLED_OR_SCHEMA_UNVERIFIED'});}catch{sweepFailed=true;}
       try{await recoverDeferredAutoCancelAlerts(env);}catch{deferredFailed=true;}
       await recoverPendingLineNotifications(env);
       if(sweepFailed||deferredFailed)throw Error('SYNC_ALERT_SWEEP_FAILED');

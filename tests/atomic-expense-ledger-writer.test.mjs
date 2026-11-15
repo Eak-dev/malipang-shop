@@ -2,6 +2,12 @@ import {cutoverReadySql} from './helpers/cutover-ready.mjs';
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),route=require('../dist/sheets/continuous-daily-route.js'),cutover=require('../dist/sheets/continuous-daily-cutover.js'),sourceReader=require('../dist/sheets/stable-expense-source.js'),claims=require('../dist/sheets/stable-workbook-claim.js'),{writeCarrierLedgerUnderClaim}=require('../dist/sheets/atomic-expense-ledger-writer.js'),{cancelCarrierLedgerUnderClaim}=require('../dist/sheets/atomic-expense-ledger-cancellation.js'),{ledgerCarrierFormulas,ledgerCarrierMarker,decodeLedgerCarrier,ledgerCarrierDisplay,rawCarrierHeaders,detailCarrierHeaders}=require('../dist/sheets/atomic-expense-ledger-template.js');
 const notice=require('../dist/sheets/stable-edit-notice.js'),health=require('../dist/sheets/continuous-report-health.js'),{verifyReviewedLedgerProjection}=require('../dist/sheets/continuous-ledger-positive-recovery.js');
+// Test-only stub: lifecycle tests simulate an already admitted readiness gate.
+// The real, currently fail-closed gate is covered in continuous-notice-readiness.test.mjs.
+const simulatedReadiness=require('../dist/sheets/continuous-notice-readiness.js');
+simulatedReadiness.noticeReadinessFingerprint=async()=> 'f'.repeat(64);
+simulatedReadiness.noticeReadinessReady=async()=>true;
+simulatedReadiness.noticeReadinessSql='(? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL)';
 function fixture(projection='EXPENSE_RAW'){
  const h=expenseSqlite(),old={grid:client.getSheetGridInfo,formula:client.batchGetSheetFormulaValues,effective:client.batchGetSheetEffectiveSerialValues,write:client.batchUpdateSpreadsheetWithReply,activated:route.assertContinuousDailyActivated,target:route.continuousDailyTarget,cutover:cutover.chooseContinuousDailyCutover,source:sourceReader.readStableExpenseSource,reviewSource:sourceReader.readReviewedLedgerExpenseSource,claim:claims.stableWorkbookClaimOwned,paused:notice.stableNoticePaused,health:health.readContinuousReportHealth},prepare=h.DB.prepare,batch=h.DB.batch;
  h.DB.prepare=function(sql){const s=prepare.call(this,sql),run=s.run,all=s.all;s.run=async function(){return{...await run.call(this),success:true}};s.all=async function(){return{...await all.call(this),success:true}};return s};h.DB.batch=async function(s){return(await batch.call(this,s)).map(r=>({...r,success:true}))};
@@ -96,6 +102,17 @@ for(const projection of ['EXPENSE_RAW','DETAIL'])for(const mode of ['REPLACE','A
  assert.equal(proof.write_mode,mode);assert.equal(actual.writeMarker,proof.marker);assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined),true);
  assert.equal(h.sqlite.prepare('SELECT state FROM stable_projection_writes WHERE projection=?').get(projection).state,'VERIFIED');
  assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id='epoch-ledger'").get().state,'ARMED');assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),1);
+ assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined),true);assert.equal(h.writes(),1);
+ h.f[proof.target_row-1][25]='tampered';assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined),false);
+ }finally{h.close();}});
+for(const projection of ['EXPENSE_RAW','DETAIL'])test(`${projection} positive recovery forwards its request policy to nested readers`,async()=>{const h=fixture(projection);try{
+ h.setMode('timeout');await assert.rejects(h.run(),/lost response/);holdLedgerReview(h,1);
+ const budget={},policy={kind:'continuous-expense',budget},seen=new Set();
+ for(const name of ['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues']){const next=client[name];client[name]=async(...args)=>{assert.equal(args[2],policy,name);seen.add(name);return next(...args);};}
+ const nextHealth=health.readContinuousReportHealth;health.readContinuousReportHealth=async(...args)=>{assert.equal(args[2],policy);seen.add('health');return nextHealth(...args);};
+ const nextNotice=notice.stableNoticePaused;notice.stableNoticePaused=async(...args)=>{assert.equal(args[3],budget);seen.add('notice');return nextNotice(...args);};
+ assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined,'PAUSED',policy),true);
+ assert.deepEqual([...seen].sort(),['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','health','notice'].sort());
  }finally{h.close();}});
 for(const projection of ['EXPENSE_RAW','DETAIL'])test(`${projection} append rejects unexpected non-formula cells in normal readback`,async()=>{const h=fixture(projection);try{
  const ownerCol=projection==='DETAIL'?20:17;h.f[5][ownerCol]=h.e[5][ownerCol]='owner';h.setMode('append-extra-race');
@@ -120,7 +137,14 @@ for(const projection of ['EXPENSE_RAW','DETAIL'])test(`${projection} lost cancel
  assert.equal(await verifyReviewedLedgerProjection(h.env,h.cancelled,'claim-token',projection,'CANCEL',projection==='DETAIL'?'item_1':undefined),true);
  assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes WHERE projection=?').get(projection).state,'VERIFIED');
  assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='cancel'").get().status,'REVIEW');assert.equal(h.writes(),2);
+ assert.equal(await verifyReviewedLedgerProjection(h.env,h.cancelled,'claim-token',projection,'CANCEL',projection==='DETAIL'?'item_1':undefined),true);assert.equal(h.writes(),2);
  if(projection==='EXPENSE_RAW')assert.equal(h.f[1][17],'owner-input');
+ }finally{h.close();}});
+test('ledger Undo reverify after a crash rejects a changed linked item',async()=>{const h=fixture();try{
+ await h.run();h.prepareCancel();addLinkedCancelSource(h);h.setMode('timeout');await assert.rejects(h.cancel(),/lost response/);holdLedgerReview(h,2);
+ assert.equal(await verifyReviewedLedgerProjection(h.env,h.cancelled,'claim-token','EXPENSE_RAW','CANCEL'),true);
+ h.sqlite.exec("UPDATE expense_document_items SET description='changed' WHERE item_id='item_linked'");
+ assert.equal(await verifyReviewedLedgerProjection(h.env,h.cancelled,'claim-token','EXPENSE_RAW','CANCEL'),false);assert.equal(h.writes(),2);
  }finally{h.close();}});
 for(const kind of ['CONFIRM','CANCEL'])for(const mode of ['absent','unaffected','notice'])test(`${kind} does not treat ${mode} as positive evidence or replay`,async()=>{const h=fixture();try{
  if(kind==='CANCEL'){await h.run();h.prepareCancel();}h.setMode('timeout');await assert.rejects(kind==='CANCEL'?h.cancel():h.run(),/lost response/);holdLedgerReview(h,kind==='CANCEL'?2:1);
@@ -146,4 +170,10 @@ test('actual reviewed source reader is restricted to the exact held job and immu
  const actual=await h.readActualReviewedSource();assert.equal(actual.expense.expense_id,'exp_test');assert.equal(actual.expense.status,'CONFIRMED');assert.match(actual.digest,/^[0-9a-f]{64}$/);
  h.sqlite.exec("UPDATE sync_jobs SET status='PENDING' WHERE job_id='job'");assert.equal(await h.readActualReviewedSource(),null);
  h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW' WHERE job_id='job'; UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_test'");assert.equal(await h.readActualReviewedSource(),null);
+ }finally{h.close();}});
+for(const projection of ['EXPENSE_RAW','DETAIL'])test(`opt-in actual ${projection} confirm atomically commits handoff`,async()=>{const h=fixture(projection);try{
+ Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',CONTINUOUS_REVIEW_CLOSE_ENABLED:'true',CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED:'true',CONTINUOUS_NOTICE_DISPATCH_ENABLED:'true'});h.sqlite.exec("UPDATE stable_workbook_claims SET notice_stamp='stamp',notice_identity='identity' WHERE operation_token='claim-token'; INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-fixture','book','ARMED','EXPENSE','exp_test',1,'now','now'); INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('claim-token','epoch-fixture','ADMITTED','now')");await h.run();assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE operation_token='claim-token'").get().state,'VERIFIED');assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_version=1").get().status,'PENDING');assert.equal(h.sqlite.prepare('SELECT operation_kind FROM continuous_normal_notice_handoffs').get().operation_kind,'CONFIRM');assert.equal(await verifyReviewedLedgerProjection(h.env,h.job,'claim-token',projection,'CONFIRM',projection==='DETAIL'?'item_1':undefined,'PAUSED',undefined,'HANDOFF'),true);
+ }finally{h.close();}});
+for(const projection of ['EXPENSE_RAW','DETAIL'])test(`opt-in actual ${projection} Undo atomically commits handoff`,async()=>{const h=fixture(projection);try{
+ await h.run();h.prepareCancel();Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',CONTINUOUS_REVIEW_CLOSE_ENABLED:'true',CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED:'true',CONTINUOUS_NOTICE_DISPATCH_ENABLED:'true'});h.sqlite.exec("UPDATE stable_workbook_claims SET operation_token='claim-token-cancel',notice_stamp='stamp',notice_identity='identity' WHERE operation_token='claim-token'; INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-fixture','book','ARMED','EXPENSE','exp_test',2,'now','now'); INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('claim-token-cancel','epoch-fixture','ADMITTED','now')");await cancelCarrierLedgerUnderClaim(h.env,h.cancelled,'lease','claim-token-cancel',projection,projection==='DETAIL'?'item_1':undefined);assert.equal(h.writes(),2);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'VERIFIED');assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_version=2").get().status,'PENDING');assert.equal(h.sqlite.prepare('SELECT operation_kind FROM continuous_normal_notice_handoffs').get().operation_kind,'CANCEL');assert.equal(await verifyReviewedLedgerProjection(h.env,h.cancelled,'claim-token-cancel',projection,'CANCEL',projection==='DETAIL'?'item_1':undefined,'PAUSED',undefined,'HANDOFF'),true);
  }finally{h.close();}});

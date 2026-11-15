@@ -44,6 +44,7 @@
     "src/sheets/continuous-publication-template.ts",
     "src/sheets/continuous-publication-executor.ts",
     "src/sheets/continuous-publication-reviewed-source.ts",
+    "src/sheets/continuous-expired-revoke-phase.ts",
     "src/sheets/cancelled-financial-fingerprint.ts",
     "src/sheets/publication-accounting-evidence.ts",
     "src/sheets/continuous-publication-adapter.ts",

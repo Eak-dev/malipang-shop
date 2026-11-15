@@ -173,14 +173,16 @@ test('an ambiguous same-version redelivery is replaced without spending the rema
     assert.equal(firstCalls.acks,0);
     assert.equal(firstCalls.retries.length,1);
     assert.ok(firstCalls.retries[0].delaySeconds>=30&&firstCalls.retries[0].delaySeconds<=37,'the first ambiguous failure uses bounded transient jitter');
+    assert.equal(h.queued.length,1);
+    assert.equal(h.queued[0].body.kind,'SYNC_ALERT_SWEEP');
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
     const message={body:job(h.id,2),attempts:5,ack(){redeliveryCalls.acks+=1;},retry(options){redeliveryCalls.retries.push(options);}};
     await worker.queue({queue:'malipang-jobs',messages:[message]},h.env,{});
     assert.equal(redeliveryCalls.acks,1);
     assert.deepEqual(redeliveryCalls.retries,[]);
-    assert.equal(h.queued.length,1);
-    assert.equal(h.queued[0].delaySeconds,30);
-    assert.deepEqual(h.queued[0].body,job(h.id,2));
+    assert.equal(h.queued.length,2);
+    assert.equal(h.queued[1].delaySeconds,30);
+    assert.deepEqual(h.queued[1].body,job(h.id,2));
     assert.equal(h.sqlite.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).get().count,1);
   }finally{h.close();}
 });

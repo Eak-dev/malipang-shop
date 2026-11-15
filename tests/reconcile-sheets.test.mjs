@@ -2,17 +2,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {reconcileSheets} from '../dist/admin/reconcile-sheets.js';
 
-test('reconcile recreates all report job types from D1',async()=>{
+test('reconcile reports blocked expenses while scheduling other report jobs',async()=>{
   const sent=[];
   const db={
-    prepare(sql){return{bind(){return this;},async all(){if(sql.includes('attendance_events'))return{results:[{entity_key:'att_1',version:1}],meta:{}};if(sql.includes('attendance_daily'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('payroll_weekly'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('expense_events'))return{results:[{entity_key:'exp_1',version:1}],meta:{}};if(sql.includes('owner_personal_transactions'))return{results:[{entity_key:'personal_1',version:1}],meta:{}};return{results:[],meta:{}};}};},
-    async batch(statements){return statements.map(()=>({meta:{changes:1}}));}
+    prepare(sql){return{bind(...args){this.args=args;return this;},async all(){if(sql.includes('attendance_events'))return{results:[{entity_key:'att_1',version:1}],meta:{}};if(sql.includes('attendance_daily'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('payroll_weekly'))return{results:[{entity_key:'EMP001|2026-07-23',version:2}],meta:{}};if(sql.includes('expense_events'))return{results:[{entity_key:'exp_1',version:1}],meta:{}};if(sql.includes('owner_personal_transactions'))return{results:[{entity_key:'personal_1',version:1}],meta:{}};return{results:[],meta:{}};}};},
+    async batch(statements){return statements.map(statement=>({meta:{changes:statement.args?.[1]==='EXPENSE'?0:1}}));}
   };
   const sentMessages=[];
   const env={DB:db,SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async send(){},async sendBatch(messages){sentMessages.push(...messages);sent.push(...messages.map(message=>message.body));}}};
   const result=await reconcileSheets(env,{fromDate:'2026-07-23',toDate:'2026-08-05',limitPerType:20});
-  assert.equal(result.enqueued,5);
-  assert.deepEqual(new Set(sent.map(job=>job.entityType)),new Set(['ATTENDANCE_EVENT','DAILY_PAYROLL','WEEKLY_PAYROLL','EXPENSE','PERSONAL_USE']));
+  assert.equal(result.enqueued,4);
+  assert.deepEqual(result.blockedExpense,{count:1,reason:'EXPENSE_PROVIDER_RECONCILIATION_REQUIRED'});
+  assert.deepEqual(new Set(sent.map(job=>job.entityType)),new Set(['ATTENDANCE_EVENT','DAILY_PAYROLL','WEEKLY_PAYROLL','PERSONAL_USE']));
   assert.equal(sentMessages.every(message=>message.delaySeconds==null),true,'small reconcile should not need a delay');
 });
 
@@ -31,9 +32,9 @@ test('reconcile selects weekly payroll rows using Thursday cycle keys',async()=>
 
 test('large forced sheet batches are spread across minute windows',async()=>{
   const sent=[],bound=[];
-  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(){return[];}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(statements){return statements.map(()=>({meta:{changes:1}}));}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   const {enqueueSheetSyncBatch}=await import('../dist/db/repositories.js');
-  const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:`exp_${index}`,entityVersion:1,traceId:'reconcile_test'}));
+  const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'DAILY_PAYROLL',entityKey:`test_${index}`,entityVersion:1,traceId:'reconcile_test'}));
   assert.equal(await enqueueSheetSyncBatch(env,jobs,true),45);
   assert.equal(sent[0].delaySeconds,undefined);
   assert.equal(sent[39].delaySeconds,undefined);

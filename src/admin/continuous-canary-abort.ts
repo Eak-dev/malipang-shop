@@ -1,0 +1,41 @@
+import type {Env} from '../types';
+
+type CanaryAbortEnv=Env & {CONTINUOUS_CANARY_OPERATOR_ENABLED?:string};
+const integrity=`(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('continuous_canary_no_delete','continuous_canary_no_replace','continuous_canary_transition','stable_recovery_epoch_no_delete','stable_recovery_epoch_transition','stable_recovery_operation_no_delete','stable_recovery_operation_transition'))=7`;
+
+/** Fence an explicitly marked synthetic v1 canary, retain all unknown provider
+ * intents, and create a v2 Undo outbox entry. This does not resolve provider
+ * settlement, release REVIEW, call Sheets, or enqueue a provider retry. */
+export async function abortContinuousCanary(env:CanaryAbortEnv):Promise<void>{
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
+ if(env.CONTINUOUS_CANARY_OPERATOR_ENABLED!=='true'||env.STABLE_RECOVERY_GATE_ENABLED!=='true'||env.SHEETS_SYNC_ENABLED!=='true'||!book)throw Error('CANARY_ABORT_DISABLED');
+ const now=new Date().toISOString(),audit=`exp_audit_${crypto.randomUUID()}`,job=`sync_${crypto.randomUUID()}`,epoch=`canary_abort_${crypto.randomUUID()}`,fence=`canary_abort_claim_${crypto.randomUUID()}`;
+ const statements=[
+  // If the prior epoch already completed, establish a fresh REVIEW fence
+  // only while no active epoch or unverified operation exists. Existing
+  // claims remain untouched unless linked to the exact canary epoch.
+  db.prepare(`INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at)
+   SELECT ?,?,'REVIEW','EXPENSE',c.expense_id,1,?,? FROM continuous_canary_operator c WHERE c.spreadsheet_id=? AND c.state IN ('CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED') AND ${integrity}
+   AND NOT EXISTS(SELECT 1 FROM stable_recovery_epochs WHERE spreadsheet_id=c.spreadsheet_id AND state IN ('ARMED','REVIEW'))
+   AND NOT EXISTS(SELECT 1 FROM stable_recovery_operations o JOIN stable_recovery_epochs prior ON prior.epoch_id=o.epoch_id WHERE prior.spreadsheet_id=c.spreadsheet_id AND o.state='ADMITTED')`).bind(epoch,book,now,now,book),
+  db.prepare(`UPDATE stable_recovery_epochs SET state='REVIEW',updated_at=? WHERE spreadsheet_id=? AND state='ARMED' AND target_type='EXPENSE' AND target_version=1 AND EXISTS(SELECT 1 FROM continuous_canary_operator c WHERE c.spreadsheet_id=stable_recovery_epochs.spreadsheet_id AND c.expense_id=stable_recovery_epochs.target_key AND c.state IN ('CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED')) AND ${integrity}`).bind(now,book),
+  db.prepare(`SELECT CASE WHEN EXISTS(SELECT 1 FROM stable_recovery_epochs r WHERE r.spreadsheet_id=? AND r.state='REVIEW' AND r.target_type='EXPENSE' AND r.target_version=1 AND ${integrity}   AND EXISTS(SELECT 1 FROM continuous_canary_operator c JOIN expense_events e ON e.expense_id=c.expense_id JOIN expense_documents d ON d.document_id=c.document_id AND d.expense_id=e.expense_id JOIN expense_document_items i ON i.item_id=c.item_id AND i.document_id=d.document_id AND i.expense_id=e.expense_id JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=1
+    WHERE c.spreadsheet_id=r.spreadsheet_id AND c.expense_id=r.target_key AND c.state IN ('CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED') AND c.expense_id GLOB 'exp_canary_*' AND c.document_id GLOB 'doc_canary_*' AND c.item_id GLOB 'item_canary_*' AND c.line_user_id GLOB 'CANARY_NO_LINE_*' AND c.trace_id GLOB 'trace_canary_*' AND e.status='CONFIRMED' AND e.version=1 AND e.line_user_id=c.line_user_id AND e.trace_id=c.trace_id AND e.description='[SYSTEM TEST] Synthetic expense - cancel after verification' AND e.amount_satang=100 AND e.category='ingredients' AND e.source_wallet='SHOP_BANK' AND e.payment_key='transfer' AND e.transaction_date=c.transaction_date AND d.status='CONFIRMED' AND d.line_user_id=c.line_user_id AND d.trace_id=c.trace_id AND i.description='[SYSTEM TEST] Synthetic item' AND i.line_total_satang=100 AND j.status IN ('PENDING','PROCESSING','REVIEW','COMPLETED') AND j.trace_id=c.trace_id
+    AND (SELECT count(*) FROM expense_documents dx WHERE dx.expense_id=e.expense_id)=1 AND (SELECT count(*) FROM expense_document_items ix WHERE ix.expense_id=e.expense_id)=1 AND NOT EXISTS(SELECT 1 FROM sync_jobs x WHERE x.entity_type='EXPENSE' AND x.entity_key=e.expense_id AND x.entity_version<>1))) THEN 1 ELSE json_extract('invalid-json','$') END AS ok`).bind(book),
+  // Persist a workbook-level REVIEW fence even when no claim existed; the
+  // recovery epoch alone could be bypassed by disabling its feature flag.
+  db.prepare(`INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,phase,review_reason,created_at,updated_at)
+   SELECT ?,?,'REVIEW','OPERATION','CANARY_ABORT_UNCERTAIN',?,? WHERE NOT EXISTS(SELECT 1 FROM stable_workbook_claims WHERE spreadsheet_id=?)`).bind(book,fence,now,now,book),
+  db.prepare(`UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='CANARY_ABORT_UNCERTAIN',updated_at=? WHERE spreadsheet_id=? AND state='HELD' AND EXISTS(SELECT 1 FROM stable_recovery_operations o JOIN stable_recovery_epochs r ON r.epoch_id=o.epoch_id WHERE r.spreadsheet_id=stable_workbook_claims.spreadsheet_id AND r.state='REVIEW' AND o.operation_token=stable_workbook_claims.operation_token)`).bind(now,book),
+  db.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
+   SELECT ?,NULL,'UNDO',c.expense_id,NULL,'SYSTEM_CANARY_ABORT',json_object('status','CONFIRMED','version',1),json_object('status','CANCELLED','version',2),? FROM continuous_canary_operator c JOIN stable_recovery_epochs r ON r.spreadsheet_id=c.spreadsheet_id AND r.target_key=c.expense_id WHERE c.spreadsheet_id=? AND c.state IN ('CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED') AND r.state='REVIEW' AND r.target_version=1`).bind(audit,now,book),
+  db.prepare(`UPDATE expense_events SET status='CANCELLED',version=2,updated_at=? WHERE expense_id=(SELECT expense_id FROM continuous_canary_operator WHERE spreadsheet_id=?) AND status='CONFIRMED' AND version=1 AND changes()=1 AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=? AND expense_id=expense_events.expense_id)`).bind(now,book,audit),
+  db.prepare(`UPDATE expense_documents SET status='CANCELLED',updated_at=? WHERE document_id=(SELECT document_id FROM continuous_canary_operator WHERE spreadsheet_id=?) AND status='CONFIRMED' AND changes()=1 AND EXISTS(SELECT 1 FROM expense_audit_log a JOIN expense_events e ON e.expense_id=a.expense_id WHERE a.audit_id=? AND e.status='CANCELLED' AND e.version=2)`).bind(now,book,audit),
+  db.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) SELECT ?,'EXPENSE',c.expense_id,2,c.trace_id,'PENDING',0,?,?,NULL,NULL FROM continuous_canary_operator c WHERE c.spreadsheet_id=? AND changes()=1 AND EXISTS(SELECT 1 FROM expense_audit_log a JOIN expense_events e ON e.expense_id=a.expense_id WHERE a.audit_id=? AND e.status='CANCELLED' AND e.version=2)`).bind(job,now,now,book,audit),
+  db.prepare(`UPDATE sync_jobs SET status='REVIEW',last_error='CANARY_ABORT_UNCERTAIN',updated_at=?,lease_until=NULL,lease_token=NULL WHERE entity_type='EXPENSE' AND entity_version=1 AND entity_key=(SELECT expense_id FROM continuous_canary_operator WHERE spreadsheet_id=?) AND changes()=1`).bind(now,book),
+  db.prepare(`UPDATE continuous_canary_operator SET state='ABORTED',updated_at=? WHERE spreadsheet_id=? AND state IN ('CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED') AND changes()=1`).bind(now,book),
+  db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
+ ];
+ const results=await db.batch(statements);
+ if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||results.length!==12||results.some(x=>x.success!==true)||[5,6,7,8,9,10].some(i=>Number(results[i]!.meta?.changes)!==1))throw Error('CANARY_ABORT_OUTCOME_UNCERTAIN');
+}

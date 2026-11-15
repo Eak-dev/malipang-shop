@@ -1,4 +1,4 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {createHash} from 'node:crypto';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),notice=require('../dist/sheets/stable-edit-notice.js'),{dispatchStablePhase1}=require('../dist/sheets/stable-phase1-dispatch.js'),{readStableExpenseSource}=require('../dist/sheets/stable-expense-source.js'),{writeNewDailyUnderClaim}=require('../dist/sheets/stable-daily-writer.js'),{runStableExpenseJob}=require('../dist/sheets/stable-expense-job.js'),{resumeStableCapacity}=require('../dist/admin/stable-capacity-resume.js'),{withStableWorkbookClaim}=require('../dist/sheets/stable-workbook-claim.js'),{expectedHelperFormulae}=require('../dist/sheets/daily-stable-row-writes.js');
 const blank=()=>Array(25).fill(null);
 function fixture(full=false,withItems=false){
@@ -33,9 +33,118 @@ test('expense job completes only after daily and RAW readbacks, then releases it
  }finally{h.close();}});
 test('expense with a purchase item completes only after all three sheets read back',async()=>{const h=fixture(false,true);try{assert.equal(await runStages(h),'COMPLETED');assert.equal(h.writes(),3);assert.equal(h.detail[1][0],'item_1');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes WHERE state='VERIFIED'").get().n,3);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  }finally{h.close();}});
+test('opt-in preimages are captured only after each verified provider readback',async()=>{const h=fixture(false,true);try{
+ h.env.STABLE_CANCELLATION_PREIMAGE_ENABLED='true';assert.equal(await runStages(h),'COMPLETED');
+ const rows=h.sqlite.prepare("SELECT projection,preimage_width,preimage_digest FROM stable_expense_projection_preimages ORDER BY projection").all();
+ assert.deepEqual(rows.map(x=>x.projection),['DAILY','DETAIL','EXPENSE_RAW']);
+ const sources={DAILY:h.f[7],EXPENSE_RAW:h.raw[1],DETAIL:h.detail[1]};
+ for(const row of rows){const source=sources[row.projection];const canonical=Array.from({length:row.preimage_width},(_,i)=>source[i]===undefined||source[i]===''?null:source[i]);assert.equal(createHash('sha256').update(JSON.stringify(canonical)).digest('hex'),row.preimage_digest);}
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM pragma_table_info('stable_expense_projection_preimages') WHERE name='preimage_json'").get().n,0,'private provider rows are not stored in the journal');
+ }finally{h.close();}});
+test('undo racing the verified transition cannot commit a trusted preimage',async()=>{const h=fixture();try{
+ h.env.STABLE_CANCELLATION_PREIMAGE_ENABLED='true';const batch=h.DB.batch;let raced=false;
+ h.DB.batch=async function(statements){if(!raced&&statements.some(s=>s.sql?.includes('INSERT INTO stable_expense_projection_preimages'))){raced=true;h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");}return batch.call(this,statements);};
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_DAILY_VERIFICATION_UNCERTAIN/);assert.equal(raced,true);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_projection_preimages').get().n,0);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ }finally{h.close();}});
+test('preimage insert failure rolls back the VERIFIED transition after a Sheets write',async()=>{const h=fixture();try{
+ h.env.STABLE_CANCELLATION_PREIMAGE_ENABLED='true';h.sqlite.exec("CREATE TRIGGER fail_preimage BEFORE INSERT ON stable_expense_projection_preimages BEGIN SELECT RAISE(ABORT,'synthetic failure'); END");
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'));assert.equal(h.writes(),1);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_projection_preimages').get().n,0);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ }finally{h.close();}});
 test('full month holds only its job without dispatch and releases the workbook',async()=>{const h=fixture(true);try{assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'CAPACITY_REVIEW');assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  let queued=0;h.env.STABLE_PHASE1_ENABLED='true';h.env.JOB_QUEUE.send=async()=>{queued++;};await resumeStableCapacity(h.env,'exp_new',1);assert.equal(queued,1);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PENDING');await assert.rejects(resumeStableCapacity(h.env,'exp_new',1));
  }finally{h.close();}});
+test('a read-only daily preflight failure isolates the job and retains its specific reason',async()=>{const h=fixture();try{
+ h.e[5][9]=null;
+ assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');assert.equal(h.writes(),0);
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_DAILY_MONTH_OPENING_UNVERIFIED'});
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);
+ }finally{h.close();}});
+test('a month-specific helper formula failure is held for that job with a specific reason',async()=>{const h=fixture();try{
+ h.f[6][9]='=unexpected';assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED'});
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('duplicate workbook-wide identifiers retain global review even before intent',async()=>{const h=fixture();try{
+ h.f[6][23]=h.e[6][23]='duplicate';h.f[7][23]=h.e[7][23]='duplicate';
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_DAILY_DUPLICATE_OR_INVALID_ID/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('a daily preflight failure after reservation retains workbook review and the in-flight intent',async()=>{const h=fixture();try{
+ client.batchUpdateSpreadsheet=async(_env,_requests,before)=>{h.e[5][9]=null;await before();};
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_DAILY_MONTH_OPENING_UNVERIFIED/);
+ assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PROCESSING');
+ }finally{h.close();}});
+test('undo after claim but before source read isolates only the stale job without provider writes',async()=>{const h=fixture(),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused};try{
+ h.env.STABLE_PHASE1_ENABLED='true';let ended=0;
+ notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");};
+ notice.endStableNotice=async()=>{ended++};notice.stableNoticePaused=async()=>true;
+ assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');assert.equal(ended,1);assert.equal(h.writes(),0);
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED'});
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
+ }finally{Object.assign(notice,old);h.close();}});
+test('undo after reading source but before daily reservation is held without locking the workbook',async()=>{const h=fixture(),original=client.batchGetSheetFormulaValues;let undone=false;try{
+ client.batchGetSheetFormulaValues=async(...args)=>{const data=await original(...args);if(!undone){undone=true;h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");}return data;};
+ assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED'});
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('undo between the final source check and intent reservation is held without an intent',async()=>{const h=fixture(),prepare=h.DB.prepare;let undone=false;try{
+ h.DB.prepare=function(sql){const stmt=prepare.call(this,sql);if(sql.includes('INSERT INTO stable_projection_writes')){const run=stmt.run;stmt.run=async function(){if(!undone){undone=true;h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");}return run.call(this);};}return stmt;};
+ assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED'});
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);assert.equal(h.writes(),0);
+ }finally{h.DB.prepare=prepare;h.close();}});
+test('undo after daily intent remains workbook review and does not erase ambiguity',async()=>{const h=fixture();try{
+ client.batchUpdateSpreadsheet=async(_env,_requests,before)=>{h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");await before();};
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_DAILY_SOURCE_CHANGED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('an unexplained missing source still retains global review',async()=>{const h=fixture();try{
+ h.sqlite.exec("UPDATE expense_events SET status='WAITING_CONFIRM' WHERE expense_id='exp_new'");
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('an armed recovery gate retains workbook review for preflight and stale-source failures',async()=>{for(const mode of ['PREFLIGHT','STALE']){
+ const h=fixture(),pacing=require('../dist/sheets/stable-sheet-pacing.js'),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused,pacingPreflightBlocked:pacing.pacingPreflightBlocked,admitPacedWorkbookOperation:pacing.admitPacedWorkbookOperation};try{
+ Object.assign(h.env,{STABLE_PHASE1_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true'});
+ h.sqlite.exec("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch_gate_test','book','ARMED','EXPENSE','exp_new',1,'now','now')");
+ pacing.pacingPreflightBlocked=async()=>false;pacing.admitPacedWorkbookOperation=async()=>true;
+ notice.beginStableNotice=async(env,token,_wait,authorize)=>{await authorize();await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.stableNoticePaused=async()=>true;notice.endStableNotice=async()=>assert.fail('must not close notice on unverified recovery stage');
+ if(mode==='PREFLIGHT')h.e[5][9]=null;else h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),mode==='PREFLIGHT'?/STABLE_DAILY_MONTH_OPENING_UNVERIFIED/:/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_operations").get().state,'ADMITTED');assert.equal(h.writes(),0);
+ }finally{notice.beginStableNotice=old.beginStableNotice;notice.endStableNotice=old.endStableNotice;notice.stableNoticePaused=old.stableNoticePaused;pacing.pacingPreflightBlocked=old.pacingPreflightBlocked;pacing.admitPacedWorkbookOperation=old.admitPacedWorkbookOperation;h.close();}
+ }});
+test('a persisted recovery epoch fences scoped holds even when the gate flag is off',async()=>{for(const mode of ['PREFLIGHT','STALE'])for(const epochState of ['ARMED','REVIEW']){
+ const h=fixture();try{
+ h.env.STABLE_RECOVERY_GATE_ENABLED='false';
+ h.sqlite.exec(`INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch_gate_test','book','ARMED','EXPENSE','exp_new',1,'now','now')`);
+ if(epochState==='REVIEW')h.sqlite.exec("UPDATE stable_recovery_epochs SET state='REVIEW',updated_at='later' WHERE epoch_id='epoch_gate_test'");
+ if(mode==='PREFLIGHT')h.e[5][9]=null;else h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),mode==='PREFLIGHT'?/STABLE_DAILY_MONTH_OPENING_UNVERIFIED/:/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_recovery_epochs').get().state,epochState);
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PROCESSING');assert.equal(h.writes(),0);
+ }finally{h.close();}
+ }});
+test('without migration 0023, scoped review falls back to the original workbook review',async()=>{for(const mode of ['PREFLIGHT','STALE']){
+ const h=fixture();try{
+ h.env.STABLE_RECOVERY_GATE_ENABLED='false';h.sqlite.exec('DROP TABLE stable_recovery_operations; DROP TABLE stable_recovery_epochs');
+ if(mode==='PREFLIGHT')h.e[5][9]=null;else h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),mode==='PREFLIGHT'?/STABLE_DAILY_MONTH_OPENING_UNVERIFIED/:/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PROCESSING');assert.equal(h.writes(),0);
+ }finally{h.close();}
+ }});
 test('lost daily acknowledgement keeps the workbook held and never starts RAW',async()=>{const h=fixture();try{h.lose();await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'));assert.equal(h.writes(),1);assert.equal(h.raw.length,1);assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
  }finally{h.close();}});
 test('a human change between stages stops completion without rewriting the daily row',async()=>{const h=fixture();try{
@@ -64,11 +173,22 @@ test('queue dispatch processes a new expense and holds a full month without a pr
  h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
  let outcome;for(let n=0;n<5;n++){outcome=await dispatchStablePhase1(h.env,h.job);if(outcome!=='BUSY')break;}assert.equal(outcome,full?'REVIEW':'PROCESSED');assert.equal(h.writes(),full?0:2);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,full?'REVIEW':'COMPLETED');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  }finally{Object.assign(notice,old);h.close();}}});
-test('staged expense with item stays below the 50 subrequest limit per invocation',async()=>{const h=fixture(false,true),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused},fns=['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','batchUpdateSpreadsheet','batchWriteValues'];let count=0,max=0;const add=n=>{count+=n;max=Math.max(max,count);if(count>50)throw Error('subrequest limit');};try{
- h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");
+test('dispatch holds cancelled sources safely and retains workbook review for an unresolved intent',async()=>{for(const inFlight of [false,true]){
+ const h=fixture(),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused};try{
+ h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'; UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");
+ if(inFlight)h.sqlite.prepare("INSERT INTO stable_projection_writes VALUES('book','EXPENSE','exp_new','DAILY',9,'daily',1,?,'earlier','IN_FLIGHT','now')").run('a'.repeat(64));
+ notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
+ assert.equal(await dispatchStablePhase1(h.env,h.job),'REVIEW');assert.equal(h.writes(),0);
+ const claim=h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get();
+ assert.equal(claim?.state,inFlight?'REVIEW':undefined);
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');
+ }finally{Object.assign(notice,old);h.close();}
+}});
+test('staged expense with item and preimage capture stays below the 50 subrequest limit per invocation',async()=>{const h=fixture(false,true),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused},fns=['getSheetGridInfo','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','batchUpdateSpreadsheet','batchWriteValues'];let count=0,max=0;const add=n=>{count+=n;max=Math.max(max,count);if(count>50)throw Error('subrequest limit');};try{
+ h.env.STABLE_PHASE1_ENABLED='true';h.env.STABLE_CANCELLATION_PREIMAGE_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");
  notice.beginStableNotice=async(env,token)=>{add(7);await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{add(5);};notice.stableNoticePaused=async()=>{add(2);return true;};
  for(const name of fns){const fn=client[name];client[name]=async(...args)=>{add(1);return fn(...args);};}
- let outcome;for(let i=0;i<6;i++){count=1;outcome=await dispatchStablePhase1(h.env,h.job);if(outcome!=='BUSY')break;}assert.equal(outcome,'PROCESSED');assert.equal(h.writes(),3);assert.ok(max<=50,`maximum ${max}`);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'COMPLETED');
+ let outcome;for(let i=0;i<6;i++){count=1;outcome=await dispatchStablePhase1(h.env,h.job);if(outcome!=='BUSY')break;}assert.equal(outcome,'PROCESSED');assert.equal(h.writes(),3);assert.ok(max<=50,`maximum ${max}`);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'COMPLETED');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_projection_preimages').get().n,3);
  }finally{Object.assign(notice,old);h.close();}});
 test('verified stage followed by a rate-limited end notice keeps the job durable, records the cause and never repeats the write',async()=>{const h=fixture(),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused},logged=[],error=console.error;try{
  h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");console.error=(...args)=>logged.push(args);

@@ -7,6 +7,7 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
+import {assertContinuousDailyActivated} from './continuous-daily-route';
 export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
@@ -121,12 +122,21 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   const serializePersonalUse=job.entityType==="PERSONAL_USE";
   // The lease CAS itself fences previously recorded terminal financial jobs.
   const terminalFence=` AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`;
-  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence;
+  // A FAILED job or expired lease does not prove that a previous Sheets POST
+  // failed before dispatch. In stable mode a queued duplicate must not claim
+  // either state before the scheduled recovery has isolated it for review.
+  // Keep both time placeholders so the personal-use serialization arguments
+  // retain their existing positions in either mode.
+  const eligible=env.STABLE_PHASE1_ENABLED==='true'
+    ? "(status='PENDING' AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND ? IS NOT NULL)"
+    : "(((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))";
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  if(job.entityType==='EXPENSE')await assertContinuousDailyActivated(env);
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
   const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}
   let personalUse:PersonalUseProjectionRow|null=null,personalUseWriteOutcomeUncertain=false,personalUseAmbiguityLeaseUntil:string|null=null;

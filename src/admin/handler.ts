@@ -26,10 +26,24 @@ import {readOriginalPausedNotice} from './stable-paused-notice';
 import {stableRecoveryGateDiagnostic,recoveryGateConfigured} from '../sheets/stable-recovery-admission';
 import {stablePacingDiagnostic,stablePacingConfigured,stablePacingValid} from '../sheets/stable-sheet-pacing';
 import {stableWorkbookInReview} from '../sheets/stable-workbook-claim';
+import {inspectRecoveryProvider} from './stable-recovery-provider';
+import {operateContinuousCutover} from './continuous-cutover-operator';
+import {operateContinuousCanary} from './continuous-canary-operator';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
   if(!authorized(request,env))return new Response("Unauthorized",{status:401});const url=new URL(request.url);
+  // Prevent an old or mixed deployment from executing a cutover/canary step.
+  // The authenticated caller pins the Worker version obtained independently
+  // from Cloudflare; an absent/malformed metadata binding fails closed.
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary'].includes(url.pathname);
+  const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
+  if(guardedMutation){
+    if(!served)return Response.json({ok:false,error:'WORKER_VERSION_UNAVAILABLE',servedVersion:null},{status:503,headers:{'cache-control':'no-store'}});
+    const expected=request.headers.get('x-malipang-expected-worker-version');
+    if(!expected||!versionPattern.test(expected)||expected!==served)return Response.json({ok:false,error:'WORKER_VERSION_MISMATCH',servedVersion:served},{status:409,headers:{'cache-control':'no-store'}});
+  }
   try{
     if(request.method==="GET"&&url.pathname==="/admin/status"){
       const[inbound,sync,failed,lineAuth,lineQuota]=await Promise.all([env.DB.prepare(`SELECT status,COUNT(*) count FROM inbound_events GROUP BY status`).all(),env.DB.prepare(`SELECT status,COUNT(*) count FROM sync_jobs GROUP BY status`).all(),env.DB.prepare(`SELECT COUNT(*) count FROM failed_jobs WHERE status='OPEN'`).first<{count:number}>(),getLineBotInfo(env).then(()=>true).catch(()=>false),getLineMessageQuota(env).catch(error=>({pushCapacity:"UNKNOWN",warning:String(error instanceof Error?error.message:error)}))]);return Response.json({ok:true,mode:env.RUNTIME_MODE,inbound:inbound.results,sync:sync.results,openFailedJobs:Number(failed?.count||0),line:{auth:lineAuth?"PASS":"FAIL",replyCapability:lineAuth?"PASS":"FAIL",push:lineQuota},now:new Date().toISOString()});
@@ -83,17 +97,44 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       if(recoveryGateConfigured(env))return Response.json({ok:true,enqueued:0,blockedBy:'RECOVERY_GATE'});
       if(stablePacingConfigured(env)&&!stablePacingValid(env))return Response.json({ok:true,enqueued:0,blockedBy:'PACING_INVALID_CONFIG'});
       const body=await request.json().catch(()=>({})) as{staleAfterSeconds?:number;includeTerminalDlq?:boolean};
-      // Exclude terminal DLQ by default. Explicit true retains the existing
-      // authorized recovery path; operators must reconcile stable IDs first.
+      // Do not silently ignore the explicit override: a terminal delivery can
+      // have written before its acknowledgement was lost. It needs its own
+      // reconciliation; enqueueing it cannot prove that a replay is safe.
+      if(env.STABLE_PHASE1_ENABLED==='true'&&body.includeTerminalDlq===true)
+        return Response.json({ok:false,error:'TERMINAL_RECONCILIATION_REQUIRED'},{status:409});
+      // Preserve the legacy administrative enqueue behavior when stable mode
+      // is off; the separate terminal claim fence still applies.
       return Response.json({ok:true,enqueued:await recoverPendingSheetJobs(env,body.staleAfterSeconds??300,body.includeTerminalDlq===true)});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/resume-capacity'){const body=await request.json() as {expenseId?:unknown;version?:unknown};await resumeStableCapacity(env,typeof body.expenseId==='string'?body.expenseId:'',typeof body.version==='number'?body.version:0);return Response.json({ok:true,queued:true});}
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-cutover'){
+      const body=await request.json().catch(()=>({})) as {action?:unknown;expenseIds?:unknown};
+      return Response.json({...await operateContinuousCutover(env,body.action,body.expenseIds),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-canary'){
+      const body=await request.json().catch(()=>({})) as {action?:unknown};
+      return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/expense-provider-diagnostic'){
+      const body=await request.json().catch(()=>({})) as {expenseId?:unknown};
+      const evidence=await inspectRecoveryProvider(env,typeof body.expenseId==='string'?body.expenseId:'','รายวัน','รายวันต่อเนื่อง_แบบร่าง');
+      return Response.json({ok:true,...evidence},{headers:{'cache-control':'no-store'}});
+    }
     if(request.method==='GET'&&url.pathname==='/admin/stable-sync/status'){
       if(env.STABLE_PHASE1_ENABLED!=='true')return Response.json({ok:false,error:'STABLE_PHASE1_DISABLED'},{status:409});
       // phase/review_reason come from migration 0022; fall back before it is applied.
       const claimQuery=(columns:string)=>env.DB.prepare(`SELECT ${columns} FROM stable_workbook_claims WHERE spreadsheet_id=?`).bind(env.GOOGLE_SPREADSHEET_ID).first();
       const [claim,reviews,inFlight,recoveryGate,sheetPacing,syncBacklog,expiredProcessing,openTerminalDlq]=await Promise.all([claimQuery('state,updated_at,notice_stamp,phase,review_reason').catch(()=>claimQuery('state,updated_at,notice_stamp')),env.DB.prepare("SELECT CASE WHEN last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY' WHEN last_error='STABLE_HISTORICAL_OR_SOURCE_REVIEW' THEN 'HISTORICAL_OR_SOURCE' ELSE 'OTHER' END AS reason,count(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason").all(),env.DB.prepare("SELECT count(*) AS n FROM stable_projection_writes WHERE spreadsheet_id=? AND state='IN_FLIGHT'").bind(env.GOOGLE_SPREADSHEET_ID).first<{n:number}>(),stableRecoveryGateDiagnostic(env),stablePacingDiagnostic(env),env.DB.prepare("SELECT entity_type,status,count(*) n FROM sync_jobs WHERE status!='COMPLETED' GROUP BY entity_type,status ORDER BY entity_type,status").all(),env.DB.prepare("SELECT count(*) n FROM sync_jobs WHERE status='PROCESSING' AND lease_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')").first<{n:number}>(),env.DB.prepare("SELECT count(*) n FROM failed_jobs WHERE status='OPEN' AND error='DEAD_LETTER_MAX_RETRIES'").first<{n:number}>()]);
-      return Response.json({ok:true,claim:claim??null,reviews:reviews.results??[],inFlightProjections:Number(inFlight?.n??0),recoveryGate,sheetPacing,syncBacklog:(syncBacklog.results||[]).map((x:any)=>({entityType:x.entity_type,status:x.status,count:Number(x.n)})),expiredProcessing:Number(expiredProcessing?.n||0),openTerminalDlq:Number(openTerminalDlq?.n||0)},{headers:{'cache-control':'no-store'}});
+      // Additive, allowlisted breakdown; do not expose raw error text or record IDs.
+      // Keep the existing `reviews` categories unchanged for existing clients.
+      const reviewDetails=await (async()=>{try{const result=await env.DB.prepare(`SELECT CASE
+        WHEN last_error='STABLE_DAILY_MONTH_OPENING_UNVERIFIED' THEN 'DAILY_MONTH_OPENING'
+        WHEN last_error='STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED' THEN 'DAILY_ROW_FORMULA'
+        WHEN last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED') THEN 'CANCELLED_OR_SUPERSEDED'
+        ELSE 'OTHER' END AS reason,COUNT(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason`).all();
+        return result.success!==false&&Array.isArray(result.results)?result.results:null;
+      }catch{return null;}})();
+      return Response.json({ok:true,claim:claim??null,reviews:reviews.results??[],reviewDetails,inFlightProjections:Number(inFlight?.n??0),recoveryGate,sheetPacing,syncBacklog:(syncBacklog.results||[]).map((x:any)=>({entityType:x.entity_type,status:x.status,count:Number(x.n)})),expiredProcessing:Number(expiredProcessing?.n||0),openTerminalDlq:Number(openTerminalDlq?.n||0)},{headers:{'cache-control':'no-store'}});
     }
     if(request.method==="POST"&&url.pathname==="/admin/recover-line-notifications"){
       const body=await request.json().catch(()=>({})) as{purpose?:unknown;limit?:unknown};
@@ -121,5 +162,5 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==="POST"&&url.pathname==="/admin/vision/evaluate-evidence")return Response.json({ok:true,...await evaluateEvidenceImage(env,await request.json() as{key?:string},url) as Record<string,unknown>});
     if(request.method==="GET"&&url.pathname.startsWith("/admin/evidence/"))return getEvidence(env,decodeURIComponent(url.pathname.slice("/admin/evidence/".length)));
     return new Response("Not found",{status:404});
-  }catch(error){return Response.json({ok:false,error:String(error instanceof Error?error.message:error)},{status:400});}
+  }catch(error){return Response.json({ok:false,error:String(error instanceof Error?error.message:error),...(guardedMutation?{servedVersion:served}:{})},{status:400,...(guardedMutation?{headers:{'cache-control':'no-store'}}:{})});}
 }

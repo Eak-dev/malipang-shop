@@ -5,6 +5,8 @@ export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
 export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "PERSONAL_USE" | "SYSTEM_LOG";
 
 export interface Env {
+  /** Supplied by the Workers runtime, never trusted from an HTTP client. */
+  CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   DB: D1Database;
   AI: { run(model: string, input: unknown): Promise<unknown> };
   EVIDENCE: R2Bucket;
@@ -17,6 +19,16 @@ export interface Env {
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
   STABLE_PHASE1_ENABLED?: string;
+  /** Experimental opt-in; requires the carrier template and migration 0026. */
+  CONTINUOUS_DAILY_ENABLED?: string;
+  CONTINUOUS_DAILY_SHEET?: string;
+  CONTINUOUS_DAILY_SHEET_ID?: string;
+  CONTINUOUS_RAW_SHEET?: string;
+  CONTINUOUS_RAW_SHEET_ID?: string;
+  CONTINUOUS_DETAIL_SHEET?: string;
+  CONTINUOUS_DETAIL_SHEET_ID?: string;
+  /** Default off; requires migration 0024. Captures verified expense-row preimages. */
+  STABLE_CANCELLATION_PREIMAGE_ENABLED?: string;
   /** Optional, default-off durable one-workbook-operation recovery canary. */
   STABLE_RECOVERY_GATE_ENABLED?: string;
   /** Opt-in D1-serialized pacing for Google Sheets projection operations. */
@@ -90,7 +102,8 @@ export type LineNotificationPurpose =
   | "ATTENDANCE_SMOKE"
   | "EMPLOYEE_RESPONSE"
   | "EXPENSE_RESPONSE"
-  | "OWNER_RESPONSE";
+  | "OWNER_RESPONSE"
+  | "SYNC_FAILURE";
 export interface LineNotificationJob {
   kind: "LINE_NOTIFICATION";
   to: string;
@@ -99,7 +112,9 @@ export interface LineNotificationJob {
   retryKey: string;
   traceId: string;
 }
-export type QueueJob = InboundJob | SheetsSyncJob | LineNotificationJob;
+/** A wake-up hint only; durable REVIEW/DLQ records remain the source. */
+export interface SyncAlertSweepJob { kind: "SYNC_ALERT_SWEEP"; traceId: string }
+export type QueueJob = InboundJob | SheetsSyncJob | LineNotificationJob | SyncAlertSweepJob;
 
 export interface Employee {
   employeeId: string;

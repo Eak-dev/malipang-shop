@@ -120,3 +120,7 @@ test('PUBLISH handoff source requires exact transition, claim, version and activ
   assert.equal(await read(h.env,job,'claim-token','wrong'),null);assert.equal(await read(h.env,job,'wrong','publish-op'),null);assert.equal(await read(h.env,{...job,entityVersion:2},'claim-token','publish-op'),null);
  });
  }finally{h.close();}});
+test('PUBLISH close refuses commit when source revision changes after proof',async()=>{const h=fixture(true),original=h.DB.batch;let injected=false;try{
+ await assert.rejects(finishSyntheticPublication(h,async()=>{h.DB.batch=async statements=>{if(!injected&&statements.some(s=>s.sql.includes("UPDATE stable_recovery_operations SET state='VERIFIED'"))){injected=true;h.sqlite.exec("UPDATE expense_events SET description='raced' WHERE expense_id='exp_other'");}return original.call(h.DB,statements);};}));
+ assert.equal(injected,true);assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_operations WHERE operation_token='claim-token'").get().state,'ADMITTED');assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='j'").get().status,'PENDING');assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE operation_token='claim-token'").get().state,'HELD');
+ }finally{h.close();}});

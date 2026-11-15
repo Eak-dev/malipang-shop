@@ -20,7 +20,7 @@ type Proof={operation_kind:'CONFIRM'|'CANCEL';source_digest:string;journal_manif
 export async function verifyFinalHandoff(env:Env,job:SheetsSyncJob,token:string,noticeMode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy):Promise<boolean>{
  // Until the publication writer, cancellation lifecycle and external fence are
  // proven, do not allow this prototype to authorize runtime notice closure.
- if(env.CONTINUOUS_PUBLICATION_ENABLED==='true')return false;
+ if(env.CONTINUOUS_PUBLICATION_ENABLED!==undefined&&env.CONTINUOUS_PUBLICATION_ENABLED!=='false')return false;
  return verifyFinalHandoffCandidate(env,job,token,noticeMode,policy);
 }
 

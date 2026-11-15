@@ -661,3 +661,12 @@ test('activated stable and legacy expense entrypoints both block before writes o
 test('activation fence rejects missing immutable trigger even with matching runtime',async()=>{const h=await fixture();try{enableNoticeActivation(h);h.sqlite.exec('DROP TRIGGER continuous_notice_activation_no_delete');await assert.rejects(assertNoticeActivationReal(h.env,h.job),/CONTINUOUS_NOTICE_ACTIVATION_BLOCKED/);}finally{h.close();}});
 
 test('new handoff cannot be enabled before its durable activation marker exists',async()=>{const h=await fixture();try{await assert.doesNotReject(assertNoticeActivationReal(h.env,h.job));h.env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED='true';await assert.rejects(assertNoticeActivationReal(h.env,h.job),/CONTINUOUS_NOTICE_ACTIVATION_BLOCKED/);assert.equal(h.writes(),0);}finally{h.close();}});
+test('PUBLISH route holds before intent or provider write while whole-invocation quota is unproven',async()=>{
+ const h=await publicationFixture(),pubRoute=require('../dist/sheets/continuous-publication-route.js'),handoff=require('../dist/sheets/continuous-normal-notice-handoff.js'),{ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js'),{writeCarrierLedgerUnderClaim}=require('../dist/sheets/atomic-expense-ledger-writer.js'),oldClaim=claimApi.withStableWorkbookClaim,oldRoute=pubRoute.resolvePublicationTarget,oldReady=handoff.normalNoticeHandoffReady;
+ try{
+  await h.runPublication();await writeCarrierLedgerUnderClaim(h.env,h.job,'lease-token',h.claim,h.source,'EXPENSE_RAW',undefined,h.target,new ReviewRequestBudget(40));const before=h.publicationWrites();
+  Object.assign(h.env,{CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED:'true',CONTINUOUS_NOTICE_DISPATCH_ENABLED:'true',CONTINUOUS_REVIEW_CLOSE_ENABLED:'true',SHEETS_SYNC_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:'true'});handoff.normalNoticeHandoffReady=async()=>true;claimApi.withStableWorkbookClaim=async(_env,fn)=>fn(h.claim);pubRoute.resolvePublicationTarget=async()=>({sheetId:50,sheetName:'pub',rows:3});
+  await assert.rejects(runStableExpenseJob(h.env,h.job,'lease-token',new ReviewRequestBudget(48,'invocation')),/PUBLICATION_PUBLISH_QUOTA_UNPROVEN/);
+  assert.equal(h.publicationWrites(),before);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM continuous_publication_intents WHERE kind='PUBLISH'").get().n,0);
+ }finally{claimApi.withStableWorkbookClaim=oldClaim;pubRoute.resolvePublicationTarget=oldRoute;handoff.normalNoticeHandoffReady=oldReady;h.close();}
+});

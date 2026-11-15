@@ -1,7 +1,7 @@
 import {randomId} from "../shared/ids";
 import type {Env} from "../types";
 
-interface UndoInput{
+export interface UndoInput{
   expenseId:string;lineUserId:string;traceId:string;
   actorEmployeeId:string|null;branchId:string|null;
 }
@@ -13,14 +13,15 @@ interface UndoInput{
  * business version and the existing outbox high-water mark while holding the
  * transaction. A failed audit/document/outbox statement rolls everything back.
  */
-export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<number|null>{
-  const now=new Date().toISOString(),auditId=randomId("exp_audit");
+export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{auditId:string;pendingRequestId?:string;expectedVersion?:number}):Promise<number|null>{
+  const now=new Date().toISOString(),auditId=options?.auditId??randomId("exp_audit");
+  if(options?.pendingRequestId&&env.SHEETS_SYNC_ENABLED!=="true")throw Error("DEFERRED_UNDO_SYNC_DISABLED");
   const statements=[
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
       SELECT ?,?,'UNDO',expense_id,?,'',json_object('status',status,'version',version),
         json_object('status','CANCELLED','version',MAX(version,COALESCE((SELECT MAX(entity_version) FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=expense_events.expense_id),0))+1),?
-      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'`)
-      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId),
+      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED' AND (? IS NULL OR version=?)`)
+      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,options?.expectedVersion??null,options?.expectedVersion??null),
     env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=?,
         version=(SELECT json_extract(after_json,'$.version') FROM expense_audit_log WHERE audit_id=?)
       WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
@@ -40,6 +41,10 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput):Promise<numb
       WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`)
       .bind(randomId("sync"),input.traceId,now,now,auditId)
   );
+  if(options?.pendingRequestId){
+    statements.push(env.DB.prepare(`UPDATE continuous_pending_undo SET state='APPLIED',audit_id=?,cancelled_version=(SELECT version FROM expense_events WHERE expense_id=?),updated_at=? WHERE request_id=? AND expense_id=? AND source_version=? AND state='PENDING' AND EXISTS(SELECT 1 FROM expense_audit_log a JOIN expense_events e ON e.expense_id=a.expense_id WHERE a.audit_id=? AND e.expense_id=continuous_pending_undo.expense_id AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version'))`).bind(auditId,input.expenseId,now,options.pendingRequestId,input.expenseId,options.expectedVersion,auditId));
+    statements.push(env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok"));
+  }
   statements.push(env.DB.prepare(`SELECT e.version FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
     WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`).bind(auditId));
   const results=await env.DB.batch<{version:number}>(statements);

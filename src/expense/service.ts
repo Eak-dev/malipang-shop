@@ -14,7 +14,7 @@ import { parseExpenseText } from "./text-parser";
 import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyReviewState,purchaseReviewState,stateFromStoredDocument,type ExpenseReviewField,type ExpenseReviewState,unresolvedReviewFields } from "./review-state";
 import type { StaffActor } from "../access/repository";
 import type { BankSlipDocument,PurchaseDocument } from "../types";
-import { undoConfirmedExpense } from "./undo";
+import { requestConfirmedExpenseUndo } from "./deferred-undo";
 import { confirmExpenseAtomically } from "./confirm";
 import { inspectReceiptCandidates,receiptReferenceKey,storedReceiptFacts } from "./receipt-identity";
 import { maybeRespondOwnerOrderReview } from "./online-order-review-service";
@@ -503,8 +503,8 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     await respondText(env,event,Number(changed.meta.changes||0)===1?"Expense cancelled. ✅":"This item has already been saved or cancelled.",traceId);return;
   }
   if(action==="expense_undo"){
-    const owner=actorValues(accessActor||actor),version=await undoConfirmedExpense(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
-    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
+    const owner=actorValues(accessActor||actor),result=await requestConfirmedExpenseUndo(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
+    if(result.kind==="PENDING")await respondText(env,event,"ได้รับคำขอยกเลิกแล้ว กำลังรอตรวจผลซิงก์ก่อนดำเนินการต่อ",traceId);else if(result.kind==="UNDONE"){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:result.version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
   if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}

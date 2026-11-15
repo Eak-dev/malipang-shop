@@ -21,6 +21,7 @@ export interface Env {
   STABLE_PHASE1_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;
+  CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED?: string;
   CONTINUOUS_UNDO_SERIALIZATION_ENABLED?: string;
   CONTINUOUS_PUBLICATION_SHEET?: string;
   CONTINUOUS_PUBLICATION_SHEET_ID?: string;

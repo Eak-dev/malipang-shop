@@ -9,7 +9,7 @@ import {ReviewRequestBudget} from './review-request-budget';
 import {publicationSnapshotRange,type PublicationBatchSnapshot} from './publication-batch-snapshot';
 import {GoogleOAuthLease} from './google-auth';
 
-type AdapterInput={job:SheetsSyncJob;lease:string;claim:string;transitionId:string;sheetName:string;intent:PublicationIntent;sourceRevision:number;sourceDigest:string;budget:ReviewRequestBudget;oauthLease?:GoogleOAuthLease;atomicHandoff?:(prefix:D1PreparedStatement[],transitionId:string)=>Promise<boolean>;verifyHandoff?:(transitionId:string)=>Promise<boolean>;
+type AdapterInput={job:SheetsSyncJob;lease:string;claim:string;transitionId:string;sheetName:string;intent:PublicationIntent;sourceRevision:number;sourceDigest:string;financialJournalRevision?:number|undefined;budget:ReviewRequestBudget;oauthLease?:GoogleOAuthLease;atomicHandoff?:(prefix:D1PreparedStatement[],transitionId:string)=>Promise<boolean>;verifyHandoff?:(transitionId:string)=>Promise<boolean>;
  /** These checks must verify the activated publication target and, for
   * PUBLISH, exact staged DAILY/RAW/DETAIL provider images and item set. */
  verifyTarget:()=>Promise<boolean>;verifyProjections:(phase:'BEFORE'|'AFTER',snapshot?:PublicationBatchSnapshot)=>Promise<boolean>;captureForGuard?:()=>Promise<PublicationBatchSnapshot>;initialSnapshot?:PublicationBatchSnapshot};
@@ -21,6 +21,8 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
  const {job,lease,claim,transitionId,sheetName,intent,sourceRevision,sourceDigest,budget,oauthLease}=input,db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,policy={...continuousSheetsReadPolicy,budget,...oauthLease?{oauthLease}:{}};
  const before=decodePublicationCarrier(intent.before),after=intent.after;
  const kind=before?(after.state==='PUBLISHED'?'PUBLISH':'REVOKE'):'STAGE';
+ const financial=kind==='REVOKE'&&env.CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED==='true';
+ if(financial&&(!Number.isSafeInteger(input.financialJournalRevision)||Number(input.financialJournalRevision)<0))throw Error('PUBLICATION_FINANCIAL_JOURNAL_INVALID');
  // Grouped PUBLISH has two post-dispatch rounds, each four batched reads,
  // one format read and two notice reads. The invocation-scoped OAuth lease
  // forbids refresh and pacing disables GET retries. Unproven implementations
@@ -29,7 +31,7 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
  const leased=oauthLease instanceof GoogleOAuthLease&&env.STABLE_SHEETS_PACING_ENABLED==='true';
  const postReserve=kind==='PUBLISH'?(groupedPublish?14:129):(leased?12:25),preDispatchReserve=groupedPublish?14:leased?12:0;
  const state=before?.state??'EMPTY',beforeNonce=before?.nonce??intent.before.slice(-32);
- const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.STABLE_PHASE1_ENABLED,env.STABLE_SHEETS_PACING_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
+ const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.STABLE_PHASE1_ENABLED,env.STABLE_SHEETS_PACING_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
  const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
  if(!book||!lease||!claim||!transitionId||!sheetName||!(budget instanceof ReviewRequestBudget)||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||job.entityKey!==after.expenseId||job.entityVersion!==after.version||!Number.isSafeInteger(sourceRevision)||sourceRevision<0||!/^[0-9a-f]{64}$/.test(sourceDigest)||typeof input.verifyTarget!=='function'||typeof input.verifyProjections!=='function')throw Error('PUBLICATION_ADAPTER_INVALID');
  let currentSnapshot:PublicationBatchSnapshot|undefined,initialSnapshot=input.initialSnapshot;
@@ -56,7 +58,7 @@ export function createPublicationAdapter(env:Env,input:AdapterInput):Publication
  const persist=async()=>{
   if(budget.remaining<postReserve+preDispatchReserve+1||!budget.reservePost(postReserve))throw Error('PUBLICATION_BUDGET_POSTIMAGE');
   if(!budget.reserveMutation()){budget.releasePost();throw Error('PUBLICATION_BUDGET_MUTATION');}
-  const result=await db.prepare(`INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(transitionId,book,job.entityKey,intent.sheetId,sheetName,intent.row,kind,job.entityVersion,sourceRevision,sourceDigest,claim,lease,state,beforeNonce,after.nonce,after.detailCount,intent.before,encodePublicationCarrier(after)).run();
+  const result=await db.prepare(financial?`INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at,financial_journal_revision) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'),?)`:`INSERT INTO continuous_publication_intents(transition_id,spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,kind,source_version,source_revision,source_digest,claim_token,lease_token,before_state,before_nonce,after_nonce,detail_count,before_value,after_value,state,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,'IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))`).bind(transitionId,book,job.entityKey,intent.sheetId,sheetName,intent.row,kind,job.entityVersion,sourceRevision,sourceDigest,claim,lease,state,beforeNonce,after.nonce,after.detailCount,intent.before,encodePublicationCarrier(after),...(financial?[input.financialJournalRevision]:[])).run();
   return stable()&&result.success===true&&Number(result.meta?.changes)===1;
  };
  const dispatch=async(request:unknown)=>{

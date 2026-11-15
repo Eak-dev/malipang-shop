@@ -28,8 +28,16 @@ export async function verifyFinalHandoff(env:Env,job:SheetsSyncJob,token:string,
  * publication and provider-fence preconditions have been independently verified. */
 export async function verifyFinalHandoffCandidate(env:Env,job:SheetsSyncJob,token:string,noticeMode:ReviewedNoticeMode,policy:ContinuousSheetsReadPolicy):Promise<boolean>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!token)return false;
+ // The provider snapshots and journal proof must all describe the same
+ // publication mode, targets and job. In particular, switching the mode to
+ // false while an async source read is in flight must not let FINAL finish
+ // without validating the PUBLISHED/REVOKED marker.
+ const publicationMode=env.CONTINUOUS_PUBLICATION_ENABLED,budget=policy.budget,oauthLease=policy.oauthLease,policyKind=policy.kind;
+ if(publicationMode!==undefined&&publicationMode!=='false'&&publicationMode!=='true')return false;
+ const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.CONTINUOUS_PUBLICATION_ENABLED,env.CONTINUOUS_PUBLICATION_SHEET,env.CONTINUOUS_PUBLICATION_SHEET_ID,env.CONTINUOUS_PUBLICATION_ROWS,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.SHEET_EXPENSE_DAILY,env.SHEET_EXPENSE_RAW,env.SHEET_PURCHASE_DETAILS,env.STABLE_PHASE1_ENABLED,env.APP_ENV,env.RUNTIME_MODE,job.kind,job.entityType,job.entityKey,job.entityVersion,token,noticeMode]);
+ const initialScope=scope(),stable=()=>env.DB===db&&scope()===initialScope&&policy.budget===budget&&policy.oauthLease===oauthLease&&policy.kind===policyKind;
  const proof=await db.prepare(`SELECT z.operation_kind,z.source_digest,z.journal_manifest,c.notice_stamp,c.notice_identity FROM continuous_final_notice_evidence z JOIN continuous_normal_notice_handoffs h ON h.spreadsheet_id=z.spreadsheet_id AND h.operation_token=z.operation_token JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.operation_token=h.operation_token JOIN stable_recovery_epochs e ON e.epoch_id=z.epoch_id AND e.spreadsheet_id=z.spreadsheet_id JOIN stable_recovery_operations o ON o.epoch_id=e.epoch_id AND o.operation_token=z.operation_token JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=z.expense_id AND j.entity_version=z.source_version WHERE z.spreadsheet_id=? AND z.operation_token=? AND z.expense_id=? AND z.source_version=? AND h.projection='FINAL' AND h.expense_id=z.expense_id AND h.source_version=z.source_version AND h.operation_kind=z.operation_kind AND c.state='HELD' AND c.phase='END_NOTICE_PENDING' AND j.status='PENDING' AND j.lease_token IS NULL AND j.lease_until IS NULL AND e.state='ARMED' AND e.target_type='EXPENSE' AND e.target_key=z.expense_id AND e.target_version=z.source_version AND o.state='ADMITTED' AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_final_notice_evidence' AND name IN ('continuous_final_notice_evidence_insert','continuous_final_notice_evidence_no_update','continuous_final_notice_evidence_no_delete','continuous_final_notice_evidence_no_replace'))=4 AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_normal_notice_handoffs' AND name IN ('continuous_normal_notice_handoff_insert','continuous_normal_notice_handoff_no_update','continuous_normal_notice_handoff_no_delete','continuous_normal_notice_handoff_no_replace'))=4`).bind(book,token,job.entityKey,job.entityVersion).first<Proof>();
- if(!proof||!proof.notice_stamp||!proof.notice_identity||!['CONFIRM','CANCEL'].includes(proof.operation_kind)||!/^[0-9a-f]{64}$/.test(proof.source_digest)||env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book)return false;
+ if(!proof||!proof.notice_stamp||!proof.notice_identity||!['CONFIRM','CANCEL'].includes(proof.operation_kind)||!/^[0-9a-f]{64}$/.test(proof.source_digest)||!stable())return false;
  const readJournals=async()=>{
   const results=await db.batch([
    db.prepare("SELECT entity_id,projection,sheet_id,sheet_name,source_version,source_digest,state,operation_token FROM stable_projection_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND (entity_id=? OR substr(entity_id,1,length(?)+1)=?||'|')").bind(book,job.entityKey,job.entityKey,job.entityKey),
@@ -45,8 +53,8 @@ export async function verifyFinalHandoffCandidate(env:Env,job:SheetsSyncJob,toke
  };
  try{
   const journals=await readJournals();if(!journals||!await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF'))return false;
-  const publication=env.CONTINUOUS_PUBLICATION_ENABLED==='true'?await finalPublicationSnapshot(env,job,proof,policy):null;
-  if(env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&!publication)return false;
+  const publication=publicationMode==='true'?await finalPublicationSnapshot(env,job,proof,policy):null;
+  if(!stable()||publicationMode==='true'&&!publication)return false;
   let sourceStillMatches:()=>Promise<boolean>;
   if(proof.operation_kind==='CONFIRM'){
    const source=await readFinalHandoffExpenseSource(env,job,token);if(!source||source.digest!==proof.source_digest)return false;
@@ -63,7 +71,8 @@ export async function verifyFinalHandoffCandidate(env:Env,job:SheetsSyncJob,toke
    if(!await sourceStillMatches())return false;
   }
   if(publication){const after=await capturePublicationBatchSnapshot(env,publication.specs,policy.budget!);if(JSON.stringify(publication.snapshot)!==JSON.stringify(after)||!await finalPublicationSnapshot(env,job,proof,policy,after))return false;}
-  return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&!!await readJournals()&&(!publication||await sourceStillMatches())&&await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF');
+  if(!stable()||!await readJournals()||publication&&!await sourceStillMatches()||!await reviewedNoticeMatches(env,token,proof.notice_stamp,proof.notice_identity,noticeMode,policy,'HANDOFF'))return false;
+  return stable();
  }catch(error){throw error;}
 }
 

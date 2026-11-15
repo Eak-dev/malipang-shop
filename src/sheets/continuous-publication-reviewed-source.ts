@@ -4,6 +4,9 @@ import {reviewedClaimState,reviewedJobState,type NormalNoticeAuthority} from './
 import {cancelledFinancialFingerprint,cancelledJournalRevisionSnapshot,cancelledPriorMarker,cancelledPriorMarkerSnapshot,cancelledProjectionSnapshot} from './cancelled-financial-fingerprint';
 import {cancellationProtocol} from './cancelled-protocol';
 
+/** Sanitized error from read-only expired-source inspection. */
+export class ExpiredRevokeReadError extends Error {constructor(){super('EXPIRED_REVOKE_SOURCE_READ');this.name='ExpiredRevokeReadError';}}
+
 /** Read-only source evidence for one exact publication intent in REVIEW.
  * It does not admit a job, verify the notice, change a claim or permit a
  * Sheets POST. The caller must recheck the full result and live provider
@@ -44,5 +47,5 @@ async function readPublicationSource(env:Env,job:SheetsSyncJob,claim:string,tran
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes)),x=>x.toString(16).padStart(2,'0')).join('');
   if(digest!==intentDigest||cancel&&(await cancellationProtocol(env,job))?.signature!==protocol?.signature||env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book)return null;
   return{revision:Number(revision),digest,kind:meta.kind as 'STAGE'|'PUBLISH'|'REVOKE',noticeStamp,noticeIdentity};
- }catch(error){if(authority==='HANDOFF')throw error;return null;}
+ }catch(error){if(expired)throw new ExpiredRevokeReadError();if(authority==='HANDOFF')throw error;return null;}
 }

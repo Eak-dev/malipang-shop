@@ -33,7 +33,14 @@ export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClai
   return read();
 }
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,readMutationReply=false):Promise<Response>{
+/** Explicit opt-in for continuous expense operations. Other callers retain the
+ * pre-existing read behavior, including their own retry and body handling. */
+export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense'};
+export const continuousSheetsReadPolicy:ContinuousSheetsReadPolicy=Object.freeze({kind:'continuous-expense'});
+async function readContinuousSheetsBody(response:Response,remainingMs:number,label:string):Promise<Uint8Array>{
+  try{return await readSheetsBody(response,remainingMs,label);}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
+}
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,readMutationReply=false,readPolicy?:ContinuousSheetsReadPolicy,boundedMutationError=false):Promise<Response>{
   const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet
@@ -42,11 +49,14 @@ async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,b
   const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),label=`Google Sheets ${init.method||"GET"}`;let deadline=0;
   const send=()=>{deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},timeout,label);};
   const idempotentRead=!mutation&&(init.method||"GET")==="GET";
-  let res:Response;try{res=idempotentRead?await retryIdempotentRead(send,env.STABLE_SHEETS_PACING_ENABLED!=='true'):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
-  if(!res.ok){let body="";try{body=readMutationReply?new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),label)):await res.text();}catch(error){if(readMutationReply)throw new SheetsMutationOutcomeUnknownError(error);}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}
-  if(readMutationReply){let body:Uint8Array;try{body=await readSheetsBody(res,deadline-Date.now(),label);}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}return res;
+  let res:Response;try{res=idempotentRead?await retryIdempotentRead(send,env.STABLE_SHEETS_PACING_ENABLED!=='true',!!readPolicy):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);if(readPolicy&&error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
+  if(!res.ok){let body="";try{body=readPolicy?new TextDecoder().decode(await readContinuousSheetsBody(res,deadline-Date.now(),label)):readMutationReply||boundedMutationError?new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),label)):await res.text();}catch(error){if(readMutationReply||boundedMutationError)throw new SheetsMutationOutcomeUnknownError(error);if(readPolicy)throw error;}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}
+  if(readMutationReply){try{const body=await readSheetsBody(res,deadline-Date.now(),label);return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}}
+  if(readPolicy){const body=await readContinuousSheetsBody(res,deadline-Date.now(),label);return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
+/** Used only by continuous-expense/cutover notice writes. */
+export async function batchWriteContinuousNoticeValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch,false,undefined,true);}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
 export async function batchClearValues(env:Env,ranges:string[]):Promise<void>{if(!ranges.length)return;await sheetsFetch(env,"/values:batchClear",{method:"POST",body:JSON.stringify({ranges})},true);}
 export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!requests.length)return;await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);}
@@ -58,18 +68,18 @@ export async function batchUpdateSpreadsheetWithReply(env:Env,requests:unknown[]
   const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch,true);
   try{return await response.json();}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
 }
-export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
-export async function batchGetSheetValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+export async function getSheetValues(env:Env,range:string,readPolicy?:ContinuousSheetsReadPolicy):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"},false,undefined,false,readPolicy).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}
+export async function batchGetSheetValues(env:Env,ranges:string[],readPolicy?:ContinuousSheetsReadPolicy):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"UNFORMATTED_VALUE",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
-  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"},false,undefined,false,readPolicy).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
-export async function batchGetSheetEffectiveSerialValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+export async function batchGetSheetEffectiveSerialValues(env:Env,ranges:string[],readPolicy?:ContinuousSheetsReadPolicy):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:'UNFORMATTED_VALUE',dateTimeRenderOption:'SERIAL_NUMBER'});for(const range of ranges)query.append('ranges',range);
-  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:'GET'}).then(r=>r.json()) as {valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:'GET'},false,undefined,false,readPolicy).then(r=>r.json()) as {valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
-export async function batchGetSheetFormulaValues(env:Env,ranges:string[]):Promise<unknown[][][]>{
+export async function batchGetSheetFormulaValues(env:Env,ranges:string[],readPolicy?:ContinuousSheetsReadPolicy):Promise<unknown[][][]>{
   if(!ranges.length)return[];const query=new URLSearchParams({valueRenderOption:"FORMULA",dateTimeRenderOption:"FORMATTED_STRING"});for(const range of ranges)query.append("ranges",range);
-  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"}).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
+  const data=await sheetsFetch(env,`/values:batchGet?${query.toString()}`,{method:"GET"},false,undefined,false,readPolicy).then(r=>r.json()) as{valueRanges?:Array<{values?:unknown[][]}>};return(data.valueRanges||[]).map(item=>item.values||[]);
 }
 export async function getSpreadsheetMetadata(env:Env):Promise<{spreadsheetId:string;title:string;timeZone:string}>{const data=await sheetsFetch(env,"?fields=spreadsheetId,properties(title,timeZone)",{method:"GET"}).then(r=>r.json()) as{spreadsheetId:string;properties?:{title?:string;timeZone?:string}};return{spreadsheetId:data.spreadsheetId,title:String(data.properties?.title||""),timeZone:String(data.properties?.timeZone||"")};}
 export async function getSheetId(env:Env,title:string):Promise<number>{
@@ -80,26 +90,26 @@ export async function getSheetId(env:Env,title:string):Promise<number>{
 }
 /** Read sheet identities without disclosing cell data. Used to ensure a
  * bootstrap cannot collide with an existing sheet title or ID. */
-export async function getSpreadsheetSheetProperties(env:Env):Promise<Array<{sheetId:number;title:string;rowCount:number;columnCount:number}>>{
-  const data=await sheetsFetch(env,'?fields=spreadsheetId,sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',{method:'GET'}).then(r=>r.json()) as {spreadsheetId?:unknown;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown}}}>};
+export async function getSpreadsheetSheetProperties(env:Env,readPolicy?:ContinuousSheetsReadPolicy):Promise<Array<{sheetId:number;title:string;rowCount:number;columnCount:number}>>{
+  const data=await sheetsFetch(env,'?fields=spreadsheetId,sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))',{method:'GET'},false,undefined,false,readPolicy).then(r=>r.json()) as {spreadsheetId?:unknown;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown}}}>};
   if(data.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||!Array.isArray(data.sheets))throw Error('SHEET_PROPERTIES_UNVERIFIED');
   const result=data.sheets.map(sheet=>{const p=sheet.properties,g=p?.gridProperties;if(!p||!g||!Number.isSafeInteger(p.sheetId)||Number(p.sheetId)<0||typeof p.title!=='string'||!p.title||!Number.isSafeInteger(g.rowCount)||Number(g.rowCount)<1||!Number.isSafeInteger(g.columnCount)||Number(g.columnCount)<1)throw Error('SHEET_PROPERTIES_UNVERIFIED');return{sheetId:Number(p.sheetId),title:p.title,rowCount:Number(g.rowCount),columnCount:Number(g.columnCount)};});
   if(new Set(result.map(s=>s.sheetId)).size!==result.length||new Set(result.map(s=>s.title)).size!==result.length)throw Error('SHEET_PROPERTIES_UNVERIFIED');
   return result;
 }
 /** Grid bounds are used to read every possible identity before appending. */
-export async function getSheetGridInfo(env:Env,title:string):Promise<{sheetId:number;rowCount:number;columnCount:number}>{
-  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))",{method:"GET"}).then(r=>r.json()) as {sheets?:Array<{properties?:{sheetId?:number;title?:string;gridProperties?:{rowCount?:number;columnCount?:number}}}>};
+export async function getSheetGridInfo(env:Env,title:string,readPolicy?:ContinuousSheetsReadPolicy):Promise<{sheetId:number;rowCount:number;columnCount:number}>{
+  const data=await sheetsFetch(env,"?fields=sheets.properties(sheetId,title,gridProperties(rowCount,columnCount))",{method:"GET"},false,undefined,false,readPolicy).then(r=>r.json()) as {sheets?:Array<{properties?:{sheetId?:number;title?:string;gridProperties?:{rowCount?:number;columnCount?:number}}}>};
   const found=(data.sheets||[]).filter(sheet=>sheet.properties?.title===title);
   const p=found[0]?.properties,g=p?.gridProperties;
   if(found.length!==1||!Number.isSafeInteger(p?.sheetId)||Number(p?.sheetId)<0||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||Number(g?.rowCount)<1||Number(g?.columnCount)<1)throw Error('SHEET_GRID_UNVERIFIED');
   return {sheetId:Number(p?.sheetId),rowCount:Number(g?.rowCount),columnCount:Number(g?.columnCount)};
 }
 /** Read only the explicitly written number formats on a single E:U row. */
-export async function getSheetCellNumberFormats(env:Env,title:string,sheetId:number,row:number):Promise<Array<{type?:string;pattern?:string}|null>>{
+export async function getSheetCellNumberFormats(env:Env,title:string,sheetId:number,row:number,readPolicy?:ContinuousSheetsReadPolicy):Promise<Array<{type?:string;pattern?:string}|null>>{
  if(!title||!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(row)||row<1)throw Error('SHEET_FORMAT_RANGE_INVALID');
  const query=new URLSearchParams({includeGridData:'true',fields:'sheets(properties(sheetId,title),data(startRow,startColumn,rowData(values(userEnteredFormat(numberFormat)))))'});query.append('ranges',`'${title.replace(/'/g,"''")}'!E${row}:U${row}`);
- const data=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'}).then(r=>r.json()) as {sheets?:Array<{properties?:{sheetId?:number;title?:string};data?:Array<{startRow?:number;startColumn?:number;rowData?:Array<{values?:Array<{userEnteredFormat?:{numberFormat?:{type?:string;pattern?:string}}}>}>}>}>};
+ const data=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,readPolicy).then(r=>r.json()) as {sheets?:Array<{properties?:{sheetId?:number;title?:string};data?:Array<{startRow?:number;startColumn?:number;rowData?:Array<{values?:Array<{userEnteredFormat?:{numberFormat?:{type?:string;pattern?:string}}}>}>}>}>};
  const matches=(data.sheets||[]).filter(s=>s.properties?.sheetId===sheetId&&s.properties?.title===title),grid=matches[0]?.data?.[0];
  if(matches.length!==1||matches[0]!.data?.length!==1||grid?.startRow!==row-1||grid.startColumn!==4||!Array.isArray(grid.rowData)||grid.rowData.length!==1||!Array.isArray(grid.rowData[0]?.values)||grid.rowData[0]!.values!.length>17)throw Error('SHEET_FORMAT_READ_UNVERIFIED');
  return Array.from({length:17},(_,i)=>grid.rowData![0]!.values![i]?.userEnteredFormat?.numberFormat??null);

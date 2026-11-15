@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from '../sheets/client';
 import type {Env} from '../types';
 import {beginStableNotice,stableNoticePaused} from '../sheets/stable-edit-notice';
 import {releaseContinuousCutoverNotice} from './continuous-cutover-notice';
@@ -44,7 +45,7 @@ async function start(env:OperatorEnv):Promise<void>{
   db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
  ]);
  if(env.DB!==db||scope(env)!==initial||!results.every(x=>x.success===true))throw Error('CUTOVER_OPERATOR_START_UNCERTAIN');
- try{await beginStableNotice(env,token);if(env.DB!==db||scope(env)!==initial||!await stableWorkbookClaimOwned(env,token))throw Error('CUTOVER_OPERATOR_NOTICE_UNVERIFIED');await move(env,token,'STARTING','HELD');}
+ try{await beginStableNotice(env,token,undefined,undefined,true);if(env.DB!==db||scope(env)!==initial||!await stableWorkbookClaimOwned(env,token))throw Error('CUTOVER_OPERATOR_NOTICE_UNVERIFIED');await move(env,token,'STARTING','HELD');}
  catch(error){await retain(env,token,'STARTING');throw error;}
 }
 type ReviewClaim={operation_token:string;notice_stamp:string;notice_identity:string;created_at:string;phase:string;review_reason:string};
@@ -83,7 +84,7 @@ async function verifyInstalledReports(env:OperatorEnv):Promise<void>{
  await captureContinuousReportInputs(env,'REPORTS');
  const rows=await env.DB.prepare("SELECT stage,state,manifest_json,manifest_digest,cell_count FROM continuous_report_cutover_attempts WHERE spreadsheet_id=? AND stage IN ('DAILY_J','REPORTS')").bind(env.GOOGLE_SPREADSHEET_ID).all<{stage:string;state:string;manifest_json:string;manifest_digest:string;cell_count:number}>();
  if(rows.success!==true||rows.results?.length!==2)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
- const sheets=await getSpreadsheetSheetProperties(env);
+ const sheets=await getSpreadsheetSheetProperties(env,continuousSheetsReadPolicy);
  for(const row of rows.results){
   if(row.state!=='VERIFIED'||await hash(row.manifest_json)!==row.manifest_digest)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
   let entries:ManifestEntry[];try{entries=JSON.parse(row.manifest_json) as ManifestEntry[];}catch{throw Error('CUTOVER_REPORT_NOT_VERIFIED');}
@@ -95,14 +96,14 @@ async function verifyInstalledReports(env:OperatorEnv):Promise<void>{
    else groups.set(e.sheetId,{name:e.sheetName,minRow:e.row,maxRow:e.row,minColumn:e.column,maxColumn:e.column,entries:[e]});
   }
   const grouped=[...groups.values()];if(grouped.length>10)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
-  const values=await batchGetSheetFormulaValues(env,grouped.map(g=>`${quote(g.name)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`));
+  const values=await batchGetSheetFormulaValues(env,grouped.map(g=>`${quote(g.name)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`),continuousSheetsReadPolicy);
   if(values.length!==grouped.length)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
   for(let i=0;i<grouped.length;i++){const g=grouped[i]!;for(const e of g.entries){const value=values[i]?.[e.row-g.minRow]?.[e.column-g.minColumn];if(typeof value!=='string'||await hash(value)!==e.after)throw Error('CUTOVER_REPORT_NOT_VERIFIED');}}
  }
 }
 async function activate(env:OperatorEnv,token:string,expenseIds:readonly [string,string]):Promise<void>{
  await verifyInstalledReports(env);
- const [sheets,revision]=await Promise.all([getSpreadsheetSheetProperties(env),env.DB.prepare('SELECT revision FROM stable_source_revision WHERE singleton=1').first<{revision:number}>()]);
+ const [sheets,revision]=await Promise.all([getSpreadsheetSheetProperties(env,continuousSheetsReadPolicy),env.DB.prepare('SELECT revision FROM stable_source_revision WHERE singleton=1').first<{revision:number}>()]);
  const names=[env.SHEET_EXPENSE_DAILY,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_DETAIL_SHEET];
  const found=names.map(n=>sheets.find(s=>s.title===n));
  if(names.some(n=>!n)||found.some(s=>!s)||new Set(found.map(s=>s!.sheetId)).size!==4||!revision||!Number.isSafeInteger(revision.revision)||revision.revision<0||found[1]!.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||found[2]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||found[3]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID)||!await stableWorkbookClaimOwned(env,token))throw Error('CUTOVER_TARGET_UNVERIFIED');

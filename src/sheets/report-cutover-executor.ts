@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from './client';
 import type {Env} from '../types';
 import {batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetGridInfo} from './client';
 import {columnName} from './daily-expense';
@@ -22,10 +23,10 @@ function groupsFor(changes:readonly ReportFormulaChange[]):TargetGroup[]{
  return [...byId.values()].sort((a,b)=>a.sheetId-b.sheetId);
 }
 async function readCurrent(env:Env,changes:readonly ReportFormulaChange[],groups:readonly TargetGroup[]):Promise<unknown[]>{
- const grids=await Promise.all(groups.map(g=>getSheetGridInfo(env,g.sheetName)));
+ const grids=await Promise.all(groups.map(g=>getSheetGridInfo(env,g.sheetName,continuousSheetsReadPolicy)));
  if(grids.some((g,i)=>g.sheetId!==groups[i]!.sheetId||g.rowCount<groups[i]!.maxRow||g.columnCount<groups[i]!.maxColumn))throw Error('REPORT_TARGET_CHANGED');
  const ranges=groups.map(g=>`${q(g.sheetName)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`);
- const values=await batchGetSheetFormulaValues(env,ranges);
+ const values=await batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy);
  if(values.length!==groups.length||values.some((rows,i)=>rows.length>groups[i]!.maxRow-groups[i]!.minRow+1||rows.some(row=>!Array.isArray(row)||row.length>groups[i]!.maxColumn-groups[i]!.minColumn+1)))throw Error('REPORT_READ_UNVERIFIED');
  const index=new Map(groups.map((g,i)=>[g.sheetId,i]));
  return changes.map(c=>{const i=index.get(c.sheetId);if(i===undefined)throw Error('REPORT_TARGET_CHANGED');const g=groups[i]!;return values[i]?.[c.row-g.minRow]?.[c.column-g.minColumn]??null;});

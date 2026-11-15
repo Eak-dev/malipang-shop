@@ -1,5 +1,6 @@
+import {continuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
-import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetCellNumberFormats,getSheetGridInfo,SheetsHttpError} from './client';
+import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetCellNumberFormats,getSheetGridInfo,SheetsHttpError,SheetsReadNetworkError} from './client';
 import {OperationTimeoutError} from '../shared/async';
 import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from './google-auth';
 import {columnName,legacySourceWallet,resolvePayment} from './daily-expense';
@@ -47,11 +48,13 @@ async function beforeIntentRead<T>(read:()=>Promise<T>):Promise<T>{
   if(error instanceof GoogleOAuthPreflightError)throw new InsertDailyPreflightReviewError(error.code);
   if(error instanceof OperationTimeoutError&&/^Google OAuth timed out after \d+ms$/.test(error.message))throw new InsertDailyPreflightReviewError('GOOGLE_OAUTH_TIMEOUT');
   if(error instanceof OperationTimeoutError)throw new InsertDailyPreflightReviewError('SHEETS_READ_TIMEOUT');
+  if(error instanceof SheetsReadNetworkError)throw new InsertDailyPreflightReviewError('SHEETS_READ_NETWORK');
+  if(error instanceof Error&&error.message==='SHEETS_RESPONSE_TOO_LARGE')throw new InsertDailyPreflightReviewError('SHEETS_READ_RESPONSE_TOO_LARGE');
   throw error;
  }
 }
 async function verifyInsertedNumberFormats(env:Env,sheet:string,sheetId:number,row:number):Promise<boolean>{
- const formats=await getSheetCellNumberFormats(env,sheet,sheetId,row);
+ const formats=await getSheetCellNumberFormats(env,sheet,sheetId,row,continuousSheetsReadPolicy);
  return formats.length===17&&formats.slice(0,15).every(f=>f?.type==='NUMBER'&&f.pattern==='#,##0.00')&&formats[16]?.type==='DATE'&&formats[16]?.pattern==='dd/MM/yyyy';
 }
 
@@ -112,17 +115,17 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  if(!await sourceMatches())throw Error('INSERT_DAILY_SOURCE_UNVERIFIED');
  const record=planStableExpenseProjections(source).record,date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(record.transactionDate);
  if(!date||!paymentOptionForPair(record.paymentKey,record.sourceWallet))throw Error('INSERT_DAILY_SOURCE_UNVERIFIED');
- const grid=await beforeIntentRead(()=>getSheetGridInfo(env,sheet));if(!stable()||grid.sheetId!==sheetId||grid.rowCount<5||grid.columnCount<29||grid.columnCount>100)throw Error('INSERT_DAILY_GRID');
+ const grid=await beforeIntentRead(()=>getSheetGridInfo(env,sheet,continuousSheetsReadPolicy));if(!stable()||grid.sheetId!==sheetId||grid.rowCount<5||grid.columnCount<29||grid.columnCount>100)throw Error('INSERT_DAILY_GRID');
  if(grid.rowCount>=5000)throw new InsertDailyDefiniteFailure('CAPACITY');
- const snapshot=async(expected:Grid):Promise<Snapshot>=>{const a=await getSheetGridInfo(env,sheet),range=`'${sheet.replace(/'/g,"''")}'!A1:${columnName(expected.columnCount)}${expected.rowCount}`,f=await batchGetSheetFormulaValues(env,[range]),e=await batchGetSheetEffectiveSerialValues(env,[range]),b=await getSheetGridInfo(env,sheet);if(!stable()||JSON.stringify(a)!==JSON.stringify(expected)||JSON.stringify(b)!==JSON.stringify(expected)||f.length!==1||e.length!==1||f[0]!.length>expected.rowCount||e[0]!.length>expected.rowCount||[...f[0]!,...e[0]!].some(r=>!Array.isArray(r)||r.length>expected.columnCount))throw Error('INSERT_DAILY_SNAPSHOT_UNVERIFIED');return{formula:f[0]!,effective:e[0]!};};
+ const snapshot=async(expected:Grid):Promise<Snapshot>=>{const a=await getSheetGridInfo(env,sheet,continuousSheetsReadPolicy),range=`'${sheet.replace(/'/g,"''")}'!A1:${columnName(expected.columnCount)}${expected.rowCount}`,f=await batchGetSheetFormulaValues(env,[range],continuousSheetsReadPolicy),e=await batchGetSheetEffectiveSerialValues(env,[range],continuousSheetsReadPolicy),b=await getSheetGridInfo(env,sheet,continuousSheetsReadPolicy);if(!stable()||JSON.stringify(a)!==JSON.stringify(expected)||JSON.stringify(b)!==JSON.stringify(expected)||f.length!==1||e.length!==1||f[0]!.length>expected.rowCount||e[0]!.length>expected.rowCount||[...f[0]!,...e[0]!].some(r=>!Array.isArray(r)||r.length>expected.columnCount))throw Error('INSERT_DAILY_SNAPSHOT_UNVERIFIED');return{formula:f[0]!,effective:e[0]!};};
  const before=await beforeIntentRead(()=>snapshot(grid)),payment=verifiedInsertDailyPayment(before.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
  let legacy:Awaited<ReturnType<typeof readLegacyDailyCoverage>>;
- try{legacy=await beforeIntentRead(()=>readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet));}catch(error){
+ try{legacy=await beforeIntentRead(()=>readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy));}catch(error){
   if(error instanceof Error&&/^LEGACY_COVERAGE_(YEAR_UNVERIFIED|MONTH_UNVERIFIED|DATE_UNVERIFIED|MONTH_BLOCK_UNVERIFIED|OPENING_UNVERIFIED|SUBTOTAL_UNVERIFIED|SUBTOTAL_MISMATCH|AMOUNT_UNVERIFIED)$/.test(error.message))throw new InsertDailyDefiniteFailure('LEGACY_COVERAGE');
   if(error instanceof Error&&/^LEGACY_COVERAGE_[A-Z_]+$/.test(error.message))throw new InsertDailyPreflightReviewError(error.message);
   throw error;
  }
- const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await beforeIntentRead(()=>batchGetSheetFormulaValues(env,[legacyIdRange]));
+ const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await beforeIntentRead(()=>batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy));
  if(legacyIds.length!==1||legacyIds[0]!.some(r=>r[0]===stableDailyExpenseKey(job.entityKey)))throw Error('INSERT_DAILY_LEGACY_ID_UNVERIFIED');
  const openings=before.formula.slice(3,243).filter(r=>r[26]===payment.postingYear&&r[27]===payment.postingMonth);
  if(openings.length>1||openings.length===0&&legacy.coverage.openingSatang===null||openings.length===1&&(typeof openings[0]![28]!=='number'||!Number.isFinite(openings[0]![28])||Number(openings[0]![28])<0))throw new InsertDailyDefiniteFailure('MONTH_OPENING');
@@ -160,12 +163,12 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  ]);
  if(!stable()||reserved.length!==3||reserved.some(r=>r.success!==true)||Number(reserved[0]!.meta?.changes)!==1||Number(reserved[1]!.meta?.changes)!==1)throw Error('INSERT_DAILY_RESERVATION_UNCERTAIN');
  const reply=await batchUpdateSpreadsheetWithReply(env,insertContinuousDailyRowRequests(sheetId,row,grid.rowCount,payload),async()=>{
-  if(!await sourceMatches()||JSON.stringify(await snapshot(grid))!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange]))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env)!=='OK'||!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
+  if(!await sourceMatches()||JSON.stringify(await snapshot(grid))!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env)!=='OK'||!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
  });
  const replies=reply&&typeof reply==='object'?(reply as {replies?:unknown[]}).replies:undefined;if(!Array.isArray(replies)||replies.length!==3||replies.some(r=>!r||typeof r!=='object'))throw Error('INSERT_DAILY_OUTCOME_UNKNOWN');
  const afterGrid={...grid,rowCount:grid.rowCount+1},after=await snapshot(afterGrid);
  if(!await verifyInsertedNumberFormats(env,sheet,sheetId,row))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
- if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||after.effective[row-1]?.[23]!==key||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange]))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
+ if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||after.effective[row-1]?.[23]!==key||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,continuousSheetsReadPolicy))!==JSON.stringify(legacy)||JSON.stringify(await batchGetSheetFormulaValues(env,[legacyIdRange],continuousSheetsReadPolicy))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
  const verified=db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,sheetId,sheet,job.entityVersion,source.digest,claim,...args);
  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId,sheetName:sheet,version:job.entityVersion,sourceDigest:source.digest,row:after.formula[row-1]??[],width:grid.columnCount});if(!preimage||!stable())throw Error('INSERT_DAILY_PREIMAGE_UNVERIFIED');
  const result=await db.batch([verified,preimage]);if(result.length!==2||result.some(r=>r.success!==true||Number(r.meta?.changes)!==1))throw Error('INSERT_DAILY_VERIFY_UNCERTAIN');

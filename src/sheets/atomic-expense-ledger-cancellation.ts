@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetGridInfo} from './client';
 import {columnName} from './daily-expense';
@@ -32,9 +33,9 @@ export async function cancelCarrierLedgerUnderClaim(env:Env,job:SheetsSyncJob,le
  const sourceValid=async()=>{const ok=await db.prepare(`SELECT 1 AS ok WHERE ${guard}`).bind(...args).first<{ok:number}>();return stable()&&ok?.ok===1&&await stableWorkbookClaimOwned(env,claim)&&stable();};
  if(!await sourceValid())throw Error('LEDGER_CANCEL_SOURCE');
  const prior=await db.prepare("SELECT state FROM stable_expense_cancellation_writes WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection=?").bind(book,entity,projection).all();if(prior.success!==true||!Array.isArray(prior.results)||prior.results.length)throw Error('LEDGER_CANCEL_PRIOR_REVIEW');
- const grid=await getSheetGridInfo(env,sheet);if(!stable()||grid.sheetId!==sheetId||grid.rowCount<2||grid.rowCount>5000||grid.columnCount!==26)throw Error('LEDGER_CANCEL_GRID');
+ const grid=await getSheetGridInfo(env,sheet,continuousSheetsReadPolicy);if(!stable()||grid.sheetId!==sheetId||grid.rowCount<2||grid.rowCount>5000||grid.columnCount!==26)throw Error('LEDGER_CANCEL_GRID');
  const range=`'${sheet.replace(/'/g,"''")}'!A1:${columnName(grid.columnCount)}${grid.rowCount}`;
- const snapshot=async():Promise<Snapshot>=>{const a=await getSheetGridInfo(env,sheet),f=await batchGetSheetFormulaValues(env,[range]),e=await batchGetSheetEffectiveSerialValues(env,[range]),b=await getSheetGridInfo(env,sheet);if(!stable()||JSON.stringify(a)!==JSON.stringify(grid)||JSON.stringify(b)!==JSON.stringify(grid)||f.length!==1||e.length!==1||f[0]!.length>grid.rowCount||e[0]!.length>grid.rowCount||[...f[0]!,...e[0]!].some(r=>!Array.isArray(r)||r.length>26))throw Error('LEDGER_CANCEL_READ');return{formula:f[0]!,effective:e[0]!};};
+ const snapshot=async():Promise<Snapshot>=>{const a=await getSheetGridInfo(env,sheet,continuousSheetsReadPolicy),f=await batchGetSheetFormulaValues(env,[range],continuousSheetsReadPolicy),e=await batchGetSheetEffectiveSerialValues(env,[range],continuousSheetsReadPolicy),b=await getSheetGridInfo(env,sheet,continuousSheetsReadPolicy);if(!stable()||JSON.stringify(a)!==JSON.stringify(grid)||JSON.stringify(b)!==JSON.stringify(grid)||f.length!==1||e.length!==1||f[0]!.length>grid.rowCount||e[0]!.length>grid.rowCount||[...f[0]!,...e[0]!].some(r=>!Array.isArray(r)||r.length>26))throw Error('LEDGER_CANCEL_READ');return{formula:f[0]!,effective:e[0]!};};
  const before=await snapshot(),matches=before.formula.flatMap((r,i)=>{const c=decodeLedgerCarrier(r[25]);return c&&c.projection===projection&&c.expenseId===job.entityKey&&(projection==='EXPENSE_RAW'||c.itemId===itemId)?[i]:[]});if(matches.length!==1)throw Error('LEDGER_CANCEL_IDENTITY');
  const index=matches[0]!,f=before.formula[index]??[],original=f[25],carrier=decodeLedgerCarrier(original);
  // RAW R is owner-editable addback. Our carrier writer requires it blank at

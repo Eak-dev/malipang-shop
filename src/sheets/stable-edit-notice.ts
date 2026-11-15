@@ -1,6 +1,6 @@
 import type {Env} from '../types';
 import {getGoogleAccessToken} from './google-auth';
-import {batchWriteValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError,SheetsReadNetworkError} from './client';
+import {batchWriteValues,batchWriteContinuousNoticeValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError,SheetsReadNetworkError} from './client';
 import {readSheetsBody} from './bounded-response';
 import {fetchWithTimeout} from '../shared/async';
 import {numberEnv} from '../shared/env';
@@ -69,20 +69,20 @@ export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,
   return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
  }catch{return null;}
 }
-export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{}):Promise<void>{
+export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so
  // a single read both proves the ready state and guards the write.
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,seen:{before?:Snapshot}={},time=stamp();
- await batchWriteValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ')||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();});
+ await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ')||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();});
  const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!=='พักแก้ไฟล์'||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
  const saved=await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp=?,notice_identity=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(time,identity(after),env.GOOGLE_SPREADSHEET_ID,token).run();if(saved.success!==true||Number(saved.meta?.changes)!==1)throw Error('STABLE_NOTICE_UNCERTAIN');
  await wait(15000);
  if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after))||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
 }
-export async function endStableNotice(env:Env,token:string):Promise<void>{
+export async function endStableNotice(env:Env,token:string,boundedMutation=false):Promise<void>{
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,current=await claim(env,token);if(!current?.notice_stamp||!current.notice_identity||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  const reviews=await db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>();if(!reviews||!Number.isSafeInteger(reviews.n)||reviews.n<0||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  // As in beginStableNotice, the paused pre-image is read inside the fence.
- const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await batchWriteValues(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');seen.before=latest;});
+ const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');seen.before=latest;});
  const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!==ready||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
 }

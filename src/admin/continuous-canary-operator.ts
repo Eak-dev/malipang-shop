@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from '../sheets/client';
 import type {Env} from '../types';
 import {confirmExpenseAtomically} from '../expense/confirm';
 import {undoConfirmedExpense} from '../expense/undo';
@@ -215,9 +216,9 @@ async function reconcileUndo(env:CanaryEnv,r:Canary):Promise<void>{
 }
 async function provider(env:CanaryEnv,r:Canary,version:1|2):Promise<void>{
  const names=[env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_DETAIL_SHEET];if(names.some(n=>!n)||new Set(names).size!==3)throw Error('CANARY_PROVIDER_SCOPE');
- const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n!)));if(grids.some(g=>g.rowCount>5000)||grids[0]!.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||grids[1]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[2]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('CANARY_PROVIDER_SCOPE');
+ const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n!,continuousSheetsReadPolicy)));if(grids.some(g=>g.rowCount>5000)||grids[0]!.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||grids[1]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[2]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('CANARY_PROVIDER_SCOPE');
  const ranges=names.map((n,i)=>`${q(n!)}!A1:${i===0?'Y':'Z'}${grids[i]!.rowCount}`);
- const [f,e]=await Promise.all([batchGetSheetFormulaValues(env,ranges),batchGetSheetEffectiveSerialValues(env,ranges)]);if(f.length!==3||e.length!==3)throw Error('CANARY_PROVIDER_READ');
+ const [f,e]=await Promise.all([batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy),batchGetSheetEffectiveSerialValues(env,ranges,continuousSheetsReadPolicy)]);if(f.length!==3||e.length!==3)throw Error('CANARY_PROVIDER_READ');
  const daily=f[0]!.flatMap((row,i)=>{const payload=decodeAtomicDailyPayload(row[24]);return payload?.expenseId===r.expense_id?[{payload,row:e[0]![i]??[]}]:[];});
  const raw=f[1]!.flatMap(row=>{const p=decodeLedgerCarrier(row[25]);return p?.expenseId===r.expense_id?[p]:[];});
  const detail=f[2]!.flatMap(row=>{const p=decodeLedgerCarrier(row[25]);return p?.expenseId===r.expense_id&&p.itemId===r.item_id?[p]:[];});

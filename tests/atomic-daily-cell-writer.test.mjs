@@ -164,3 +164,25 @@ test('real Sheets client runs the mutation callback before POST and classifies a
   await assert.rejects(client.batchUpdateSpreadsheetWithReply(env,[{findReplace:{}}],async()=>{}),error=>error instanceof client.SheetsMutationOutcomeUnknownError);assert.equal(sends,1);
  }finally{auth.getGoogleAccessToken=originalToken;globalThis.fetch=originalFetch;}
 });
+
+test('bodyless conditional POST responses retain unknown mutation outcome',async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),token=auth.getGoogleAccessToken,fetcher=globalThis.fetch;
+ try{auth.getGoogleAccessToken=async()=> 'synthetic';for(const status of [204,205]){globalThis.fetch=async()=>new Response(null,{status});await assert.rejects(client.batchUpdateSpreadsheetWithReply({GOOGLE_SPREADSHEET_ID:'book',EXTERNAL_API_TIMEOUT_MS:'100'},[{}]),error=>error instanceof client.SheetsMutationOutcomeUnknownError);}}
+ finally{auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}
+});
+
+test('only the opt-in continuous Sheets read bounds a stalled body', {timeout:5000},async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),token=auth.getGoogleAccessToken,fetcher=globalThis.fetch;let release;
+ try{auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>new Response(new ReadableStream({start(controller){release=()=>{controller.enqueue(new TextEncoder().encode('{"sheets":[]}'));controller.close();};},cancel(){return new Promise(()=>{});}}));
+  const env={GOOGLE_SPREADSHEET_ID:'book',EXTERNAL_API_TIMEOUT_MS:'20',STABLE_SHEETS_PACING_ENABLED:'true'};
+  await assert.rejects(client.getSpreadsheetSheetProperties(env,client.continuousSheetsReadPolicy),error=>error.name==='OperationTimeoutError');
+  const old=client.getSheetValues(env,"'HR'!A1");await new Promise(resolve=>setTimeout(resolve,50));release();assert.deepEqual(await old,[]);
+ }finally{auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}
+});
+
+test('continuous notice POST with a stalled error body retains unknown mutation outcome',{timeout:5000},async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),token=auth.getGoogleAccessToken,fetcher=globalThis.fetch;let sent=0;
+ try{auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>{sent++;return new Response(new ReadableStream({start(){},cancel(){return new Promise(()=>{});}}),{status:503});};
+  await assert.rejects(client.batchWriteContinuousNoticeValues({GOOGLE_SPREADSHEET_ID:'book',EXTERNAL_API_TIMEOUT_MS:'20'},[{range:'A1',values:[['x']]}]),error=>error instanceof client.SheetsMutationOutcomeUnknownError);assert.equal(sent,1);
+ }finally{auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}
+});

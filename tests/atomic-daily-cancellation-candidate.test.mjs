@@ -58,3 +58,12 @@ test('missing immutable preimage or marker triggers block cancellation before pr
 test('real isolation gate blocks direct candidate before any provider writes',async()=>{const h=fixture();try{
  h.unmockGate();await assert.rejects(h.run(),/CONTINUOUS_DAILY_NOT_READY/);assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_cancellation_writes').get().n,0);
 }finally{h.close()}});
+
+test('stalled cancellation reads after intent or write retain the uncertain journal',{timeout:5000},async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),token=auth.getGoogleAccessToken,fetcher=globalThis.fetch,realGrid=client.getSheetGridInfo;
+ for(const phase of ['reserved','written']){const h=fixture(true),mockGrid=client.getSheetGridInfo;try{
+  Object.assign(h.env,{STABLE_SHEETS_PACING_ENABLED:'true',EXTERNAL_API_TIMEOUT_MS:'20'});auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>new Response(new ReadableStream({start(){},cancel(){return new Promise(()=>{});}}));
+  client.getSheetGridInfo=async(...args)=>{const journal=h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get(),hit=phase==='reserved'?journal?.state==='IN_FLIGHT'&&h.writes()===0:h.writes()>0;return hit?realGrid(...args):mockGrid(...args)};
+  await assert.rejects(h.run(),error=>error.name==='OperationTimeoutError');assert.equal(h.writes(),phase==='written'?1:0);assert.equal(h.sqlite.prepare('SELECT state FROM stable_expense_cancellation_writes').get().state,'IN_FLIGHT');
+ }finally{h.close();auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}}
+});

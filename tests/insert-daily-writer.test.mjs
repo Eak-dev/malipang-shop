@@ -222,3 +222,29 @@ for(const [kind,make,code] of [
  assert.deepEqual({...h.sqlite.prepare("SELECT status,version FROM expense_events WHERE expense_id='exp_test'").get()},{status:'CANCELLED',version:2});
  const outbox=JSON.parse(h.sqlite.prepare("SELECT payload_json FROM failed_jobs WHERE error='SYNC_AUTO_CANCEL_AWAITING_RECIPIENT'").get().payload_json);assert.equal(outbox.reason,'SHEETS_READ');assert.equal(outbox.errorCode,code);assert.doesNotMatch(JSON.stringify(outbox),/private provider body/);
  }finally{client.getSheetGridInfo=oldGrid;claimApi.withStableWorkbookClaim=oldClaim;h.close()}});
+
+test('stalled continuous Sheets bodies distinguish before intent from after reservation and write',{timeout:5000},async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),originalToken=auth.getGoogleAccessToken,originalFetch=globalThis.fetch,realGrid=client.getSheetGridInfo;
+ for(const phase of ['preflight','reserved','written']){
+  const h=await fixture(),mockGrid=client.getSheetGridInfo;let stalled=0;
+  try{
+   h.env.EXTERNAL_API_TIMEOUT_MS='20';h.env.STABLE_SHEETS_PACING_ENABLED='true';auth.getGoogleAccessToken=async()=> 'synthetic';
+   globalThis.fetch=async()=>{stalled++;return new Response(new ReadableStream({start(){},cancel(){return new Promise(()=>{});}}));};
+   client.getSheetGridInfo=async(...args)=>{const intents=h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes").get().n,hit=phase==='preflight'?!intents:phase==='reserved'?intents>0&&h.writes()===0:h.writes()>0;return hit?realGrid(...args):mockGrid(...args);};
+   await assert.rejects(h.run(),error=>phase==='preflight'?error instanceof insertWriter.InsertDailyPreflightReviewError&&error.reason==='SHEETS_READ_TIMEOUT':error.name==='OperationTimeoutError');
+   assert.equal(stalled,1);assert.equal(h.writes(),phase==='written'?1:0);
+   const row=h.sqlite.prepare("SELECT state FROM stable_projection_writes").get();assert.equal(row?.state,phase==='preflight'?undefined:'IN_FLIGHT');
+  }finally{h.close();auth.getGoogleAccessToken=originalToken;globalThis.fetch=originalFetch;}
+ }
+});
+
+test('a real pre-intent stalled read cancels only a provably unwritten expense and records the error',{timeout:5000},async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),token=auth.getGoogleAccessToken,fetcher=globalThis.fetch,realGrid=client.getSheetGridInfo,h=await fixture(),claim=claimApi.withStableWorkbookClaim;
+ try{
+  Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',EXTERNAL_API_TIMEOUT_MS:'20',LINE_OWNER_USER_ID:''});
+  h.sqlite.exec("UPDATE stable_workbook_claims SET operation_token='claim-token-123'; INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-v1','book','ARMED','EXPENSE','exp_test',1,'now','now'); INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('claim-token-123','epoch-v1','ADMITTED','now')");
+  auth.getGoogleAccessToken=async()=> 'synthetic';globalThis.fetch=async()=>new Response(new ReadableStream({start(){},cancel(){return new Promise(()=>{});}}));client.getSheetGridInfo=realGrid;claimApi.withStableWorkbookClaim=async(_env,fn)=>fn('claim-token-123');
+  assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'COMPLETED');assert.equal(h.sqlite.prepare("SELECT status FROM expense_events WHERE expense_id='exp_test'").get().status,'CANCELLED');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);
+  const incident=JSON.parse(h.sqlite.prepare("SELECT payload_json FROM failed_jobs WHERE error='SYNC_AUTO_CANCEL_AWAITING_RECIPIENT'").get().payload_json);assert.equal(incident.errorCode,'SHEETS_READ_TIMEOUT');
+ }finally{claimApi.withStableWorkbookClaim=claim;h.close();auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}
+});

@@ -53,6 +53,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,gateSetting=env.STABLE_RECOVERY_GATE_ENABLED,pacingSetting=env.STABLE_SHEETS_PACING_ENABLED,token=crypto.randomUUID();
   const untouchedScope=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag&&env.STABLE_RECOVERY_GATE_ENABLED===gateSetting&&env.STABLE_SHEETS_PACING_ENABLED===pacingSetting;
   const sheetJob=identity&&'entityType' in identity?identity:undefined;
+  const boundedNotice=sheetJob?.entityType==='EXPENSE'&&env.CONTINUOUS_DAILY_ENABLED==='true';
   const guardedJob=sheetJob&&sheetJob.entityType!=='EXPENSE'&&sheetJob.entityType!=='PERSONAL_USE'?sheetJob:undefined;
   if(!book)throw new Error('STABLE_WORKBOOK_NOT_CONFIGURED');
   // Fast deny before reserving the shared workbook; the atomic D1 admission
@@ -94,7 +95,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // MUST be the last instruction before returning to mutation dispatch:
       // a lost POST acknowledgement must never look like a safe read defer.
       beginNoticeMayHaveWritten=true;
-    });
+    },boundedNotice);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='OPERATION';
     // Notice POST may already have been sent, so closed-state drift here must
@@ -107,7 +108,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='END_NOTICE';
-    if(flag==='true')await endStableNotice(env,token);
+    if(flag==='true')await endStableNotice(env,token,boundedNotice);
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='RELEASE';

@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from '../sheets/client';
 import type {Env} from '../types';
 import {batchUpdateSpreadsheetWithReply,getSheetGridInfo} from '../sheets/client';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
@@ -19,7 +20,7 @@ export async function releaseContinuousCutoverNotice(env:Env,token:string):Promi
  if(!book||!token||env.SHEET_EXPENSE_DAILY!=='รายวัน'||env.STABLE_PHASE1_ENABLED!=='true'||env.STABLE_RECOVERY_GATE_ENABLED!=='true'||env.STABLE_SHEETS_PACING_ENABLED!=='true')throw Error('CUTOVER_NOTICE_DISABLED');
  const [claim,reviewCount,grid]=await Promise.all([
   db.prepare("SELECT notice_stamp,notice_identity FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(book,token).first<{notice_stamp:string;notice_identity:string}>(),
-  db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>(),getSheetGridInfo(env,env.SHEET_EXPENSE_DAILY)
+  db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>(),getSheetGridInfo(env,env.SHEET_EXPENSE_DAILY,continuousSheetsReadPolicy)
  ]);
  if(!claim?.notice_stamp||!claim.notice_identity||!/^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/.test(claim.notice_stamp)||!reviewCount||!Number.isSafeInteger(reviewCount.n)||reviewCount.n<0||grid.sheetId!==bookSheetId||!stable()||!await stableWorkbookClaimOwned(env,token))throw Error('CUTOVER_NOTICE_PREIMAGE_UNVERIFIED');
  const oldStamp=claim.notice_stamp,newStamp=nowBangkok(),ready=reviewCount.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข';

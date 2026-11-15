@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from './client';
 import type {Env,SheetsSyncJob} from '../types';
 import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSheetGridInfo} from './client';
 import {columnName} from './daily-expense';
@@ -70,8 +71,8 @@ export async function admitUnwrittenPreCutover(env:Env,job:SheetsSyncJob,lease:s
  const boundary=await db.prepare("SELECT legacy_sheet_id FROM continuous_daily_cutovers WHERE spreadsheet_id=? AND state='ACTIVE'").bind(book).first<{legacy_sheet_id:number}>();if(!boundary||!Number.isSafeInteger(boundary.legacy_sheet_id))throw Error('ADMISSION_TARGET');
  const sourceMatches=async()=>{const s=await readStableExpenseSource(env,job,lease,claim);return !!s&&s.digest===source.digest&&s.revision===source.revision&&s.fingerprint===source.fingerprint&&stable()&&await stableWorkbookClaimOwned(env,claim)&&stable();};
  const capture=async()=>{
-  const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n)));if(grids.some(g=>g.rowCount>5000||g.columnCount>100)||new Set(grids.map(g=>g.sheetId)).size!==6||grids[0]!.sheetId!==boundary.legacy_sheet_id||grids[1]!.sheetId!==target.sheetId||grids[3]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[5]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('ADMISSION_GRID');
-  const ranges=names.map((n,i)=>`'${n.replace(/'/g,"''")}'!A1:${columnName(grids[i]!.columnCount)}${grids[i]!.rowCount}`),f=await batchGetSheetFormulaValues(env,ranges),e=await batchGetSheetEffectiveSerialValues(env,ranges),again=await Promise.all(names.map(n=>getSheetGridInfo(env,n)));
+  const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n,continuousSheetsReadPolicy)));if(grids.some(g=>g.rowCount>5000||g.columnCount>100)||new Set(grids.map(g=>g.sheetId)).size!==6||grids[0]!.sheetId!==boundary.legacy_sheet_id||grids[1]!.sheetId!==target.sheetId||grids[3]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[5]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('ADMISSION_GRID');
+  const ranges=names.map((n,i)=>`'${n.replace(/'/g,"''")}'!A1:${columnName(grids[i]!.columnCount)}${grids[i]!.rowCount}`),f=await batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy),e=await batchGetSheetEffectiveSerialValues(env,ranges,continuousSheetsReadPolicy),again=await Promise.all(names.map(n=>getSheetGridInfo(env,n,continuousSheetsReadPolicy)));
   if(!stable()||JSON.stringify(grids)!==JSON.stringify(again)||f.length!==6||e.length!==6)throw Error('ADMISSION_READ');
   return grids.map((g,i)=>({...g,formula:f[i]!,effective:e[i]!}));
  };

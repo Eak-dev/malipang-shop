@@ -167,7 +167,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    }
   }catch(error){
    if(error instanceof InsertDailyPreflightReviewError){
-    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&(/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)||/^(?:(?:SHEETS_READ|GOOGLE_OAUTH)_(?:HTTP_[45][0-9]{2}|TIMEOUT)|GOOGLE_OAUTH_(?:CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|SHEETS_READ_NETWORK)$/.test(error.reason))&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':/^(?:SHEETS_READ|GOOGLE_OAUTH)_/.test(error.reason)?'SHEETS_READ':'LEGACY_READ',errorCode:error.reason}))return 'COMPLETED';
+    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&(/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)||/^(?:(?:SHEETS_READ|GOOGLE_OAUTH)_(?:HTTP_[45][0-9]{2}|TIMEOUT)|GOOGLE_OAUTH_(?:CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|SHEETS_READ_(?:NETWORK|RESPONSE_TOO_LARGE))$/.test(error.reason))&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':/^(?:SHEETS_READ|GOOGLE_OAUTH)_/.test(error.reason)?'SHEETS_READ':'LEGACY_READ',errorCode:error.reason}))return 'COMPLETED';
     if(await holdUnwrittenExpenseReview(env,job,lease,claim,error.message,'PREFLIGHT',source.revision))return 'JOB_REVIEW';
     throw error;
    }

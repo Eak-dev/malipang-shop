@@ -1,3 +1,4 @@
+import {continuousSheetsReadPolicy} from './client';
 import type {Env} from '../types';
 import {batchGetSheetFormulaValues,batchGetSheetValues,getSheetGridInfo} from './client';
 import {executeContinuousReportCutover} from './report-cutover-executor';
@@ -18,7 +19,7 @@ function snapshot(name:string,grid:Grid,rows:unknown[][],startRow:number,startCo
  return{sheetId:grid.sheetId,sheetName:name,rowCount:grid.rowCount,columnCount:grid.columnCount,formula};
 }
 async function checkedGrid(env:Env,name:string,minRows:number,minColumns:number,maxRows=5000):Promise<Grid>{
- const g=await getSheetGridInfo(env,name);
+ const g=await getSheetGridInfo(env,name,continuousSheetsReadPolicy);
  if(g.rowCount<minRows||g.rowCount>maxRows||g.columnCount<minColumns||g.columnCount>100)throw Error('REPORT_GRID_UNVERIFIED');return g;
 }
 
@@ -34,7 +35,7 @@ export async function captureContinuousReportInputs(env:ReportEnv,stage:'DAILY_J
  const daily=await checkedGrid(env,env.CONTINUOUS_DAILY_SHEET,4,29);
  if(daily.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||!stable())throw Error('REPORT_TARGET_UNVERIFIED');
  if(stage==='DAILY_J'){
-  const values=await batchGetSheetFormulaValues(env,[`${quote(env.CONTINUOUS_DAILY_SHEET)}!J4:J${daily.rowCount}`]);
+  const values=await batchGetSheetFormulaValues(env,[`${quote(env.CONTINUOUS_DAILY_SHEET)}!J4:J${daily.rowCount}`],continuousSheetsReadPolicy);
   if(values.length!==1||!stable())throw Error('REPORT_READ_UNVERIFIED');
   return{stage,snapshot:snapshot(env.CONTINUOUS_DAILY_SHEET,daily,values[0]!,4,10)};
  }
@@ -55,7 +56,7 @@ export async function captureContinuousReportInputs(env:ReportEnv,stage:'DAILY_J
  const view=combinedLedgerSpillFormulas({...titles,rawOldRows:ledgers[0]!.rowCount,detailOldRows:ledgers[1]!.rowCount,rawNewRows:ledgers[2]!.rowCount,detailNewRows:ledgers[3]!.rowCount});
  if(ledgers[4]!.rowCount<view.rawRows||ledgers[5]!.rowCount<view.detailRows)throw Error('REPORT_VIEW_CAPACITY_UNVERIFIED');
  const ranges=[`${quote(names[0])}!A1:W${grids[0]!.rowCount}`,`${quote(names[1])}!A2:H2`,`${quote(names[2])}!F3:F3`,`${quote(names[3])}!B46:F76`,`${quote(names[4])}!B5:F65`,`${quote(names[5])}!T4:T4`,`${quote(rawView)}!A1:A1`,`${quote(detailView)}!A1:A1`];
- const [values,effective]=await Promise.all([batchGetSheetFormulaValues(env,ranges),batchGetSheetValues(env,[ranges[6]!,ranges[7]!])]);
+ const [values,effective]=await Promise.all([batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy),batchGetSheetValues(env,[ranges[6]!,ranges[7]!],continuousSheetsReadPolicy)]);
  if(values.length!==8||effective.length!==2||values[6]?.[0]?.[0]!==view.raw||values[7]?.[0]?.[0]!==view.detail||effective[0]?.[0]?.[0]!=='Expense_ID'||effective[1]?.[0]?.[0]!=='Purchase_Item_ID'||!stable())throw Error('REPORT_VIEW_UNVERIFIED');
  const snapshots:ReportCutoverSnapshots={monthClose:snapshot(names[0],grids[0]!,values[0]!,1,1),clean:snapshot(names[1],grids[1]!,values[1]!,2,1),formulaReview:snapshot(names[2],grids[2]!,values[2]!,3,6),ownerCash:snapshot(names[3],grids[3]!,values[3]!,46,2),flow:snapshot(names[4],grids[4]!,values[4]!,5,2),recon:snapshot(names[5],grids[5]!,values[5]!,4,20)};
  return{stage,snapshots,titles};

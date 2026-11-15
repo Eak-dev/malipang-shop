@@ -20,8 +20,9 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{aud
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,branch_id,reason,before_json,after_json,created_at)
       SELECT ?,?,'UNDO',expense_id,?,'',json_object('status',status,'version',version),
         json_object('status','CANCELLED','version',MAX(version,COALESCE((SELECT MAX(entity_version) FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=expense_events.expense_id),0))+1),?
-      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED' AND (? IS NULL OR version=?)`)
-      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,options?.expectedVersion??null,options?.expectedVersion??null),
+      FROM expense_events WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED' AND (? IS NULL OR version=?)
+        AND (? IS NULL OR EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=expense_events.expense_id AND j.entity_version=expense_events.version))`)
+      .bind(auditId,input.actorEmployeeId,input.branchId,now,input.expenseId,input.lineUserId,options?.expectedVersion??null,options?.expectedVersion??null,options?.pendingRequestId??null),
     env.DB.prepare(`UPDATE expense_events SET status='CANCELLED',updated_at=?,
         version=(SELECT json_extract(after_json,'$.version') FROM expense_audit_log WHERE audit_id=?)
       WHERE expense_id=? AND line_user_id=? AND status='CONFIRMED'
@@ -47,6 +48,9 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{aud
   if(options?.pendingRequestId){
     statements.push(env.DB.prepare(`UPDATE continuous_pending_undo SET state='APPLIED',audit_id=?,cancelled_version=(SELECT version FROM expense_events WHERE expense_id=?),updated_at=? WHERE request_id=? AND expense_id=? AND source_version=? AND state='PENDING' AND EXISTS(SELECT 1 FROM expense_audit_log a JOIN expense_events e ON e.expense_id=a.expense_id WHERE a.audit_id=? AND e.expense_id=continuous_pending_undo.expense_id AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version'))`).bind(auditId,input.expenseId,now,options.pendingRequestId,input.expenseId,options.expectedVersion,auditId));
     statements.push(env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok"));
+    // Only resolve this request's own incident; a JOB incident may represent
+    // a different, still-unresolved sync error for the same expense.
+    statements.push(env.DB.prepare("UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='JOB' AND source_id='DEFERRED_UNDO:'||? AND state='OPEN'").bind(options.pendingRequestId));
   }
   statements.push(env.DB.prepare(`SELECT e.version FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
     WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`).bind(auditId));

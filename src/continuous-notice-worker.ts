@@ -1,4 +1,4 @@
-import {applyPendingUndoAfterNotice,holdPendingUndoAfterNotice,sweepPendingUndoAfterNotice} from './expense/deferred-undo';
+import {applyPendingUndoAfterNotice,recordDeferredUndoApplyIssue,sweepPendingUndoAfterNotice} from './expense/deferred-undo';
 import type {Env} from './types';
 import {normalNoticeHandoffEnabled} from './sheets/continuous-normal-notice-handoff';
 import {runNoticeDispatch} from './sheets/continuous-notice-dispatch';
@@ -12,7 +12,7 @@ export default {
   if(batch.queue!=='malipang-continuous-notice-phases'||batch.messages.length!==1){for(const message of batch.messages)message.retry();return;}
   const message=batch.messages[0]!;
   if(!normalNoticeHandoffEnabled(env)){if(message.body&&'probeId' in message.body)message.ack();else message.retry();return;}
-  try{if('probeId' in message.body){await verifyNoticeProbe(env,message.body.probeId);message.ack();}else {const result=await runNoticeDispatch(env,message.body?.dispatchId);if(result==='DISABLED'||result==='RUNNING')message.retry({delaySeconds:60});else {if(result==='DONE'||result==='DUPLICATE')try{await applyPendingUndoAfterNotice(env,message.body?.dispatchId);}catch{await holdPendingUndoAfterNotice(env,message.body?.dispatchId);}message.ack();}}}catch{message.retry();}
+  try{if('probeId' in message.body){await verifyNoticeProbe(env,message.body.probeId);message.ack();}else {const result=await runNoticeDispatch(env,message.body?.dispatchId);if(result==='DISABLED'||result==='RUNNING')message.retry({delaySeconds:60});else {if(result==='DONE'||result==='DUPLICATE')try{await applyPendingUndoAfterNotice(env,message.body?.dispatchId);}catch{await recordDeferredUndoApplyIssue(env,message.body?.dispatchId);}message.ack();}}}catch{message.retry();}
  },
  async scheduled(_event:ScheduledController,env:Env):Promise<void>{
   if(!normalNoticeHandoffEnabled(env)||!env.GOOGLE_SPREADSHEET_ID)return;

@@ -50,7 +50,7 @@ export async function undoConfirmedExpense(env:Env,input:UndoInput,options?:{aud
     statements.push(env.DB.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok"));
     // Only resolve this request's own incident; a JOB incident may represent
     // a different, still-unresolved sync error for the same expense.
-    statements.push(env.DB.prepare("UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='JOB' AND source_id='DEFERRED_UNDO_RETRY:'||? AND state='OPEN'").bind(options.pendingRequestId));
+    statements.push(env.DB.prepare("UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='JOB' AND source_id IN ('DEFERRED_UNDO_RETRY:'||?,'DEFERRED_UNDO_STALLED:'||?) AND state='OPEN'").bind(options.pendingRequestId,options.pendingRequestId));
   }
   statements.push(env.DB.prepare(`SELECT e.version FROM expense_events e JOIN expense_audit_log a ON a.expense_id=e.expense_id
     WHERE a.audit_id=? AND a.action='UNDO' AND e.status='CANCELLED' AND e.version=json_extract(a.after_json,'$.version')`).bind(auditId));

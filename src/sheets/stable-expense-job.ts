@@ -30,6 +30,10 @@ import {publicationHandoffHooks} from './publication-handoff-hooks';
 
 /** These codes apply only before notice-mutation authorization. OAuth only
  * exchanges a token; it is not a Sheets business write. */
+/** PUBLISH stays disabled until a measured full invocation proves both request
+ * quotas and post-dispatch verification, including all queue and D1 work. */
+function publicationPublishInvocationReady(_budget:ReviewRequestBudget|undefined):boolean{return false;}
+
 function untouchedNoticeFailureCode(error:unknown):string|null{
  if(error instanceof SheetsHttpError&&error.message==='STABLE_NOTICE_READ'&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599)return `SHEETS_READ_HTTP_${error.status}`;
  if(error instanceof SheetsReadNetworkError)return 'SHEETS_READ_NETWORK';
@@ -242,6 +246,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   }
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
   if(publication&&publicationTarget&&publicationBudget&&publication.expected.state==='STAGED'){
+   if(!publicationPublishInvocationReady(invocationBudget))throw Error('PUBLICATION_PUBLISH_QUOTA_UNPROVEN');
    const hooks=publicationHandoffHooks(env,job,claim,lease,source.revision,'PUBLISH');
    await publicationOperationUnderClaim(env,'PUBLISH',{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,detailCount:projections.details.length,target:publicationTarget,budget:publicationBudget,verifyTarget:verifyPublicationTarget,verifyProjections:(phase,after,row,pending,snapshot,oauthLease)=>verifyPublicationFinalGuard(env,job,source,journals,publicationTarget,claim,phase,after,row,publicationBudget,pending,snapshot,oauthLease),...hooks});
    const handoff=await db.prepare("SELECT transition_id FROM continuous_publication_markers WHERE spreadsheet_id=? AND entity_id=? AND state='PUBLISHED'").bind(book,job.entityKey).first<{transition_id:string}>();if(!handoff||!await hooks.verifyHandoff(handoff.transition_id))throw Error('PUBLICATION_PUBLISH_CONTINUE_UNCERTAIN');return 'CONTINUE';

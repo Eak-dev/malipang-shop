@@ -82,7 +82,7 @@ test('pending Undo stays fenced after notice close against direct or old-writer 
 test('uncertain D1 outcome stays pending, alerts and retries after backoff',async()=>{const h=fixture(true),original=h.DB.batch;let wakes=0;try{
  assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});const dispatch=await finishSyntheticPublication(h);h.env.SHADOW_LINE_OUTPUT='true';h.env.JOB_QUEUE.send=async()=>{wakes++;};
  h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log'))throw Error('synthetic apply failure');return original.call(h.DB,statements);};
- assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');assert.equal(h.sqlite.prepare('SELECT state FROM continuous_pending_undo').get().state,'PENDING');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO:%' AND state='OPEN'").get().n,1);assert.equal(wakes,1);
+ assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');assert.equal(h.sqlite.prepare('SELECT state FROM continuous_pending_undo').get().state,'PENDING');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO_RETRY:%' AND state='OPEN'").get().n,1);assert.equal(wakes,1);
  assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'NONE');assert.equal(await deferred.applyPendingUndoAfterNotice(h.env,dispatch),'NONE');assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});assert.throws(()=>h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_one'"),/publication source is resolving/);
  h.DB.batch=original;h.sqlite.exec("UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE expense_id='exp_one' AND action='UNDO'").get().n,1);
  }finally{h.close();}});
@@ -142,7 +142,7 @@ test('deferred alert preserves an unrelated open incident for the same job',asyn
  h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log'))throw Error('D1 temporary');return original.call(h.DB,statements);};
  assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');h.DB.batch=original;assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id='j'").get().state,'OPEN');assert.equal(await sweepSyncFailureAlerts(h.env),2);
  const messages=sent.filter(job=>job.kind==='LINE_NOTIFICATION').flatMap(job=>job.messages.map(m=>m.text));assert.equal(messages.filter(x=>x.includes('DEFERRED_UNDO_RETRY')).length,1);assert.equal(messages.filter(x=>x.includes('การซิงก์ล้มเหลว')).length,1);
- h.sqlite.exec("UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id='j'").get().state,'OPEN');assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO:%'").get().state,'CLOSED');
+ h.sqlite.exec("UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id='j'").get().state,'OPEN');assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO_RETRY:%'").get().state,'CLOSED');
  }finally{h.DB.batch=original;h.close();}});
 test('lost Undo batch ACK plus temporary receipt read failure never replays a committed undo',async()=>{const h=fixture(true),originalBatch=h.DB.batch,originalPrepare=h.DB.prepare;let lost=false,failedRead=false;try{
  assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});await finishSyntheticPublication(h);h.env.JOB_QUEUE.send=async()=>{};
@@ -150,3 +150,48 @@ test('lost Undo batch ACK plus temporary receipt read failure never replays a co
  h.DB.prepare=function(sql){const q=originalPrepare.call(this,sql);if(!failedRead&&sql.includes('SELECT cancelled_version FROM continuous_pending_undo')){failedRead=true;q.first=async()=>{throw Error('receipt read unavailable');};}return q;};
  assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'NONE');assert.equal(h.sqlite.prepare("SELECT state FROM continuous_pending_undo").get().state,'APPLIED');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE expense_id='exp_one' AND action='UNDO'").get().n,1);assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'NONE');assert.equal(lost&&failedRead,true);
  }finally{h.DB.prepare=originalPrepare;h.DB.batch=originalBatch;h.close();}});
+test('a sent retry alert does not suppress a later orphan hold alert',async()=>{const h=fixture(true),original=h.DB.batch,{sweepSyncFailureAlerts}=require('../dist/line/sync-failure-alerts.js'),sent=[];try{
+ assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});await finishSyntheticPublication(h);Object.assign(h.env,{SHADOW_LINE_OUTPUT:'true',LINE_OWNER_USER_ID:'owner'});h.env.JOB_QUEUE.send=async job=>sent.push(job);
+ h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log'))throw Error('D1 temporary');return original.call(h.DB,statements);};
+ assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');h.DB.batch=original;assert.equal(await sweepSyncFailureAlerts(h.env),1);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO_RETRY:%' AND alerted_at IS NOT NULL").get().n,1);
+ h.sqlite.exec("DELETE FROM sync_jobs WHERE job_id='j'; UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'HELD');assert.equal(h.sqlite.prepare("SELECT state FROM sync_alert_incidents WHERE source_id LIKE 'DEFERRED_UNDO_RETRY:%'").get().state,'CLOSED');assert.equal(await sweepSyncFailureAlerts(h.env),1);
+ const messages=sent.filter(job=>job.kind==='LINE_NOTIFICATION').flatMap(job=>job.messages.map(m=>m.text));assert.equal(messages.filter(x=>x.includes('DEFERRED_UNDO_RETRY')).length,1);assert.equal(messages.filter(x=>x.includes('DEFERRED_UNDO_APPLY_FAILED')).length,1);
+ }finally{h.DB.batch=original;h.close();}});
+test('a delayed first D1 batch cannot duplicate a concurrent committed Undo',async()=>{const h=fixture(true),original=h.DB.batch;let release,started;const gate=new Promise(r=>release=r),running=new Promise(r=>started=r);let delayed=false;try{
+ assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});const dispatch=await finishSyntheticPublication(h);h.env.JOB_QUEUE.send=async()=>{};
+ h.DB.batch=async statements=>{if(!delayed&&statements[0].sql.includes('INSERT INTO expense_audit_log')){delayed=true;started();await gate;}return original.call(h.DB,statements);};
+ const first=deferred.sweepPendingUndoAfterNotice(h.env);await running;assert.equal(await deferred.applyPendingUndoAfterNotice(h.env,dispatch),'APPLIED');release();assert.equal(await first,'NONE');
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE expense_id='exp_one' AND action='UNDO'").get().n,1);assert.equal(h.sqlite.prepare("SELECT state FROM continuous_pending_undo").get().state,'APPLIED');
+ }finally{release?.();h.DB.batch=original;h.close();}});
+test('a retry due at the next cron does not starve another waiting Undo',async()=>{const h=fixture(true),original=h.DB.batch;try{
+ assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});await finishSyntheticPublication(h);h.env.JOB_QUEUE.send=async()=>{};
+ h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log')&&statements[0].args[4]==='exp_one')throw Error('first request D1 fault');return original.call(h.DB,statements);};
+ assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');
+ // Synthetic closed second handoff: disable only fixture-insertion triggers,
+ // then restore them before exercising the real scheduler and guarded Undo.
+ const tables=['continuous_publication_intents','continuous_normal_notice_handoffs','continuous_review_notice_close','continuous_notice_dispatches','continuous_pending_undo'];
+ const triggers=h.sqlite.prepare(`SELECT name,sql FROM sqlite_master WHERE type='trigger' AND tbl_name IN (${tables.map(()=>'?').join(',')})`).all(...tables);
+ for(const t of triggers)h.sqlite.exec(`DROP TRIGGER "${t.name}"`);
+ const copy=(table,where,overrides)=>{const row=h.sqlite.prepare(`SELECT * FROM ${table} WHERE ${where}`).get(),value={...row,...overrides},columns=Object.keys(value);h.sqlite.prepare(`INSERT INTO ${table} (${columns.join(',')}) VALUES (${columns.map(()=>'?').join(',')})`).run(...columns.map(c=>value[c]));};
+ try{
+  copy('continuous_publication_intents',"transition_id='publish-op'",{transition_id:'publish-two',entity_id:'exp_other',claim_token:'claim-two',before_value:`PUB1␟MALIPANG_EXPENSE:exp_other␟1␟${'b'.repeat(32)}␟STAGED␟0`,after_value:`PUB1␟MALIPANG_EXPENSE:exp_other␟1␟${'d'.repeat(32)}␟PUBLISHED␟0`});
+  copy('continuous_normal_notice_handoffs',"operation_token='claim-token'",{operation_token:'claim-two',expense_id:'exp_other',journal_entity:'publish-two'});
+  copy('continuous_review_notice_close',"operation_token='claim-token'",{operation_token:'claim-two',expense_id:'exp_other',journal_entity:'publish-two'});
+  copy('continuous_notice_dispatches',"operation_token='claim-token'",{dispatch_id:'dispatch-two',operation_token:'claim-two',expense_id:'exp_other'});
+  copy('continuous_pending_undo',"expense_id='exp_one'",{request_id:'undo-two',expense_id:'exp_other',publication_transition_id:'publish-two',created_at:'2000-01-01T00:00:00.000Z'});
+ }finally{for(const t of triggers)h.sqlite.exec(t.sql);}
+ h.sqlite.exec("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('j2','EXPENSE','exp_other',1,'t2','PENDING','now'); UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");
+ assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(h.sqlite.prepare("SELECT state FROM continuous_pending_undo WHERE expense_id='exp_other'").get().state,'APPLIED');assert.equal(h.sqlite.prepare("SELECT state FROM continuous_pending_undo WHERE expense_id='exp_one'").get().state,'PENDING');
+ }finally{h.DB.batch=original;h.close();}});
+test('an unsent retry alert reports that Undo was subsequently applied',async()=>{const h=fixture(true),original=h.DB.batch,{sweepSyncFailureAlerts}=require('../dist/line/sync-failure-alerts.js'),sent=[];try{
+ assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});await finishSyntheticPublication(h);Object.assign(h.env,{SHADOW_LINE_OUTPUT:'true',LINE_OWNER_USER_ID:'owner'});h.env.JOB_QUEUE.send=async job=>sent.push(job);
+ h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log'))throw Error('D1 temporary');return original.call(h.DB,statements);};assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'DEFERRED');
+ h.DB.batch=original;h.sqlite.exec("UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(await sweepSyncFailureAlerts(h.env),1);
+ const notification=sent.find(job=>job.kind==='LINE_NOTIFICATION');assert.match(notification.messages[0].text,/บันทึกการยกเลิกแล้ว/);assert.doesNotMatch(notification.messages[0].text,/DEFERRED_UNDO_RETRY/);
+ }finally{h.DB.batch=original;h.close();}});
+test('lost retry-record ACK leaves a durable backoff and never repeats Undo early',async()=>{const h=fixture(true),original=h.DB.batch;let lost=false;try{
+ assert.deepEqual(await deferred.requestConfirmedExpenseUndo(h.env,input),{kind:'PENDING'});const dispatch=await finishSyntheticPublication(h);h.env.JOB_QUEUE.send=async()=>{};
+ h.DB.batch=async statements=>{if(statements[0].sql.includes('INSERT INTO expense_audit_log'))throw Error('D1 temporary');const result=await original.call(h.DB,statements);if(!lost&&statements[0].sql.includes('INSERT INTO continuous_deferred_undo_retries')){lost=true;throw Error('retry ACK lost');}return result;};
+ await assert.rejects(deferred.sweepPendingUndoAfterNotice(h.env),/retry ACK lost/);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM continuous_deferred_undo_retries').get().n,1);assert.equal(await deferred.applyPendingUndoAfterNotice(h.env,dispatch),'NONE');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE expense_id='exp_one' AND action='UNDO'").get().n,0);
+ h.DB.batch=original;h.sqlite.exec("UPDATE continuous_deferred_undo_retries SET next_attempt_at='2000-01-01T00:00:00.000Z'");assert.equal(await deferred.sweepPendingUndoAfterNotice(h.env),'APPLIED');assert.equal(lost,true);
+ }finally{h.DB.batch=original;h.close();}});

@@ -2,14 +2,18 @@ import type {Env} from '../types';
 import {randomId} from '../shared/ids';
 import {enqueueSheetSync} from '../db/repositories';
 import {wakeSyncFailureAlerts} from '../line/sync-failure-alerts';
+import {normalNoticeHandoffEnabled} from '../sheets/continuous-normal-notice-handoff';
+import {noticeReadinessReady} from '../sheets/continuous-notice-readiness';
 import {undoConfirmedExpense,type UndoInput} from './undo';
 
 type GuardEnv=Env&{CONTINUOUS_UNDO_SERIALIZATION_ENABLED?:string};
 type Pending={request_id:string;expense_id:string;source_version:number;line_user_id:string;trace_id:string;actor_employee_id:string|null;branch_id:string|null;publication_transition_id:string;state:'PENDING'|'APPLIED'|'REVIEW';audit_id:string|null;cancelled_version:number|null};
 export type UndoRequestResult={kind:'UNDONE';version:number}|{kind:'PENDING'}|{kind:'REVIEW'}|{kind:'UNAVAILABLE'};
 const integrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('continuous_undo_activation_no_update','continuous_undo_activation_no_delete','continuous_undo_activation_no_replace','continuous_pending_undo_insert','continuous_pending_undo_transition','continuous_pending_undo_no_delete','continuous_pending_undo_no_replace','continuous_pending_undo_blocks_publish','continuous_undo_guard_expense_update','continuous_undo_guard_expense_delete','continuous_undo_guard_expense_document_items_insert','continuous_undo_guard_expense_document_items_update','continuous_undo_guard_expense_document_items_delete','continuous_undo_guard_expense_document_links_insert','continuous_undo_guard_expense_document_links_update','continuous_undo_guard_expense_document_links_delete','continuous_undo_guard_documents_insert','continuous_undo_guard_documents_update','continuous_undo_guard_documents_delete','continuous_pending_undo_apply_auth_insert','continuous_pending_undo_apply_auth_no_update','continuous_pending_undo_apply_auth_no_delete','continuous_pending_undo_apply_auth_no_replace'))=23";
-async function ready(env:GuardEnv):Promise<boolean>{const db=env.DB;if(env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED!=='true'||env.SHEETS_SYNC_ENABLED!=='true')return false;const row=await db.prepare(`SELECT 1 AS ok WHERE EXISTS(SELECT 1 FROM continuous_undo_serialization_activation WHERE singleton=1) AND ${integrity}`).first<{ok:number}>();return env.DB===db&&env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED==='true'&&env.SHEETS_SYNC_ENABLED==='true'&&row?.ok===1;}
+async function ready(env:GuardEnv):Promise<boolean>{const db=env.DB;if(env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED!=='true'||env.SHEETS_SYNC_ENABLED!=='true')return false;const row=await db.prepare(`SELECT 1 AS ok WHERE EXISTS(SELECT 1 FROM continuous_undo_serialization_activation WHERE singleton=1) AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuous_deferred_undo_retries') AND (SELECT count(*) FROM pragma_table_info('continuous_deferred_undo_retries') WHERE name IN ('request_id','attempt_count','next_attempt_at','updated_at'))=4 AND ${integrity}`).first<{ok:number}>();return env.DB===db&&env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED==='true'&&env.SHEETS_SYNC_ENABLED==='true'&&row?.ok===1;}
 const active="(i.state IN ('IN_FLIGHT','REVIEW') OR (i.state='VERIFIED' AND c.state IN ('HELD','REVIEW')))";
+/** Fresh, matching probes from both workers are required before accepting a new request. */
+async function admissionReady(env:GuardEnv):Promise<boolean>{const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,queue=env.NOTICE_QUEUE;if(!book||!queue||!normalNoticeHandoffEnabled(env)||!await ready(env)||!await noticeReadinessReady(env))return false;return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.NOTICE_QUEUE===queue&&normalNoticeHandoffEnabled(env)&&env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED==='true';}
 
 /** Request is durable before acknowledging a deferred Undo. A source write and
  * a PUBLISH intent are serialized by D1 triggers; no provider result is inferred. */
@@ -30,7 +34,7 @@ async function exactReceipt(env:Env,input:UndoInput,auditId:string):Promise<numb
 }
 export async function requestConfirmedExpenseUndo(env:GuardEnv,input:UndoInput):Promise<UndoRequestResult>{
  if(env.CONTINUOUS_UNDO_SERIALIZATION_ENABLED!=='true'){const version=await undoConfirmedExpense(env,input);return version===null?{kind:'UNAVAILABLE'}:{kind:'UNDONE',version};}
- if(!await ready(env))throw Error('DEFERRED_UNDO_NOT_READY');
+ if(!await admissionReady(env))throw Error('DEFERRED_UNDO_NOT_READY');
  const first=await deferWhenResolving(env,input);if(first)return {kind:first};
  const auditId=randomId('exp_audit');
  try{const version=await undoConfirmedExpense(env,input,{auditId});return version===null?{kind:'UNAVAILABLE'}:{kind:'UNDONE',version};}

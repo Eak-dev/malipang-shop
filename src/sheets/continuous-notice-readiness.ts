@@ -13,7 +13,7 @@ const readyFlags=(e:Env)=>e.CONTINUOUS_NOTICE_DISPATCH_ENABLED==='true'&&e.CONTI
 export async function noticeReadinessFingerprint(e:Env):Promise<string|null>{
  const fields=[e.GOOGLE_SPREADSHEET_ID,e.GOOGLE_SERVICE_ACCOUNT_EMAIL,e.GOOGLE_PRIVATE_KEY_BASE64,e.SHEET_EXPENSE_DAILY,e.CONTINUOUS_DAILY_SHEET,e.CONTINUOUS_DAILY_SHEET_ID,e.CONTINUOUS_RAW_SHEET,e.CONTINUOUS_RAW_SHEET_ID,e.CONTINUOUS_DETAIL_SHEET,e.CONTINUOUS_DETAIL_SHEET_ID,e.SHEET_EXPENSE_RAW,e.SHEET_PURCHASE_DETAILS,e.CONTINUOUS_NOTICE_DEPLOYMENT_ID,e.APP_ENV,e.RUNTIME_MODE,e.LINE_CHANNEL_ACCESS_TOKEN,e.LINE_OWNER_USER_ID];
  if(!readyFlags(e)||fields.some(x=>typeof x!=='string'||!x.trim())||!e.NOTICE_QUEUE||e.RUNTIME_MODE==='shadow'&&e.SHADOW_LINE_OUTPUT!=='true')return null;
- return hex(await crypto.subtle.digest('SHA-256',utf(JSON.stringify(['notice-readiness-v1',...fields,e.SHADOW_LINE_OUTPUT??'']))));
+ return hex(await crypto.subtle.digest('SHA-256',utf(JSON.stringify(['notice-readiness-v1',...fields,e.SHADOW_LINE_OUTPUT??'',...(e.CONTINUOUS_UNDO_SERIALIZATION_ENABLED==='true'?['undo-serialization-v1']:[])]))));
 }
 /** SQL predicate with two bound parameters: spreadsheet ID and fingerprint. */
 export const noticeProbeIntegritySql="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_notice_readiness_probes' AND name IN ('continuous_notice_probe_insert','continuous_notice_probe_update','continuous_notice_probe_no_delete','continuous_notice_probe_no_replace'))=4 AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='index' AND name='continuous_notice_readiness_fresh')";

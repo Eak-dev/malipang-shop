@@ -58,7 +58,7 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 
 /** Read-only provider readiness; never grants permission to write. */
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ'||status==='พร้อมแก้ไข • กำลังซิงก์'||status==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(status));}catch{return false;}}
-export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch{return false;}}
+export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease,strict=false):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch(error){if(strict)throw error;return false;}}
 /** Sanitized read-only G6b evidence. Never returns sheet values or identifiers. */
 export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string,budget?:ReviewRequestBudget):Promise<string|null>{
  try{

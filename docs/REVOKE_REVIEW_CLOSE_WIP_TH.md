@@ -11,3 +11,5 @@
 - มีต้นแบบ guarded cleanup คง claim และใช้ nonce จน status ถูกอ่านกลับแล้วเท่านั้นก่อนปล่อย claim; หากจำนวน REVIEW เปลี่ยนระหว่าง cleanup จะคง claim และสร้าง incident แจ้งเหตุหนึ่งครั้ง ไม่ replay ผลไม่ชัด ยังต้องตรวจอิสระและทดสอบ provider จริง
 - ค่า source revision ระดับระบบยังอาจเปลี่ยนเมื่อเอกสารไม่เกี่ยวข้องเข้ามาระหว่าง REVOKE ทำให้ต้องพักตรวจหลังส่ง POST และ fingerprint candidate ยังต้องผ่านการทบทวนและผสานแบบครบเส้นทาง
 - ยังต้องพิสูจน์สิทธิ์เขียน พฤติกรรม provider การป้องกัน writer อื่น และผลรายงานของไฟล์จริง รวมถึง migration และทดสอบระบบจริงก่อนเปิด gate
+
+Checkpoint เพิ่มเติม: dispatcher รันเฉพาะ queue ของ notice worker โดย RUNNING ไม่ถูก steal หรือเปลี่ยนเป็น HELD โดย watchdog; watchdog แจ้งว่ารอนานและเจ้าของเดิมอาจยังทำงานต่อ. expired-phase ตรวจเฉพาะ GET จึงลองใหม่ไม่เกินสองครั้งเมื่อพบ network/timeout/429/5xx โดยคงเหตุ lease หมดเวลา; ผลข้อมูลขัดแย้งไม่ลองใหม่. ยังต้องทบทวน race, งบ D1 ของ worker จริง, migration และการเชื่อม quota/outbox/report ก่อนใช้จริง

@@ -25,7 +25,7 @@ export async function authorizeExpiredRevokeReviewPhase(env:Env,job:SheetsSyncJo
  if(!source||source.kind!=='REVOKE'||!stable())return false;
  const policy={...continuousSheetsReadPolicy,budget},grid=await getSheetGridInfo(env,target.sheetName,policy);if(!stable()||grid.sheetId!==target.sheetId||grid.rowCount!==target.rows||grid.columnCount<1||grid.columnCount>100)return false;
  const range=`'${target.sheetName.replace(/'/g,"''")}'!A1:A${target.rows}`,formula=await batchGetSheetFormulaValues(env,[range],policy),effective=await batchGetSheetEffectiveSerialValues(env,[range],policy),lastGrid=await getSheetGridInfo(env,target.sheetName,policy);
- if(!stable()||JSON.stringify(grid)!==JSON.stringify(lastGrid)||formula.length!==1||effective.length!==1||!verifyPublicationColumn(formula[0]!,effective[0]!,target.rows,marker,intent.row_number)||!await stableNoticePaused(env,source.noticeStamp,source.noticeIdentity,budget))return false;
+ if(!stable()||JSON.stringify(grid)!==JSON.stringify(lastGrid)||formula.length!==1||effective.length!==1||!verifyPublicationColumn(formula[0]!,effective[0]!,target.rows,marker,intent.row_number)||!await stableNoticePaused(env,source.noticeStamp,source.noticeIdentity,budget,undefined,true))return false;
  const again=await readExpiredRevokeSource(env,job,claim,transitionId,loc),targetAgain=await resolvePublicationTarget(env);
  if(!stable()||JSON.stringify(source)!==JSON.stringify(again)||JSON.stringify(target)!==JSON.stringify(targetAgain))return false;
  try{const result=await db.batch([

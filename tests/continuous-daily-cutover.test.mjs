@@ -4,6 +4,8 @@ import {createRequire} from 'node:module';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),{chooseContinuousDailyCutover,continuousDailyCutoverStatements}=require('../dist/sheets/continuous-daily-cutover.js');
 const {assertContinuousDailyActivated}=require('../dist/sheets/continuous-daily-route.js');
+const {claimSheetSyncJob,syncJob,reconcileExpenseItemRows}=require('../dist/sheets/sync.js');
+const worker=require('../dist/index.js').default;
 
 function fixture(withReports=true){
  const h=expenseSqlite();h.env.GOOGLE_SPREADSHEET_ID='book';
@@ -70,6 +72,35 @@ test('legacy reservation and activation serialize safely in either order',()=>{f
  h.expense('exp_race');h.prepare();h.snapshot();
  if(legacyFirst){h.journal('exp_race',1,'old','IN_FLIGHT');assert.throws(()=>h.activate(),/cutover activation rejected/);assert.equal(h.sqlite.prepare('SELECT state FROM continuous_daily_cutovers').get().state,'PREPARED');}
  else{h.activate();assert.throws(()=>h.journal('exp_race',1,'old','IN_FLIGHT'),/projection target rejected/);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes WHERE entity_id=\'exp_race\'').get().n,0);}
+ }finally{h.close();}}});
+
+test('legacy direct expense lease and activation are mutually fenced in D1',async()=>{const h=fixture();try{
+ h.expense('exp_race');const job=h.job('exp_race');
+ // A schema created after a pre-migration inspection blocks the stale CAS.
+ assert.equal(await claimSheetSyncJob(h.env,job,Date.now(),false),null);
+ assert.ok(await claimSheetSyncJob(h.env,job,Date.now(),true));
+ h.prepare();h.snapshot();assert.throws(()=>h.activate(),/continuous expense cutover processing/);
+ h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_until=NULL,lease_token=NULL WHERE entity_key='exp_race'");h.activate();
+ assert.equal(await claimSheetSyncJob(h.env,job,Date.now(),true),null);
+ await assert.rejects(syncJob(h.env,job),/CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED/);
+ await assert.rejects(reconcileExpenseItemRows(h.env,'exp_race'),/CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED/);
+ }finally{h.close();}});
+
+test('a prepared or active cutover blocks accidentally disabled continuous configuration',async()=>{const h=fixture();try{
+ h.env.CONTINUOUS_DAILY_ENABLED='false';h.expense('exp_before');h.prepare();
+ await assert.rejects(assertContinuousDailyActivated(h.env),/CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED/);
+ h.snapshot();h.activate();await assert.rejects(assertContinuousDailyActivated(h.env),/CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED/);
+ }finally{h.close();}});
+
+test('disabled cutover config parks expense queue work without attempting legacy writes',async()=>{for(const stable of ['true','false']){const h=fixture();try{
+ h.prepare();h.snapshot();h.activate();h.expense('exp_queued');
+ Object.assign(h.env,{STABLE_PHASE1_ENABLED:stable,CONTINUOUS_DAILY_ENABLED:'false',SHEETS_SYNC_ENABLED:'true',SHEET_EXPENSE_DAILY:'old'});
+ let acked=0,retried=0;
+ await worker.queue({queue:'malipang-jobs',messages:[{body:h.job('exp_queued'),ack(){acked++},retry(){retried++}}]},h.env,{});
+ assert.equal(acked,1);assert.equal(retried,0);
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_key='exp_queued'").get().status,'PENDING');
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM failed_jobs').get().n,0);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);
  }finally{h.close();}}});
 
 test('pre-cutover cancelled records leave no boundary reference and cannot be mistaken for new',async()=>{const h=fixture();try{

@@ -13,3 +13,11 @@ WHEN NEW.entity_type='EXPENSE' AND EXISTS(
  )
 )
 BEGIN SELECT RAISE(ABORT,'continuous expense projection target rejected'); END;
+
+-- Legacy direct writers acquire an expense lease before a Sheets request.
+-- Activation must serialize against every such lease, including expired ones:
+-- expiry does not prove that an already-sent request stopped at Google.
+CREATE TRIGGER IF NOT EXISTS continuous_expense_cutover_no_processing
+BEFORE UPDATE OF state ON continuous_daily_cutovers
+WHEN NEW.state='ACTIVE' AND EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.status='PROCESSING')
+BEGIN SELECT RAISE(ABORT,'continuous expense cutover processing'); END;

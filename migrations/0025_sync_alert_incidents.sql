@@ -18,12 +18,12 @@ CREATE TRIGGER IF NOT EXISTS sync_alert_job_insert AFTER INSERT ON sync_jobs
 WHEN NEW.status IN ('FAILED','REVIEW')
 BEGIN
  INSERT INTO sync_alert_incidents(kind,source_id,category,state,opened_at)
- SELECT 'JOB',NEW.job_id,CASE WHEN NEW.status='FAILED' THEN 'FAILED'
+ SELECT 'JOB',NEW.job_id, CASE WHEN NEW.status='FAILED' THEN 'FAILED'
   WHEN NEW.last_error='STABLE_DAILY_MONTH_OPENING_UNVERIFIED' THEN 'MONTH_OPENING'
   WHEN NEW.last_error='STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED' THEN 'ROW_FORMULA'
   WHEN NEW.last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY'
   WHEN NEW.last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED') THEN 'CANCELLED_OR_SUPERSEDED'
-  ELSE 'REVIEW' END,'OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  ELSE 'REVIEW' END ,'OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE NOT EXISTS(SELECT 1 FROM sync_alert_incidents WHERE kind='JOB' AND source_id=NEW.job_id AND state='OPEN')
  ON CONFLICT DO NOTHING;
 END;
@@ -36,19 +36,19 @@ BEGIN
  -- generations too: their durable record may be the only evidence of a
  -- short-lived failure.
  UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
- WHERE kind='JOB' AND source_id=NEW.job_id AND state='OPEN' AND category<>CASE WHEN NEW.status='FAILED' THEN 'FAILED'
+ WHERE kind='JOB' AND source_id=NEW.job_id AND state='OPEN' AND category<> CASE WHEN NEW.status='FAILED' THEN 'FAILED'
   WHEN NEW.last_error='STABLE_DAILY_MONTH_OPENING_UNVERIFIED' THEN 'MONTH_OPENING'
   WHEN NEW.last_error='STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED' THEN 'ROW_FORMULA'
   WHEN NEW.last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY'
   WHEN NEW.last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED') THEN 'CANCELLED_OR_SUPERSEDED'
   ELSE 'REVIEW' END;
  INSERT INTO sync_alert_incidents(kind,source_id,category,state,opened_at)
- SELECT 'JOB',NEW.job_id,CASE WHEN NEW.status='FAILED' THEN 'FAILED'
+ SELECT 'JOB',NEW.job_id, CASE WHEN NEW.status='FAILED' THEN 'FAILED'
   WHEN NEW.last_error='STABLE_DAILY_MONTH_OPENING_UNVERIFIED' THEN 'MONTH_OPENING'
   WHEN NEW.last_error='STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED' THEN 'ROW_FORMULA'
   WHEN NEW.last_error='STABLE_DAILY_CAPACITY' THEN 'CAPACITY'
   WHEN NEW.last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED') THEN 'CANCELLED_OR_SUPERSEDED'
-  ELSE 'REVIEW' END,'OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
+  ELSE 'REVIEW' END ,'OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE NOT EXISTS(SELECT 1 FROM sync_alert_incidents WHERE kind='JOB' AND source_id=NEW.job_id AND state='OPEN')
  ON CONFLICT DO NOTHING;
 END;
@@ -80,14 +80,14 @@ BEGIN UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%
 
 CREATE TRIGGER IF NOT EXISTS sync_alert_terminal_insert AFTER INSERT ON failed_jobs
 WHEN NEW.queue_name='malipang-jobs' AND NEW.status='OPEN' AND NEW.error='DEAD_LETTER_MAX_RETRIES'
- AND json_extract(CASE WHEN json_valid(NEW.payload_json) THEN NEW.payload_json ELSE '{}' END,'$.kind') IN ('SHEETS_SYNC','STAFF_CONFIG_SYNC')
+ AND json_extract( CASE WHEN json_valid(NEW.payload_json) THEN NEW.payload_json ELSE '{}' END ,'$.kind') IN ('SHEETS_SYNC','STAFF_CONFIG_SYNC')
 BEGIN INSERT INTO sync_alert_incidents(kind,source_id,category,state,opened_at)
  SELECT 'TERMINAL',NEW.id,'TERMINAL','OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE NOT EXISTS(SELECT 1 FROM sync_alert_incidents WHERE kind='TERMINAL' AND source_id=NEW.id AND state='OPEN')
  ON CONFLICT DO NOTHING; END;
 CREATE TRIGGER IF NOT EXISTS sync_alert_terminal_update AFTER UPDATE OF status,error ON failed_jobs
 WHEN NEW.queue_name='malipang-jobs' AND NEW.status='OPEN' AND NEW.error='DEAD_LETTER_MAX_RETRIES'
- AND json_extract(CASE WHEN json_valid(NEW.payload_json) THEN NEW.payload_json ELSE '{}' END,'$.kind') IN ('SHEETS_SYNC','STAFF_CONFIG_SYNC')
+ AND json_extract( CASE WHEN json_valid(NEW.payload_json) THEN NEW.payload_json ELSE '{}' END ,'$.kind') IN ('SHEETS_SYNC','STAFF_CONFIG_SYNC')
 BEGIN INSERT INTO sync_alert_incidents(kind,source_id,category,state,opened_at)
  SELECT 'TERMINAL',NEW.id,'TERMINAL','OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now')
  WHERE NOT EXISTS(SELECT 1 FROM sync_alert_incidents WHERE kind='TERMINAL' AND source_id=NEW.id AND state='OPEN')

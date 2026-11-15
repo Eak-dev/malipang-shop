@@ -7,12 +7,27 @@ import {newStableSourcePredicate,stableSourceIntegrity} from './stable-source-cu
 import {withStableWorkbookClaim} from './stable-workbook-claim';
 import {stableWorkbookClaimOwned} from './stable-workbook-claim';
 import {verifyStableExpenseProjections} from './stable-expense-final-check';
-import {recoveryGateConfigured,recoveryGateValid} from './stable-recovery-admission';
+import {admitStableRecovery,recoveryGateConfigured,recoveryGateValid} from './stable-recovery-admission';
+import {SheetsHttpError,SheetsReadNetworkError} from './client';
+import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from './google-auth';
+import {OperationTimeoutError} from '../shared/async';
 import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {chooseContinuousDailyCutover,continuousAdmissionIntegrity,continuousDailyCutoverIntegrity} from './continuous-daily-cutover';
 import {InsertDailyDefiniteFailure,InsertDailyPendingCancellationError,InsertDailyPreflightReviewError,insertDailyExpenseUnderClaim} from './insert-daily-writer';
 import {writeCarrierLedgerUnderClaim} from './atomic-expense-ledger-writer';
 import {executeUnwrittenExpenseCancellation} from './unwritten-expense-cancellation-candidate';
+
+/** These codes apply only before notice-mutation authorization. OAuth only
+ * exchanges a token; it is not a Sheets business write. */
+function untouchedNoticeFailureCode(error:unknown):string|null{
+ if(error instanceof SheetsHttpError&&error.message==='STABLE_NOTICE_READ'&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599)return `SHEETS_READ_HTTP_${error.status}`;
+ if(error instanceof SheetsReadNetworkError)return 'SHEETS_READ_NETWORK';
+ if(error instanceof GoogleOAuthHttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599)return `GOOGLE_OAUTH_HTTP_${error.status}`;
+ if(error instanceof GoogleOAuthPreflightError)return error.code;
+ if(error instanceof OperationTimeoutError&&/^Stable notice read timed out after \d+ms$/.test(error.message))return 'SHEETS_READ_TIMEOUT';
+ if(error instanceof OperationTimeoutError&&/^Google OAuth timed out after \d+ms$/.test(error.message))return 'GOOGLE_OAUTH_TIMEOUT';
+ return null;
+}
 
 /** Scope a read-only failure to this job only if the source, lease, claim and
  * absence of all projection intents are proven in the same D1 statement.
@@ -152,7 +167,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    }
   }catch(error){
    if(error instanceof InsertDailyPreflightReviewError){
-    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':'LEGACY_READ',errorCode:error.reason}))return 'COMPLETED';
+    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&(/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)||/^(?:(?:SHEETS_READ|GOOGLE_OAUTH)_(?:HTTP_[45][0-9]{2}|TIMEOUT)|GOOGLE_OAUTH_(?:CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|SHEETS_READ_NETWORK)$/.test(error.reason))&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':/^(?:SHEETS_READ|GOOGLE_OAUTH)_/.test(error.reason)?'SHEETS_READ':'LEGACY_READ',errorCode:error.reason}))return 'COMPLETED';
     if(await holdUnwrittenExpenseReview(env,job,lease,claim,error.message,'PREFLIGHT',source.revision))return 'JOB_REVIEW';
     throw error;
    }
@@ -207,5 +222,16 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    .bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,source.digest,book,itemKeys,job.entityVersion,source.digest,projections.details.length).run();
   if(completed.success!==true||Number(completed.meta?.changes)!==1)throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
   return 'COMPLETED';
- },job);
+ },job,target?async(claim,error)=>{
+  const errorCode=untouchedNoticeFailureCode(error);
+  if(!errorCode||targetScope!==scope())return null;
+  const source=await readStableExpenseSource(env,job,lease,claim);
+  if(!source||targetScope!==scope())return null;
+  // If anything after durable admission is uncertain, throw so the claim
+  // and epoch remain fenced; never treat an unknown D1 result as a no-op.
+  if(!await admitStableRecovery(env,job,claim))return null;
+  const cancelled=await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'SHEETS_READ',errorCode});
+  if(!cancelled||targetScope!==scope())throw Error('SYNC_UNTOUCHED_NOTICE_CANCEL_UNCERTAIN');
+  return{value:'COMPLETED' as const};
+ }:undefined);
 }

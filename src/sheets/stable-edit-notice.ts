@@ -1,6 +1,7 @@
 import type {Env} from '../types';
 import {getGoogleAccessToken} from './google-auth';
-import {batchWriteValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError} from './client';
+import {batchWriteValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError,SheetsReadNetworkError} from './client';
+import {readSheetsBody} from './bounded-response';
 import {fetchWithTimeout} from '../shared/async';
 import {numberEnv} from '../shared/env';
 
@@ -17,9 +18,12 @@ function overlaps(a:Range,r:Record<string,unknown>):boolean{
  return a.row>=sr&&a.row<er&&a.column>=sc&&a.column<ec;
 }
 async function get(env:Env,path:string):Promise<unknown>{
- const token=await getGoogleAccessToken(env),res=await retryIdempotentRead(()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Stable notice read'),env.STABLE_SHEETS_PACING_ENABLED!=='true');
+ const token=await getGoogleAccessToken(env),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);let deadline=0,res:Response;
+ try{res=await retryIdempotentRead(()=>{deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},timeout,'Stable notice read');},env.STABLE_SHEETS_PACING_ENABLED!=='true',true);}
+ catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
  // Keep the HTTP status for diagnostics; the message stays a stable code.
- if(!res.ok)throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));return res.json();
+ if(!res.ok){try{await Promise.race([res.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);}catch{}throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));}
+ try{return JSON.parse(new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),'Stable notice read'))) as unknown;}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
 }
 type Structure={spreadsheetId?:unknown;namedRanges?:Array<{namedRangeId?:unknown;name?:unknown;range?:Record<string,unknown>}>;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown;frozenRowCount?:unknown}};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>;data?:Array<{startRow?:unknown;startColumn?:unknown;rowData?:Array<{values?:Array<Record<string,unknown>>}>}>}>};
 const structureFields='spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges)';

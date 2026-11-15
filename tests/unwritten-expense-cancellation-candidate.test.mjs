@@ -63,6 +63,10 @@ for(const [reason,errorCode,match] of [['REPORT_UNVERIFIED','REPORT_HEALTH_FORMU
  h.env.LINE_OWNER_USER_ID='owner';assert.equal(await recoverDeferredAutoCancelAlerts(h.env),1);assert.match(h.notifications[0].messages[0].text,match);assert.ok(h.notifications[0].messages[0].text.includes(errorCode));
 }finally{h.close()}});
 test('unsafe provider error text cannot enter a cancellation notification',async()=>{const h=fixture();try{assert.equal(await buildUnwrittenExpenseCancellationCandidate(h.env,{...h.input(),reason:'REPORT_UNVERIFIED',errorCode:'private receipt 123'}),null);assert.equal(h.sqlite.prepare('SELECT status FROM expense_events').get().status,'CONFIRMED');}finally{h.close()}});
+test('a deferred Sheets read failure reports a safe code exactly once when the owner becomes available',async()=>{const h=fixture();try{
+ h.env.LINE_OWNER_USER_ID='';assert.equal(await executeUnwrittenExpenseCancellation(h.env,{...h.input(),reason:'SHEETS_READ',errorCode:'SHEETS_READ_HTTP_403'}),true);
+ h.env.LINE_OWNER_USER_ID='owner';assert.equal(await recoverDeferredAutoCancelAlerts(h.env),1);assert.match(h.notifications[0].messages[0].text,/SHEETS_READ_HTTP_403/);assert.match(h.notifications[0].messages[0].text,/อ่านข้อมูล Sheets ไม่สำเร็จ/);assert.equal(await recoverDeferredAutoCancelAlerts(h.env),0);
+}finally{h.close()}});
 test('deferred alert enqueue failure leaves ordinary retryable LINE outbox',async()=>{const h=fixture();try{
  h.env.LINE_OWNER_USER_ID='';assert.equal(await executeUnwrittenExpenseCancellation(h.env,h.input()),true);h.env.LINE_OWNER_USER_ID='owner';h.env.JOB_QUEUE.send=async()=>{throw Error('offline')};assert.equal(await recoverDeferredAutoCancelAlerts(h.env),1);assert.equal(h.sqlite.prepare("SELECT error FROM failed_jobs WHERE job_key LIKE 'LINE_NOTIFICATION:%'").get().error,'LINE_NOTIFICATION_ENQUEUE_FAILED');
 }finally{h.close();}});

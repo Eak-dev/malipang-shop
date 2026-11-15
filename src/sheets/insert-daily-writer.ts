@@ -1,5 +1,7 @@
 import type {Env,SheetsSyncJob} from '../types';
-import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetCellNumberFormats,getSheetGridInfo} from './client';
+import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetCellNumberFormats,getSheetGridInfo,SheetsHttpError} from './client';
+import {OperationTimeoutError} from '../shared/async';
+import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from './google-auth';
 import {columnName,legacySourceWallet,resolvePayment} from './daily-expense';
 import {stableDailyExpenseKey} from './daily-stable-row-plan';
 import {continuousDailyHelperFormulas} from './continuous-daily-plan';
@@ -34,6 +36,19 @@ export class InsertDailyDefiniteFailure extends Error{
 /** Only before any provider mutation or intent for this expense. */
 export class InsertDailyPreflightReviewError extends Error{
  constructor(readonly reason:string){super(`INSERT_DAILY_PREFLIGHT_${reason}`);this.name='InsertDailyPreflightReviewError';}
+}
+/** Wrap only provider reads before this expense reserves any write intent.
+ * Do not wrap the later pre-dispatch callback or readback: those occur after
+ * reservation and their uncertain state must remain fenced. */
+async function beforeIntentRead<T>(read:()=>Promise<T>):Promise<T>{
+ try{return await read();}catch(error){
+  if(error instanceof SheetsHttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599)throw new InsertDailyPreflightReviewError(`SHEETS_READ_HTTP_${error.status}`);
+  if(error instanceof GoogleOAuthHttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599)throw new InsertDailyPreflightReviewError(`GOOGLE_OAUTH_HTTP_${error.status}`);
+  if(error instanceof GoogleOAuthPreflightError)throw new InsertDailyPreflightReviewError(error.code);
+  if(error instanceof OperationTimeoutError&&/^Google OAuth timed out after \d+ms$/.test(error.message))throw new InsertDailyPreflightReviewError('GOOGLE_OAUTH_TIMEOUT');
+  if(error instanceof OperationTimeoutError)throw new InsertDailyPreflightReviewError('SHEETS_READ_TIMEOUT');
+  throw error;
+ }
 }
 async function verifyInsertedNumberFormats(env:Env,sheet:string,sheetId:number,row:number):Promise<boolean>{
  const formats=await getSheetCellNumberFormats(env,sheet,sheetId,row);
@@ -97,17 +112,17 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  if(!await sourceMatches())throw Error('INSERT_DAILY_SOURCE_UNVERIFIED');
  const record=planStableExpenseProjections(source).record,date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(record.transactionDate);
  if(!date||!paymentOptionForPair(record.paymentKey,record.sourceWallet))throw Error('INSERT_DAILY_SOURCE_UNVERIFIED');
- const grid=await getSheetGridInfo(env,sheet);if(!stable()||grid.sheetId!==sheetId||grid.rowCount<5||grid.columnCount<29||grid.columnCount>100)throw Error('INSERT_DAILY_GRID');
+ const grid=await beforeIntentRead(()=>getSheetGridInfo(env,sheet));if(!stable()||grid.sheetId!==sheetId||grid.rowCount<5||grid.columnCount<29||grid.columnCount>100)throw Error('INSERT_DAILY_GRID');
  if(grid.rowCount>=5000)throw new InsertDailyDefiniteFailure('CAPACITY');
  const snapshot=async(expected:Grid):Promise<Snapshot>=>{const a=await getSheetGridInfo(env,sheet),range=`'${sheet.replace(/'/g,"''")}'!A1:${columnName(expected.columnCount)}${expected.rowCount}`,f=await batchGetSheetFormulaValues(env,[range]),e=await batchGetSheetEffectiveSerialValues(env,[range]),b=await getSheetGridInfo(env,sheet);if(!stable()||JSON.stringify(a)!==JSON.stringify(expected)||JSON.stringify(b)!==JSON.stringify(expected)||f.length!==1||e.length!==1||f[0]!.length>expected.rowCount||e[0]!.length>expected.rowCount||[...f[0]!,...e[0]!].some(r=>!Array.isArray(r)||r.length>expected.columnCount))throw Error('INSERT_DAILY_SNAPSHOT_UNVERIFIED');return{formula:f[0]!,effective:e[0]!};};
- const before=await snapshot(grid),payment=verifiedInsertDailyPayment(before.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
+ const before=await beforeIntentRead(()=>snapshot(grid)),payment=verifiedInsertDailyPayment(before.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));
  let legacy:Awaited<ReturnType<typeof readLegacyDailyCoverage>>;
- try{legacy=await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet);}catch(error){
+ try{legacy=await beforeIntentRead(()=>readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet));}catch(error){
   if(error instanceof Error&&/^LEGACY_COVERAGE_(YEAR_UNVERIFIED|MONTH_UNVERIFIED|DATE_UNVERIFIED|MONTH_BLOCK_UNVERIFIED|OPENING_UNVERIFIED|SUBTOTAL_UNVERIFIED|SUBTOTAL_MISMATCH|AMOUNT_UNVERIFIED)$/.test(error.message))throw new InsertDailyDefiniteFailure('LEGACY_COVERAGE');
   if(error instanceof Error&&/^LEGACY_COVERAGE_[A-Z_]+$/.test(error.message))throw new InsertDailyPreflightReviewError(error.message);
   throw error;
  }
- const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await batchGetSheetFormulaValues(env,[legacyIdRange]);
+ const legacyIdRange=`'${env.SHEET_EXPENSE_DAILY.replace(/'/g,"''")}'!X1:X${legacy.grid.rowCount}`,legacyIds=await beforeIntentRead(()=>batchGetSheetFormulaValues(env,[legacyIdRange]));
  if(legacyIds.length!==1||legacyIds[0]!.some(r=>r[0]===stableDailyExpenseKey(job.entityKey)))throw Error('INSERT_DAILY_LEGACY_ID_UNVERIFIED');
  const openings=before.formula.slice(3,243).filter(r=>r[26]===payment.postingYear&&r[27]===payment.postingMonth);
  if(openings.length>1||openings.length===0&&legacy.coverage.openingSatang===null||openings.length===1&&(typeof openings[0]![28]!=='number'||!Number.isFinite(openings[0]![28])||Number(openings[0]![28])<0))throw new InsertDailyDefiniteFailure('MONTH_OPENING');
@@ -117,7 +132,7 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
   if(pending.size&&await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,before.formula,undefined,pending))throw new InsertDailyPendingCancellationError([...pending][0]!);
   throw Error('INSERT_DAILY_ACCOUNTING_UNVERIFIED');
  }
- try{if(await readContinuousReportHealth(env)==='CAPACITY')throw new InsertDailyDefiniteFailure('CAPACITY');}catch(error){
+ try{if(await beforeIntentRead(()=>readContinuousReportHealth(env))==='CAPACITY')throw new InsertDailyDefiniteFailure('CAPACITY');}catch(error){
   if(error instanceof Error&&/^REPORT_HEALTH_[A-Z_]+$/.test(error.message))throw new InsertDailyPreflightReviewError(error.message);
   throw error;
  }

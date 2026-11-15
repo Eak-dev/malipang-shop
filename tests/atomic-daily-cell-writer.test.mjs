@@ -93,7 +93,7 @@ test('dispatcher rejects mislabeled test or production binding before taking a j
  Object.assign(h.env,{APP_ENV:'test',CONTINUOUS_DAILY_ENABLED:'true',CONTINUOUS_DAILY_SHEET:'continuous_carrier',CONTINUOUS_DAILY_SHEET_ID:'9',CONTINUOUS_RAW_SHEET:'raw_new',CONTINUOUS_RAW_SHEET_ID:'10',CONTINUOUS_DETAIL_SHEET:'detail_new',CONTINUOUS_DETAIL_SHEET_ID:'11',STABLE_CANCELLATION_PREIMAGE_ENABLED:'true',STABLE_PHASE1_ENABLED:stable});
  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_test',entityVersion:1,traceId:'fixture'};
  await assert.rejects(dispatchStablePhase1(h.env,job),/CONTINUOUS_DAILY_(NOT_READY|TARGET_INVALID)/);
- await assert.rejects(syncJob(h.env,job),/CONTINUOUS_DAILY_(NOT_READY|TARGET_INVALID)/);
+ await assert.rejects(syncJob(h.env,job),/CONTINUOUS_DAILY_(NOT_READY|TARGET_INVALID|LEGACY_WRITE_BLOCKED)/);
  assert.equal(h.writes(),0);assert.equal(h.DB.runs.length,0);assert.equal(h.DB.batches.length,0);
  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PROCESSING');

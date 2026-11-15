@@ -3,6 +3,8 @@ import { getGoogleAccessToken } from "./google-auth";
 import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites } from "./owner-month-close";
+import {readSheetsBody} from './bounded-response';
+export class SheetsReadNetworkError extends Error{constructor(){super('SHEETS_READ_NETWORK');this.name='SheetsReadNetworkError';}}
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
 }
@@ -24,23 +26,25 @@ export const sheetsReadRetryTiming={wait:(ms:number)=>new Promise<void>(resolve=
 /** A read is idempotent, so one paced retry of a rate-limited or transient
  * response is safe. Mutations never pass through here. Google refills the
  * per-minute read quota continuously; without Retry-After wait 20 seconds. */
-export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClaimWait=true):Promise<Response>{
+export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClaimWait=true,boundCancellation=false):Promise<Response>{
   const first=await read();if(!allowInClaimWait||first.status!==429&&(first.status<500||first.status>599))return first;
-  const retryAfter=parseRetryAfterSeconds(first.headers.get("Retry-After"));try{await first.body?.cancel();}catch{}
+  const retryAfter=parseRetryAfterSeconds(first.headers.get("Retry-After"));try{if(boundCancellation)await Promise.race([first.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);else await first.body?.cancel();}catch{}
   await sheetsReadRetryTiming.wait(first.status===429?Math.min(30,Math.max(1,retryAfter??20))*1000:2000);
   return read();
 }
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
-async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<Response>{
+async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,beforeMutationDispatch?:BeforeSheetsMutationDispatch,readMutationReply=false):Promise<Response>{
   const token=await getGoogleAccessToken(env),headers=new Headers(init.headers);headers.set("Authorization",`Bearer ${token}`);if(init.body)headers.set("content-type","application/json");
   // Authentication can consume the full external timeout on a cold token cache.
   // Run the caller's final CAS only after auth, immediately before the Sheet
   // request can be dispatched, so that wait is outside the mutation fence.
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
-  const send=()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),`Google Sheets ${init.method||"GET"}`);
+  const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),label=`Google Sheets ${init.method||"GET"}`;let deadline=0;
+  const send=()=>{deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers},timeout,label);};
   const idempotentRead=!mutation&&(init.method||"GET")==="GET";
   let res:Response;try{res=idempotentRead?await retryIdempotentRead(send,env.STABLE_SHEETS_PACING_ENABLED!=='true'):await send();}catch(error){if(mutation)throw new SheetsMutationOutcomeUnknownError(error);throw error;}
-  if(!res.ok){let body="";try{body=await res.text();}catch{}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}return res;
+  if(!res.ok){let body="";try{body=readMutationReply?new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),label)):await res.text();}catch(error){if(readMutationReply)throw new SheetsMutationOutcomeUnknownError(error);}const httpError=new SheetsHttpError(res.status,`Sheets HTTP ${res.status}${body?`: ${body}`:""}`,parseRetryAfterSeconds(res.headers.get("Retry-After")));if(mutation&&isAmbiguousSheetsMutationStatus(res.status))throw new SheetsMutationOutcomeUnknownError(httpError);throw httpError;}
+  if(readMutationReply){let body:Uint8Array;try{body=await readSheetsBody(res,deadline-Date.now(),label);}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}return new Response(body,{status:res.status,statusText:res.statusText,headers:res.headers});}return res;
 }
 export async function batchWriteValues(env:Env,data:Array<{range:string;values:unknown[][]}>,beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"RAW",data})},true,beforeMutationDispatch);}
 export async function batchWriteUserEnteredValues(env:Env,data:Array<{range:string;values:unknown[][]}>):Promise<void>{if(!data.length)return;await sheetsFetch(env,"/values:batchUpdate",{method:"POST",body:JSON.stringify({valueInputOption:"USER_ENTERED",data})},true);}
@@ -51,7 +55,7 @@ export async function batchUpdateSpreadsheet(env:Env,requests:unknown[],beforeMu
  * treated by the caller as an uncertain mutation, never blindly retried. */
 export async function batchUpdateSpreadsheetWithReply(env:Env,requests:unknown[],beforeMutationDispatch?:BeforeSheetsMutationDispatch):Promise<unknown>{
   if(!requests.length)throw Error('SHEETS_EMPTY_CONDITIONAL_MUTATION');
-  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch);
+  const response=await sheetsFetch(env,":batchUpdate",{method:"POST",body:JSON.stringify({requests})},true,beforeMutationDispatch,true);
   try{return await response.json();}catch(error){throw new SheetsMutationOutcomeUnknownError(error);}
 }
 export async function getSheetValues(env:Env,range:string):Promise<unknown[][]>{const encoded=encodeURIComponent(range),data=await sheetsFetch(env,`/values/${encoded}?valueRenderOption=UNFORMATTED_VALUE&dateTimeRenderOption=FORMATTED_STRING`,{method:"GET"}).then(r=>r.json()) as{values?:unknown[][]};return data.values||[];}

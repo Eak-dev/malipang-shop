@@ -42,6 +42,7 @@
     "src/sheets/continuous-report-health.ts",
     "src/sheets/continuous-daily-route.ts",
     "src/sheets/continuous-daily-verification.ts",
+    "src/sheets/continuous-daily-positive-recovery.ts",
     "src/sheets/report-cutover-plan.ts",
     "src/sheets/report-cutover-executor.ts",
     "src/sheets/report-cutover-controller.ts",

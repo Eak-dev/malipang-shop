@@ -9,14 +9,17 @@ export const atomicDailyMarker=(row:number):string=>{
  return `MPD1_EMPTY_${row}_${crypto.randomUUID().replaceAll('-','').toLowerCase()}`;
 };
 export const isAtomicDailyMarkerForRow=(marker:unknown,row:number):marker is string=>typeof marker==='string'&&new RegExp(`^MPD1_EMPTY_${row}_[0-9a-f]{32}$`).test(marker);
-export type AtomicDailyPayload={expenseId:string;postingYear:number;postingMonth:number;postingDay:number;description:string;amountColumn:string;amountSatang:number;category:string;wallet:string};
+export type AtomicDailyPayload={expenseId:string;postingYear:number;postingMonth:number;postingDay:number;description:string;amountColumn:string;amountSatang:number;category:string;wallet:string;operationMarker?:string};
 const columns=['F','G','H','K','L','M','N','O','P','Q'];
 export function encodeAtomicDailyPayload(input:AtomicDailyPayload):string{
  const date=new Date(Date.UTC(input.postingYear,input.postingMonth-1,input.postingDay));
  if(!/^exp_[A-Za-z0-9_-]{1,128}$/.test(input.expenseId)||!Number.isSafeInteger(input.postingYear)||input.postingYear<1900||input.postingYear>9999||!Number.isInteger(input.postingMonth)||!Number.isInteger(input.postingDay)||date.getUTCFullYear()!==input.postingYear||date.getUTCMonth()+1!==input.postingMonth||date.getUTCDate()!==input.postingDay||!columns.includes(input.amountColumn)||!Number.isSafeInteger(input.amountSatang)||input.amountSatang<=0)throw Error('ATOMIC_DAILY_INVALID_SOURCE');
  const strings=[input.description,input.category,input.wallet];
  if(strings.some(x=>typeof x!=='string'||!x.trim()||x!==x.trim()||x.includes(ATOMIC_DAILY_SEPARATOR)||x.length>1000))throw Error('ATOMIC_DAILY_INVALID_TEXT');
- const out=['MPD1',`MALIPANG_EXPENSE:${input.expenseId}`,input.postingYear,input.postingMonth,input.postingDay,input.description,input.amountColumn,input.amountSatang,input.category,input.wallet].join(ATOMIC_DAILY_SEPARATOR);
+ if(input.operationMarker!==undefined&&!/^INSERT_[0-9a-f]{32}$/.test(input.operationMarker))throw Error('ATOMIC_DAILY_INVALID_MARKER');
+ const fields:(string|number)[]=['MPD1',`MALIPANG_EXPENSE:${input.expenseId}`,input.postingYear,input.postingMonth,input.postingDay,input.description,input.amountColumn,input.amountSatang,input.category,input.wallet];
+ if(input.operationMarker!==undefined)fields.push(input.operationMarker);
+ const out=fields.join(ATOMIC_DAILY_SEPARATOR);
  if(new TextEncoder().encode(out).byteLength>8000)throw Error('ATOMIC_DAILY_PAYLOAD_TOO_LONG');
  return out;
 }
@@ -25,8 +28,9 @@ export function encodeAtomicDailyPayload(input:AtomicDailyPayload):string{
 export function decodeAtomicDailyPayload(value:unknown):AtomicDailyPayload|null{
  if(typeof value!=='string'||!value.startsWith(ATOMIC_DAILY_PREFIX))return null;
  const p=value.split(ATOMIC_DAILY_SEPARATOR);
- if(p.length!==10||!p[1]?.startsWith('MALIPANG_EXPENSE:')||!/^\d+$/.test(p[2]||'')||!/^\d+$/.test(p[3]||'')||!/^\d+$/.test(p[4]||'')||!/^\d+$/.test(p[7]||''))return null;
+ if((p.length!==10&&p.length!==11)||!p[1]?.startsWith('MALIPANG_EXPENSE:')||!/^\d+$/.test(p[2]||'')||!/^\d+$/.test(p[3]||'')||!/^\d+$/.test(p[4]||'')||!/^\d+$/.test(p[7]||''))return null;
  const parsed:AtomicDailyPayload={expenseId:p[1].slice('MALIPANG_EXPENSE:'.length),postingYear:Number(p[2]),postingMonth:Number(p[3]),postingDay:Number(p[4]),description:p[5]||'',amountColumn:p[6]||'',amountSatang:Number(p[7]),category:p[8]||'',wallet:p[9]||''};
+ if(p.length===11)parsed.operationMarker=p[10]||'';
  try{return encodeAtomicDailyPayload(parsed)===value?parsed:null;}catch{return null;}
 }
 

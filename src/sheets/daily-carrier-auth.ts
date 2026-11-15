@@ -7,7 +7,7 @@ import {paymentOptionForPair} from '../expense/document';
 
 type Current={entityId:string;operationToken:string;payload:string};
 export type CancellingDailyCarrier={entityId:string;sourceVersion:number;cancelVersion:number;operationToken:string;leaseToken:string;tombstone?:string};
-type Evidence={entity_id:string;state:string;source_version:number;operation_token:string;preimage_width:number|null;preimage_digest:string|null;expense_version:number|null;expense_status:string|null;description:string|null;amount_satang:number|null;payment_key:string|null;source_wallet:string|null;category:string|null;transaction_date:string|null;marker_present:number;pending_cancel:number;cancel_lease:string|null;cancel_lease_active:number;cancel_state:string|null;cancel_token:string|null;cancel_version:number|null;previous_version:number|null;cancel_preimage_digest:string|null};
+type Evidence={entity_id:string;state:string;source_version:number;operation_token:string;preimage_width:number|null;preimage_digest:string|null;expense_version:number|null;expense_status:string|null;description:string|null;amount_satang:number|null;payment_key:string|null;source_wallet:string|null;category:string|null;transaction_date:string|null;marker_present:number;marker_value:string|null;pending_cancel:number;cancel_lease:string|null;cancel_lease_active:number;cancel_state:string|null;cancel_token:string|null;cancel_version:number|null;previous_version:number|null;cancel_preimage_digest:string|null};
 const blank=(v:unknown)=>v===undefined||v===null||v==='';
 async function digest(values:unknown[]):Promise<string>{return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(values)))),v=>v.toString(16).padStart(2,'0')).join('');}
 
@@ -19,6 +19,7 @@ export async function verifyDailyCarrierEvidence(env:Env,sheet:string,sheetId:nu
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book||!sheet||!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(columnCount)||columnCount<29||columnCount>100||!Array.isArray(formula))return false;
  const result=await db.prepare(`SELECT p.entity_id,p.state,p.source_version,p.operation_token,i.preimage_width,i.preimage_digest,e.version AS expense_version,e.status AS expense_status,e.description,e.amount_satang,e.payment_key,e.source_wallet,e.category,e.transaction_date,
   EXISTS(SELECT 1 FROM atomic_daily_marker_reservations m WHERE m.spreadsheet_id=p.spreadsheet_id AND m.sheet_id=p.sheet_id AND m.entity_id=p.entity_id AND m.source_version=p.source_version AND m.operation_token=p.operation_token) AS marker_present,
+  (SELECT m.marker FROM atomic_daily_marker_reservations m WHERE m.spreadsheet_id=p.spreadsheet_id AND m.sheet_id=p.sheet_id AND m.entity_id=p.entity_id AND m.source_version=p.source_version AND m.operation_token=p.operation_token LIMIT 1) AS marker_value,
   EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status IN ('PENDING','PROCESSING')) AS pending_cancel,
   (SELECT j.lease_token FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING') AS cancel_lease,
   EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')) AS cancel_lease_active,
@@ -39,6 +40,7 @@ export async function verifyDailyCarrierEvidence(env:Env,sheet:string,sheetId:nu
  const expectedTombs=new Set<string>();
  for(const [entityId,r] of byId){
   const row=active.get(entityId);
+  if(row){const marker=decodeAtomicDailyPayload(row[24])?.operationMarker;if(marker&&marker!==r.marker_value)return false;}
   if(r.state==='IN_FLIGHT'){
    if(!current||current.entityId!==entityId||current.operationToken!==r.operation_token||!row||row[24]!==current.payload||r.cancel_state!==null||r.expense_status!=='CONFIRMED'||r.expense_version!==r.source_version)return false;
    continue;

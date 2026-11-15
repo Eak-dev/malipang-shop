@@ -4,23 +4,27 @@ const {continuousDailyCutoverStatements}=require('../dist/sheets/continuous-dail
 const {runStableExpenseJob}=require('../dist/sheets/stable-expense-job.js');
 const {runStableExpenseCancellationJob}=require('../dist/sheets/stable-expense-cancellation-job.js');
 const {pendingDailyCancellations,verifyDailyCarrierEvidence}=require('../dist/sheets/daily-carrier-auth.js');
+const {matchesCommittedDailyInsert}=require('../dist/sheets/continuous-daily-write-evidence.js');
+const {verifyReviewedDailyProjection}=require('../dist/sheets/continuous-daily-positive-recovery.js'),notice=require('../dist/sheets/stable-edit-notice.js');
+const {cancelAtomicDailyCandidateUnderClaim}=require('../dist/sheets/atomic-daily-cancellation-candidate.js');
+const {dispatchStablePhase1}=require('../dist/sheets/stable-phase1-dispatch.js');
 const {rawCarrierHeaders,detailCarrierHeaders,ledgerCarrierFormulas,ledgerCarrierMarker,decodeLedgerCarrier,ledgerCarrierDisplay}=require('../dist/sheets/atomic-expense-ledger-template.js');
 
-async function fixture(preCutover=false,createAdmission=true){
+async function fixture(preCutover=false,createAdmission=true,claim='claim'){
  const h=expenseSqlite(),names=['getSheetGridInfo','getSpreadsheetSheetProperties','getSheetCellNumberFormats','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','batchUpdateSpreadsheetWithReply'],saved=Object.fromEntries(names.map(k=>[k,client[k]])),originalRoute=route.continuousDailyTarget,originalOwned=claimApi.stableWorkbookClaimOwned,originalCoverage=coverage.readLegacyDailyCoverage,prepare=h.DB.prepare,batch=h.DB.batch;
  h.DB.prepare=function(sql){const stmt=prepare.call(this,sql),run=stmt.run,all=stmt.all;stmt.run=async function(){return{...await run.call(this),success:true};};stmt.all=async function(){return{...await all.call(this),success:true};};return stmt;};h.DB.batch=async function(stmts){return(await batch.call(this,stmts)).map(x=>({...x,success:true}));};
  Object.assign(h.env,{GOOGLE_SPREADSHEET_ID:'book',SHEET_EXPENSE_DAILY:'รายวัน',SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_PURCHASE_DETAILS:'รายละเอียดการซื้อ',APP_ENV:'test',RUNTIME_MODE:'shadow',STABLE_PHASE1_ENABLED:'true',STABLE_CANCELLATION_PREIMAGE_ENABLED:'true',CONTINUOUS_DAILY_ENABLED:'true',CONTINUOUS_DAILY_SHEET:'draft',CONTINUOUS_DAILY_SHEET_ID:'2',CONTINUOUS_RAW_SHEET:'raw_new',CONTINUOUS_RAW_SHEET_ID:'3',CONTINUOUS_DETAIL_SHEET:'detail_new',CONTINUOUS_DETAIL_SHEET_ID:'4'});
- h.sqlite.exec("UPDATE stable_sync_cutover SET state='ACTIVE',activated_at='now'; INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','claim','HELD','now','now')");
+ h.sqlite.exec("UPDATE stable_sync_cutover SET state='ACTIVE',activated_at='now'");h.sqlite.prepare("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book',?,'HELD','now','now')").run(claim);
  const viewManifest=JSON.stringify([{sheetId:3,title:'raw_new',kind:'LEDGER'},{sheetId:4,title:'detail_new',kind:'LEDGER'},{sheetId:5,title:'V52_EXPENSE_RAW_ALL',kind:'VIEW'},{sheetId:6,title:'V52_PURCHASE_DETAIL_ALL',kind:'VIEW'}]);
  const reportFormula='=1+1',reportManifest=JSON.stringify([{sheetId:7,sheetName:'97_EXPENSE_CLEAN',row:2,column:1,after:createHash('sha256').update(reportFormula).digest('hex')}]);
- for(const stage of ['VIEWS','DAILY_J','REPORTS']){const manifest=stage==='VIEWS'?viewManifest:stage==='REPORTS'?reportManifest:'[{}]',hash=createHash('sha256').update(manifest).digest('hex');h.sqlite.prepare("INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book',?,'claim',?,?,?,'IN_FLIGHT','now','now')").run(stage,hash,manifest,JSON.parse(manifest).length);h.sqlite.prepare("UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage=?").run(stage);}
+ for(const stage of ['VIEWS','DAILY_J','REPORTS']){const manifest=stage==='VIEWS'?viewManifest:stage==='REPORTS'?reportManifest:'[{}]',hash=createHash('sha256').update(manifest).digest('hex');h.sqlite.prepare("INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book',?,?,?,?,?,'IN_FLIGHT','now','now')").run(stage,claim,hash,manifest,JSON.parse(manifest).length);h.sqlite.prepare("UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage=?").run(stage);}
  const createSource=()=>h.sqlite.exec("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_test','message','owner','=literal',123,'transfer','SHOP_BANK','ingredients','2026-11-15','CONFIRMED','now',1); INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_test',1,'fixture','PROCESSING',1,'now','2099-01-01T00:00:00.000Z','lease')");
  if(preCutover){createSource();h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");}
  const revision=h.sqlite.prepare('SELECT revision FROM stable_source_revision WHERE singleton=1').get().revision;
- await h.DB.batch(continuousDailyCutoverStatements(h.env,{book:'book',legacySheetId:1,legacySheetName:'รายวัน',continuousSheetId:2,continuousSheetName:'draft',rawSheetId:3,rawSheetName:'raw_new',detailSheetId:4,detailSheetName:'detail_new',claim:'claim',revision,mustBeCancelledOrAbsentExpenseIds:['exp_absent1','exp_absent2']}));
+ await h.DB.batch(continuousDailyCutoverStatements(h.env,{book:'book',legacySheetId:1,legacySheetName:'รายวัน',continuousSheetId:2,continuousSheetName:'draft',rawSheetId:3,rawSheetName:'raw_new',detailSheetId:4,detailSheetName:'detail_new',claim,revision,mustBeCancelledOrAbsentExpenseIds:['exp_absent1','exp_absent2']}));
  if(!preCutover)createSource();else h.sqlite.exec("UPDATE sync_jobs SET status='PROCESSING',lease_token='lease',lease_until='2099-01-01T00:00:00.000Z' WHERE job_id='job'");
- const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_test',entityVersion:1,traceId:'fixture'},source=await readStableExpenseSource(h.env,job,'lease','claim');assert.ok(source);
- if(preCutover&&createAdmission)h.sqlite.prepare("INSERT INTO continuous_daily_source_admissions(spreadsheet_id,expense_id,source_version,source_digest,provider_digest,source_revision,claim_token,admitted_at) VALUES('book','exp_test',1,?,?,?,'claim','now')").run(source.digest,'b'.repeat(64),source.revision);
+ const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_test',entityVersion:1,traceId:'fixture'},source=await readStableExpenseSource(h.env,job,'lease',claim);assert.ok(source);
+ if(preCutover&&createAdmission)h.sqlite.prepare("INSERT INTO continuous_daily_source_admissions(spreadsheet_id,expense_id,source_version,source_digest,provider_digest,source_revision,claim_token,admitted_at) VALUES('book','exp_test',1,?,?,?,?, 'now')").run(source.digest,'b'.repeat(64),source.revision,claim);
  let f=Array.from({length:8},()=>Array(29).fill(null)),e=Array.from({length:8},()=>Array(29).fill(null)),mode='ok',writes=0;
  const rawF=Array.from({length:6},()=>Array(26).fill(null)),rawE=Array.from({length:6},()=>Array(26).fill(null));
  const detailF=Array.from({length:6},()=>Array(26).fill(null)),detailE=Array.from({length:6},()=>Array(26).fill(null));
@@ -45,6 +49,7 @@ async function fixture(preCutover=false,createAdmission=true){
  });
  client.batchUpdateSpreadsheetWithReply=async(_env,requests,before)=>{
   await before();
+  if(requests[0].findReplace?.range.sheetId===2){const x=requests[0].findReplace,i=x.range.startRowIndex;if(f[i][24]!==x.find)return{replies:[{findReplace:{}}]};assert.equal(x.matchEntireCell,true);assert.equal(x.includeFormulas,false);writes++;f[i][24]=e[i][24]=x.replacement;for(const c of [0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23])e[i][c]='';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,ledgerF=change.range.sheetId===4?detailF:rawF,ledgerE=change.range.sheetId===4?detailE:rawE;if(ledgerF[i][25]!==change.find)return{replies:[{findReplace:{}}]};ledgerF[i][25]=ledgerE[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{ledgerE[i][c]=v});writes++;return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   const index=requests[1].insertRange.range.startRowIndex,values=requests[2].updateCells.rows[0].values;
   assert.equal(index,4);assert.equal(requests[1].insertRange.range.endColumnIndex,25);writes++;
@@ -56,7 +61,7 @@ async function fixture(preCutover=false,createAdmission=true){
   Object.assign(e[index],{0:2026,1:11,2:15,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
   if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';return{replies:[{},{},{}]};
  };
- return {...h,job,source,legacy,formula:()=>f,effective:()=>e,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease','claim',source,'draft',2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
+ return {...h,job,source,legacy,claim,formula:()=>f,effective:()=>e,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,'draft',2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
 }
 
 test('inserts into first logical row after permanent anchor and verifies durable preimage',async()=>{const h=await fixture();try{
@@ -67,6 +72,86 @@ test('lost response, format mismatch or shifted-formula tampering leaves intent 
  h.setMode(mode);await assert.rejects(h.run());assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
  await assert.rejects(h.run());assert.equal(h.writes(),1);
  }finally{h.close();}}});
+test('lost daily insert keeps immutable evidence and a positive postimage proves the captured grid transform only',async()=>{const h=await fixture();try{
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ const evidence=h.sqlite.prepare("SELECT * FROM continuous_daily_write_evidence WHERE entity_id='exp_test'").get(),formula=h.formula(),effective=h.effective(),payload=formula[4][24],coords={sheetId:evidence.sheet_id,row:evidence.target_row,rowCount:evidence.before_rows,columnCount:evidence.before_columns};
+ assert.equal(decodeAtomicDailyPayload(payload).operationMarker,evidence.marker);
+ assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,evidence.payload_digest),true);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE entity_id='exp_test'").get().state,'IN_FLIGHT');
+ assert.throws(()=>h.sqlite.exec("UPDATE continuous_daily_write_evidence SET before_digest='"+'f'.repeat(64)+"'"),/immutable/);
+ assert.throws(()=>h.sqlite.exec('DELETE FROM continuous_daily_write_evidence'),/retained/);
+ formula[0][0]='changed';assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,evidence.payload_digest),false);formula[0][0]=null;
+ formula[6][9]='=0';assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,evidence.payload_digest),false);formula[6][9]=continuousDailyHelperFormulas(7)[9];
+ formula[4][24]='';assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,evidence.payload_digest),false);formula[4][24]=payload;
+ formula[5][24]=payload;assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,evidence.payload_digest),false);formula[5][24]=null;
+ assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,'f'.repeat(64),evidence.payload_digest),false);
+ assert.equal(await matchesCommittedDailyInsert({formula,effective},coords,payload,evidence.before_digest,'f'.repeat(64)),false);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE entity_id='exp_test'").get().state,'IN_FLIGHT');
+ }finally{h.close();}});
+test('daily evidence cannot be forged without its exact journal and marker reservation',async()=>{const h=await fixture();try{
+ assert.throws(()=>h.sqlite.prepare("INSERT INTO continuous_daily_write_evidence(spreadsheet_id,entity_id,sheet_id,sheet_name,source_version,source_digest,operation_token,marker,target_row,before_rows,before_columns,before_digest,payload_digest,created_at) VALUES('book','exp_fake',2,'draft',1,?,'claim',?,5,8,29,?,?, 'now')").run('a'.repeat(64),'INSERT_'+'a'.repeat(32),'b'.repeat(64),'c'.repeat(64)),/requires exact intent/);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM continuous_daily_write_evidence').get().n,0);
+ }finally{h.close();}});
+async function reviewedLostDaily(){
+ const h=await fixture(false,true,'claim-token-recovery'),oldPaused=notice.stableNoticePaused;
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ h.env.STABLE_RECOVERY_GATE_ENABLED='true';h.env.STABLE_SHEETS_PACING_ENABLED='true';
+ h.sqlite.prepare("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-recovery','book','ARMED','EXPENSE','exp_test',1,'now','now')").run();
+ h.sqlite.prepare("INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES(?,'epoch-recovery','ADMITTED','now')").run(h.claim);
+ h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',notice_stamp='stamp',notice_identity='identity' WHERE operation_token=?").run(h.claim);
+ h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW' WHERE job_id='job'");
+ notice.stableNoticePaused=async()=>true;
+ return {...h,close(){notice.stableNoticePaused=oldPaused;h.close();}};
+}
+test('positive daily recovery verifies only exact projection and preserves REVIEW, epoch and notice',async()=>{const h=await reviewedLostDaily();try{
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),true);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_projection_preimages WHERE projection='DAILY'").get().n,1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id='epoch-recovery'").get().state,'ARMED');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_operations WHERE operation_token=?").get(h.claim).state,'ADMITTED');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');
+ assert.equal(h.writes(),1);assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ }finally{h.close();}});
+test('positive daily recovery never infers success from absence, changed formula, notice or changed source',async()=>{for(const mode of ['absent','formula','notice','source','race']){const h=await reviewedLostDaily();try{
+ if(mode==='absent')h.formula()[4][24]=null;
+ if(mode==='formula')h.formula()[6][9]='=0';
+ if(mode==='notice')notice.stableNoticePaused=async()=>false;
+ if(mode==='source')h.sqlite.exec("UPDATE expense_events SET description='changed' WHERE expense_id='exp_test'");
+ if(mode==='race'){const getFormats=client.getSheetCellNumberFormats;client.getSheetCellNumberFormats=async(...args)=>{const r=await getFormats(...args);h.sqlite.exec("UPDATE expense_events SET description='raced' WHERE expense_id='exp_test'");return r;};}
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false,mode);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('actual 11-field daily writer carrier can be undone with verified readback and preserved formulas',async()=>{const h=await fixture(false,true,'claim-token-original');try{
+ await h.run();const f=h.formula(),e=h.effective(),payload=f[4][24],before=f[4].slice();
+ assert.equal(payload.split('␟').length,11);assert.match(decodeAtomicDailyPayload(payload).operationMarker,/^INSERT_[0-9a-f]{32}$/);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ h.sqlite.exec("UPDATE sync_jobs SET status='COMPLETED',lease_token=NULL,lease_until=NULL WHERE job_id='job'; UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_test'; INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,lease_until,lease_token) VALUES('undo-job','EXPENSE','exp_test',2,'undo','PROCESSING','now','2099-01-01T00:00:00.000Z','undo-lease'); UPDATE stable_workbook_claims SET operation_token='cancel-token-next' WHERE spreadsheet_id='book'");
+ const undo={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_test',entityVersion:2,traceId:'undo'};
+ await cancelAtomicDailyCandidateUnderClaim(h.env,undo,'undo-lease','cancel-token-next','draft',2);
+ assert.equal(h.writes(),2);assert.match(f[4][24],/^MPD1_CANCELLED_[0-9a-f]{64}$/);assert.equal(e[4][24],f[4][24]);
+ for(let col=0;col<24;col++)assert.equal(f[4][col],before[col],`formula ${col} preserved`);
+ for(const col of [0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23])assert.equal(e[4][col],'');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_expense_cancellation_writes WHERE entity_id='exp_test' AND projection='DAILY'").get().state,'VERIFIED');
+ assert.equal(await verifyDailyCarrierEvidence(h.env,'draft',2,29,f),true);
+ }finally{h.close();}});
+test('actual dispatcher and workbook claim hold an ambiguous daily write before positive recovery',async()=>{const h=await fixture(false,true,'claim-token-original'),oldBegin=notice.beginStableNotice,oldPaused=notice.stableNoticePaused;try{
+ Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true'});
+ h.sqlite.exec("DELETE FROM stable_workbook_claims WHERE spreadsheet_id='book'; UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL,attempt_count=0 WHERE job_id='job'; INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-dispatch','book','ARMED','EXPENSE','exp_test',1,'now','now')");
+ notice.beginStableNotice=async(env,token,_wait,authorized)=>{await authorized();const r=await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='stamp',notice_identity='identity' WHERE spreadsheet_id='book' AND operation_token=? AND state='HELD'").bind(token).run();assert.equal(r.meta.changes,1);};
+ notice.stableNoticePaused=async()=>true;h.setMode('timeout');
+ assert.equal(await dispatchStablePhase1(h.env,h.job),'REVIEW');assert.equal(h.writes(),1);
+ const claim=h.sqlite.prepare("SELECT operation_token,state,phase FROM stable_workbook_claims WHERE spreadsheet_id='book'").get();assert.equal(claim.state,'REVIEW');assert.equal(claim.phase,'OPERATION');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,claim.operation_token),true);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").get().state,'REVIEW');
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id='epoch-dispatch'").get().state,'ARMED');
+ assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),1);
+ }finally{notice.beginStableNotice=oldBegin;notice.stableNoticePaused=oldPaused;h.close();}});
 test('carrier evidence rejects missing, altered, duplicate and unjournaled active rows',async()=>{const h=await fixture();try{
  await h.run();const rows=h.formula(),check=()=>verifyDailyCarrierEvidence(h.env,'draft',2,29,rows);assert.equal(await check(),true);
  const original=rows[4][24];rows[4][24]='';assert.equal(await check(),false);rows[4][24]=original;

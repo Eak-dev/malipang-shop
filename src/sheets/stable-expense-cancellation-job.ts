@@ -24,7 +24,7 @@ import {capturePublicationBatchSnapshot} from './publication-batch-snapshot';
  * legacy row, a version gap or absent DAILY projection remains REVIEW. This
  * function does not release an existing review claim or prove legacy writer
  * exclusion; those are rollout prerequisites. */
-export async function runStableExpenseCancellationJob(env:Env,job:SheetsSyncJob,lease:string):Promise<'CONTINUE'|'COMPLETED'>{
+export async function runStableExpenseCancellationJob(env:Env,job:SheetsSyncJob,lease:string,invocationBudget?:ReviewRequestBudget):Promise<'CONTINUE'|'COMPLETED'>{
  const dailyTarget=await assertContinuousDailyActivated(env);if(!dailyTarget)throw Error('CANCEL_JOB_DISABLED');
  const publicationTarget=await resolvePublicationTarget(env);if(publicationTarget&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_UNDO_HANDOFF_UNAVAILABLE');
  if(job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(job.entityKey)||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<2||!lease)throw Error('CANCEL_JOB_INVALID');
@@ -43,7 +43,7 @@ export async function runStableExpenseCancellationJob(env:Env,job:SheetsSyncJob,
   if(!stable()||results.length!==3||results.some(r=>r.success!==true||!Array.isArray(r.results))||results[0]!.results!.length!==1)throw Error('CANCEL_JOB_READ');
   const source=results[0]!.results![0] as {version:number;status:string;updated_at:string;revision:number},projections=results[1]!.results as CancelProjection[],writes=results[2]!.results as CancelWrite[];
   if(source.status!=='CANCELLED'||source.version!==job.entityVersion||!Number.isSafeInteger(source.revision)||typeof source.updated_at!=='string'||projections.length>502||writes.length>projections.length)throw Error('CANCEL_JOB_SOURCE');
-  const publicationBudget=publicationTarget?new ReviewRequestBudget(40):undefined;
+  const publicationBudget=publicationTarget?invocationBudget:undefined;
   let publication:PublicationAccountingTarget|undefined;
   const verifyPublicationTarget=async()=>JSON.stringify(await resolvePublicationTarget(env))===JSON.stringify(publicationTarget)&&stable();
   if(publicationTarget&&publicationBudget){
@@ -109,5 +109,5 @@ export async function runStableExpenseCancellationJob(env:Env,job:SheetsSyncJob,
   const publicationFinalGuard=publication?" AND EXISTS(SELECT 1 FROM continuous_publication_markers p JOIN continuous_publication_intents i ON i.transition_id=p.transition_id AND i.state='VERIFIED' AND i.kind='REVOKE' WHERE p.spreadsheet_id=? AND p.entity_id=? AND p.sheet_id=? AND p.sheet_name=? AND p.row_number=? AND p.version=? AND p.state='REVOKED' AND p.marker=i.after_value AND i.source_digest=?) AND NOT EXISTS(SELECT 1 FROM continuous_publication_intents pending WHERE pending.spreadsheet_id=? AND pending.entity_id=? AND pending.state IN ('IN_FLIGHT','REVIEW'))":'';
   const finish=await db.prepare(`UPDATE sync_jobs SET status='COMPLETED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=NULL WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? AND ${sourceGuard} AND (SELECT count(*) FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|'))=? AND (SELECT count(*) FROM stable_expense_cancellation_writes c WHERE c.spreadsheet_id=? AND c.entity_type='EXPENSE' AND (c.entity_id=? OR substr(c.entity_id,1,length(?)+1)=?||'|'))=? AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|') AND (p.state<>'VERIFIED' OR NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes c WHERE c.spreadsheet_id=p.spreadsheet_id AND c.entity_type=p.entity_type AND c.entity_id=p.entity_id AND c.projection=p.projection AND c.cancellation_version=? AND c.previous_version=p.source_version AND c.state='VERIFIED'))) ${publicationFinalGuard}`).bind(job.entityKey,job.entityVersion,lease,...args,book,job.entityKey,job.entityKey,job.entityKey,projections.length,book,job.entityKey,job.entityKey,job.entityKey,projections.length,book,job.entityKey,job.entityKey,job.entityKey,job.entityVersion,...(publication?[book,job.entityKey,publication.sheetId,publication.sheet,publication.row,job.entityVersion,publication.sourceDigest,book,job.entityKey]:[])).run();
   if(finish.success!==true||Number(finish.meta?.changes)!==1)throw Error('CANCEL_JOB_FINAL_UNCERTAIN');return 'COMPLETED';
- },job);
+ },job,undefined,invocationBudget);
 }

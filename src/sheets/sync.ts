@@ -148,6 +148,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_LEGACY_DISABLED');
   await assertContinuousNoticeActivation(env,job);
   const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";

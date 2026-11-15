@@ -1,3 +1,4 @@
+import type {ReviewRequestBudget} from './review-request-budget';
 import type {Env,SheetsSyncJob,LineNotificationJob} from '../types';
 import {buildLineNotificationJob} from '../line/attendance-notification';
 import {lineOutputEnabled} from '../line/api';
@@ -53,11 +54,11 @@ export async function buildUnwrittenExpenseCancellationCandidate(env:Env,input:U
 /** Caller must pass only a typed, proven pre-dispatch failure while it still
  * owns the claim. D1 batch atomically cancels and persists owner outbox; an
  * enqueue failure is recovered by the existing LINE outbox cron. */
-export async function executeUnwrittenExpenseCancellation(env:Env,input:UnwrittenCancelInput):Promise<boolean>{
+export async function executeUnwrittenExpenseCancellation(env:Env,input:UnwrittenCancelInput,budget?:ReviewRequestBudget):Promise<boolean>{
  const recoverySetting=env.STABLE_RECOVERY_GATE_ENABLED,db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,owner=env.LINE_OWNER_USER_ID,enabled=lineOutputEnabled(env),gate=await buildUnwrittenExpenseCancellationCandidate(env,input);if(!gate)return false;
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.LINE_OWNER_USER_ID!==owner||lineOutputEnabled(env)!==enabled||env.STABLE_RECOVERY_GATE_ENABLED!==recoverySetting||!await assertContinuousDailyActivated(env))throw Error('SYNC_PRE_DISPATCH_SCOPE_CHANGED');
  const result=await db.batch(gate.statements);
  if(result.length!==6||result.some(r=>r.success!==true)||[0,1,3,4].some(i=>Number(result[i]!.meta?.changes)!==1))throw Error('SYNC_PRE_DISPATCH_OUTCOME_UNCERTAIN');
- if(gate.notification)try{await env.JOB_QUEUE.send(gate.notification);}catch{/* Durable failed_jobs outbox is retried by scheduled recovery. */}
+ if(gate.notification)try{budget?.consumeQueue();await env.JOB_QUEUE.send(gate.notification);}catch{/* Durable failed_jobs outbox is retried by scheduled recovery. */}
  return true;
 }

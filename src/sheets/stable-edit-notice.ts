@@ -72,15 +72,18 @@ export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,
   return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
  }catch{return null;}
 }
-export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false):Promise<void>{
+export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false,budget?:ReviewRequestBudget):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so
  // a single read both proves the ready state and guards the write.
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,seen:{before?:Snapshot}={},time=stamp();
- await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ'||prior==='พร้อมแก้ไข • กำลังซิงก์'||prior==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(prior))||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();});
- const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!=='พักแก้ไฟล์'||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
+ if(budget&&(!boundedMutation||budget.remaining<9||!budget.reservePost(5)))throw Error('STABLE_NOTICE_BUDGET');
+ if(budget&&!budget.reserveMutation()){budget.releasePost();throw Error('STABLE_NOTICE_BUDGET');}
+ const beforeDispatch=async()=>{const latest=await snapshot(env,budget),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ'||prior==='พร้อมแก้ไข • กำลังซิงก์'||prior==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(prior))||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();};
+ try{if(boundedMutation)await batchWriteContinuousNoticeValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],beforeDispatch,budget);else await batchWriteValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],beforeDispatch);}finally{budget?.releaseMutation();budget?.releasePost();}
+ const before=seen.before,after=await snapshot(env,budget);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!=='พักแก้ไฟล์'||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
  const saved=await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp=?,notice_identity=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(time,identity(after),env.GOOGLE_SPREADSHEET_ID,token).run();if(saved.success!==true||Number(saved.meta?.changes)!==1)throw Error('STABLE_NOTICE_UNCERTAIN');
  await wait(15000);
- if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after))||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
+ if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after),budget)||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
 }
 export async function endStableNotice(env:Env,token:string,boundedMutation=false):Promise<void>{
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,current=await claim(env,token);if(!current?.notice_stamp||!current.notice_identity||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');

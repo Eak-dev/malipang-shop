@@ -4,9 +4,11 @@ export class ReviewRequestBudgetError extends Error {
  constructor(readonly code:'EXHAUSTED'|'MUTATION_NOT_RESERVED'){super(`REVIEW_REQUEST_BUDGET_${code}`);this.name='ReviewRequestBudgetError';}
 }
 export class ReviewRequestBudget {
- private count=0; private slot=false; private claimed=false; private post=0;
- constructor(readonly limit:number){if(!Number.isSafeInteger(limit)||limit<1||limit>40)throw Error('REVIEW_REQUEST_BUDGET_INVALID');}
+ private count=0; private slot=false; private claimed=false; private post=0; private queues=0;
+ constructor(readonly limit:number,readonly scope:'isolated'|'invocation'='isolated'){if(!Number.isSafeInteger(limit)||limit<1||limit>(scope==='invocation'?48:40))throw Error('REVIEW_REQUEST_BUDGET_INVALID');}
  get used():number{return this.count;}
+ get queueUsed():number{return this.queues;}
+ consumeQueue():void{if(this.scope!=='invocation'||this.queues>=2)throw new ReviewRequestBudgetError('EXHAUSTED');this.queues++;}
  get remaining():number{return this.limit-this.count-(this.slot?1:0)-this.post;}
  get reserved():boolean{return this.slot;}
  get postReserved():number{return this.post;}

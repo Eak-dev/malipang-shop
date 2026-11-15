@@ -1,3 +1,4 @@
+import type {ReviewRequestBudget} from './review-request-budget';
 import type {Env,SheetsSyncJob} from '../types';
 import {noticeReadinessReady,noticeReadinessFingerprint,noticeReadinessSql} from './continuous-notice-readiness';
 
@@ -46,11 +47,11 @@ export async function hasNormalNoticeHandoff(env:Env,claim:string,job:Pick<Sheet
  return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&row?.ok===1;
 }
 /** Best-effort wake after the wrapper has observed the immutable handoff. */
-export async function wakeNormalNoticeHandoff(env:Env,claim:string,job:Pick<SheetsSyncJob,'entityKey'|'entityVersion'>):Promise<void>{
+export async function wakeNormalNoticeHandoff(env:Env,claim:string,job:Pick<SheetsSyncJob,'entityKey'|'entityVersion'>,budget?:ReviewRequestBudget):Promise<void>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,queue=env.NOTICE_QUEUE;if(!book||!queue)return;
  try{
   const row=await db.prepare("SELECT d.dispatch_id FROM continuous_normal_notice_handoffs h JOIN continuous_notice_dispatches d ON d.spreadsheet_id=h.spreadsheet_id AND d.operation_token=h.operation_token AND d.expense_id=h.expense_id AND d.source_version=h.source_version AND d.sequence=0 WHERE h.spreadsheet_id=? AND h.operation_token=? AND h.expense_id=? AND h.source_version=? AND d.state='PENDING'").bind(book,claim,job.entityKey,job.entityVersion).first<{dispatch_id:string}>();
-  if(row&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.NOTICE_QUEUE===queue&&normalNoticeHandoffEnabled(env))await queue.send({dispatchId:row.dispatch_id});
+  if(row&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.NOTICE_QUEUE===queue&&normalNoticeHandoffEnabled(env)){budget?.consumeQueue();await queue.send({dispatchId:row.dispatch_id});}
  }catch{/* Durable PENDING is swept independently. Never repeat the operation. */}
 }
 

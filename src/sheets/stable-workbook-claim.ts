@@ -52,7 +52,7 @@ export async function stableWorkbookClaimOwned(env:Env,token:string,budget?:Revi
  * human editor, an old deployment, or any writer not using this guard.
  * The caller must return only after all provider writes are read back and
  * verified; an exception retains the claim for review rather than retrying. */
-export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity,onUntouchedNoticeFailure?:(token:string,error:unknown)=>Promise<{value:T}|null>):Promise<T>{
+export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity,onUntouchedNoticeFailure?:(token:string,error:unknown)=>Promise<{value:T}|null>,invocationBudget?:ReviewRequestBudget):Promise<T>{
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,gateSetting=env.STABLE_RECOVERY_GATE_ENABLED,pacingSetting=env.STABLE_SHEETS_PACING_ENABLED,token=crypto.randomUUID();
   const handoffFlag=env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED;
   const untouchedScope=()=>env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED===handoffFlag&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag&&env.STABLE_RECOVERY_GATE_ENABLED===gateSetting&&env.STABLE_SHEETS_PACING_ENABLED===pacingSetting;
@@ -100,7 +100,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // MUST be the last instruction before returning to mutation dispatch:
       // a lost POST acknowledgement must never look like a safe read defer.
       beginNoticeMayHaveWritten=true;
-    },boundedNotice);
+    },boundedNotice,invocationBudget);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='OPERATION';
     // Notice POST may already have been sent, so closed-state drift here must
@@ -114,7 +114,7 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     if(handoffFlag==='true'&&sheetJob?.entityType==='EXPENSE'){
       if(env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED!==handoffFlag)throw Error('NORMAL_NOTICE_HANDOFF_SCOPE_CHANGED');
-      if(result==='CONTINUE'&&await hasNormalNoticeHandoff(env,token,sheetJob)){claimed=false;await wakeNormalNoticeHandoff(env,token,sheetJob);return result;}
+      if(result==='CONTINUE'&&await hasNormalNoticeHandoff(env,token,sheetJob)){claimed=false;await wakeNormalNoticeHandoff(env,token,sheetJob,invocationBudget);return result;}
       // FINAL and no-journal exits need their own durable evidence design.
       // Never fall through to the legacy two-cell notice writer in opt-in mode.
       throw Error('NORMAL_NOTICE_HANDOFF_UNSUPPORTED_STAGE');

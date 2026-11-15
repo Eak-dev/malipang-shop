@@ -1,3 +1,4 @@
+import type {ReviewRequestBudget} from '../sheets/review-request-budget';
 import { buildLineNotificationJob } from './attendance-notification';
 import { lineOutputEnabled } from './api';
 import type {Env,LineNotificationJob} from '../types';
@@ -15,9 +16,9 @@ async function sendPersisted(env:Env,job:LineNotificationJob):Promise<void>{
 
 /** Trigger a separate Queue invocation: a notification failure cannot replay a
  * Sheets writer, and a failed wake-up is recovered by the scheduled sweep. */
-export async function wakeSyncFailureAlerts(env:Env):Promise<void>{
+export async function wakeSyncFailureAlerts(env:Env,budget?:ReviewRequestBudget):Promise<void>{
  if(!lineOutputEnabled(env))return;
- try{await env.JOB_QUEUE.send({kind:'SYNC_ALERT_SWEEP',traceId:'sync-alert-sweep'});}catch{ /* cron scans durable state */ }
+ try{budget?.consumeQueue();await env.JOB_QUEUE.send({kind:'SYNC_ALERT_SWEEP',traceId:'sync-alert-sweep'});}catch{ /* cron scans durable state */ }
 }
 
 /** A proven-unwritten expense is cancelled even when LINE is unavailable.

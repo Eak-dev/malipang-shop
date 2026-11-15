@@ -1,3 +1,4 @@
+import type {ReviewRequestBudget} from './review-request-budget';
 import {STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
 import type {Env,SheetsSyncJob} from '../types';
 import {claimSheetSyncJob,ensureSheetSyncOutbox,syncJob,STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN,type SheetSyncOutcome} from './sync';
@@ -22,7 +23,7 @@ export const isStableWorkbookReview=(error:unknown):boolean=>error instanceof Er
 
 /** Default-off routing. An old financial record is held, never sent through
  * its legacy numeric-row writer. Other workers share the workbook claim. */
-export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):Promise<StablePhase1Outcome>{
+export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,invocationBudget?:ReviewRequestBudget):Promise<StablePhase1Outcome>{
  // Reject the unready experimental route before any outbox, lease, workbook
  // claim or legacy write can mutate a potentially mislabeled live binding.
  await assertContinuousNoticeActivation(env,job);
@@ -68,7 +69,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1):
   if(job.entityType==='EXPENSE'){
    const current=dailyTarget?await env.DB.prepare("SELECT status,version FROM expense_events WHERE expense_id=?").bind(job.entityKey).first<{status:string;version:number}>():null;
    const result=dailyTarget&&current?.status==='CANCELLED'&&current.version===job.entityVersion
-    ?await runStableExpenseCancellationJob(env,job,lease):await runStableExpenseJob(env,job,lease);
+    ?await runStableExpenseCancellationJob(env,job,lease,invocationBudget):await runStableExpenseJob(env,job,lease,invocationBudget);
    return result==='COMPLETED'?'PROCESSED':result==='CONTINUE'?(stablePacingConfigured(env)?'CONTINUE':'BUSY'):'REVIEW';
   }
   await runStablePersonalJob(env,job,lease);return 'PROCESSED';

@@ -131,14 +131,14 @@ async function finishSupersededBeforeDispatch(env:Env,job:SheetsSyncJob,lease:st
 
 /** Phase-one candidate. The daily preflight happens first so a full month can
  * be held without writing RAW or details. Called by the stable phase-one dispatcher. */
-export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string):Promise<'COMPLETED'|'CONTINUE'|'CAPACITY_REVIEW'|'JOB_REVIEW'>{
+export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string,invocationBudget?:ReviewRequestBudget):Promise<'COMPLETED'|'CONTINUE'|'CAPACITY_REVIEW'|'JOB_REVIEW'>{
  // This gate must run before acquiring the workbook claim, which itself
  // changes D1 and the owner notice. A mislabeled test binding must not touch
  // Production even when the experimental route is accidentally enabled.
  const scope=()=>JSON.stringify([env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,env.CONTINUOUS_REVIEW_CLOSE_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]);
  const target=await assertContinuousDailyActivated(env),targetScope=scope();
  const publicationTarget=await resolvePublicationTarget(env);
- if(publicationTarget&&(!target||env.STABLE_SHEETS_PACING_ENABLED!=='true'||!normalNoticeHandoffEnabled(env)||!await normalNoticeHandoffReady(env)))throw Error('PUBLICATION_ROUTE_DISABLED');
+ if(publicationTarget&&(!(invocationBudget instanceof ReviewRequestBudget)||!target||env.STABLE_SHEETS_PACING_ENABLED!=='true'||!normalNoticeHandoffEnabled(env)||!await normalNoticeHandoffReady(env)))throw Error('PUBLICATION_ROUTE_DISABLED');
  return withStableWorkbookClaim(env,async claim=>{
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,source=await readStableExpenseSource(env,job,lease,claim);
@@ -160,7 +160,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   }
   if(dailyChoice?.status==='CONTINUOUS'&&(dailyChoice.sheet!==target?.sheet||dailyChoice.sheetId!==target.sheetId))throw Error('CONTINUOUS_DAILY_TARGET_CHANGED');
   const projections=planStableExpenseProjections(source);
-  const publicationBudget=publicationTarget&&dailyChoice?.status==='CONTINUOUS'?new ReviewRequestBudget(40):undefined;
+  const publicationBudget=publicationTarget&&dailyChoice?.status==='CONTINUOUS'?invocationBudget:undefined;
   let publication:PublicationAccountingTarget|undefined;
   const verifyPublicationTarget=async()=>JSON.stringify(await resolvePublicationTarget(env))===JSON.stringify(publicationTarget)&&targetScope===scope();
   if(publicationTarget&&publicationBudget){
@@ -198,16 +198,16 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    }
   }catch(error){
    if(error instanceof InsertDailyPreflightReviewError){
-    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&(/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)||/^(?:(?:SHEETS_READ|GOOGLE_OAUTH)_(?:HTTP_[45][0-9]{2}|TIMEOUT)|GOOGLE_OAUTH_(?:CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|SHEETS_READ_(?:NETWORK|RESPONSE_TOO_LARGE))$/.test(error.reason))&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':/^(?:SHEETS_READ|GOOGLE_OAUTH)_/.test(error.reason)?'SHEETS_READ':'LEGACY_READ',errorCode:error.reason}))return 'COMPLETED';
+    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&(/^(REPORT_HEALTH_|LEGACY_COVERAGE_)[A-Z_]+$/.test(error.reason)||/^(?:(?:SHEETS_READ|GOOGLE_OAUTH)_(?:HTTP_[45][0-9]{2}|TIMEOUT)|GOOGLE_OAUTH_(?:CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|SHEETS_READ_(?:NETWORK|RESPONSE_TOO_LARGE))$/.test(error.reason))&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason.startsWith('REPORT_HEALTH_')?'REPORT_UNVERIFIED':/^(?:SHEETS_READ|GOOGLE_OAUTH)_/.test(error.reason)?'SHEETS_READ':'LEGACY_READ',errorCode:error.reason},invocationBudget))return 'COMPLETED';
     if(await holdUnwrittenExpenseReview(env,job,lease,claim,error.message,'PREFLIGHT',source.revision))return 'JOB_REVIEW';
     throw error;
    }
    if(error instanceof InsertDailyDefiniteFailure){
-    if(await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason}))return 'COMPLETED';
+    if(await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:error.reason},invocationBudget))return 'COMPLETED';
     throw error;
    }
    if(error instanceof InsertDailyPendingCancellationError){
-    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'PENDING_UNDO',errorCode:'INSERT_DAILY_PENDING_CANCELLATION'}))return 'COMPLETED';
+    if(recoveryGateConfigured(env)&&recoveryGateValid(env)&&await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'PENDING_UNDO',errorCode:'INSERT_DAILY_PENDING_CANCELLATION'},invocationBudget))return 'COMPLETED';
     if(await deferUnwrittenForCancellation(env,job,lease,claim,source.revision,error.pendingEntityId))return 'CONTINUE';
     throw error;
    }
@@ -279,8 +279,8 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   // If anything after durable admission is uncertain, throw so the claim
   // and epoch remain fenced; never treat an unknown D1 result as a no-op.
   if(!await admitStableRecovery(env,job,claim))return null;
-  const cancelled=await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'SHEETS_READ',errorCode});
+  const cancelled=await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'SHEETS_READ',errorCode},invocationBudget);
   if(!cancelled||targetScope!==scope())throw Error('SYNC_UNTOUCHED_NOTICE_CANCEL_UNCERTAIN');
   return{value:'COMPLETED' as const};
- }:undefined);
+ }:undefined,invocationBudget);
 }

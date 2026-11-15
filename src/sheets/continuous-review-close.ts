@@ -1,5 +1,6 @@
 import type {Env,SheetsSyncJob} from '../types';
 import {verifyPublicationHandoff} from './continuous-publication-handoff';
+import {wakeSyncFailureAlerts} from '../line/sync-failure-alerts';
 import {finalPublicationCommitGuard,publicationGuardIntegrity} from './continuous-final-publication-commit-guard';
 import {verifyFinalHandoff} from './continuous-final-positive-recovery';
 import {normalNoticeHandoffEnabled} from './continuous-normal-notice-handoff';
@@ -19,7 +20,7 @@ type Intent={operation_token:string;spreadsheet_id:string;epoch_id:string;expens
 export type ReviewCloseOutcome='DISABLED'|'HELD'|'IN_PROGRESS'|'RESUMED'|'ALREADY_COMPLETED';
 const dailySheetId=1815870717,paused='พักแก้ไฟล์',reviewReady='พร้อมแก้ไข • มีรายการรอตรวจ',plainReady='พร้อมแก้ไข',syncReady='พร้อมแก้ไข • กำลังซิงก์',syncReviewReady='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ';
 const integrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_review_notice_close' AND name IN ('continuous_review_close_insert','continuous_review_close_transition','continuous_review_close_no_delete','continuous_review_close_no_replace'))=4 AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_notice_status_attempts' AND name IN ('continuous_notice_status_attempt_insert','continuous_notice_status_attempt_no_update','continuous_notice_status_attempt_no_delete','continuous_notice_status_attempt_no_replace'))=4";
-const scope=(e:Env)=>JSON.stringify([e.GOOGLE_SPREADSHEET_ID,e.SHEET_EXPENSE_DAILY,e.GOOGLE_SERVICE_ACCOUNT_EMAIL,e.GOOGLE_PRIVATE_KEY_BASE64,e.STABLE_PHASE1_ENABLED,e.STABLE_RECOVERY_GATE_ENABLED,e.STABLE_SHEETS_PACING_ENABLED,e.CONTINUOUS_DAILY_ENABLED,e.CONTINUOUS_DAILY_SHEET,e.CONTINUOUS_DAILY_SHEET_ID,e.CONTINUOUS_PUBLICATION_ENABLED,e.CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED,e.CONTINUOUS_PUBLICATION_SHEET,e.CONTINUOUS_PUBLICATION_SHEET_ID,e.CONTINUOUS_PUBLICATION_ROWS,e.CONTINUOUS_REVIEW_CLOSE_ENABLED,e.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,e.CONTINUOUS_NOTICE_DISPATCH_ENABLED,e.SHEETS_SYNC_ENABLED,e.APP_ENV,e.RUNTIME_MODE]);
+const scope=(e:Env)=>JSON.stringify([e.GOOGLE_SPREADSHEET_ID,e.SHEET_EXPENSE_DAILY,e.GOOGLE_SERVICE_ACCOUNT_EMAIL,e.GOOGLE_PRIVATE_KEY_BASE64,e.STABLE_PHASE1_ENABLED,e.STABLE_RECOVERY_GATE_ENABLED,e.STABLE_SHEETS_PACING_ENABLED,e.CONTINUOUS_DAILY_ENABLED,e.CONTINUOUS_DAILY_SHEET,e.CONTINUOUS_DAILY_SHEET_ID,e.CONTINUOUS_PUBLICATION_ENABLED,e.CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED,e.CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED,e.CONTINUOUS_PUBLICATION_SHEET,e.CONTINUOUS_PUBLICATION_SHEET_ID,e.CONTINUOUS_PUBLICATION_ROWS,e.CONTINUOUS_REVIEW_CLOSE_ENABLED,e.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,e.CONTINUOUS_NOTICE_DISPATCH_ENABLED,e.SHEETS_SYNC_ENABLED,e.APP_ENV,e.RUNTIME_MODE]);
 function timestamp():string{const p=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()),v=(name:string)=>p.find(x=>x.type===name)?.value;return `${v('year')}-${v('month')}-${v('day')} ${v('hour')}:${v('minute')}:${v('second')}`;}
 const request=(column:number,find:string,replacement:string)=>({findReplace:{range:{sheetId:dailySheetId,startRowIndex:0,endRowIndex:1,startColumnIndex:column,endColumnIndex:column+1},find,replacement,matchCase:true,matchEntireCell:true,searchByRegex:false,includeFormulas:false}});
 
@@ -142,13 +143,29 @@ async function finishRevokeReviewCleanup(env:Env,job:SheetsSyncJob,token:string,
  }
  if(intent.state!=='CLEANUP_IN_FLIGHT')return 'HELD';
  const receipt=await db.prepare('SELECT find_status,replacement_status,notice_stamp FROM continuous_final_notice_cleanup WHERE spreadsheet_id=? AND operation_token=?').bind(book,token).first<Cleanup>();
- if(!receipt||receipt.find_status!==intent.ready_status||receipt.notice_stamp!==intent.next_stamp||await expectedReady(env,'REVIEW')!==receipt.replacement_status||await stableNoticeStyleFingerprint(env,intent.notice_identity,receipt.replacement_status,intent.next_stamp,budget)!==intent.style_digest||!stable())return 'HELD';
+ if(!receipt||receipt.find_status!==intent.ready_status||receipt.notice_stamp!==intent.next_stamp||await stableNoticeStyleFingerprint(env,intent.notice_identity,receipt.replacement_status,intent.next_stamp,budget)!==intent.style_digest||!stable())return 'HELD';
+ const latestReady=await expectedReady(env,'REVIEW');if(!latestReady||!stable())return 'HELD';
+ if(latestReady!==receipt.replacement_status){
+  // The exact cleanup value is visible, but the count changed while the POST
+  // was in flight. Hold the claim and emit one durable, actionable incident;
+  // never replay a POST or silently release with an incorrect status.
+  const reason='REVOKE_REVIEW_CLEANUP_COUNT_CHANGED';
+  const alerted=await db.batch([
+   db.prepare(`UPDATE stable_workbook_claims SET review_reason=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND COALESCE(review_reason,'')<>? AND EXISTS(SELECT 1 FROM continuous_review_notice_close n WHERE n.spreadsheet_id=? AND n.operation_token=? AND n.state='CLEANUP_IN_FLIGHT' AND n.claim_mode='REVIEW' AND n.projection='PUBLICATION' AND n.operation_kind='CANCEL')`).bind(reason,book,token,reason,book,token),
+   db.prepare(`UPDATE sync_alert_incidents SET state='CLOSED',closed_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE kind='WORKBOOK' AND state='OPEN' AND source_id=(SELECT CAST(rowid AS TEXT) FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND review_reason=?) AND changes()=1`).bind(book,token,reason),
+   db.prepare(`INSERT INTO sync_alert_incidents(kind,source_id,category,state,opened_at) SELECT 'WORKBOOK',CAST(c.rowid AS TEXT),'WORKBOOK_REVIEW','OPEN',strftime('%Y-%m-%dT%H:%M:%fZ','now') FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='REVIEW' AND c.review_reason=? AND NOT EXISTS(SELECT 1 FROM sync_alert_incidents i WHERE i.kind='WORKBOOK' AND i.source_id=CAST(c.rowid AS TEXT) AND i.state='OPEN') ON CONFLICT DO NOTHING`).bind(book,token,reason)
+  ]);
+  if(!stable()||alerted.length!==3||alerted.some(x=>x.success!==true))throw Error('REVOKE_REVIEW_CLEANUP_ALERT_UNCERTAIN');await wakeSyncFailureAlerts(env);return 'HELD';
+ }
  const released=await db.batch([
   db.prepare(`DELETE FROM stable_workbook_claims AS c WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND notice_stamp=? AND notice_identity=? AND EXISTS(SELECT 1 FROM continuous_review_notice_close n JOIN continuous_final_notice_cleanup a ON a.spreadsheet_id=n.spreadsheet_id AND a.operation_token=n.operation_token JOIN stable_recovery_epochs e ON e.epoch_id=n.epoch_id AND e.spreadsheet_id=n.spreadsheet_id JOIN stable_recovery_operations o ON o.epoch_id=e.epoch_id AND o.operation_token=n.operation_token JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=n.expense_id AND j.entity_version=n.source_version WHERE n.spreadsheet_id=c.spreadsheet_id AND n.operation_token=c.operation_token AND n.state='CLEANUP_IN_FLIGHT' AND n.projection='PUBLICATION' AND n.operation_kind='CANCEL' AND n.claim_mode='REVIEW' AND n.next_stamp=a.notice_stamp AND n.ready_status=a.find_status AND a.replacement_status=? AND e.state='ARMED' AND o.state='VERIFIED' AND j.status='PENDING' AND j.lease_token IS NULL AND j.lease_until IS NULL) AND ((?='พร้อมแก้ไข' AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='REVIEW')) OR (?='พร้อมแก้ไข • มีรายการรอตรวจ' AND EXISTS(SELECT 1 FROM sync_jobs WHERE status='REVIEW'))) AND ${integrity} AND ${cleanupIntegrity}`).bind(book,token,intent.next_stamp,intent.notice_identity,receipt.replacement_status,receipt.replacement_status,receipt.replacement_status),
   db.prepare(`UPDATE continuous_review_notice_close SET state='COMPLETE',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='CLEANUP_IN_FLIGHT' AND changes()=1 AND ${integrity} AND ${cleanupIntegrity}`).bind(book,token),
   db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
  ]);
  if(!stable()||released.length!==3||released.some(x=>x.success!==true)||released[0]!.meta?.changes!==1||released[1]!.meta?.changes!==1)throw Error('REVOKE_REVIEW_CLEANUP_RELEASE_UNCERTAIN');
+ // A failed/ambiguous wake cannot reverse the durable PENDING job. Existing
+ // scheduled recoverArmedSheetJob re-enqueues this exact target if still stale.
+ try{await env.JOB_QUEUE.send(job);}catch{/* durable ARMED/PENDING sweep is the fallback */}
  return 'RESUMED';
 }
 

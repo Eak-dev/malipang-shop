@@ -53,6 +53,7 @@
     "src/sheets/continuous-publication-route.ts",
     "src/sheets/continuous-publication-final-guard.ts",
     "src/sheets/continuous-publication-handoff.ts",
+    "src/sheets/continuous-revoke-review-rearm.ts",
     "src/sheets/publication-handoff-hooks.ts",
     "src/sheets/publication-batch-snapshot.ts",
     "src/sheets/publication-snapshot-plan.ts",

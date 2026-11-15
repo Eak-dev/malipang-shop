@@ -9,6 +9,7 @@
 - ภาพรวมและวิธีพัฒนา: [README](../README.md), [architecture](07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md), [roadmap](11_IMPLEMENTATION_ROADMAP_TH.md)
 - LINE: [flow](05_LINE_FLEX_FLOW_TH.md); expense และบัญชี: [sheet mapping](02_SHEET_MAPPING_TH.md), [expense contract](20_V12_EXPENSE_V2_CONTRACT_TH.md)
 - ความเชื่อถือได้ของการซิงก์รายจ่ายและข้อจำกัดการกู้เหตุ 15 พ.ย. 2569: [ผลตรวจและขอบเขต](SYNC_RELIABILITY_INCIDENT_20261115_TH.md)
+- ต้นแบบ local เท่านั้นสำหรับ [นับ D1 และ queue ต่อ invocation](INVOCATION_BINDING_BUDGET_WIP.md); ยังไม่ได้เชื่อม Worker หรือเปิดใช้งาน
 - พนักงานและ Payroll: [นโยบายค่าแรง](14_PAYROLL_POLICY_WAGE_HISTORY_AND_FIXED_OT_TH.md), [release Payroll](16_WEDNESDAY_PAYROLL_RELEASE_TH.md); สิทธิ์: [identity/access](19_V11_IDENTITY_ACCESS_TH.md)
 - ปฏิบัติการและ release: [operations](04_OPERATIONS_TH.md), [release/cutover](08_RELEASE_AND_CUTOVER_PLAN_TH.md), [การทดสอบ](03_TEST_AND_CUTOVER_TH.md)
 - ระบบ Legacy: [สถานะ Apps Script](06_LEGACY_APPS_SCRIPT_STATUS_TH.md), [แผนปิดตามขั้นตอน](17_LEGACY_APPS_SCRIPT_STAGED_SHUTDOWN_TH.md)

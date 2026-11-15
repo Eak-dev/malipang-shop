@@ -96,6 +96,7 @@
     "src/sheets/stable-expense-source.ts",
     "src/sheets/stable-expense-cancellation-plan.ts",
     "src/sheets/unwritten-expense-cancellation-candidate.ts",
+    "src/sheets/invocation-binding-budget.ts",
     "src/sheets/stable-expense-projection-plan.ts",
     "src/sheets/stable-expense-ledger-writer.ts",
     "src/sheets/stable-daily-writer.ts",

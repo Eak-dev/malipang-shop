@@ -61,8 +61,9 @@ async function verifyPublicationHandoffInternal(env:Env,job:SheetsSyncJob,claim:
  if(dailyJournal.length>1||dailyJournal.some(p=>p.entity_id!==job.entityKey||p.sheet_id!==daily.sheetId)||entries.length!==dailyJournal.length||effective.some(r=>r[23]===key||isError(r[23]))||formula.some((r,i)=>{const y=r[24],e=effective[i]?.[24];return y!==null&&y!==undefined&&y!==''&&(!decodeAtomicDailyPayload(y)&&!(typeof y==='string'&&/^MPD1_CANCELLED_[0-9a-f]{64}$/.test(y))||y!==e);} ))return false;
  const legacyFormula=publicationSnapshotRange(snapshot,legacy.sheetId,1,legacy.rowCount,24,24,'FORMULA'),legacyEffective=publicationSnapshotRange(snapshot,legacy.sheetId,1,legacy.rowCount,24,24,'EFFECTIVE');
  if(legacyFormula.some((r,i)=>{const f=r[0],e=legacyEffective[i]?.[0],isFormula=typeof f==='string'&&f.startsWith('=');return f===key||e===key||isError(e)||isFormula&&(e===null||e===undefined||e==='')||!isFormula&&(f??null)!==(e??null);} ))return false;
- const pending=await pendingDailyCancellations(env,daily.title,daily.sheetId,claim);
- if(!await verifyDailyCarrierEvidence(env,daily.title,daily.sheetId,daily.columnCount,formula,undefined,pending))return false;
+ const reviewed=authority==='REVIEW'&&row.kind==='REVOKE'?{expenseId:job.entityKey,version:job.entityVersion,claim,transitionId}:undefined;
+ const pending=await pendingDailyCancellations(env,daily.title,daily.sheetId,claim,reviewed);
+ if(!await verifyDailyCarrierEvidence(env,daily.title,daily.sheetId,daily.columnCount,formula,undefined,pending,undefined,reviewed))return false;
  if(entries.length){
   const payload=decodeAtomicDailyPayload(formula[entries[0]!]![24]);if(!payload)return false;
   const coverage=await readLegacyDailyCoverage(env,payload.postingYear,payload.postingMonth,daily.title,policy,snapshot);

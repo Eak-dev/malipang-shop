@@ -54,7 +54,8 @@ export async function verifyStableCancellationFinal(env:Env,job:SheetsSyncJob,pr
   for(const p of group){
    const found=rows.get(p.entity_id),w=writes.find(x=>x.entity_id===p.entity_id&&x.projection===projection);if(!found||!w)throw Error('CANCEL_FINAL_LEDGER_IDENTITY');
    const {index,carrier}=found;if(carrier.status!=='CANCELLED'||carrier.cancelVersion!==job.entityVersion||carrier.confirmedVersion!==p.source_version||carrier.cancelledAt!==cancelledAt)throw Error('CANCEL_FINAL_LEDGER_VALUE');
-   const original=(snapshot.formula[index]??[]).slice();original[25]=encodeLedgerCarrier({...carrier,status:'CONFIRMED',cancelVersion:null,cancelledAt:''});if(projection==='EXPENSE_RAW')original[17]=null;
+   const confirmed={...carrier,status:'CONFIRMED' as const,cancelVersion:null,cancelledAt:''};delete confirmed.cancelMarker;
+   const original=(snapshot.formula[index]??[]).slice();original[25]=encodeLedgerCarrier(confirmed);if(projection==='EXPENSE_RAW')original[17]=null;
    if(await digest(original,grid.columnCount)!==w.preimage_digest)throw Error('CANCEL_FINAL_PREIMAGE');
   }
  }

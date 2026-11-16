@@ -1,0 +1,33 @@
+name: Sync cutover backup and migration rehearsal
+
+# Exports Production D1 (read-only), stores one private backup object,
+# verifies its download and rehearses pending migrations on the runner copy.
+# No migration, deploy or data change reaches Production from this workflow.
+on:
+  push:
+    branches: [codex/revoke-review-close-20261116]
+    paths: ['.github/prod-snapshot/rehearsal-trigger.txt']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-cutover-backup-rehearsal
+  cancel-in-progress: false
+
+jobs:
+  rehearsal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Backup, restore and rehearse
+        shell: bash
+        run: bash scripts/prod-backup-rehearsal.sh | tee -a "$GITHUB_STEP_SUMMARY"

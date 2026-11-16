@@ -30,4 +30,4 @@ jobs:
       - run: npm ci
       - name: Collect sanitized aggregates
         shell: bash
-        run: node scripts/prod-readonly-snapshot.mjs >> "$GITHUB_STEP_SUMMARY"
+        run: node scripts/prod-readonly-snapshot.mjs | tee -a "$GITHUB_STEP_SUMMARY"

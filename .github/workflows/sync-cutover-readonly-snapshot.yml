@@ -1,0 +1,33 @@
+name: Sync cutover read-only snapshot
+
+# Read-only Production inspection for the continuous daily sync task.
+# The repository is public: only aggregate counts, schema names, migration
+# names and Worker version ids may reach logs or the step summary.
+on:
+  push:
+    branches: [codex/revoke-review-close-20261116]
+    paths: ['.github/prod-snapshot/trigger.txt']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sync-cutover-readonly-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - run: npm ci
+      - name: Collect sanitized aggregates
+        shell: bash
+        run: node scripts/prod-readonly-snapshot.mjs >> "$GITHUB_STEP_SUMMARY"

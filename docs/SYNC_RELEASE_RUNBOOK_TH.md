@@ -10,6 +10,9 @@
 - ล็อก workbook `REVIEW` เดิม: ใช้ `START_REVIEW` ของ operator หลังตรวจผลการเขียนเดิมในชีตแบบอ่านอย่างเดียว ในขั้นที่เจ้าของอนุมัติ
 - สองรายการที่เจ้าของสั่งลบ: ลบหลัง canary ผ่าน เป็นงานแยก (L5) เก็บบันทึกกันซ้ำของข้อความ LINE ไว้ และเปิด `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED` ก่อนลบ เจ้าของยืนยันทีละชิ้น
 - แผนบัญชี Cloudflare (Paid/Free): เจ้าของตรวจเอง ก่อนขั้น 3
+- การยกเลิกค่าใช้จ่ายอัตโนมัติ (#296 ข้อ 7): ไม่ให้ระบบยกเลิกเอง — `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` ต้องไม่ตั้ง (ไม่ตั้ง = พักงานรอคนตรวจ, `true` = ยกเลิกแบบเดิม)
+- จังหวะ cutover (#296 ข้อ 8): เมื่อเริ่ม `START_REVIEW` แล้วต้องไปให้ถึง `RELEASE`; ตรวจ preflight checklist ให้ครบก่อนเริ่ม ทำในช่วง 02:00–05:00 ไม่ทำวันที่มีรอบจ่าย payroll; ถ้าติดเกิน 8 ชั่วโมงให้หยุดถามเจ้าของ (ซิงก์ชีตยังหยุดระหว่างนั้น) — ไม่ใช้วิธีปิด gate กลางทาง
+- payroll/การลงเวลาที่หยุดตั้งแต่ 14 พ.ย.: รอ release ตามแผน ไม่ปลดล็อกแยก
 
 ## ก่อนเริ่ม
 
@@ -30,28 +33,43 @@
 | 4b | แจ้งเหตุแบบ durable | `SYNC_ALERT_DURABLE_ENABLED=true`, `SYNC_ALERT_DURABLE_SINCE=<เวลาที่เปิด, ISO UTC>`, (`SYNC_ALERT_INCIDENT_RETENTION_DAYS` ถ้าไม่ใช้ค่าเริ่มต้น 30) | ไม่มีการแจ้งเหตุย้อนหลังก่อน cutoff |
 | 4c | ส่วนเสริม | `WORKBOOK_BATCH_FAIRNESS_ENABLED=true`, `EXPENSE_SAVED_SYNC_NOTE_ENABLED=true` | งาน HR และค่าใช้จ่ายสลับกันได้, การ์ด LINE แสดงข้อความใหม่ |
 | 4d | เป้าหมายแท็บ | `STABLE_CANCELLATION_PREIMAGE_ENABLED=true`, `CONTINUOUS_DAILY_SHEET`/`_ID`, `CONTINUOUS_RAW_SHEET`/`_ID`, `CONTINUOUS_DETAIL_SHEET`/`_ID` (ตามคำตัดสินเรื่องแท็บ) | `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง |
-| 5 | cutover | `STABLE_RECOVERY_GATE_ENABLED=true`, `CONTINUOUS_REPORT_CUTOVER_ENABLED=true`, `CONTINUOUS_CUTOVER_OPERATOR_ENABLED=true` แล้วสั่ง operator ตามขั้นตอนของ `/admin/stable-sync/continuous-cutover` | operator อยู่สถานะพร้อม, ไม่มีงานค้าง `PROCESSING` |
-| 6 | canary รายการเดียว | `CONTINUOUS_DAILY_ENABLED=true`, `CONTINUOUS_CANARY_OPERATOR_ENABLED=true` | อ่านกลับแถว ยอด สูตร `I/J/R/S/U` และรายงาน; ส่งซ้ำจำกัดรายการแล้วไม่เพิ่ม; Undo รายการเดียวกันแล้วอ่านกลับ |
+| 5 | cutover (ทำหลังผ่าน preflight checklist) | `STABLE_RECOVERY_GATE_ENABLED=true`, `CONTINUOUS_REPORT_CUTOVER_ENABLED=true`, `CONTINUOUS_CUTOVER_OPERATOR_ENABLED=true`, `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true`, `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT=<hash ของล็อกเดิมที่เจ้าของยืนยัน>` แล้วสั่ง operator `START_REVIEW` → `VIEWS` → `DAILY_J` → `REPORTS` → `ACTIVATE` → `RELEASE` ที่ `/admin/stable-sync/continuous-cutover` | แต่ละ action ตอบ `ok:true` และ `servedVersion` ตรงเวอร์ชันที่ deploy; หลัง `RELEASE` claim ถูกปล่อย |
+| 6 | canary รายการเดียว | `CONTINUOUS_DAILY_ENABLED=true`, `CONTINUOUS_CANARY_OPERATOR_ENABLED=true` (**`UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` ต้องไม่ตั้ง**) | อ่านกลับแถว ยอด สูตร `I/J/R/S/U` และรายงาน; ส่งซ้ำจำกัดรายการแล้วไม่เพิ่ม; Undo รายการเดียวกันแล้วอ่านกลับ |
 | 7 | ขยายวง | ปิด `CONTINUOUS_CANARY_OPERATOR_ENABLED` ตามขั้นตอน operator | 24 ชั่วโมงแรก: failed jobs, REVIEW, รายการซ้ำ วันละครั้ง |
 
 **คำเตือนขั้น 4b:** ถ้าตั้ง `SYNC_ALERT_DURABLE_ENABLED=true` แต่ไม่ตั้งหรือตั้ง `SYNC_ALERT_DURABLE_SINCE` ผิดรูปแบบ ระบบจะ**ทำงานแบบ main อย่างเงียบ ๆ** (แจ้งเหตุ DLQ ตรงแบบเดิม ไม่มี error) ให้ตรวจว่าค่าเป็น ISO-8601 UTC เช่น `2026-12-01T02:00:00Z` และหลัง deploy ตรวจว่ามีการ sweep เกิดขึ้น
 
-**เงื่อนไขก่อนขั้น 5 และ 6:** ต้องมีคำตัดสินของเจ้าของใน #296 ข้อ 8 (ซิงก์ชีตอื่นหยุดระหว่างขั้น 5–7) ก่อนขั้น 5 และข้อ 7 (ยกเลิกค่าใช้จ่ายอัตโนมัติ) ก่อนขั้น 6
+**เงื่อนไขก่อนขั้น 5 และ 6:** ขั้น 5 เริ่มได้เมื่อผ่าน preflight checklist ด้านล่างครบทุกข้อ; ขั้น 6 เริ่มได้เมื่อ PR ที่เพิ่ม `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` merge และ Worker ที่ deploy อยู่มีโค้ดนั้นแล้ว และค่านี้ไม่ได้ตั้ง (ตรวจจาก config ที่ deploy)
 
 **จังหวะเวลาของขั้น 5–6:** ตามคำตัดสินเรื่องงบ ให้ `ACTIVATE` ในช่วง 02:00–05:00 ของวันที่ 1 ของเดือนเป้าหมาย; รายการที่ยืนยันระหว่าง 00:00 จนถึง `ACTIVATE` ของวันนั้นจะยังลงแท็บเดิม เจ้าของต้องยอมรับหรือเลือกเวลาอื่น และใส่งบเต็มของเดือนใน `AA:AC` ก่อน canary
 
 ห้ามเปิดในรอบนี้ เพราะต้องใช้ notice worker หรือยังไม่ผ่านการทดสอบ provider จริง: `CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED`, `CONTINUOUS_NOTICE_DISPATCH_ENABLED`, `CONTINUOUS_REVIEW_CLOSE_ENABLED`, `CONTINUOUS_PUBLICATION_ENABLED`, `CONTINUOUS_UNDO_SERIALIZATION_ENABLED`, `CONTINUOUS_REVOKE_REVIEW_*`, `CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED`, `CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED`, `CONTINUOUS_PROVIDER_CANARY_ENABLED`, `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED`, `EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED` (เปิดได้ชั่วคราวเพื่ออ่านอย่างเดียวเมื่อเจ้าของอนุมัติ)
 
+## Preflight checklist ก่อน `START_REVIEW` (ต้องครบทุกข้อ ไม่อย่างนั้นห้ามเริ่ม)
+
+เมื่อเริ่มแล้วต้องไปให้ถึง `RELEASE` ข้อใดขาดจะทำให้ action ล้มกลางทางขณะที่ซิงก์ชีตทุกประเภทหยุด
+
+- [ ] วันและเวลา: ช่วง 02:00–05:00 ของวันที่ 1 ของเดือนเป้าหมายที่เจ้าของยืนยัน และไม่ใช่วันที่มีรอบจ่าย payroll; มีผู้สั่ง action และเจ้าของพร้อมตัดสินตลอดช่วง
+- [ ] ขั้น 1–4 เสร็จและอ่านผลกลับแล้ว: migration ไม่ค้าง, Worker ที่ deploy เป็น SHA ที่อนุมัติ, flag ขั้น 4a–4d ตั้งแล้ว และ `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง (operator ทำงานเฉพาะตอนที่ยังไม่ตั้ง)
+- [ ] snapshot ล่าสุดก่อนเริ่ม: Worker version `MATCH` กับ hash ที่กรอก, ไม่มี recovery epoch สถานะ ARMED/REVIEW (ตัวตรวจของ `START_REVIEW` บังคับ — snapshot ปัจจุบันยังไม่มีส่วนนี้ ต้องอ่านแยกเมื่อเจ้าของอนุมัติ), ไม่มีงานซิงก์ `PROCESSING`
+- [ ] header `x-malipang-expected-worker-version` ของทุก request ถึง `/admin/stable-sync/continuous-cutover` และ `/admin/stable-sync/continuous-canary` ตรงกับ Worker version ที่รันอยู่ (`src/admin/handler.ts` ตรวจ ไม่ตรงได้ `WORKER_VERSION_MISMATCH`) และใช้ admin token ที่ถูกต้อง
+- [ ] `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true` และ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` = SHA-256 ของข้อมูลระบุตัวตนล็อกเดิม เป็น JSON array ตามลำดับ `[spreadsheet, operation_token, notice_stamp, notice_identity, created_at, phase, review_reason]` (ตาม `startPrewriteReview` ใน `src/admin/continuous-cutover-operator.ts`) ที่เจ้าของยืนยัน; คำนวณจากข้อมูลส่วนตัว ห้ามลงใน Issue
+- [ ] ตรวจผลการเขียนเดิมของล็อก (ครั้งที่ทำให้ล็อกค้าง 14 พ.ย.) ในชีตแบบอ่านอย่างเดียวแล้ว และเจ้าของยืนยันว่าไม่ต้องเขียนซ้ำ
+- [ ] ชื่อแท็บและ sheet ID 4 ค่าสำหรับขั้น `VIEWS` เลือกแล้วและตั้งใน config; แท็บ `V52_EXPENSE_RAW` และ `รายละเอียดการซื้อ` เดิมไม่เกิน 4,000 แถว
+- [ ] request ของ `ACTIVATE` เตรียมไว้: body `{"action":"ACTIVATE","expenseIds":["<รหัสที่ 1>","<รหัสที่ 2>"]}` — ชื่อช่องใน HTTP คือ `expenseIds` (ภายในโค้ดคือ `mustBeCancelledOrAbsentExpenseIds`) ใช้ชื่ออื่นจะได้ `CUTOVER_RECEIPTS_INVALID`; รหัสมาจากหลักฐานส่วนตัว
+- [ ] สำเนา Owner Master ภายใน 1 วันก่อน และ backup D1 ภายใน 1 ชั่วโมงก่อน (#295 ขั้นที่ 3)
+- [ ] งบเต็มของเดือนเป้าหมายพร้อมใส่ใน `AA:AC` ก่อน canary
+
 ## ผลกระทบระหว่างขั้น 5–7 (recovery gate)
 
 - **ผล:** เมื่อ `STABLE_RECOVERY_GATE_ENABLED=true` ตัว gate (`stableRecoveryGateBlocked` ใน `src/sheets/stable-recovery-admission.ts`) อนุญาตให้เขียนชีตเฉพาะเป้าหมายที่ operator arm ไว้ทีละรายการ **การซิงก์ชีตอื่นทั้งหมดหยุด** ทั้งการลงเวลา payroll รายวัน/รายสัปดาห์ ตารางกะ และค่าใช้จ่ายรายการอื่น งานไม่หาย: ถูกเก็บใน outbox (`sync_jobs` สถานะ PENDING) และข้อความในคิวถูก ACK
-- **ระยะเวลาที่เสนอ:** ทำขั้น 5–7 ให้เสร็จภายในช่วงเงียบ 02:00–05:00 (ไม่เกิน 3 ชั่วโมง) และไม่ทำในวันที่มีรอบจ่าย payroll; ถ้าเกิน 8 ชั่วโมงให้หยุดและให้เจ้าของตัดสินว่าจะไปต่อหรือหยุดที่สถานะปัจจุบัน — ค่าเหล่านี้เป็นข้อเสนอของ Dev รอเจ้าของยืนยัน
+- **ระยะเวลา (เจ้าของตัดสินแล้ว):** ทำให้จบภายใน 02:00–05:00 ไม่ทำวันที่มีรอบจ่าย payroll; ถ้าติดเกิน 8 ชั่วโมงให้หยุดถามเจ้าของ การปิด gate กลางทางไม่ทำให้ซิงก์กลับมา (operator ยังถือล็อก) และทำให้ operator ทำต่อไม่ได้ จึงไม่ใช้
 - **ช่วงที่ซิงก์หยุดจริงยาวกว่าขั้น 5–7:** ตั้งแต่ `START`/`START_REVIEW` (operator ถือ workbook claim แบบ HELD) จนถึง `RELEASE` ผู้เขียนชีตทุกตัวรอ claim อยู่แล้ว และ gate ทำให้หยุดต่อจนกว่าจะปิด gate
 - **การปล่อยงานที่ค้าง:** หลังขั้น 7 ผ่าน ปิด `STABLE_RECOVERY_GATE_ENABLED` (deploy config) แล้ว cron `sheets_recovery` จะส่งงาน PENDING ที่ค้างอีกครั้งเองทีละไม่เกิน 4 งานต่อรอบเมื่อเปิด pacing ไม่ต้อง replay คิวด้วยมือ; งาน FAILED หรือ lease หมดอายุจะถูกพักเป็น REVIEW ถ้า `STABLE_REDRIVE_HOLD_ENABLED=true` ตรวจด้วย snapshot ว่าช่วงจำนวนงานผิดปกติไม่เพิ่ม
 
 ## การยกเลิกค่าใช้จ่ายอัตโนมัติเมื่อเปิด `CONTINUOUS_DAILY_ENABLED` (ขั้น 6)
 
-เมื่อแท็บต่อเนื่องเปิดใช้ ระบบจะเปลี่ยนค่าใช้จ่ายที่ยืนยันแล้วเป็น "ยกเลิก" ใน D1 เองในบางกรณีที่การเขียนชีตล้มแบบแน่นอนก่อนส่งคำขอใด ๆ (`src/sheets/unwritten-expense-cancellation-candidate.ts`, เรียกจาก `src/sheets/stable-expense-job.ts`) โดยไม่มี flag แยก — รายละเอียดเป็นภาษาง่ายและทางเลือกอยู่ใน #296 ข้อ 7 ต้องให้เจ้าของตัดสินก่อนขั้น 6
+เดิมเมื่อแท็บต่อเนื่องเปิดใช้ ระบบจะเปลี่ยนค่าใช้จ่ายที่ยืนยันแล้วเป็น "ยกเลิก" ใน D1 เองในบางกรณีที่การเขียนชีตล้มแบบแน่นอนก่อนส่งคำขอ (`src/sheets/unwritten-expense-cancellation-candidate.ts`) ตามคำตัดสินของเจ้าของ (#296 ข้อ 7) พฤติกรรมนี้อยู่หลัง `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED`: **ไม่ตั้ง = พักงานรอคนตรวจ ไม่ยกเลิก** ซึ่งเป็นค่าที่ใช้ใน release นี้; `true` = ยกเลิกแบบเดิม ใช้เมื่อเจ้าของอนุมัติแยกเท่านั้น
 
 ## Rollback หลังขั้น 5 (operator)
 
@@ -61,7 +79,7 @@ Cutover operator (`POST /admin/stable-sync/continuous-cutover`, `src/admin/conti
 - **ก่อน `ACTIVATE`:** ตัวเขียนยังเป็นแบบเดิม ถ้าจะยกเลิก: แท็บที่ `VIEWS` สร้างไม่ถูกลบอัตโนมัติ (เจ้าของลบเอง) และคอลัมน์ J ของแท็บรายวัน/สูตรรายงานที่ `DAILY_J`/`REPORTS` เขียนต้องคืนจากสำเนา Owner Master หรือ version history; จากนั้นตัดสินเรื่อง claim ที่ operator ถืออยู่แยก
 - **หลัง `ACTIVATE`:** แถว cutover ใน D1 เป็น `ACTIVE` และแก้หรือลบไม่ได้ (มี trigger กัน) ทางเขียนแบบเดิมถูกกันถาวร; สิ่งที่ย้อนได้คือคืนคอลัมน์ J/สูตรรายงานจากสำเนา และลบแท็บใหม่ด้วยมือ แต่ตัวเขียนไม่กลับไปแท็บเดิม
 - **ปิด `CONTINUOUS_DAILY_ENABLED` หลัง activation:** ทำได้ (deploy config) แต่ไม่ใช่การกลับไปแท็บเดิม — งานซิงก์ค่าใช้จ่ายจะได้ `CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED` ถูกเก็บไว้ใน outbox (ไม่หาย) และ ACK ข้อความ ค่าใช้จ่ายจึงหยุดลงชีตจนกว่าจะเปิดกลับหรือมี forward-fix; งาน HR/payroll ไม่กระทบ ใช้เป็นการหยุดฉุกเฉินได้ ห้าม deploy config ค่าเริ่มต้นทั้งชุดทับ
-- **`ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการ** ที่ต้องเป็น "ยกเลิก" หรือไม่มีอยู่ (`mustBeCancelledOrAbsentExpenseIds`; จากชื่อและบริบทน่าจะเป็นสองรายการที่เจ้าของสั่งลบ — ต้องยืนยันก่อนใช้) ใส่ใน request ของ operator เท่านั้น ห้ามลงใน Issue
+- **`ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการ** ใน body `{"action":"ACTIVATE","expenseIds":[...]}` — ชื่อช่องใน HTTP คือ `expenseIds` (`src/admin/handler.ts`, `continuous-cutover-operator.ts`; ภายในคือ `mustBeCancelledOrAbsentExpenseIds`) ตัวตรวจบังคับเพียงว่าแต่ละรหัสต้องเป็น "ยกเลิก" หรือไม่มีอยู่ใน D1 จึงยืนยันตัวตนไม่ได้ ใช้สองรายการที่เจ้าของสั่งลบตาม #296 ข้อ 6 จากหลักฐานส่วนตัว ห้ามลงใน Issue
 - **Canary operator** (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
 
 ## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)

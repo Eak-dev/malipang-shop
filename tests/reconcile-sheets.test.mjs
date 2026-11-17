@@ -9,7 +9,7 @@ test('reconcile reports blocked expenses while scheduling other report jobs',asy
     async batch(statements){return statements.map(statement=>({meta:{changes:statement.args?.[1]==='EXPENSE'?0:1}}));}
   };
   const sentMessages=[];
-  const env={DB:db,SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async send(){},async sendBatch(messages){sentMessages.push(...messages);sent.push(...messages.map(message=>message.body));}}};
+  const env={DB:db,SHEETS_SYNC_ENABLED:'true',EXPENSE_FORCE_RECONCILE_HOLD_ENABLED:'true',JOB_QUEUE:{async send(){},async sendBatch(messages){sentMessages.push(...messages);sent.push(...messages.map(message=>message.body));}}};
   const result=await reconcileSheets(env,{fromDate:'2026-07-23',toDate:'2026-08-05',limitPerType:20});
   assert.equal(result.enqueued,4);
   assert.deepEqual(result.blockedExpense,{count:1,reason:'EXPENSE_PROVIDER_RECONCILIATION_REQUIRED'});
@@ -23,7 +23,7 @@ test('reconcile selects weekly payroll rows using Thursday cycle keys',async()=>
     prepare(sql){return{bind(...args){bound.push({sql,args});return this;},async all(){return{results:[],meta:{}};}};},
     async batch(){return[];}
   };
-  const env={DB:db,SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(){}}};
+  const env={DB:db,SHEETS_SYNC_ENABLED:'true',EXPENSE_FORCE_RECONCILE_HOLD_ENABLED:'true',JOB_QUEUE:{async sendBatch(){}}};
   await reconcileSheets(env,{fromDate:'2026-07-23',toDate:'2026-08-05',limitPerType:20});
   const weekly=bound.find(item=>item.sql.includes('FROM payroll_weekly'));
   assert.ok(weekly,'weekly payroll reconcile query must run');
@@ -32,7 +32,7 @@ test('reconcile selects weekly payroll rows using Thursday cycle keys',async()=>
 
 test('large forced sheet batches are spread across minute windows',async()=>{
   const sent=[],bound=[];
-  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(statements){return statements.map(()=>({meta:{changes:1}}));}},SHEETS_SYNC_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
+  const env={DB:{prepare(sql){return{bind(...args){bound.push({sql,args});return this;}};},async batch(statements){return statements.map(()=>({meta:{changes:1}}));}},SHEETS_SYNC_ENABLED:'true',EXPENSE_FORCE_RECONCILE_HOLD_ENABLED:'true',JOB_QUEUE:{async sendBatch(messages){sent.push(...messages);}}};
   const {enqueueSheetSyncBatch}=await import('../dist/db/repositories.js');
   const jobs=Array.from({length:45},(_,index)=>({kind:'SHEETS_SYNC',entityType:'DAILY_PAYROLL',entityKey:`test_${index}`,entityVersion:1,traceId:'reconcile_test'}));
   assert.equal(await enqueueSheetSyncBatch(env,jobs,true),45);

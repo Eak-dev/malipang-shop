@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';import {cutoverReadySql} from './helpers/cutover-ready.mjs';
 const require=createRequire(import.meta.url),route=require('../dist/sheets/continuous-daily-route.js'),{armNextContinuousExpense,holdContinuousHistoricalExpenses,holdContinuousUndoVersionGaps,holdContinuousConfirmationVersionGaps,holdContinuousExpenseHistory,holdContinuousExpiredLease}=require('../dist/sheets/continuous-normal-recovery.js'),{sweepSyncFailureAlerts}=require('../dist/line/sync-failure-alerts.js');
 function fixture(){

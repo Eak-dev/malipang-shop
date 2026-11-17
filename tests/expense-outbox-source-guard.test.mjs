@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),{ensureSheetSyncOutbox}=require('../dist/sheets/sync.js'),{enqueueSheetSyncBatch,createFailedJob}=require('../dist/db/repositories.js');
 const job=(entityType='EXPENSE',entityKey='exp_synthetic',entityVersion=1)=>({kind:'SHEETS_SYNC',entityType,entityKey,entityVersion,traceId:'synthetic'});

@@ -21,6 +21,12 @@ export interface Env {
   /** Default off: do not reconstruct expense outbox work after source removal. */
   EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED?: string;
   STABLE_PHASE1_ENABLED?: string;
+  /** Default off. Each restores the pre-candidate behaviour when unset. */
+  EXPENSE_SAVED_SYNC_NOTE_ENABLED?: string;
+  EXPENSE_FORCE_RECONCILE_HOLD_ENABLED?: string;
+  STABLE_REDRIVE_HOLD_ENABLED?: string;
+  WORKBOOK_BATCH_FAIRNESS_ENABLED?: string;
+  SYNC_ALERT_DURABLE_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;
   CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED?: string;

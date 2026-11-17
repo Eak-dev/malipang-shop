@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite,receipt,receiptReading,imageEvent} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),deferred=require('../dist/expense/deferred-undo.js'),admissionReadiness=require('../dist/sheets/continuous-notice-readiness.js');
 // Synthetic fixture only: both worker readiness probes are mocked.

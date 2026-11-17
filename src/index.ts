@@ -14,7 +14,7 @@ import {stablePacingConfigured,stablePacingValid,persistedStableBusyDelay,STABLE
 import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
-import { sweepSyncFailureAlerts,wakeSyncFailureAlerts,syncFailureAlertSchemaReady } from "./line/sync-failure-alerts";
+import { sweepSyncFailureAlerts,wakeSyncFailureAlerts,syncFailureAlertSchemaReady,syncAlertDurableEnabled } from "./line/sync-failure-alerts";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob,SheetsSyncJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -48,6 +48,11 @@ export default{
     let bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
     if(bindingBudget){const scope=bindingBudget.invocationScope();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
     if(batch.queue==="malipang-jobs-dlq"){
+      if(!syncAlertDurableEnabled(env)){
+        // Flag off: the pre-candidate DLQ handling, unchanged.
+        for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+        return;
+      }
       for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;
         if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}
         try{if(await createFailedJob(env,"malipang-jobs",job.traceId,job,job.kind==='LINE_NOTIFICATION'&&job.purpose==='SYNC_FAILURE'?"LINE_NOTIFICATION_ENQUEUE_FAILED":"DEAD_LETTER_MAX_RETRIES")==='ABSENT'){message.ack();continue;}}catch(error){console.error("dlq-log",error);message.retry();continue;}
@@ -85,7 +90,7 @@ export default{
       const eligible=batch.messages.filter(m=>{const j=m.body as WorkbookQueueJob;return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));});
       const expense=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='SHEETS_SYNC'&&j.entityType==='EXPENSE';});
       const other=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='STAFF_CONFIG_SYNC'||j.kind==='SHEETS_SYNC'&&j.entityType!=='EXPENSE';});
-      if(!recoveryGateConfigured(env)&&expense&&other){
+      if(env.WORKBOOK_BATCH_FAIRNESS_ENABLED==='true'&&!recoveryGateConfigured(env)&&expense&&other){
        // A shared D1 CAS prevents either stream from monopolizing sustained
        // mixed batches. If unavailable, park both; never spend the writer budget.
        try{const turn=await env.DB.prepare("INSERT INTO workbook_batch_fairness(singleton,expense_turn) VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET expense_turn=1-expense_turn RETURNING expense_turn").first<{expense_turn:number}>();if(turn?.expense_turn===1)chosenSheet=expense;else if(turn?.expense_turn===0)chosenSheet=other;}catch{/* park both until fairness state is available */}

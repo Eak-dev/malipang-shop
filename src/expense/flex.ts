@@ -149,10 +149,10 @@ export function buildExpenseDateFlex(expense:ExpenseFlexRecord):FlexMessage{
     action("↩️ Back",`a=expense_back&id=${id}`)
   ]}}};
 }
-export function buildExpenseSavedFlex(expense:ExpenseFlexRecord):FlexMessage{
+export function buildExpenseSavedFlex(expense:ExpenseFlexRecord,syncNote=false):FlexMessage{
   const id=encodeURIComponent(expense.expenseId),body:Record<string,unknown>[]=[row("Item",expense.description),row("Amount",`${money(expense.amountSatang)} THB`),row("Payment",paymentLabels[expense.paymentKey]||expense.paymentKey),row("Paid from",walletLabels[expense.sourceWallet]||expense.sourceWallet),row("Category",categoryLabels[expense.category]||expense.category),row("Date",displayDate(expense.transactionDate))];
   if(expense.documentType==="BANK_SLIP"&&expense.institution)body.push(row("Institution",expense.institution));
-  body.push({type:"text",text:"บันทึกค่าใช้จ่ายแล้ว การซิงก์ไป Sheets แยกต่างหาก กรุณาตรวจสอบในชีต",size:"sm",wrap:true,color:"#666666"});
+  if(syncNote)body.push({type:"text",text:"บันทึกค่าใช้จ่ายแล้ว การซิงก์ไป Sheets แยกต่างหาก กรุณาตรวจสอบในชีต",size:"sm",wrap:true,color:"#666666"});
   return{type:"flex",altText:`Expense saved: ${expense.description} ${money(expense.amountSatang)} THB`,contents:{type:"bubble",header:{type:"box",layout:"vertical",backgroundColor:"#E8F5E9",contents:title("Saved successfully ✅","#2E7D32")},body:{type:"box",layout:"vertical",contents:body},footer:{type:"box",layout:"vertical",contents:[action("↩️ Undo save",`a=expense_undo&id=${id}`)]}}};
 }
 

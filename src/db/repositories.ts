@@ -95,6 +95,7 @@ async function sendScheduledSheetJobs(env:Env,jobs:ScheduledSheetJob[]):Promise<
     await env.JOB_QUEUE.sendBatch(messages);
   }
 }
+const LEGACY_FORCE_ENQUEUE_SQL=`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO UPDATE SET trace_id=excluded.trace_id,status='PENDING',last_error=NULL,updated_at=excluded.updated_at,next_attempt_at=excluded.next_attempt_at,lease_until=NULL,lease_token=NULL WHERE sync_jobs.status!='PROCESSING' OR (sync_jobs.lease_until IS NOT NULL AND sync_jobs.lease_until<=excluded.updated_at)`;
 export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
   const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs,stablePacingConfigured(env));
@@ -102,6 +103,16 @@ export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=f
   // when its version has no local job: an older version, legacy writer or
   // delayed provider request may have written. Hold all expense force jobs
   // for explicit reconciliation. Existing non-expense behavior is unchanged.
+  if(force&&env.EXPENSE_FORCE_RECONCILE_HOLD_ENABLED!=='true'){
+    // Flag off: the pre-candidate forced enqueue, unchanged.
+    for(let offset=0;offset<scheduled.length;offset+=50){
+      const statements=scheduled.slice(offset,offset+50).map(({body:job,nextAttemptAt})=>env.DB.prepare(LEGACY_FORCE_ENQUEUE_SQL)
+        .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,nextAttemptAt));
+      await env.DB.batch(statements);
+    }
+    await sendScheduledSheetJobs(env,scheduled);
+    return unique.length;
+  }
   const accepted:ScheduledSheetJob[]=[];
   for(let offset=0;offset<scheduled.length;offset+=50){
     const chunk=scheduled.slice(offset,offset+50);
@@ -174,7 +185,7 @@ export async function recoverPendingSheetJobs(env:Env,staleAfterSeconds=300,incl
   // are re-sent by the first recovery after an operator resolves the review.
   if(await stableWorkbookInReview(env)||stablePacingConfigured(env)&&!stablePacingValid(env))return 0;
   if(recoveryGateConfigured(env))return recoverArmedSheetJob(env,staleAfterSeconds);
-  const stable=env.STABLE_PHASE1_ENABLED==='true';
+  const stable=env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true';
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds))),nowMs=Date.now(),now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString(),terminalDlqAllowed=includeTerminalDlq&&!stable?1:0;
   const rows=await env.DB.prepare(`SELECT s.entity_type,s.entity_key,s.entity_version,s.trace_id,s.status,s.updated_at,s.next_attempt_at,s.lease_until,EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') AS terminal_dlq_open FROM sync_jobs s WHERE s.status IN ('PENDING','FAILED','PROCESSING') AND (?=1 OR NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=s.entity_type || ':' || s.entity_key || ':' || s.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')) ORDER BY s.updated_at LIMIT 200`).bind(terminalDlqAllowed).all<RecoverableSheetJobRow>();
   const recoverable=(rows.results||[]).filter(row=>(terminalDlqAllowed===1||Number(row.terminal_dlq_open||0)!==1)&&isRecoverableSheetJob(row,now,stale));

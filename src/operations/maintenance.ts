@@ -1,7 +1,7 @@
 import { recoverPendingSheetJobs,safeRecordMetric } from "../db/repositories";
 import { auditEvidenceRetention } from "../evidence/retention";
 import { recoverPendingLineNotifications } from "../line/attendance-notification";
-import { recoverDeferredAutoCancelAlerts,sweepSyncFailureAlerts } from "../line/sync-failure-alerts";
+import { recoverDeferredAutoCancelAlerts,sweepSyncFailureAlerts,syncAlertDurableEnabled } from "../line/sync-failure-alerts";
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
 import { refreshCurrentEmployeeWages } from "../payroll/repository";
 import { recoverPendingStaffConfigSyncs } from "../sheets/staff-config";
@@ -28,7 +28,7 @@ export async function runScheduledMaintenance(env:Env):Promise<void>{
       try{await watchdogNoticeWorker(env);}catch{console.error('notice-watchdog-unavailable');}
       try{await watchdogPendingUndo(env);}catch{console.error('deferred-undo-watchdog-unavailable');}
       try{await issueNoticeProbe(env,'MAIN_CRON');}catch{console.error('notice-main-probe-unavailable');}
-      try{if(await sweepSyncFailureAlerts(env)===null)console.error('sync-alert-unavailable',{reason:'DISABLED_OR_SCHEMA_UNVERIFIED'});}catch{sweepFailed=true;}
+      try{if(syncAlertDurableEnabled(env)&&await sweepSyncFailureAlerts(env)===null)console.error('sync-alert-unavailable',{reason:'DISABLED_OR_SCHEMA_UNVERIFIED'});}catch{sweepFailed=true;}
       try{await recoverDeferredAutoCancelAlerts(env);}catch{deferredFailed=true;}
       await recoverPendingLineNotifications(env);
       if(sweepFailed||deferredFailed)throw Error('SYNC_ALERT_SWEEP_FAILED');

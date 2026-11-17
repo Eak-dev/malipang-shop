@@ -23,7 +23,7 @@ test('migration does not alert historical failures but new failures generate one
   sqlite.exec(migration);sqlite.exec(migration);
   assert.equal(sqlite.prepare('SELECT count(*) AS n FROM sync_alert_incidents').get().n,0);
   const DB={prepare(sql){const stmt=sqlite.prepare(sql);let args=[];return{bind(...a){args=a;return this},async first(){return stmt.get(...args)??null},async all(){return{success:true,results:stmt.all(...args)}},async run(){return{success:true,meta:{changes:Number(stmt.run(...args).changes)}}}}},async batch(stmts){sqlite.exec('BEGIN');try{const results=[];for(const s of stmts)results.push(await s.run());sqlite.exec('COMMIT');return results}catch(e){sqlite.exec('ROLLBACK');throw e}}};
-  const queued=[],env={DB,RUNTIME_MODE:'production',LINE_OWNER_USER_ID:'synthetic-owner',JOB_QUEUE:{async send(job){queued.push(job)}}};
+  const queued=[],env={DB,SYNC_ALERT_DURABLE_ENABLED:'true',RUNTIME_MODE:'production',LINE_OWNER_USER_ID:'synthetic-owner',JOB_QUEUE:{async send(job){queued.push(job)}}};
   assert.equal(await sweepSyncFailureAlerts(env),0);assert.equal(queued.length,0);
   sqlite.exec("INSERT INTO sync_jobs VALUES('new-job','ATTENDANCE_EVENT','new-attendance',1,'FAILED','new failure')");
   assert.equal(await sweepSyncFailureAlerts(env),1);assert.equal(await sweepSyncFailureAlerts(env),0);assert.equal(queued.length,1);

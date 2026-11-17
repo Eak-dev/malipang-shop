@@ -74,7 +74,7 @@ async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,tra
     if(await receiptConfirmationBlocked(env,event,expense.expenseId,traceId))return;
     await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
   }
-  else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
+  else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense,env.EXPENSE_SAVED_SYNC_NOTE_ENABLED==='true'),traceId);
   else await respondText(env,event,"This item was cancelled.",traceId);
 }
 
@@ -185,7 +185,7 @@ async function confirmExpense(
   if(version===null)return false;
   expense.status="CONFIRMED";
   await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:version,traceId});
-  await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
+  await respondFlex(env,event,buildExpenseSavedFlex(expense,env.EXPENSE_SAVED_SYNC_NOTE_ENABLED==='true'),traceId);
   return true;
 }
 

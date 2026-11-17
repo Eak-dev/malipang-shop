@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {generateKeyPairSync} from 'node:crypto';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),{ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js'),notice=require('../dist/sheets/stable-edit-notice.js');
 test('invocation notice reserves all postreads before dispatch and counts OAuth plus HTTP',async()=>{

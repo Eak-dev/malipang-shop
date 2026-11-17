@@ -105,7 +105,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       // Do not silently ignore the explicit override: a terminal delivery can
       // have written before its acknowledgement was lost. It needs its own
       // reconciliation; enqueueing it cannot prove that a replay is safe.
-      if(env.STABLE_PHASE1_ENABLED==='true'&&body.includeTerminalDlq===true)
+      if(env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true'&&body.includeTerminalDlq===true)
         return Response.json({ok:false,error:'TERMINAL_RECONCILIATION_REQUIRED'},{status:409});
       // Preserve the legacy administrative enqueue behavior when stable mode
       // is off; the separate terminal claim fence still applies.

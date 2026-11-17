@@ -31,7 +31,8 @@ test('summary Flex renders only actions for the actual unresolved fields',()=>{
 test('saved Flex offers audit-safe undo',()=>{
   const saved=JSON.stringify(buildExpenseSavedFlex({...expense,status:'CONFIRMED'}));
   assert.match(saved,/expense_undo/);
-  assert.match(saved,/การซิงก์ไป Sheets แยกต่างหาก/);
+  assert.doesNotMatch(saved,/การซิงก์ไป Sheets แยกต่างหาก/);
+  assert.match(JSON.stringify(buildExpenseSavedFlex({...expense,status:'CONFIRMED'},true)),/การซิงก์ไป Sheets แยกต่างหาก/);
 });
 
 test('guided review Flex is Thai-first while preserving usable action labels',()=>{

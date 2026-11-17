@@ -16,8 +16,10 @@ async function sendPersisted(env:Env,job:LineNotificationJob):Promise<void>{
 
 /** Trigger a separate Queue invocation: a notification failure cannot replay a
  * Sheets writer, and a failed wake-up is recovered by the scheduled sweep. */
+/** Default off: without it the pre-candidate direct owner alert is retained. */
+export function syncAlertDurableEnabled(env:Env):boolean{return env.SYNC_ALERT_DURABLE_ENABLED==='true';}
 export async function wakeSyncFailureAlerts(env:Env,budget?:ReviewRequestBudget):Promise<void>{
- if(!lineOutputEnabled(env))return;
+ if(!syncAlertDurableEnabled(env)||!lineOutputEnabled(env))return;
  try{budget?.consumeQueue();await env.JOB_QUEUE.send({kind:'SYNC_ALERT_SWEEP',traceId:'sync-alert-sweep'});}catch{ /* cron scans durable state */ }
 }
 
@@ -26,7 +28,7 @@ export async function wakeSyncFailureAlerts(env:Env,budget?:ReviewRequestBudget)
  * owner recipient and output become available. The original incident stores
  * no merchant, amount or receipt data. */
 export async function recoverDeferredAutoCancelAlerts(env:Env,limit=4):Promise<number>{
- if(!lineOutputEnabled(env)||!env.LINE_OWNER_USER_ID)return 0;
+ if(!syncAlertDurableEnabled(env)||!lineOutputEnabled(env)||!env.LINE_OWNER_USER_ID)return 0;
  const db=env.DB,owner=env.LINE_OWNER_USER_ID,safeLimit=Number.isFinite(limit)?Math.min(20,Math.max(1,Math.floor(limit))):4;
  const rows=await db.prepare(`SELECT f.id,f.updated_at,f.payload_json,e.description,e.amount_satang FROM failed_jobs f LEFT JOIN expense_events e ON e.expense_id=json_extract(CASE WHEN json_valid(f.payload_json) THEN f.payload_json ELSE '{}' END,'$.expenseId') AND e.status='CANCELLED' AND e.version=json_extract(CASE WHEN json_valid(f.payload_json) THEN f.payload_json ELSE '{}' END,'$.version') WHERE f.queue_name='malipang-jobs' AND f.status='OPEN' AND f.error='SYNC_AUTO_CANCEL_AWAITING_RECIPIENT' ORDER BY f.created_at LIMIT ?`).bind(safeLimit).all<{id:string;updated_at:string;payload_json:string;description:string|null;amount_satang:number|null}>();
  if(rows.success===false||!Array.isArray(rows.results))throw Error('SYNC_AUTO_CANCEL_INCIDENT_READ');
@@ -145,6 +147,6 @@ export async function syncFailureAlertSchemaReady(env:Env):Promise<boolean>{
  return !!triggers&&triggers.n===12;
 }
 export async function sweepSyncFailureAlerts(env:Env,limit=4):Promise<number|null>{
- if(!lineOutputEnabled(env)||!await syncFailureAlertSchemaReady(env))return null;
+ if(!syncAlertDurableEnabled(env)||!lineOutputEnabled(env)||!await syncFailureAlertSchemaReady(env))return null;
  return sweepDurableSyncFailureAlerts(env,Math.min(4,Math.max(1,Math.floor(limit))));
 }

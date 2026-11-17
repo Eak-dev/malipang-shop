@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),close=require('../dist/sheets/continuous-review-close.js'),{saveNormalNoticeHandoff}=require('../dist/sheets/continuous-normal-notice-handoff.js'),{runNoticeDispatch}=require('../dist/sheets/continuous-notice-dispatch.js'),worker=require('../dist/continuous-notice-worker.js').default;
 // Test-only stub: lifecycle tests simulate an already admitted readiness gate.

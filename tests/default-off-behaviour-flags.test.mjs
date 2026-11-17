@@ -102,3 +102,17 @@ test('R4 terminal hold under the recovery gate: an expense with an open terminal
   assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs").get().state,'ARMED');
  }finally{Object.assign(notice,{beginStableNotice:old.b,endStableNotice:old.e});Object.assign(pacing,{admitPacedWorkbookOperation:old.a,pacingPreflightBlocked:old.p});h.close();}
 });
+
+test('R7: a transient read failure of the activation marker is retried, not held for review',async()=>{
+ const {assertContinuousNoticeActivation,CONTINUOUS_NOTICE_ACTIVATION_BLOCKED}=require('../dist/sheets/continuous-notice-activation.js');
+ const h=expenseSqlite();try{
+  const prepare=h.DB.prepare;let fail=true;
+  h.DB.prepare=function(sql){const st=prepare.call(this,sql);if(sql.includes('FROM continuous_notice_activation')||sql.includes('continuous_notice_activation a')){const first=st.first;st.first=async function(){if(fail)throw Error('synthetic D1 timeout');return first.call(this);};}return st;};
+  const job={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_r7',entityVersion:1,traceId:'t'};
+  await assert.rejects(assertContinuousNoticeActivation(h.env,job),e=>e.message==='synthetic D1 timeout');
+  h.env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED='true';
+  await assert.rejects(assertContinuousNoticeActivation(h.env,job),e=>e.message===CONTINUOUS_NOTICE_ACTIVATION_BLOCKED);
+  delete h.env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED;fail=false;
+  await assertContinuousNoticeActivation(h.env,job);
+ }finally{h.close();}
+});

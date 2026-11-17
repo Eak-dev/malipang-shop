@@ -18,7 +18,12 @@ export async function assertContinuousNoticeActivation(env:Env,job:SheetsSyncJob
   // Pre-migration legacy installations may not have the marker table. Do not
   // treat a transient read error as missing schema: positively check it.
   const schema=await db.prepare("SELECT 1 AS ok FROM sqlite_master WHERE type='table' AND name='continuous_notice_activation'").first<{ok:number}>();
-  if(env.DB!==db||schema||env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true')throw Error(CONTINUOUS_NOTICE_ACTIVATION_BLOCKED);
+  if(env.DB!==db||env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true')throw Error(CONTINUOUS_NOTICE_ACTIVATION_BLOCKED);
+  // R7: the table exists, so the read failed for another (likely transient)
+  // reason. Rethrow it so the queue retries the message with backoff, as main
+  // does for any D1 failure, instead of holding the expense for review. The
+  // job is not processed either way, so no writer is selected without proof.
+  if(schema)throw error;
   return;
  }
  if(env.DB!==db||!row||row.proof!==1)throw Error(CONTINUOUS_NOTICE_ACTIVATION_BLOCKED);

@@ -8,6 +8,9 @@ set -euo pipefail
 test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN"
 umask 077
 T="$RUNNER_TEMP"; sql="$T/before.sql"; gz="$T/before.sql.gz"; dl="$T/downloaded.sql.gz"; db="$T/restored.sqlite"
+# Remove every dump and scratch file on any exit, including a failure midway.
+cleanup(){ rm -f "$sql" "$gz" "$dl" "$db" "$db-journal" "$T/retry.sqlite" "$T/retry.sqlite-journal" "$T/counts-before.txt" "$T/counts-after.txt" "$T/err.txt"; }
+trap cleanup EXIT
 key="d1/ops-rehearsal/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
 backup="${BACKUP_TO_R2:-false}"
 case "$backup" in true|false) ;; *) echo "- backup_flag: INVALID"; exit 1;; esac
@@ -51,8 +54,9 @@ echo "- migrations_applied_on_copy: $applied"
 if [ -n "$failed" ]; then echo "- migration_failed: $failed"; echo "- error_class: $(head -c 400 "$T/err.txt" | tr -c 'A-Za-z_ .:\n' ' ' | tr -s ' ' | head -2 | tr '\n' ' ')"; exit 1; fi
 echo "- ledger_head_after: $(q 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1')"
 counts > "$T/counts-after.txt"
-echo "- preexisting_table_count_mismatches: $(diff "$T/counts-before.txt" "$T/counts-after.txt" | grep -c '^[<>]' || true)"
-diff "$T/counts-before.txt" "$T/counts-after.txt" | grep '^[<>]' | sed -E 's/^([<>]) ([a-z0-9_]+)=([0-9]+)$/  - \1 \2 \3/' | grep -E '^  - [<>] [a-z0-9_]+ [0-9]+$' || true
+# Row counts stay private: report only which pre-existing tables changed.
+changed="$(diff "$T/counts-before.txt" "$T/counts-after.txt" | grep '^>' | sed -E 's/^> ([a-z0-9_]+)=[0-9]+$/\1/' | grep -E '^[a-z0-9_]+$' | grep -v '^d1_migrations$' | tr '\n' ' ' || true)"
+echo "- preexisting_tables_with_changed_row_count: ${changed:-none}"
 echo "- integrity_after: $(q 'PRAGMA integrity_check' | head -1 | tr -cd 'a-z')"
 echo "- fk_violations_after: $(q 'SELECT count(*) FROM pragma_foreign_key_check')"
 echo "- tables_after: $(q "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")"
@@ -80,5 +84,4 @@ smoke failed_job_resolve "UPDATE failed_jobs SET status='RESOLVED' WHERE id=(SEL
 smoke claim_touch "UPDATE stable_workbook_claims SET updated_at=updated_at; SELECT CASE WHEN changes()>=1 THEN 1 ELSE json_extract('x','\$') END;"
 smoke projection_insert "$(clone stable_projection_writes "entity_id='smoke-exp'" "WHERE entity_type='EXPENSE'")"
 echo "- finished_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-rm -f "$sql" "$gz" "$dl" "$db" "$T/retry.sqlite"
 test "$smoke_failed" = 0

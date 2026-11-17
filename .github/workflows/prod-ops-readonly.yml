@@ -58,16 +58,19 @@ jobs:
             want="$want WRITE BACKUP"
           fi
           [ "$CONFIRMATION" = "$want" ] || { echo 'confirmation text does not match'; exit 1; }
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.expected_sha }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with: {node-version: 22, cache: npm}
       - name: Install dependencies without lifecycle scripts
+        shell: bash
         run: npm ci --ignore-scripts
       - name: Snapshot (sanitized aggregates)
         if: inputs.operation == 'snapshot'
+        # bash runs with -eo pipefail, so a failing script fails the step despite tee.
+        shell: bash
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

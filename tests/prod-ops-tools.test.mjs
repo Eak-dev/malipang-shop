@@ -4,67 +4,97 @@ import {readFileSync,readdirSync,mkdtempSync,writeFileSync,chmodSync,existsSync,
 import {execFileSync,spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,safeVersionId,safePercentage} from '../scripts/prod-ops-snapshot.mjs';
+import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,safeVersionId,safePercentage,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
 
-const reject=(rows,reason)=>assert.throws(()=>sanitizeRows(rows),e=>e instanceof SnapshotSanitizerError&&e.message===`SNAPSHOT_SANITIZER_${reason}`);
+const reject=(query,rows,reason)=>assert.throws(()=>sanitizeRows(query,rows),e=>e instanceof SnapshotSanitizerError&&e.message===`SNAPSHOT_SANITIZER_${reason}`);
+const code=c=>`CASE WHEN ${c} IS NULL THEN 'NONE' WHEN ${c} GLOB '*[^A-Z0-9_]*' OR ${c} GLOB '[^A-Z]*' OR length(${c})>64 THEN 'OTHER' ELSE ${c} END`;
 
-test('sanitizer accepts counts, codes, ISO days and migration names',()=>{
-  const rows=[{entity_type:'EXPENSE',status:'PENDING',error_code:'NONE',n:3,oldest_day:'2026-11-04',newest_day:'2026-11-16'},{name:'0023_stable_recovery_admission.sql',total_count:0}];
-  assert.deepEqual(sanitizeRows(rows),rows);
+test('the snapshot SQL and column allowlists are pinned exactly',()=>{
+  // Any change here is a change to what reaches a public log: review it.
+  assert.deepEqual(JSON.parse(JSON.stringify(QUERIES)),{
+    migrations_applied:{sql:'SELECT name AS migration FROM d1_migrations ORDER BY id',columns:{migration:'migration'}},
+    tables:{sql:"SELECT name AS table_name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name",columns:{table_name:'table'}},
+    abnormal_sync_jobs:{sql:`SELECT entity_type,status,${code('last_error')} AS error_code,count(*) AS n FROM sync_jobs WHERE status IN ('FAILED','REVIEW') GROUP BY 1,2,3 ORDER BY 1,2,3`,columns:{entity_type:'entity',status:'jobStatus',error_code:'code',n:'count'}},
+    open_failed_jobs:{sql:"SELECT count(*) AS n FROM failed_jobs WHERE status='OPEN'",columns:{n:'count'}},
+    workbook_claims:{sql:`SELECT state,${code('review_reason')} AS reason,count(*) AS n FROM stable_workbook_claims GROUP BY 1,2`,columns:{state:'claimState',reason:'code',n:'count'}},
+    abnormal_inbound:{sql:"SELECT status,count(*) AS n FROM inbound_events WHERE status IN ('FAILED','REVIEW') GROUP BY 1 ORDER BY 1",columns:{status:'inboundStatus',n:'count'}},
+  });
+  assert.equal(Object.isFrozen(QUERIES),true);
 });
 
-test('sanitizer rejects any number outside a count column, including amounts and versions',()=>{
-  reject([{status:'CONFIRMED',amount_satang:159725}],'NUMBER_OUTSIDE_COUNT');
-  reject([{status:'CONFIRMED',total_satang:1}],'NUMBER_OUTSIDE_COUNT');
-  reject([{status:'CONFIRMED',max_version:3}],'NUMBER_OUTSIDE_COUNT');
-  reject([{id:12,name:'0012_x.sql'}],'NUMBER_OUTSIDE_COUNT');
+test('snapshot SQL reads no amount, identifier, description, normal-work count or date',()=>{
+  const sql=Object.values(QUERIES).map(q=>q.sql).join('\n').toLowerCase();
+  for(const word of ['amount','satang','description','line_user_id','expense_id','message_id','entity_key','trace_id','sum(','updated_at','created_at','expense_events',"'completed'","'pending'",'159725','166800'])assert.equal(sql.includes(word),false,word);
 });
 
-test('sanitizer rejects free text, numeric-looking strings and identifiers in code columns',()=>{
-  reject([{status:'1597.25'}],'CODE_VALUE');
-  reject([{status:'Synthetic store'}],'CODE_VALUE');
-  reject([{status:'exp_0123456789'}],'CODE_VALUE');
-  reject([{line_user:'U0123456789abcdef0123456789abcdef'}],'CODE_VALUE');
-  reject([{newest_day:'2026-11-16T10:00:00Z'}],'DAY_VALUE');
-  reject([{name:'../secret'}],'NAME_VALUE');
+test('sanitizer accepts only the allowlisted columns and value kinds for each query',()=>{
+  const rows=[{entity_type:'EXPENSE',status:'REVIEW',error_code:'STABLE_SYNC_REVIEW',n:1}];
+  assert.deepEqual(sanitizeRows('abnormal_sync_jobs',rows),rows);
+  assert.deepEqual(sanitizeRows('migrations_applied',[{migration:'0023_stable_recovery_admission.sql'}]),[{migration:'0023_stable_recovery_admission.sql'}]);
+  reject('nope',[],'UNKNOWN_QUERY');
 });
 
-test('sanitizer rejects bad counts, odd shapes and oversized results without echoing values',()=>{
-  reject([{n:-1}],'COUNT_VALUE');reject([{n:1.5}],'COUNT_VALUE');reject([{n:'7'}],'COUNT_VALUE');
-  reject([{'Amount':1}],'COLUMN_NAME');reject([['x']],'NOT_OBJECT');reject('rows','NOT_ROWS');
-  reject(Array.from({length:401},()=>({n:1})),'TOO_MANY_ROWS');
-  try{sanitizeRows([{status:'secret value 123'}]);assert.fail('should throw');}catch(e){assert.equal(String(e.message).includes('secret'),false);}
+test('sanitizer blocks the bypasses found in review',()=>{
+  // An amount aliased as a count column of another query, or an extra column.
+  reject('abnormal_sync_jobs',[{entity_type:'EXPENSE',status:'REVIEW',error_code:'NONE',n:1,amount_n:159725}],'COLUMNS');
+  reject('open_failed_jobs',[{total_n:5}],'COLUMNS');
+  // An id or amount returned under an allowed name.
+  reject('migrations_applied',[{migration:'12'}],'VALUE');
+  reject('migrations_applied',[{migration:159725}],'VALUE');
+  reject('tables',[{table_name:'exp_0123'.toUpperCase()}],'VALUE');
+  // A per-row date under any column.
+  reject('abnormal_inbound',[{status:'2026-11-16',n:1}],'VALUE');
+  // Free upper-case text where a fixed status set is required.
+  reject('abnormal_sync_jobs',[{entity_type:'SYNTHETIC_STORE_NAME',status:'REVIEW',error_code:'NONE',n:1}],'VALUE');
+  reject('abnormal_sync_jobs',[{entity_type:'EXPENSE',status:'COMPLETED',error_code:'NONE',n:1}],'VALUE');
+  reject('workbook_claims',[{state:'REVIEW',reason:'1597',n:1}],'VALUE');
+  reject('open_failed_jobs',[{n:-1}],'VALUE');reject('open_failed_jobs',[{n:1.5}],'VALUE');reject('open_failed_jobs',[{n:'7'}],'VALUE');
+  reject('open_failed_jobs',[['x']],'NOT_OBJECT');reject('open_failed_jobs','rows','NOT_ROWS');
+  reject('open_failed_jobs',Array.from({length:401},()=>({n:1})),'TOO_MANY_ROWS');
+  try{sanitizeRows('workbook_claims',[{state:'REVIEW',reason:'secret value',n:1}]);assert.fail('should throw');}catch(e){assert.equal(String(e.message).includes('secret'),false);}
 });
 
-test('snapshot queries contain no amount column, hardcoded amount or row identifier',()=>{
-  const sql=QUERIES.map(([,q])=>q).join('\n');
-  for(const word of ['amount','satang','description','line_user_id','expense_id','message_id','159725','166800','sum('])assert.equal(sql.toLowerCase().includes(word),false,word);
+test('pending migrations are those in this commit that D1 has not applied',()=>{
+  assert.deepEqual(pendingMigrations(['0001_a.sql','0002_b.sql'],['0001_a.sql','0002_b.sql','0003_c.sql']),['0003_c.sql']);
+  const local=localMigrations();assert.ok(local.length>0);assert.equal(local.every(n=>/^\d{4}_[a-z0-9_]+\.sql$/.test(n)),true);
 });
 
-test('collect prints sanitized tables and withholds unsafe provider fields',()=>{
+test('collect prints sanitized sections, pending migrations and withholds unsafe provider fields',()=>{
   const calls=[];
-  const run=args=>{calls.push(args);if(args[0]==='deployments')return JSON.stringify({versions:[{version_id:'d0000000-0000-4000-8000-000000000000',percentage:100},{version_id:'not-a-uuid',percentage:'x'}]});
-    if(args.at(-1).includes('expense_events'))return JSON.stringify([{results:[{status:'CONFIRMED',n:2,amount_satang:999}]}]);
-    return JSON.stringify([{results:[{status:'OPEN',n:1}]}]);};
-  const text=collect(run,()=>'2026-11-17T00:00:00.000Z');
-  assert.match(text,/### expense_status\nSNAPSHOT_SANITIZER_NUMBER_OUTSIDE_COUNT/);
-  assert.equal(text.includes('999'),false);
+  const run=args=>{calls.push(args);
+    if(args[0]==='deployments')return JSON.stringify({versions:[{version_id:'d0000000-0000-4000-8000-000000000000',percentage:100},{version_id:'not-a-uuid',percentage:'x'}]});
+    const sql=args.at(-1);
+    if(sql.includes('d1_migrations'))return JSON.stringify([{results:[{migration:'0001_a.sql'}]}]);
+    if(sql.includes('inbound_events'))return JSON.stringify([{results:[{status:'FAILED',n:2,amount_satang:999}]}]);
+    if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:4}]}]);
+    return JSON.stringify([{results:[]}]);};
+  const text=collect(run,()=>'2026-11-17T00:00:00.000Z',['0001_a.sql','0002_b.sql']);
+  assert.match(text,/### abnormal_inbound\nSNAPSHOT_SANITIZER_COLUMNS/);assert.equal(text.includes('999'),false);
+  assert.match(text,/### migrations_pending_in_this_commit\n- 0002_b\.sql/);assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 4 \|/);
   assert.match(text,/version d0000000-0000-4000-8000-000000000000 at 100%/);assert.match(text,/version WITHHELD at WITHHELD%/);
+  assert.equal(snapshotIncomplete(text),true);
   assert.equal(calls.every(a=>a[0]==='deployments'||a.includes('--remote')&&a.includes('--json')),true);
-  assert.equal(calls.some(a=>a.includes('migrations')&&a.includes('apply')),false);
+  assert.equal(calls.some(a=>a.includes('apply')),false);
   assert.equal(safeVersionId(undefined),'WITHHELD');assert.equal(safePercentage(101),'WITHHELD');
+  const clean=collect(a=>a[0]==='deployments'?'{"versions":[]}':a.at(-1).includes('d1_migrations')?'[{"results":[{"migration":"0001_a.sql"}]}]':'[{"results":[]}]',()=>'t',['0001_a.sql']);
+  assert.equal(snapshotIncomplete(clean),false);assert.match(clean,/migrations_pending_in_this_commit\n\(none\)/);
 });
 
-test('ops workflow is manual-only, main-only, gated and scopes the token to wrangler steps',()=>{
+test('ops workflow is manual-only, main-only, gated, pinned and scopes the token to wrangler steps',()=>{
   const wf=readFileSync(new URL('../.github/workflows/prod-ops-readonly.yml',import.meta.url),'utf8');
   const on=wf.slice(wf.indexOf('\non:'),wf.indexOf('\npermissions:'));
   assert.match(on,/workflow_dispatch:/);assert.doesNotMatch(on,/\n {2}(push|pull_request|schedule|workflow_run):/);
   assert.match(wf,/if: github\.ref == 'refs\/heads\/main'/);assert.match(wf,/environment: production/);
   assert.match(wf,/npm ci --ignore-scripts/);assert.match(wf,/persist-credentials: false/);
+  for(const line of wf.split('\n').filter(l=>/uses:/.test(l)))assert.match(line,/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,line);
   const job=wf.slice(wf.indexOf('\n  ops:'),wf.indexOf('\n    steps:'));
   assert.doesNotMatch(job,/CLOUDFLARE_/,'token must not be set at job level');
   const steps=wf.split('\n      - ').slice(1);
-  for(const step of steps){const usesToken=/CLOUDFLARE_API_TOKEN/.test(step),runsWrangler=/prod-ops-(snapshot|backup-rehearsal)/.test(step);assert.equal(usesToken,runsWrangler,step.split('\n')[0]);}
+  for(const step of steps){
+    const usesToken=/CLOUDFLARE_API_TOKEN/.test(step),runsWrangler=/prod-ops-(snapshot|backup-rehearsal)/.test(step);
+    assert.equal(usesToken,runsWrangler,step.split('\n')[0]);
+    if(/run: .*\|/.test(step))assert.match(step,/shell: bash/,`piped step needs pipefail: ${step.split('\n')[0]}`);
+  }
   assert.match(wf,/\[ "\$EXPECTED_SHA" = "\$GITHUB_SHA" \]/);assert.match(wf,/READ PRODUCTION \$\{EXPECTED_SHA:0:7\}/);assert.match(wf,/WRITE BACKUP/);
   assert.doesNotMatch(wf,/wrangler (deploy|d1 migrations apply|versions deploy|rollback)/);
 });
@@ -94,6 +124,11 @@ INSERT INTO stable_projection_writes VALUES('book','EXPENSE','e0','DAILY',1,'dai
     assert.doesNotMatch(r.stdout,/smoke_[a-z_A-Z]+: FAIL/);assert.match(r.stdout,/smoke_failed_job_insert: PASS/);
     assert.equal(readFileSync(log,'utf8').includes('r2 object'),false,'no R2 call without the flag');
     assert.equal(r.stdout.includes('synthetic'),false,'row data never printed');
+    assert.deepEqual(readdirSync(rt),[],'all dumps and scratch files removed on success');
     assert.equal(run({BACKUP_TO_R2:'yes'}).status,1);
+    // A failure midway (restore of an unreadable dump) still removes every file.
+    writeFileSync(join(bin,'npx'),`#!/bin/bash\nfor a in "$@"; do case $a in --output=*) echo 'not sql' > "\${a#--output=}";; esac; done\n`);chmodSync(join(bin,'npx'),0o755);
+    const broken=spawnSync('bash',[new URL('../scripts/prod-ops-backup-rehearsal.sh',import.meta.url).pathname],{encoding:'utf8',env:{...process.env,PATH:`${bin}:${process.env.PATH}`,RUNNER_TEMP:rt,CLOUDFLARE_ACCOUNT_ID:'synthetic',CLOUDFLARE_API_TOKEN:'synthetic',GITHUB_RUN_ID:'1',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:'0'.repeat(40)}});
+    assert.notEqual(broken.status,0);assert.deepEqual(readdirSync(rt),[],'all files removed after a failure');
   }finally{rmSync(dir,{recursive:true,force:true});}
 });

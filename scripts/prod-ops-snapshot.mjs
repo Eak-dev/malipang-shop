@@ -1,13 +1,14 @@
 // Read-only Production snapshot for operators. The repository is public, so
-// the output is limited to what an operator needs before a release:
-//  - migrations applied on D1 and migrations still pending in this commit
+// the output carries no Production numbers at all:
+//  - migration file names applied on D1 and still pending in this commit
 //  - table names present in D1
-//  - Worker version ids and traffic split
-//  - counts of abnormal work only (FAILED/REVIEW jobs, open failed jobs,
-//    workbook claims under review, failed/review inbound events)
-// No amounts, identifiers, descriptions, normal-work counts or dates.
-// Each query has a fixed column allowlist in QUERIES; sanitizeRows() rejects
-// any row whose columns or values do not match it, and tests pin the SQL.
+//  - abnormal-work counts as range labels only: 0, 1-9 or 10+
+//  - the live Worker version compared with an expected id: MATCH, MISMATCH
+//    or NOT_CHECKED (the id itself is never printed)
+// Each query has a fixed column allowlist in QUERIES, sanitizeRows() rejects
+// rows that do not match it, and tests pin the SQL and check the rendered
+// output for digits. These checks narrow what a query can expose; they do not
+// prove that a future change to QUERIES is safe, which still needs review.
 import {execFileSync} from 'node:child_process';
 import {readdirSync} from 'node:fs';
 import {pathToFileURL,fileURLToPath} from 'node:url';
@@ -59,26 +60,34 @@ export function sanitizeRows(queryName,rows){
   });
 }
 
-export function renderTable(title,rows){
-  const lines=[`### ${title}`];
+/** A count is never printed; only its range. */
+export function countBucket(n){if(!Number.isSafeInteger(n)||n<0)throw new SnapshotSanitizerError('VALUE');return n===0?'0':n<10?'1-9':'10+';}
+
+export function renderTable(queryName,rows){
+  const lines=[`### ${queryName}`];
   if(!rows.length)return [...lines,'(no rows)',''];
-  const keys=Object.keys(rows[0]);
+  const columns=QUERIES[queryName].columns,keys=Object.keys(columns);
   lines.push(`| ${keys.join(' | ')} |`,`|${keys.map(()=>'---').join('|')}|`);
-  for(const row of rows)lines.push(`| ${keys.map(k=>String(row[k])).join(' | ')} |`);
+  for(const row of rows)lines.push(`| ${keys.map(k=>columns[k]==='count'?countBucket(row[k]):String(row[k])).join(' | ')} |`);
   return [...lines,''];
 }
 
 export function pendingMigrations(applied,local){const done=new Set(applied);return local.filter(name=>!done.has(name));}
 export function localMigrations(dir=fileURLToPath(new URL('../migrations/',import.meta.url))){return readdirSync(dir).filter(n=>KINDS.migration(n)).sort();}
 
-/** A Cloudflare id is a UUID; anything else is withheld. */
-export function safeVersionId(value){return typeof value==='string'&&/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(value)?value:'WITHHELD';}
-export function safePercentage(value){return typeof value==='number'&&Number.isFinite(value)&&value>=0&&value<=100?String(value):'WITHHELD';}
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+/** MATCH only when a single version serves 100% and equals the expected id. */
+export function workerVersionCheck(status,expected){
+  if(!expected)return 'NOT_CHECKED';
+  if(!UUID.test(expected))return 'INVALID_EXPECTED';
+  const versions=Array.isArray(status?.versions)?status.versions:[];
+  return versions.length===1&&versions[0]?.percentage===100&&versions[0]?.version_id===expected?'MATCH':'MISMATCH';
+}
 
 function wrangler(args){return execFileSync('npx',['wrangler',...args],{encoding:'utf8',stdio:['ignore','pipe','ignore'],maxBuffer:32*1024*1024});}
 
-export function collect(run=wrangler,now=()=>new Date().toISOString(),local=localMigrations()){
-  const out=['## Read-only Production snapshot',`- collected_at: ${now()}`,`- source_sha: ${/^[0-9a-f]{40}$/.test(process.env.GITHUB_SHA??'')?process.env.GITHUB_SHA:'unknown'}`,''];
+export function collect(run=wrangler,expectedWorker=process.env.EXPECTED_WORKER_VERSION??'',local=localMigrations()){
+  const out=['## Read-only Production snapshot',''];
   let applied=null;
   for(const [name,{sql}] of Object.entries(QUERIES)){
     try{
@@ -90,14 +99,14 @@ export function collect(run=wrangler,now=()=>new Date().toISOString(),local=loca
   out.push('### migrations_pending_in_this_commit');
   if(applied===null)out.push('UNKNOWN (applied list unavailable)','');
   else{const pending=pendingMigrations(applied,local);out.push(...(pending.length?pending.map(n=>`- ${n}`):['(none)']),'');}
-  out.push('### worker_deployment');
-  try{const status=JSON.parse(run(['deployments','status','--json']));out.push(...(status.versions??[]).map(v=>`- version ${safeVersionId(v.version_id)} at ${safePercentage(v.percentage)}%`),'');}
-  catch{out.push('QUERY_FAILED','');}
+  out.push('### worker_version');
+  if(!expectedWorker)out.push('NOT_CHECKED','');
+  else{try{out.push(workerVersionCheck(JSON.parse(run(['deployments','status','--json'])),expectedWorker),'');}catch{out.push('QUERY_FAILED','');}}
   return out.join('\n')+'\n';
 }
 
 /** True when any section could not be read or was rejected by the sanitizer. */
-export function snapshotIncomplete(text){return /^(QUERY_FAILED|SNAPSHOT_SANITIZER_[A-Z_]+|UNKNOWN \(applied list unavailable\))$/m.test(text);}
+export function snapshotIncomplete(text){return /^(QUERY_FAILED|INVALID_EXPECTED|SNAPSHOT_SANITIZER_[A-Z_]+|UNKNOWN \(applied list unavailable\))$/m.test(text);}
 
 if(import.meta.url===pathToFileURL(process.argv[1]??'').href){
   const text=collect();process.stdout.write(text);

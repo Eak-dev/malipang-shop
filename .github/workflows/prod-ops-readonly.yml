@@ -1,11 +1,15 @@
 name: Production ops (read-only snapshot / backup rehearsal)
 
 # Manual only. Runs from main, behind the `production` environment approval.
-# snapshot: aggregate counts, migration names and Worker version ids only.
-# rehearsal: exports D1 (read), restores it on the runner and rehearses
-#   pending migrations on the copy. Writes ONE private R2 backup object only
+# snapshot: SELECT-only reads; prints migration names, table names, range
+#   labels (0, 1-9, 10+) for abnormal work and a Worker version MATCH/MISMATCH.
+# rehearsal: `wrangler d1 export --remote`, then restores the copy on the
+#   runner and rehearses pending migrations there. Cloudflare's D1 docs state
+#   that a running export blocks other database requests, so a rehearsal must
+#   run in a quiet window recorded in its Production Change issue (an earlier
+#   export took about ten seconds). It writes ONE private R2 backup object only
 #   when write_backup is true. Never deploys, migrates or writes D1.
-# The repository is public: scripts must print sanitized aggregates only.
+# The repository is public: scripts print no Production numbers or identifiers.
 on:
   workflow_dispatch:
     inputs:
@@ -26,6 +30,11 @@ on:
         description: rehearsal only — also store one private R2 backup object
         type: boolean
         default: false
+      expected_worker_version:
+        description: snapshot only, optional — Worker version id expected at 100% (printed as MATCH/MISMATCH, never echoed)
+        type: string
+        required: false
+        default: ''
 
 permissions:
   contents: read
@@ -48,6 +57,7 @@ jobs:
           CONFIRMATION: ${{ inputs.confirmation }}
           OPERATION: ${{ inputs.operation }}
           WRITE_BACKUP: ${{ inputs.write_backup }}
+          EXPECTED_WORKER_VERSION: ${{ inputs.expected_worker_version }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected_sha must be 40 lowercase hex'; exit 1; }
@@ -58,6 +68,10 @@ jobs:
             want="$want WRITE BACKUP"
           fi
           [ "$CONFIRMATION" = "$want" ] || { echo 'confirmation text does not match'; exit 1; }
+          if [ -n "$EXPECTED_WORKER_VERSION" ]; then
+            [[ "$EXPECTED_WORKER_VERSION" =~ ^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$ ]] || { echo 'expected_worker_version must be a version id'; exit 1; }
+            [ "$OPERATION" = snapshot ] || { echo 'expected_worker_version is only valid for snapshot'; exit 1; }
+          fi
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           ref: ${{ inputs.expected_sha }}
@@ -74,6 +88,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_WORKER_VERSION: ${{ inputs.expected_worker_version }}
         run: node scripts/prod-ops-snapshot.mjs | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Backup and migration rehearsal
         if: inputs.operation == 'rehearsal'

@@ -4,7 +4,10 @@ import {readFileSync,readdirSync,mkdtempSync,writeFileSync,chmodSync,existsSync,
 import {execFileSync,spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,safeVersionId,safePercentage,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
+import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,countBucket,workerVersionCheck,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
+
+/** Strip migration file names and range labels; nothing numeric may remain. */
+const digitsOutsideAllowed=text=>text.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\| (0|1-9|10\+) \|/g,'| |').replace(/\bd1_migrations\b/g,'').match(/\d/g);
 
 const reject=(query,rows,reason)=>assert.throws(()=>sanitizeRows(query,rows),e=>e instanceof SnapshotSanitizerError&&e.message===`SNAPSHOT_SANITIZER_${reason}`);
 const code=c=>`CASE WHEN ${c} IS NULL THEN 'NONE' WHEN ${c} GLOB '*[^A-Z0-9_]*' OR ${c} GLOB '[^A-Z]*' OR length(${c})>64 THEN 'OTHER' ELSE ${c} END`;
@@ -59,25 +62,42 @@ test('pending migrations are those in this commit that D1 has not applied',()=>{
   const local=localMigrations();assert.ok(local.length>0);assert.equal(local.every(n=>/^\d{4}_[a-z0-9_]+\.sql$/.test(n)),true);
 });
 
-test('collect prints sanitized sections, pending migrations and withholds unsafe provider fields',()=>{
-  const calls=[];
+test('counts become range labels and the Worker id is only compared',()=>{
+  assert.deepEqual([0,1,9,10,9999].map(countBucket),['0','1-9','1-9','10+','10+']);
+  assert.throws(()=>countBucket(-1));assert.throws(()=>countBucket(1.5));
+  const id='d0000000-0000-4000-8000-000000000000';
+  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:100}]},id),'MATCH');
+  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:90},{version_id:'e0000000-0000-4000-8000-000000000000',percentage:10}]},id),'MISMATCH');
+  assert.equal(workerVersionCheck({versions:[{version_id:'e0000000-0000-4000-8000-000000000000',percentage:100}]},id),'MISMATCH');
+  assert.equal(workerVersionCheck({versions:[]},''),'NOT_CHECKED');assert.equal(workerVersionCheck({},'nope'),'INVALID_EXPECTED');
+});
+
+test('collect output has no Production numbers: only migration names and range labels',()=>{
+  const calls=[],id='d0000000-0000-4000-8000-000000000000';
   const run=args=>{calls.push(args);
-    if(args[0]==='deployments')return JSON.stringify({versions:[{version_id:'d0000000-0000-4000-8000-000000000000',percentage:100},{version_id:'not-a-uuid',percentage:'x'}]});
+    if(args[0]==='deployments')return JSON.stringify({versions:[{version_id:id,percentage:100}]});
     const sql=args.at(-1);
-    if(sql.includes('d1_migrations'))return JSON.stringify([{results:[{migration:'0001_a.sql'}]}]);
-    if(sql.includes('inbound_events'))return JSON.stringify([{results:[{status:'FAILED',n:2,amount_satang:999}]}]);
-    if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:4}]}]);
-    return JSON.stringify([{results:[]}]);};
-  const text=collect(run,()=>'2026-11-17T00:00:00.000Z',['0001_a.sql','0002_b.sql']);
-  assert.match(text,/### abnormal_inbound\nSNAPSHOT_SANITIZER_COLUMNS/);assert.equal(text.includes('999'),false);
-  assert.match(text,/### migrations_pending_in_this_commit\n- 0002_b\.sql/);assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 4 \|/);
-  assert.match(text,/version d0000000-0000-4000-8000-000000000000 at 100%/);assert.match(text,/version WITHHELD at WITHHELD%/);
-  assert.equal(snapshotIncomplete(text),true);
+    if(sql.includes('d1_migrations'))return JSON.stringify([{results:[{migration:'0001_a.sql'},{migration:'0023_stable_recovery_admission.sql'}]}]);
+    if(sql.includes('sqlite_master'))return JSON.stringify([{results:[{table_name:'d1_migrations'},{table_name:'sync_jobs'}]}]);
+    if(sql.includes('sync_jobs'))return JSON.stringify([{results:[{entity_type:'EXPENSE',status:'REVIEW',error_code:'STABLE_SYNC_REVIEW',n:13},{entity_type:'ATTENDANCE_EVENT',status:'FAILED',error_code:'NONE',n:4}]}]);
+    if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:22}]}]);
+    if(sql.includes('stable_workbook_claims'))return JSON.stringify([{results:[{state:'REVIEW',reason:'STABLE_DAILY_REVIEW',n:1}]}]);
+    return JSON.stringify([{results:[{status:'FAILED',n:0}]}]);};
+  const text=collect(run,id,['0001_a.sql','0023_stable_recovery_admission.sql','0024_next.sql']);
+  assert.equal(digitsOutsideAllowed(text),null,text);
+  assert.match(text,/\| EXPENSE \| REVIEW \| STABLE_SYNC_REVIEW \| 10\+ \|/);assert.match(text,/\| ATTENDANCE_EVENT \| FAILED \| NONE \| 1-9 \|/);
+  assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 10\+ \|/);
+  assert.match(text,/### migrations_pending_in_this_commit\n- 0024_next\.sql/);
+  assert.match(text,/### worker_version\nMATCH/);assert.equal(text.includes(id),false);
+  assert.equal(snapshotIncomplete(text),false);
   assert.equal(calls.every(a=>a[0]==='deployments'||a.includes('--remote')&&a.includes('--json')),true);
   assert.equal(calls.some(a=>a.includes('apply')),false);
-  assert.equal(safeVersionId(undefined),'WITHHELD');assert.equal(safePercentage(101),'WITHHELD');
-  const clean=collect(a=>a[0]==='deployments'?'{"versions":[]}':a.at(-1).includes('d1_migrations')?'[{"results":[{"migration":"0001_a.sql"}]}]':'[{"results":[]}]',()=>'t',['0001_a.sql']);
-  assert.equal(snapshotIncomplete(clean),false);assert.match(clean,/migrations_pending_in_this_commit\n\(none\)/);
+  // No expected id: the deployment API is not called and nothing is echoed.
+  const before=calls.length;const unchecked=collect(run,'',['0001_a.sql','0023_stable_recovery_admission.sql']);
+  assert.match(unchecked,/### worker_version\nNOT_CHECKED/);assert.equal(calls.slice(before).some(a=>a[0]==='deployments'),false);
+  // A rejected section is replaced by a code and marks the snapshot incomplete.
+  const bad=collect(a=>a[0]==='deployments'?'{}':a.at(-1).includes('inbound_events')?JSON.stringify([{results:[{status:'FAILED',n:2,amount_satang:999}]}]):'[{"results":[]}]','',[]);
+  assert.match(bad,/### abnormal_inbound\nSNAPSHOT_SANITIZER_COLUMNS/);assert.equal(bad.includes('999'),false);assert.equal(snapshotIncomplete(bad),true);
 });
 
 test('ops workflow is manual-only, main-only, gated, pinned and scopes the token to wrangler steps',()=>{
@@ -97,6 +117,7 @@ test('ops workflow is manual-only, main-only, gated, pinned and scopes the token
   }
   assert.match(wf,/\[ "\$EXPECTED_SHA" = "\$GITHUB_SHA" \]/);assert.match(wf,/READ PRODUCTION \$\{EXPECTED_SHA:0:7\}/);assert.match(wf,/WRITE BACKUP/);
   assert.doesNotMatch(wf,/wrangler (deploy|d1 migrations apply|versions deploy|rollback)/);
+  assert.match(wf,/blocks other database requests/);assert.match(wf,/EXPECTED_WORKER_VERSION/);
 });
 
 const hasSqlite=spawnSync('sqlite3',['-version']).status===0;
@@ -120,8 +141,9 @@ INSERT INTO stable_projection_writes VALUES('book','EXPENSE','e0','DAILY',1,'dai
     const run=extra=>spawnSync('bash',[new URL('../scripts/prod-ops-backup-rehearsal.sh',import.meta.url).pathname],{encoding:'utf8',env:{...process.env,PATH:`${bin}:${process.env.PATH}`,RUNNER_TEMP:rt,CLOUDFLARE_ACCOUNT_ID:'synthetic',CLOUDFLARE_API_TOKEN:'synthetic',GITHUB_RUN_ID:'1',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:'0'.repeat(40),...extra}});
     const r=run({});
     assert.equal(r.status,0,r.stdout+r.stderr);
-    assert.match(r.stdout,/backup_upload: SKIPPED/);assert.match(r.stdout,/integrity_after: ok/);assert.match(r.stdout,/fk_violations_after: 0/);
+    assert.match(r.stdout,/backup_upload: SKIPPED/);assert.match(r.stdout,/integrity_after: PASS/);assert.match(r.stdout,/foreign_keys_after: PASS/);
     assert.doesNotMatch(r.stdout,/smoke_[a-z_A-Z]+: FAIL/);assert.match(r.stdout,/smoke_failed_job_insert: PASS/);
+    assert.equal(digitsOutsideAllowed(r.stdout),null,r.stdout);assert.match(r.stdout,/migrations_applied_on_copy: 0024_/);assert.match(r.stdout,/preexisting_rows_unchanged: PASS/);assert.match(r.stdout,/smoke_all: PASS/);
     assert.equal(readFileSync(log,'utf8').includes('r2 object'),false,'no R2 call without the flag');
     assert.equal(r.stdout.includes('synthetic'),false,'row data never printed');
     assert.deepEqual(readdirSync(rt),[],'all dumps and scratch files removed on success');

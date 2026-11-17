@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Exports Production D1 (read), restores it on the runner and rehearses the
 # pending migrations on that copy. A private R2 backup object is written ONLY
-# when BACKUP_TO_R2=true (an explicit workflow input). The repository is
-# public: print aggregates, file names and checksums only, never row data or
-# raw tool output.
+# when BACKUP_TO_R2=true; its key is d1/ops-rehearsal/<run id>-<attempt>.sql.gz.
+# WARNING: per Cloudflare's D1 docs a running export blocks other database
+# requests, so run this only in an approved quiet window.
+# The repository is public. Output is limited to PASS/FAIL/SKIPPED per step and
+# migration file names: no sizes, checksums, table or row counts, row data or
+# raw tool output. Error text is reduced to letters before printing.
 set -euo pipefail
 test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN"
 umask 077
@@ -15,58 +18,52 @@ key="d1/ops-rehearsal/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
 backup="${BACKUP_TO_R2:-false}"
 case "$backup" in true|false) ;; *) echo "- backup_flag: INVALID"; exit 1;; esac
 q(){ sqlite3 "$db" "$1"; }
+pf(){ if [ "$1" = 1 ]; then echo PASS; else echo FAIL; fi; }
 echo "## Backup and migration rehearsal"
-echo "- started_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-echo "- source_sha: ${GITHUB_SHA}"
-npx wrangler d1 export malipang-v5-2 --remote --output="$sql" >/dev/null 2>&1 || { echo "- export: FAILED"; exit 1; }
+npx wrangler d1 export malipang-v5-2 --remote --output="$sql" >/dev/null 2>&1 || { echo "- export: FAIL"; exit 1; }
 gzip -c "$sql" > "$gz"; gzip -t "$gz"
+echo "- export: PASS"
 sum="$(sha256sum "$gz" | cut -d' ' -f1)"
-echo "- export_sha256: $sum"
-echo "- export_bytes: $(stat -c %s "$gz")"
 if [ "$backup" = true ]; then
-  npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote >/dev/null 2>&1 || { echo "- backup_upload: FAILED"; exit 1; }
-  npx wrangler r2 object get "malipang-private-backups/$key" --file="$dl" --remote >/dev/null 2>&1 || { echo "- backup_download: FAILED"; exit 1; }
+  npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote >/dev/null 2>&1 || { echo "- backup_upload: FAIL"; exit 1; }
+  npx wrangler r2 object get "malipang-private-backups/$key" --file="$dl" --remote >/dev/null 2>&1 || { echo "- backup_download: FAIL"; exit 1; }
   gzip -t "$dl"
-  test "$sum" = "$(sha256sum "$dl" | cut -d' ' -f1)" || { echo "- backup_checksum: MISMATCH"; exit 1; }
-  echo "- backup_key: $key"
-  echo "- backup_checksum: VERIFIED"
+  test "$sum" = "$(sha256sum "$dl" | cut -d' ' -f1)" || { echo "- backup_checksum: FAIL"; exit 1; }
+  echo "- backup_upload: PASS (key from this run id)"
+  echo "- backup_checksum: PASS"
 else
   cp "$gz" "$dl"
-  echo "- backup_upload: SKIPPED (BACKUP_TO_R2 is not true)"
+  echo "- backup_upload: SKIPPED"
 fi
-gzip -dc "$dl" | sqlite3 -cmd "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;" "$db" >/dev/null 2>&1 || { echo "- restore: FAILED"; exit 1; }
-echo "- restore: OK"
-echo "- integrity_before: $(q 'PRAGMA integrity_check' | head -1 | tr -cd 'a-z')"
-echo "- fk_violations_before: $(q 'SELECT count(*) FROM pragma_foreign_key_check')"
-head_before="$(q 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1')"
-echo "- ledger_head: $head_before"
+gzip -dc "$dl" | sqlite3 -cmd "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;" "$db" >/dev/null 2>&1 || { echo "- restore: FAIL"; exit 1; }
+echo "- restore: PASS"
+echo "- integrity_before: $(pf "$( [ "$(q 'PRAGMA integrity_check' | head -1)" = ok ] && echo 1 )")"
+echo "- foreign_keys_before: $(pf "$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 )")"
+echo "- ledger_head: $(q 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' | grep -E '^[0-9]{4}_[a-z0-9_]+\.sql$' || echo UNKNOWN)"
 tables="$(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name")"
 counts(){ for t in $tables; do echo "$t=$(q "SELECT count(*) FROM \"$t\"")"; done; }
 counts > "$T/counts-before.txt"
-echo "- tables_before: $(wc -l < "$T/counts-before.txt")"
-applied=0; failed=""
+failed=""; applied_names=""
 for f in $(ls migrations/*.sql | sort); do
   name="$(basename "$f")"
   if [ "$(q "SELECT count(*) FROM d1_migrations WHERE name='$name'")" != 0 ]; then continue; fi
-  if sqlite3 -bail "$db" "BEGIN;" ".read $f" "INSERT INTO d1_migrations(name) VALUES('$name');" "COMMIT;" >/dev/null 2>"$T/err.txt"; then applied=$((applied+1)); else failed="$name"; break; fi
+  if sqlite3 -bail "$db" "BEGIN;" ".read $f" "INSERT INTO d1_migrations(name) VALUES('$name');" "COMMIT;" >/dev/null 2>"$T/err.txt"; then applied_names="$applied_names $name"; else failed="$name"; break; fi
 done
-echo "- migrations_applied_on_copy: $applied"
+echo "- migrations_applied_on_copy:${applied_names:- none}"
 if [ -n "$failed" ]; then echo "- migration_failed: $failed"; echo "- error_class: $(head -c 400 "$T/err.txt" | tr -c 'A-Za-z_ .:\n' ' ' | tr -s ' ' | head -2 | tr '\n' ' ')"; exit 1; fi
-echo "- ledger_head_after: $(q 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1')"
 counts > "$T/counts-after.txt"
-# Row counts stay private: report only which pre-existing tables changed.
-changed="$(diff "$T/counts-before.txt" "$T/counts-after.txt" | grep '^>' | sed -E 's/^> ([a-z0-9_]+)=[0-9]+$/\1/' | grep -E '^[a-z0-9_]+$' | grep -v '^d1_migrations$' | tr '\n' ' ' || true)"
-echo "- preexisting_tables_with_changed_row_count: ${changed:-none}"
-echo "- integrity_after: $(q 'PRAGMA integrity_check' | head -1 | tr -cd 'a-z')"
-echo "- fk_violations_after: $(q 'SELECT count(*) FROM pragma_foreign_key_check')"
-echo "- tables_after: $(q "SELECT count(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%'")"
-echo "- triggers_after: $(q "SELECT count(*) FROM sqlite_master WHERE type='trigger'")"
-echo "- activation_rows_after: $(q "SELECT (SELECT count(*) FROM continuous_daily_cutovers)+(SELECT count(*) FROM continuous_undo_serialization_activation)+(SELECT count(*) FROM continuous_cancel_financial_activation)")"
+# counts() reuses the pre-migration table list, so both files list the same
+# tables in the same order. Rows must not change; d1_migrations gains ledger rows.
+unchanged="$( [ "$(grep -v '^d1_migrations=' "$T/counts-before.txt")" = "$(grep -v '^d1_migrations=' "$T/counts-after.txt")" ] && echo 1 || true )"
+echo "- preexisting_rows_unchanged: $(pf "$unchanged")"
+echo "- integrity_after: $(pf "$( [ "$(q 'PRAGMA integrity_check' | head -1)" = ok ] && echo 1 )")"
+echo "- foreign_keys_after: $(pf "$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 )")"
+echo "- no_activation_rows: $(pf "$( [ "$(q "SELECT (SELECT count(*) FROM continuous_daily_cutovers)+(SELECT count(*) FROM continuous_undo_serialization_activation)+(SELECT count(*) FROM continuous_cancel_financial_activation)")" = 0 ] && echo 1 )")"
 # Second application of each pending file on a throwaway copy: informational.
 cp "$db" "$T/retry.sqlite"; nonidem=""
-for f in $(ls migrations/*.sql | sort); do name="$(basename "$f")"; n="${name:0:4}"; [ "$((10#$n))" -ge 24 ] || continue
-  sqlite3 -bail "$T/retry.sqlite" "BEGIN;" ".read $f" "COMMIT;" >/dev/null 2>&1 || nonidem="$nonidem ${n}"; done
-echo "- files_not_reapplicable_without_ledger:${nonidem:- none}"
+for name in $applied_names; do
+  sqlite3 -bail "$T/retry.sqlite" "BEGIN;" ".read migrations/$name" "COMMIT;" >/dev/null 2>&1 || nonidem="$nonidem $name"; done
+echo "- not_reapplicable_without_ledger:${nonidem:- none}"
 # Statements shaped like the currently deployed Worker's writes, rolled back.
 smoke(){ if sqlite3 -bail "$db" "PRAGMA foreign_keys=ON;" "BEGIN;" "$2" "ROLLBACK;" >/dev/null 2>"$T/err.txt"; then echo "- smoke_$1: PASS"; else echo "- smoke_$1: FAIL $(head -c 200 "$T/err.txt" | tr -c 'A-Za-z_ .:\n' ' ' | tr -s ' ' | head -1)"; smoke_failed=1; fi; }
 smoke_failed=0
@@ -83,5 +80,5 @@ smoke failed_job_insert "$(clone failed_jobs "id='smoke-failed',trace_id='smoke-
 smoke failed_job_resolve "UPDATE failed_jobs SET status='RESOLVED' WHERE id=(SELECT id FROM failed_jobs WHERE status='OPEN' LIMIT 1); SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('x','\$') END;"
 smoke claim_touch "UPDATE stable_workbook_claims SET updated_at=updated_at; SELECT CASE WHEN changes()>=1 THEN 1 ELSE json_extract('x','\$') END;"
 smoke projection_insert "$(clone stable_projection_writes "entity_id='smoke-exp'" "WHERE entity_type='EXPENSE'")"
-echo "- finished_at: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "- smoke_all: $(pf "$( [ "$smoke_failed" = 0 ] && echo 1 )")"
 test "$smoke_failed" = 0

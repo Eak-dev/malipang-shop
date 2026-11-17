@@ -18,7 +18,7 @@ test('counts old and new identities and flags duplicates across tabs',()=>{
  const result=inspectRecoverySheetSnapshots(id,sheets);assert.equal(result.reason,'DUPLICATE_IDENTITY');assert.deepEqual(result.counts,{oldDaily:1,newDaily:1,raw:1,details:2});
 });
 test('carrier verifies Y independently of displayed formula and flags mismatches',()=>{
- const sheets=fixture(),payload=encodeAtomicDailyPayload({expenseId:id,postingYear:2026,postingMonth:4,postingDay:11,description:'Makro',amountColumn:'H',amountSatang:123,category:'Ingredients',wallet:'Shop bank account'});
+ const sheets=fixture(),payload=encodeAtomicDailyPayload({expenseId:id,postingYear:2026,postingMonth:4,postingDay:11,description:'synthetic store',amountColumn:'H',amountSatang:123,category:'Ingredients',wallet:'Shop bank account'});
  row(sheets[1],4,24,payload);row(sheets[1],4,23,'=SOME_FORMULA()',key);
  assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'SETTLEMENT_UNPROVEN');
  sheets[1].effective[4][23]='';assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'IDENTITY_INCONSISTENT');

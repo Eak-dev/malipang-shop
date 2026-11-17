@@ -66,3 +66,39 @@ test('scoped review off: a daily preflight review throws the main code STABLE_DA
  assert.equal(STABLE_DAILY_REVIEW_REASONS.includes('STABLE_DAILY_REVIEW'),true);
  assert.equal(STABLE_DAILY_REVIEW_REASONS.includes('STABLE_DAILY_MONTH_OPENING_UNVERIFIED'),true);
 });
+
+const armTarget=(h,type,key)=>h.sqlite.prepare("INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('synthetic-epoch-r4','book','ARMED',?,?,1,'2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')").run(type,key);
+// Real D1 results carry success:true; this fixture omits it, so add it as other suites do.
+const d1Success=h=>{const prepare=h.DB.prepare,batch=h.DB.batch;h.DB.prepare=function(sql){const st=prepare.call(this,sql),run=st.run,all=st.all;st.run=async function(){return{...await run.call(this),success:true};};st.all=async function(){return{...await all.call(this),success:true};};return st;};h.DB.batch=async function(stmts){return(await batch.call(this,stmts)).map(r=>({...r,success:true}));};};
+const gateEnv=h=>{d1Success(h);Object.assign(h.env,{STABLE_PHASE1_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book'});};
+
+test('R4 redrive hold off: the armed recovery target is re-sent from FAILED or an expired lease as on main',async()=>{
+ for(const [status,extra] of [['FAILED',"next_attempt_at='2026-01-01T00:00:00.000Z'"],['PROCESSING',"lease_until='2026-01-01T00:00:00.000Z',lease_token='old'"]]){
+  const h=expenseSqlite();try{
+   gateEnv(h);armTarget(h,'DAILY_PAYROLL','hr_armed');
+   h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('j','DAILY_PAYROLL','hr_armed',1,'t',?,'2026-01-01T00:00:00.000Z')`).run(status);
+   h.sqlite.exec(`UPDATE sync_jobs SET ${extra} WHERE job_id='j'`);
+   const sent=[];h.env.JOB_QUEUE.send=async job=>{sent.push(job);};
+   assert.equal(await repositories.recoverArmedSheetJob(h.env,0),1,status);
+   assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='j'").get().status,'PENDING');assert.equal(sent.length,1);
+   // With the hold on, the same state is not re-sent (scheduled recovery reviews it instead).
+   h.sqlite.prepare(`UPDATE sync_jobs SET status=?,updated_at='2026-01-01T00:00:00.000Z' WHERE job_id='j'`).run(status);h.sqlite.exec(`UPDATE sync_jobs SET ${extra} WHERE job_id='j'`);
+   h.env.STABLE_REDRIVE_HOLD_ENABLED='true';
+   assert.equal(await repositories.recoverArmedSheetJob(h.env,0),0,status);assert.equal(sent.length,1);
+  }finally{h.close();}
+ }
+});
+
+test('R4 terminal hold under the recovery gate: an expense with an open terminal DLQ is held, as on main',async()=>{
+ const {withStableWorkbookClaim}=require('../dist/sheets/stable-workbook-claim.js'),notice=require('../dist/sheets/stable-edit-notice.js'),pacing=require('../dist/sheets/stable-sheet-pacing.js');
+ const old={b:notice.beginStableNotice,e:notice.endStableNotice,a:pacing.admitPacedWorkbookOperation,p:pacing.pacingPreflightBlocked};
+ const h=expenseSqlite();try{
+  gateEnv(h);notice.beginStableNotice=async(_e,_t,_w,ok)=>{await ok?.();};notice.endStableNotice=async()=>{};pacing.admitPacedWorkbookOperation=async()=>true;pacing.pacingPreflightBlocked=async()=>false;
+  armTarget(h,'EXPENSE','exp_r4');
+  h.sqlite.exec("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,created_at,updated_at) VALUES('f','malipang-jobs','t','EXPENSE:exp_r4:1','{}','DEAD_LETTER_MAX_RETRIES','OPEN','now','now')");
+  let ran=0;
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>{ran++;},{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_r4',entityVersion:1,traceId:'t'}),/STABLE_TERMINAL_HOLD/);
+  assert.equal(ran,0);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_recovery_operations").get().n,0);
+  assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs").get().state,'ARMED');
+ }finally{Object.assign(notice,{beginStableNotice:old.b,endStableNotice:old.e});Object.assign(pacing,{admitPacedWorkbookOperation:old.a,pacingPreflightBlocked:old.p});h.close();}
+});

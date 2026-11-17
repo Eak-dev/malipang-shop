@@ -8,6 +8,8 @@
 
 - ภาพรวมและวิธีพัฒนา: [README](../README.md), [architecture](07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md), [roadmap](11_IMPLEMENTATION_ROADMAP_TH.md)
 - LINE: [flow](05_LINE_FLEX_FLOW_TH.md); expense และบัญชี: [sheet mapping](02_SHEET_MAPPING_TH.md), [expense contract](20_V12_EXPENSE_V2_CONTRACT_TH.md)
+- ความเชื่อถือได้ของการซิงก์รายจ่ายและข้อจำกัดการกู้เหตุ 15 พ.ย. 2569: [ผลตรวจและขอบเขต](SYNC_RELIABILITY_INCIDENT_20261115_TH.md)
+- ต้นแบบ local เท่านั้นสำหรับ [นับ D1 และ queue ต่อ invocation](INVOCATION_BINDING_BUDGET_WIP.md); ยังไม่ได้เชื่อม Worker หรือเปิดใช้งาน
 - พนักงานและ Payroll: [นโยบายค่าแรง](14_PAYROLL_POLICY_WAGE_HISTORY_AND_FIXED_OT_TH.md), [release Payroll](16_WEDNESDAY_PAYROLL_RELEASE_TH.md); สิทธิ์: [identity/access](19_V11_IDENTITY_ACCESS_TH.md)
 - ปฏิบัติการและ release: [operations](04_OPERATIONS_TH.md), [release/cutover](08_RELEASE_AND_CUTOVER_PLAN_TH.md), [การทดสอบ](03_TEST_AND_CUTOVER_TH.md)
 - ระบบ Legacy: [สถานะ Apps Script](06_LEGACY_APPS_SCRIPT_STATUS_TH.md), [แผนปิดตามขั้นตอน](17_LEGACY_APPS_SCRIPT_STAGED_SHUTDOWN_TH.md)
@@ -30,6 +32,12 @@
 - เมื่อแก้หรือลบฟีเจอร์ เปลี่ยนโครงสร้าง การตั้งค่า หรือพฤติกรรมปฏิบัติการที่มีผลต่อภาพรวม ให้ตรวจและปรับหัวข้อที่เกี่ยวข้องในชุดงานเดียวกัน บันทึกรายละเอียดใน PR/commit และเอกสารเฉพาะระบบ
 - หากงานไม่มีผลต่อข้อมูลในไฟล์นี้ ให้ระบุเหตุผลในสรุปงาน ไม่สร้างข้อความที่ไม่จำเป็น สถานะ Production ต้องระบุเวลาตรวจและหลักฐานจริง หรือระบุ UNKNOWN
 - กติกานี้ให้ผู้พัฒนาหรือ agent ที่ทำงานอัปเดตระหว่างทำงาน ไม่ใช่ระบบ background ที่แก้ไฟล์ได้เอง และไม่รับประกันว่าแหล่งข้อมูลภายนอกจะตรงเสมอ
+
+## งานซิงก์รายวันแบบต่อเนื่องที่กำลังพัฒนา
+
+[PR #291](https://github.com/Eak-dev/malipang-shop/pull/291) ภายใต้ work item [#292](https://github.com/Eak-dev/malipang-shop/issues/292) (แทน PR #289 ที่ปิดแล้ว) เตรียมตัวเขียนชีตรายวันแบบเพิ่มแถวและหลักฐานสำหรับตรวจยืนยันผลเขียนที่ตอบกลับไม่แน่ชัดของ DAILY, RAW, DETAIL และการยกเลิก หลักฐานนี้ใช้ยืนยันผลที่ตรวจพบเท่านั้น และยังไม่อนุญาตส่งซ้ำจากการไม่พบข้อมูล ตัวกู้ยังไม่เชื่อมวงจรปลดสถานะและยังต้องตรวจผลรายงาน งานค้าง ตัวเขียนอื่น และทดสอบ Production ก่อนเปิดใช้ รายละเอียดและสถานะล่าสุดอยู่ใน PR
+
+ข้อจำกัดการ release ของ candidate นี้ (ตรวจ 17 พ.ย. 2569 ยังไม่ได้ deploy หรือรัน migration บน Production): ต้องรัน migration `0024`–`0061` ก่อน deploy Worker เพราะการเลือกงานใน batch ผสมอ่านตาราง `workbook_batch_fairness` (0051) และการแจ้งเหตุใช้ schema `0025`; migration `0048` และ `0055` รันซ้ำเองไม่ได้และพึ่ง ledger ของ D1. พฤติกรรมที่เคยเปลี่ยนโดยไม่มี flag ถูกย้ายไปอยู่หลัง flag ที่ปิดเป็นค่าเริ่มต้นแล้ว (ไม่ตั้งค่า = เหมือน main): `EXPENSE_SAVED_SYNC_NOTE_ENABLED` (ข้อความบนการ์ด LINE หลังบันทึก), `EXPENSE_FORCE_RECONCILE_HOLD_ENABLED` (force reconcile ไม่ส่งงาน `EXPENSE`), `STABLE_REDRIVE_HOLD_ENABLED` (พักงาน `FAILED`/lease หมดอายุเป็น `REVIEW` และปฏิเสธ terminal override ของ admin), `WORKBOOK_BATCH_FAIRNESS_ENABLED` (สลับคิวด้วยตาราง 0051) `SYNC_ALERT_DURABLE_ENABLED` (แจ้งเหตุ DLQ แบบ durable) และ `STABLE_SCOPED_REVIEW_ENABLED` (พักเฉพาะงานแทนทั้ง workbook และใช้ review_reason แบบเจาะจง). Redrive hold ครอบคลุมการ claim ของงานที่ส่งซ้ำจากคิวด้วย. ก่อน deploy ต้องทำรายการใน [#292](https://github.com/Eak-dev/malipang-shop/issues/292) และห้าม deploy `wrangler.continuous-notice.jsonc`. หลักฐาน: เทสต์ต้นฉบับของ main ใน `tests/main-parity-*.test.mjs` และ `tests/default-off-behaviour-flags.test.mjs`. ส่วนที่ยังต่างจาก main แม้ flag ปิดและยังไม่ได้พิสูจน์ความเท่ากันทุกกรณี: การบันทึก outbox ของงานที่ถูกพักใน batch เดียวรวมเป็น D1 batch, cron อ่าน schema เพิ่มก่อนข้ามงานที่ flag อื่นปิด และ trigger แจ้งเหตุของ migration 0025 จะบันทึก incident เมื่อรัน migration แล้ว. เครื่องมืออ่านสถานะและสำรอง/ซ้อม migration ที่ใช้ secret ของ Production ถูกถอดออกจาก PR นี้ ต้องเสนอแยกพร้อม approval gate และห้ามพิมพ์ยอดเงินลง log สาธารณะ.
 
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 

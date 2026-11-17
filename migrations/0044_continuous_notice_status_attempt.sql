@@ -1,0 +1,17 @@
+-- One immutable status dispatch intent per close. A TIME_VERIFIED close may
+-- choose the currently accurate wording until the first dispatch is reserved.
+CREATE TABLE IF NOT EXISTS continuous_notice_status_attempts (
+ operation_token TEXT PRIMARY KEY,
+ spreadsheet_id TEXT NOT NULL,
+ initial_ready_status TEXT NOT NULL,
+ dispatch_ready_status TEXT NOT NULL CHECK((dispatch_ready_status IN ('พร้อมแก้ไข','พร้อมแก้ไข • มีรายการรอตรวจ','พร้อมแก้ไข • กำลังซิงก์','พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ') OR (substr(dispatch_ready_status,-32) NOT GLOB '*[^0-9a-f]*' AND (length(dispatch_ready_status)=length('พร้อมแก้ไข • กำลังซิงก์ • รหัส ')+32 AND substr(dispatch_ready_status,1,length('พร้อมแก้ไข • กำลังซิงก์ • รหัส '))='พร้อมแก้ไข • กำลังซิงก์ • รหัส ' OR length(dispatch_ready_status)=length('พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส ')+32 AND substr(dispatch_ready_status,1,length('พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส '))='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส ')))),
+ next_stamp TEXT NOT NULL,
+ source_revision INTEGER NOT NULL CHECK(source_revision>=0),
+ created_at TEXT NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_insert BEFORE INSERT ON continuous_notice_status_attempts
+WHEN NOT EXISTS(SELECT 1 FROM continuous_review_notice_close n JOIN stable_workbook_claims c ON c.spreadsheet_id=n.spreadsheet_id AND c.operation_token=n.operation_token JOIN stable_source_revision r ON r.singleton=1 WHERE n.operation_token=NEW.operation_token AND n.spreadsheet_id=NEW.spreadsheet_id AND n.state='TIME_VERIFIED' AND n.ready_status=NEW.initial_ready_status AND n.next_stamp=NEW.next_stamp AND c.notice_stamp=n.next_stamp AND c.notice_identity=n.notice_identity AND r.revision=NEW.source_revision AND (((NEW.dispatch_ready_status IN ('พร้อมแก้ไข','พร้อมแก้ไข • กำลังซิงก์') OR NEW.dispatch_ready_status GLOB 'พร้อมแก้ไข • กำลังซิงก์ • รหัส *') AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='REVIEW')) OR ((NEW.dispatch_ready_status IN ('พร้อมแก้ไข • มีรายการรอตรวจ','พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ') OR NEW.dispatch_ready_status GLOB 'พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส *') AND EXISTS(SELECT 1 FROM sync_jobs WHERE status='REVIEW'))) AND ((n.claim_mode='REVIEW' AND c.state='REVIEW' AND c.phase='OPERATION' AND NEW.dispatch_ready_status IN ('พร้อมแก้ไข','พร้อมแก้ไข • มีรายการรอตรวจ')) OR (n.claim_mode='HANDOFF' AND c.state='HELD' AND c.phase='END_NOTICE_PENDING' AND (NEW.dispatch_ready_status IN ('พร้อมแก้ไข • กำลังซิงก์','พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ') OR NEW.dispatch_ready_status GLOB 'พร้อมแก้ไข • กำลังซิงก์ • รหัส *' OR NEW.dispatch_ready_status GLOB 'พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส *'))))
+BEGIN SELECT RAISE(ABORT,'status attempt requires verified notice and current review state'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_no_update BEFORE UPDATE ON continuous_notice_status_attempts BEGIN SELECT RAISE(ABORT,'status attempt immutable'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_no_delete BEFORE DELETE ON continuous_notice_status_attempts BEGIN SELECT RAISE(ABORT,'status attempt retained'); END;
+CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_no_replace BEFORE INSERT ON continuous_notice_status_attempts WHEN EXISTS(SELECT 1 FROM continuous_notice_status_attempts a WHERE a.operation_token=NEW.operation_token OR a.rowid=NEW.rowid) BEGIN SELECT RAISE(ABORT,'status attempt already exists'); END;

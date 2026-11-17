@@ -7,6 +7,8 @@ import { markCancelledExpensePurchaseDetails,writeConfirmedExpensePurchaseDetail
 import { queueRetryDelaySeconds } from "../shared/retry";
 import { numberEnv } from "../shared/env";
 import {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
+import {assertLegacyExpensePathAllowed} from './continuous-daily-route';
+import {assertContinuousNoticeActivation} from './continuous-notice-activation';
 export {buildExpenseRawSheetValues,buildPersonalUseRawSheetValues} from './raw-projection';
 const baht=(value:unknown)=>Number(value||0)/100;
 export const GOOGLE_SHEETS_MAX_SERVER_PROCESSING_MS=180*1000;
@@ -15,6 +17,13 @@ export const PERSONAL_USE_AMBIGUITY_MARGIN_MS=60*1000;
 const SHEET_SYNC_LEASE_MS=PERSONAL_USE_AMBIGUITY_LEASE_MS;
 const PERSONAL_USE_AMBIGUOUS_WRITE_PREFIX="SHEETS_MUTATION_OUTCOME_UNKNOWN:";
 export const SHEET_SYNC_BUSY_RETRY_SECONDS=30;
+/** One atomic snapshot of both source and this version's job. This only
+ * suppresses a stale expense hint; it does not authorize source deletion. */
+export async function deletedExpenseOutboxAbsent(env:Env,job:SheetsSyncJob):Promise<boolean>{
+ if(env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED!=='true'||job.entityType!=='EXPENSE')return false;
+ const db=env.DB,result=await db.prepare("SELECT 1 AS absent WHERE NOT EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?)").bind(job.entityKey,job.entityKey,job.entityVersion).first<{absent:number}>();
+ if(env.DB!==db)throw Error('EXPENSE_OUTBOX_SOURCE_UNCERTAIN');return result?.absent===1;
+}
 // The provider mutation has already crossed the boundary. Losing this job
 // lease must not release the workbook or resolve failure evidence.
 export const STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN='STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN';
@@ -38,6 +47,7 @@ export async function loadExpenseDailyPosting(env:Env,expenseId:string):Promise<
   return{expense,summaryDocument,document,items,record};
 }
 export async function reconcileExpenseItemRows(env:Env,expenseId:string):Promise<{mode:"SUMMARY";rowCount:number;detailRowCount:number;replacedLegacySummary:boolean}>{
+  if(await assertLegacyExpensePathAllowed(env))throw Error('CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED');
   const loaded=await loadExpenseDailyPosting(env,expenseId);if(String(loaded.expense.status)!=="CONFIRMED")throw new Error("Only CONFIRMED expenses can be reconciled");
   const result=await writeConfirmedExpenseWithDocumentItemsToDaily(env,loaded.record,loaded.document,loaded.items,{replaceLegacySummary:true});
   const detailRowCount=await writeConfirmedExpensePurchaseDetails(env,loaded.record,loaded.document,loaded.items);
@@ -109,11 +119,16 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
 }
 /** Durable outbox row for a delivery, so acknowledging a message that cannot
  * run yet never loses the job; scheduled recovery re-sends it later. */
-export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
-  const now=new Date(nowMs).toISOString();
-  await env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL) ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now).run();
+export function sheetSyncOutboxStatement(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
+ const guarded=env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.entityType==='EXPENSE';
+ const values=guarded?`SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)`:`VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`;
+ return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) ${values} ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now,...(guarded?[job.entityKey]:[]));
 }
-export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<string|null>{
+export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
+ const db=env.DB,result=await sheetSyncOutboxStatement(env,job,new Date(nowMs).toISOString()).run();
+ if(env.DB!==db||result.success===false||!Number.isSafeInteger(result.meta?.changes)||Number(result.meta.changes)<0||Number(result.meta.changes)>1)throw Error('SHEET_SYNC_OUTBOX_UNCERTAIN');
+}
+export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now(),legacyCutoverSchema?:boolean):Promise<string|null>{
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
   await ensureSheetSyncOutbox(env,job,nowMs);
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
@@ -121,14 +136,36 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   const serializePersonalUse=job.entityType==="PERSONAL_USE";
   // The lease CAS itself fences previously recorded terminal financial jobs.
   const terminalFence=` AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`;
-  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND (((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence;
+  // A FAILED job or expired lease does not prove that a previous Sheets POST
+  // failed before dispatch. In stable mode a queued duplicate must not claim
+  // either state before the scheduled recovery has isolated it for review.
+  // Keep both time placeholders so the personal-use serialization arguments
+  // retain their existing positions in either mode.
+  const eligible=env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true'
+    ? "(status='PENDING' AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND ? IS NOT NULL)"
+    : "(((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))";
+  // This is part of the same CAS that acquires the legacy expense lease.
+  // If schema was absent, migration appearing between read and claim blocks
+  // the claim; if present, a PREPARED or ACTIVE cutover blocks the claim.
+  const legacyFence=job.entityType==='EXPENSE'&&legacyCutoverSchema!==undefined
+   ? legacyCutoverSchema?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers WHERE spreadsheet_id=?)":" AND NOT EXISTS(SELECT 1 FROM continuous_daily_cutovers)")
+    :" AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers')"
+   :'';
+  const normalNoticeFence=job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_normal_notice_handoffs h JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.operation_token=h.operation_token WHERE h.spreadsheet_id=? AND h.expense_id=sync_jobs.entity_key AND h.source_version=sync_jobs.entity_version AND c.state='HELD' AND c.phase='END_NOTICE_PENDING')":" AND 0"):'';
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence+normalNoticeFence;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
+  if(job.entityType==='EXPENSE'&&legacyCutoverSchema===true&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
   const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{
+  if(await deletedExpenseOutboxAbsent(env,job))return 'IGNORED';
+  await assertContinuousNoticeActivation(env,job);
+  if(job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true')throw Error('PUBLICATION_LEGACY_DISABLED');
+  const legacyCutoverSchema=job.entityType==='EXPENSE'?await assertLegacyExpensePathAllowed(env):undefined;
   if(env.SHEETS_SYNC_ENABLED!=="true")return"IGNORED";
-  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow));if(!leaseToken){if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}
+  const claimNow=new Date().toISOString(),leaseToken=await claimSheetSyncJob(env,job,Date.parse(claimNow),legacyCutoverSchema);if(!leaseToken){if(job.entityType==='EXPENSE')await assertLegacyExpensePathAllowed(env);if(await hasTerminalSheetHold(env,job))return "IGNORED";return job.entityType==="PERSONAL_USE"?personalUseClaimOutcome(env,job,claimNow):"IGNORED";}
   let personalUse:PersonalUseProjectionRow|null=null,personalUseWriteOutcomeUncertain=false,personalUseAmbiguityLeaseUntil:string|null=null;
   try{
     let sheet="",values:unknown[]=[],expense:Record<string,unknown>|null=null,expenseDocument:PurchaseDetailDocument|null=null,expenseItems:DailyExpenseDocumentItem[]=[],expenseRecord:PurchaseDetailRecord|null=null;

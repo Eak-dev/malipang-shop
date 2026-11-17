@@ -146,6 +146,33 @@ export async function processLineNotificationMessage(
 ):Promise<void>{
   const job=message.body;
   if(job.kind!=="LINE_NOTIFICATION")throw new Error("LINE_NOTIFICATION job required");
+  if(job.purpose==='SYNC_FAILURE'){
+    // LINE retry keys expire 24 hours after the first request. Use the
+    // earlier outbox creation time with a one-hour safety margin; an old or
+    // unverified attempt must be reviewed rather than possibly sent twice.
+    try{
+      const row=await env.DB.prepare("SELECT status,created_at FROM failed_jobs WHERE queue_name=? AND trace_id=? AND job_key=? LIMIT 1")
+        .bind(queueName,job.traceId,`LINE_NOTIFICATION:${job.retryKey}`).first<{status:string;created_at:string}>();
+      if(!row){message.retry({delaySeconds:90});return;}
+      if(row.status==='RESOLVED'){message.ack();return;}
+      if(row.status!=='OPEN'){message.retry({delaySeconds:90});return;}
+      // A no-op push in shadow mode is not delivery. Re-arm recovery even if
+      // an earlier provider error was recorded, retaining explicit holds.
+      if(!lineOutputEnabled(env)){
+        const deferred=await env.DB.prepare(`UPDATE failed_jobs SET error=CASE WHEN error IN ('LINE_PUSH_QUOTA_EXHAUSTED','LINE_NOTIFICATION_DELIVERY_UNCERTAIN') THEN error ELSE 'PENDING_LINE_NOTIFICATION_DELIVERY' END,updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'`)
+          .bind(new Date().toISOString(),queueName,job.traceId,`LINE_NOTIFICATION:${job.retryKey}`).run();
+        if(deferred.success===false||Number(deferred.meta?.changes)!==1){message.retry({delaySeconds:90});return;}
+        message.ack();return;
+      }
+      const created=Date.parse(row.created_at),age=Date.now()-created;
+      if(!Number.isFinite(created)||age<0||age>=23*60*60*1000){
+        const marked=await env.DB.prepare("UPDATE failed_jobs SET error='LINE_NOTIFICATION_DELIVERY_UNCERTAIN',updated_at=? WHERE queue_name=? AND trace_id=? AND job_key=? AND status='OPEN'")
+          .bind(new Date().toISOString(),queueName,job.traceId,`LINE_NOTIFICATION:${job.retryKey}`).run();
+        if(Number(marked.meta?.changes)!==1){message.retry({delaySeconds:90});return;}
+        message.ack();return;
+      }
+    }catch{message.retry({delaySeconds:90});return;}
+  }
   try{
     await deliverLineNotification(env,job);
     await resolveFailedJobs(env,queueName,job.traceId,job);

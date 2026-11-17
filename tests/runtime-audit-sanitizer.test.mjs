@@ -27,7 +27,7 @@ function fixtures() {
     status: {
       ok: true, mode: 'production',
       inbound: ['PROCESSING', 'COMPLETED', 'FAILED', 'STALE', 'IGNORED', 'REJECTED', 'REVIEW'].map((status, count) => ({ status, count })),
-      sync: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'].map((status, count) => ({ status, count })),
+      sync: ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REVIEW'].map((status, count) => ({ status, count })),
       openFailedJobs: 0,
       line: { auth: 'PASS', replyCapability: 'PASS', push: { pushCapacity: 'EXHAUSTED' } },
     },

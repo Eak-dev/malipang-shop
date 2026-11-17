@@ -1,0 +1,28 @@
+/** Explicit per-invocation request budget for reviewed expense recovery only.
+ * Caller must account for other subrequests or run in a dedicated invocation. */
+import type {InvocationBindingBudget} from './invocation-binding-budget';
+export class ReviewRequestBudgetError extends Error {
+ constructor(readonly code:'EXHAUSTED'|'MUTATION_NOT_RESERVED'){super(`REVIEW_REQUEST_BUDGET_${code}`);this.name='ReviewRequestBudgetError';}
+}
+export class ReviewRequestBudget {
+ private count=0; private slot=false; private claimed=false; private post=0; private queues=0;
+ constructor(readonly limit:number,readonly scope:'isolated'|'invocation'='isolated',readonly bindingBudget?:InvocationBindingBudget){if(!Number.isSafeInteger(limit)||limit<1||limit>(scope==='invocation'?48:40)||bindingBudget&&scope!=='invocation')throw Error('REVIEW_REQUEST_BUDGET_INVALID');}
+ get used():number{return this.count;}
+ get queueUsed():number{return this.queues;}
+ consumeQueue():void{if(this.scope!=='invocation'||this.queues>=2)throw new ReviewRequestBudgetError('EXHAUSTED');this.queues++;}
+ get remaining():number{return this.limit-this.count-(this.slot?1:0)-this.post;}
+ get reserved():boolean{return this.slot;}
+ get postReserved():number{return this.post;}
+ /** Keep post-dispatch reads unavailable to pre-dispatch checks. Release only
+  * after the mutation has returned or been classified as unknown. */
+ reservePost(count:number):boolean{if(this.post||!Number.isSafeInteger(count)||count<1||this.remaining<count)return false;this.post=count;return true;}
+ releasePost():void{this.post=0;}
+ reserveMutation():boolean{if(this.slot||this.claimed||this.remaining<1)return false;this.slot=true;return true;}
+ releaseMutation():void{if(!this.claimed)this.slot=false;}
+ consumeRead():void{if(this.remaining<1)throw new ReviewRequestBudgetError('EXHAUSTED');this.count++;}
+ claimMutation():{consume:()=>void;release:()=>void}{
+  if(!this.slot||this.claimed)throw new ReviewRequestBudgetError('MUTATION_NOT_RESERVED');
+  this.claimed=true;let finished=false;
+  return {consume:()=>{if(finished||!this.slot||!this.claimed)throw new ReviewRequestBudgetError('MUTATION_NOT_RESERVED');finished=true;this.slot=false;this.claimed=false;this.count++;},release:()=>{if(!finished){finished=true;this.slot=false;this.claimed=false;}}};
+ }
+}

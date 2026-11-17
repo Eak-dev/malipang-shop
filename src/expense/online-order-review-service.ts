@@ -35,7 +35,7 @@ async function showDraft(env:Env,event:LineEvent,view:OrderReviewView,owner:Owne
   const state=stateFromStoredDocument(stored)||{requiredFields:["payment","description","category"] as const,confirmedFields:[]};
   const expense:ExpenseFlexRecord={expenseId:String(row.expense_id),description:String(row.description),amountSatang:Number(row.amount_satang),paymentKey:String(row.payment_key),sourceWallet:String(row.source_wallet),category:String(row.category),transactionDate:String(row.transaction_date),status:String(row.status),documentType:"ONLINE_ORDER",reviewRequiredFields:[...state.requiredFields],reviewConfirmedFields:[...state.confirmedFields],unresolvedRequiredFields:unresolvedReviewFields({...state,requiredFields:[...state.requiredFields]})};
   if(expense.status==="CANCELLED"){await reply(env,event,"รายการนี้ถูกยกเลิกแล้ว หลักฐานและประวัติยังอยู่",traceId);return;}
-  await flex(env,event,expense.status==="CONFIRMED"?buildExpenseSavedFlex(expense):buildExpenseSummaryFlex(expense),traceId);
+  await flex(env,event,expense.status==="CONFIRMED"?buildExpenseSavedFlex(expense,env.EXPENSE_SAVED_SYNC_NOTE_ENABLED==='true'):buildExpenseSummaryFlex(expense),traceId);
 }
 async function renderCase(env:Env,event:LineEvent,id:string,owner:OwnerReviewIdentity,traceId:string,notice?:string):Promise<void>{
   const row=await loadOwnerReview(env,id,owner);if(!row){await deny(env,event,traceId);return;}

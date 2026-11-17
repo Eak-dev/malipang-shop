@@ -28,7 +28,11 @@ export function expenseSqlite(){
     }
   };
   const queue=[];
-  const env={DB,SHEETS_SYNC_ENABLED:'true',RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false',JOB_QUEUE:{async sendBatch(messages){queue.push(...messages);}}};
+  // Default environment matches main. A candidate test file opts in to every
+  // default-off behaviour flag by setting MALIPANG_TEST_CANDIDATE_FLAGS=1 at
+  // its top (node --test isolates each file in its own process).
+  const candidate=process.env.MALIPANG_TEST_CANDIDATE_FLAGS==='1'?{EXPENSE_SAVED_SYNC_NOTE_ENABLED:'true',EXPENSE_FORCE_RECONCILE_HOLD_ENABLED:'true',STABLE_REDRIVE_HOLD_ENABLED:'true',WORKBOOK_BATCH_FAIRNESS_ENABLED:'true',SYNC_ALERT_DURABLE_ENABLED:'true',STABLE_SCOPED_REVIEW_ENABLED:'true'}:{};
+  const env={DB,...candidate,SHEETS_SYNC_ENABLED:'true',RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false',JOB_QUEUE:{async sendBatch(messages){queue.push(...messages);}}};
   return{sqlite,DB,env,queue,close(){sqlite.close();}};
 }
 

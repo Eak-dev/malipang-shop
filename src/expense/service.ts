@@ -1,4 +1,4 @@
-import { createFailedJob,enqueueSheetSync } from "../db/repositories";
+import { createFailedJob,enqueueSheetSync,InboundBusyError } from "../db/repositories";
 import { respondFlexToLineEvent,respondTextToLineEvent } from "../line/event-response";
 import { randomId,sha256Hex } from "../shared/ids";
 import { addDays,isIsoDate,isoDateInBangkok } from "../shared/time";
@@ -14,7 +14,7 @@ import { parseExpenseText } from "./text-parser";
 import { bankSlipReviewState,confirmReviewField,documentWithReviewState,legacyReviewState,purchaseReviewState,stateFromStoredDocument,type ExpenseReviewField,type ExpenseReviewState,unresolvedReviewFields } from "./review-state";
 import type { StaffActor } from "../access/repository";
 import type { BankSlipDocument,PurchaseDocument } from "../types";
-import { undoConfirmedExpense } from "./undo";
+import { requestConfirmedExpenseUndo } from "./deferred-undo";
 import { confirmExpenseAtomically } from "./confirm";
 import { inspectReceiptCandidates,receiptReferenceKey,storedReceiptFacts } from "./receipt-identity";
 import { maybeRespondOwnerOrderReview } from "./online-order-review-service";
@@ -74,7 +74,7 @@ async function showCurrent(env:Env,event:LineEvent,expense:ExpenseFlexRecord,tra
     if(await receiptConfirmationBlocked(env,event,expense.expenseId,traceId))return;
     await respondFlex(env,event,buildExpenseSummaryFlex(withConfirmationIssues(expense)),traceId);
   }
-  else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
+  else if(expense.status==="CONFIRMED")await respondFlex(env,event,buildExpenseSavedFlex(expense,env.EXPENSE_SAVED_SYNC_NOTE_ENABLED==='true'),traceId);
   else await respondText(env,event,"This item was cancelled.",traceId);
 }
 
@@ -185,7 +185,7 @@ async function confirmExpense(
   if(version===null)return false;
   expense.status="CONFIRMED";
   await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:version,traceId});
-  await respondFlex(env,event,buildExpenseSavedFlex(expense),traceId);
+  await respondFlex(env,event,buildExpenseSavedFlex(expense,env.EXPENSE_SAVED_SYNC_NOTE_ENABLED==='true'),traceId);
   return true;
 }
 
@@ -408,7 +408,7 @@ async function handlePurchaseImage(env:Env,event:LineEvent,document:PurchaseDocu
     if(linkedOrderId&&!crossTypeClaimExists)linkedStatements.push(onlineOrderClaimInsert(env,{orderId:linkedOrderId,documentId,expenseId:exactMatch.expenseId,now}));
     if(linkedOrderId)linkedStatements.push(orderDocumentTypeClaimInsert(env,{orderId:linkedOrderId,documentType:document.documentType,documentId,now}));
     try{await env.DB.batch(linkedStatements);}
-    catch(error){if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
+    catch(error){if(String(error).includes("publication source is resolving"))throw new InboundBusyError();if(String(error).includes("UNIQUE")&&linkedOrderId&&await handleExistingOnlineOrder(env,event,linkedOrderId,traceId,timing))return;throw error;}
     await respondText(env,event,`${document.documentType.replaceAll("_"," ")} received. ✅\nIt was linked to the existing purchase using a printed exact identifier. No second expense was created.`,traceId,timing);return;
   }
   const reviewOnly=!draft,documentStatus=reviewOnly?"WAITING_REVIEW":"WAITING_CONFIRM",reviewReason=multiSeller?"Multiple sellers were detected. Each seller is kept as a separate review case; confirm the seller allocations before final posting.":reviewOnly?purchaseDraftMissingReasons(document).join("; "):(draft.reviewReasons.join("; ")||"Please review visible document facts before saving.");
@@ -503,8 +503,8 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     await respondText(env,event,Number(changed.meta.changes||0)===1?"Expense cancelled. ✅":"This item has already been saved or cancelled.",traceId);return;
   }
   if(action==="expense_undo"){
-    const owner=actorValues(accessActor||actor),version=await undoConfirmedExpense(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
-    if(version!==null){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
+    const owner=actorValues(accessActor||actor),result=await requestConfirmedExpenseUndo(env,{expenseId:id,lineUserId:to,traceId,actorEmployeeId:owner.employeeId,branchId:owner.branchId});
+    if(result.kind==="PENDING")await respondText(env,event,"ได้รับคำขอยกเลิกแล้ว กำลังรอตรวจผลซิงก์ก่อนดำเนินการต่อ",traceId);else if(result.kind==="REVIEW")await respondText(env,event,"คำขอยกเลิกติดปัญหา ระบบบันทึกรายการไว้เพื่อตรวจสอบแล้ว",traceId);else if(result.kind==="UNDONE"){await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:id,entityVersion:result.version,traceId});await respondText(env,event,"Expense entry undone. ↩️\nThe original record remains in the audit history. Google Sheets will update through the sync queue.",traceId);}else await respondText(env,event,"This item is already cancelled or cannot be undone.",traceId);return;
   }
   if(expense.status!=="WAITING_CONFIRM"){await showCurrent(env,event,expense,traceId);return;}
   if(action==="expense_back"){await showCurrent(env,event,expense,traceId);return;}

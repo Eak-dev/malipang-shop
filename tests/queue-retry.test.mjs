@@ -27,3 +27,12 @@ test('transient server and timeout errors use a shorter retry delay',()=>{
   assert.equal(queueRetryDelaySeconds(new Error('Google Sheets timed out'),2,()=>0),60);
   assert.equal(queueRetryDelaySeconds(new Error('invalid request')),undefined);
 });
+
+test('bounded OAuth 429 without a provider body still uses rate-limit backoff',async()=>{
+  const {GoogleOAuthHttpError}=await import('../dist/sheets/google-auth.js');
+  const error=new GoogleOAuthHttpError(429);
+  assert.equal(error.message,'GOOGLE_OAUTH_HTTP_429');
+  assert.equal(queueRetryDelaySeconds(error,1,()=>0),60);
+  assert.equal(queueRetryDelaySeconds(error,3,()=>0),240);
+  assert.equal(queueRetryDelaySeconds(new GoogleOAuthHttpError(400),1,()=>0),undefined);
+});

@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {stableWorkbookClaimOwned,withStableWorkbookClaim} from '../dist/sheets/stable-workbook-claim.js';
 import {newStableSourcePredicate,stableCutoverStatements} from '../dist/sheets/stable-source-cutover.js';
+import {InvocationBindingBudget} from '../dist/sheets/invocation-binding-budget.js';
 
 function fixture(){
  const sqlite=new DatabaseSync(':memory:');sqlite.exec('CREATE TABLE expense_events(expense_id TEXT PRIMARY KEY); CREATE TABLE owner_personal_transactions(personal_use_id TEXT PRIMARY KEY); CREATE TABLE expense_documents(id TEXT); CREATE TABLE expense_document_links(id TEXT); CREATE TABLE expense_document_items(id TEXT)');sqlite.exec(readFileSync(new URL('../migrations/0021_stable_workbook_claim.sql',import.meta.url),'utf8'));
@@ -46,6 +47,17 @@ test('uncertain operation is retained for review and never auto-retried',async()
   assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
   await assert.rejects(withStableWorkbookClaim(h.env,async()=>assert.fail('must not run')),/REVIEW/);
  }finally{h.close();}
+});
+
+test('exhausted post-write quota preserves separate capacity to retain REVIEW',async()=>{
+ const h=fixture(),usage=new InvocationBindingBudget({d1:20,queue:2}),scope=usage.invocationScope();h.env.DB=usage.wrapD1(h.env.DB,scope);
+ try{
+  await assert.rejects(withStableWorkbookClaim(h.env,async()=>{
+   const token=usage.reservePost(1,0,3,1);assert.ok(token);usage.activatePost(token);
+   try{await h.env.DB.prepare('SELECT 1 AS n').first();await h.env.DB.prepare('SELECT 2 AS n').first();}finally{usage.activateTail(token);}
+  }),/POST_EXHAUSTED/);
+  assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.ok(usage.snapshot().tailReserved.d1<3);
+ }finally{usage.releaseRecovery();h.close();}
 });
 
 test('lost claim acknowledgement cannot start an operation or free the claim',async()=>{

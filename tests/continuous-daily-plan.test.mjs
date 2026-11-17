@@ -6,7 +6,7 @@ const {planContinuousDailyExpense,continuousDailyDateFormula,continuousDailyHelp
 
 function fixture(overrides={}){
  const headers=[[],[],[]];headers[1][7]='เงินโอน';headers[2][6]='NON-FIXED';headers[1][11]=10;headers[2][11]='First Choice';
- const base={rowCount:20,columnCount:29,firstDataRow:4,snapshotComplete:true,expenseId:'exp_one',transactionDate:'2026-04-11',description:'makro',amountSatang:166800,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'ingredients',allowCreate:true,...overrides};
+ const base={rowCount:20,columnCount:29,firstDataRow:4,snapshotComplete:true,expenseId:'exp_one',transactionDate:'2026-04-11',description:'synthetic store',amountSatang:250000,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'ingredients',allowCreate:true,...overrides};
  const source=overrides.rows||headers,rows=source.map(r=>r.slice());
  for(let number=4;number<=base.rowCount;number++){while(rows.length<number)rows.push([]);Object.assign(rows[number-1],continuousDailyHelperFormulas(number));}
  return {...base,rows};
@@ -22,14 +22,14 @@ test('plans a row after the last data row while preserving every template helper
  const input=fixture();Object.assign(input.rows[3],{0:2025,1:12,2:31,3:'existing',7:50,23:'MALIPANG_EXPENSE:exp_old'});
  const plan=planContinuousDailyExpense(input);assert.equal(plan.status,'APPEND');assert.equal(plan.observedRow,5);
  assert.equal(plan.requiresBalanceVerification,true);assert.equal(plan.changes.some(c=>[8,9,17,18,20].includes(c.column)),false);
- assert.deepEqual(changeValues(plan),{0:2026,1:4,2:11,3:'makro',7:1668,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_one'});
+ assert.deepEqual(changeValues(plan),{0:2026,1:4,2:11,3:'synthetic store',7:2500,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_one'});
 });
 
 test('credit cutoff validates cross-year and leap-end-of-month posting dates',()=>{
- const card={paymentKey:'firstchoice',sourceWallet:'CARD_FIRST_CHOICE',amountSatang:159725};
+ const card={paymentKey:'firstchoice',sourceWallet:'CARD_FIRST_CHOICE',amountSatang:123425};
  for(const [date,expected] of [['2026-12-25',[2027,1,25]],['2024-01-31',[2024,2,29]],['2023-01-31',[2023,2,28]]]){
   const plan=planContinuousDailyExpense(fixture({...card,transactionDate:date}));assert.equal(plan.status,'APPEND',date);
-  const changes=changeValues(plan);assert.deepEqual([changes[0],changes[1],changes[2]],expected);assert.equal(changes[11],1597.25);
+  const changes=changeValues(plan);assert.deepEqual([changes[0],changes[1],changes[2]],expected);assert.equal(changes[11],1234.25);
   assert.equal(plan.changes.filter(c=>[5,6,7,10,11,12,13,14,15,16].includes(c.column)).length,1);
  }
  assert.equal(planContinuousDailyExpense(fixture({...card,transactionDate:'9999-12-25'})).reason,'INVALID_POSTING_DATE');
@@ -42,7 +42,7 @@ test('new template headers map cash, transfer and every card to their original c
  const cases=[['cash','CASH_DRAWER',6],['transfer','SHOP_BANK',7],['kbank','CARD_KBANK',10],['firstchoice','CARD_FIRST_CHOICE',11],['aeon','CARD_AEON',12],['citibank','CARD_CITIBANK',13],['ttb','CARD_TTB',14],['homepro','CARD_HOMEPRO',15],['t1','CARD_THE1',16]];
  for(const [paymentKey,sourceWallet,column] of cases){
   const plan=planContinuousDailyExpense(fixture({rows:headers,transactionDate:'2026-06-10',paymentKey,sourceWallet}));
-  assert.equal(plan.status,'APPEND',paymentKey);assert.deepEqual(plan.changes.find(c=>c.column===column)?.userEnteredValue,{numberValue:1668},paymentKey);
+  assert.equal(plan.status,'APPEND',paymentKey);assert.deepEqual(plan.changes.find(c=>c.column===column)?.userEnteredValue,{numberValue:2500},paymentKey);
  }
  const conflicting=headers.map(r=>r.slice());conflicting[1][5]='เงินโอน';assert.equal(planContinuousDailyExpense(fixture({rows:conflicting})).reason,'PAYMENT_UNVERIFIED');
 });

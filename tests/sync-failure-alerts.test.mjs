@@ -12,7 +12,7 @@ function fixture(){
  const h=expenseSqlite(),sent=[];
  Object.assign(h.env,{RUNTIME_MODE:'production',LINE_OWNER_USER_ID:'fixture-owner',GOOGLE_SPREADSHEET_ID:'book',JOB_QUEUE:{async send(job){sent.push(job);}}});
  const addReview=(id,reason='STABLE_DAILY_MONTH_OPENING_UNVERIFIED',status='REVIEW')=>{
-  h.sqlite.prepare("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES(?,?,?,'Synthetic store',159725,'transfer','SHOP_BANK','ingredients','2026-11-04','CONFIRMED','now',1)").run('exp_'+id,'msg_'+id,'user');
+  h.sqlite.prepare("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES(?,?,?,'Synthetic store',123425,'transfer','SHOP_BANK','ingredients','2026-11-04','CONFIRMED','now',1)").run('exp_'+id,'msg_'+id,'user');
   h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,last_error) VALUES(?,'EXPENSE',?,1,'fixture',?,'2026-11-15T00:00:00.000Z',?)").run(id,'exp_'+id,status,reason);
  };
  return{...h,sent,addReview};
@@ -20,7 +20,7 @@ function fixture(){
 
 test('durable review alert is sent once and never changes source jobs or business records',async()=>{const h=fixture();try{
  h.addReview('job1');assert.equal(await sweepSyncFailureAlerts(h.env),1);assert.equal(await sweepSyncFailureAlerts(h.env),0);assert.equal(h.sent.length,1);
- assert.equal(h.sent[0].kind,'LINE_NOTIFICATION');assert.equal(h.sent[0].purpose,'SYNC_FAILURE');assert.match(h.sent[0].messages[0].text,/ยอดตั้งต้น/);assert.match(h.sent[0].messages[0].text,/1,?597\.25/);
+ assert.equal(h.sent[0].kind,'LINE_NOTIFICATION');assert.equal(h.sent[0].purpose,'SYNC_FAILURE');assert.match(h.sent[0].messages[0].text,/ยอดตั้งต้น/);assert.match(h.sent[0].messages[0].text,/1,?234\.25/);
  assert.equal(h.sqlite.prepare("SELECT status FROM expense_events WHERE expense_id='exp_job1'").get().status,'CONFIRMED');
  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job1'").get().status,'REVIEW');
  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM failed_jobs WHERE job_key LIKE 'LINE_NOTIFICATION:%' AND status='OPEN'").get().n,1);

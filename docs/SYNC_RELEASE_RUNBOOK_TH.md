@@ -27,11 +27,33 @@
 
 ห้ามเปิดในรอบนี้ เพราะต้องใช้ notice worker หรือยังไม่ผ่านการทดสอบ provider จริง: `CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED`, `CONTINUOUS_NOTICE_DISPATCH_ENABLED`, `CONTINUOUS_REVIEW_CLOSE_ENABLED`, `CONTINUOUS_PUBLICATION_ENABLED`, `CONTINUOUS_UNDO_SERIALIZATION_ENABLED`, `CONTINUOUS_REVOKE_REVIEW_*`, `CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED`, `CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED`, `CONTINUOUS_PROVIDER_CANARY_ENABLED`, `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED`, `EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED` (เปิดได้ชั่วคราวเพื่ออ่านอย่างเดียวเมื่อเจ้าของอนุมัติ)
 
+## ผลกระทบระหว่างขั้น 5–7 (recovery gate)
+
+- **ผล:** เมื่อ `STABLE_RECOVERY_GATE_ENABLED=true` ตัว gate (`stableRecoveryGateBlocked` ใน `src/sheets/stable-recovery-admission.ts`) อนุญาตให้เขียนชีตเฉพาะเป้าหมายที่ operator arm ไว้ทีละรายการ **การซิงก์ชีตอื่นทั้งหมดหยุด** ทั้งการลงเวลา payroll รายวัน/รายสัปดาห์ ตารางกะ และค่าใช้จ่ายรายการอื่น งานไม่หาย: ถูกเก็บใน outbox (`sync_jobs` สถานะ PENDING) และข้อความในคิวถูก ACK
+- **ระยะเวลาที่เสนอ:** ทำขั้น 5–7 ให้เสร็จภายในช่วงเงียบ 02:00–05:00 (ไม่เกิน 3 ชั่วโมง) และไม่ทำในวันที่มีรอบจ่าย payroll; ถ้าเกิน 8 ชั่วโมงให้หยุดและให้เจ้าของตัดสินว่าจะไปต่อหรือหยุดที่สถานะปัจจุบัน — ค่าเหล่านี้เป็นข้อเสนอของ Dev รอเจ้าของยืนยัน
+- **การปล่อยงานที่ค้าง:** หลังขั้น 7 ผ่าน ปิด `STABLE_RECOVERY_GATE_ENABLED` (deploy config) แล้ว cron `sheets_recovery` จะส่งงาน PENDING ที่ค้างอีกครั้งเองทีละไม่เกิน 4 งานต่อรอบเมื่อเปิด pacing ไม่ต้อง replay คิวด้วยมือ; งาน FAILED หรือ lease หมดอายุจะถูกพักเป็น REVIEW ถ้า `STABLE_REDRIVE_HOLD_ENABLED=true` ตรวจด้วย snapshot ว่าช่วงจำนวนงานผิดปกติไม่เพิ่ม
+
+## การยกเลิกค่าใช้จ่ายอัตโนมัติเมื่อเปิด `CONTINUOUS_DAILY_ENABLED` (ขั้น 6)
+
+เมื่อแท็บต่อเนื่องเปิดใช้ ระบบจะเปลี่ยนค่าใช้จ่ายที่ยืนยันแล้วเป็น "ยกเลิก" ใน D1 เองในบางกรณีที่การเขียนชีตล้มแบบแน่นอนก่อนส่งคำขอใด ๆ (`src/sheets/unwritten-expense-cancellation-candidate.ts`, เรียกจาก `src/sheets/stable-expense-job.ts`) โดยไม่มี flag แยก — รายละเอียดเป็นภาษาง่ายและทางเลือกอยู่ใน #296 ข้อ 7 ต้องให้เจ้าของตัดสินก่อนขั้น 6
+
+## Rollback หลังขั้น 5 (operator)
+
+Cutover operator (`POST /admin/stable-sync/continuous-cutover`) มี action ตามลำดับ `START` หรือ `START_REVIEW` → `VIEWS` → `DAILY_J` → `REPORTS` → `ACTIVATE` → `RELEASE` และ**ไม่มี action ย้อน cutover**:
+
+- action ใดล้ม: operator และ workbook claim ถูกตั้งเป็น REVIEW เอง (ไม่ retry อัตโนมัติ) การซิงก์ชีตทั้งหมดยังหยุด ต้องตรวจผลในชีตและ D1 แล้วให้เจ้าของตัดสินทางแก้ต่อ
+- ก่อน `ACTIVATE`: ยังไม่มีการเปลี่ยนตัวเขียน ถ้าต้องยกเลิก เจ้าของลบแท็บที่ `VIEWS` สร้างและย้อนคอลัมน์ J/สูตรรายงานที่ `DAILY_J`/`REPORTS` เขียนด้วย version history ของ Google Sheets จากสำเนาที่ทำไว้ แล้วตัดสินเรื่อง claim แยก
+- `ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการที่ต้องเป็น "ยกเลิก" หรือไม่มีอยู่ (พารามิเตอร์ `mustBeCancelledOrAbsentExpenseIds`; จากชื่อและบริบทน่าจะเป็นสองรายการที่เจ้าของสั่งลบ — ต้องยืนยันก่อนใช้) — ใส่ใน request ของ operator เท่านั้น ห้ามลงใน Issue
+- หลัง `ACTIVATE`: ตัวเขียนเดิมถูกกันถาวร (`CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED`) ห้าม deploy config ค่าเริ่มต้นทับ ทางแก้คือ forward-fix เท่านั้น
+- Canary operator (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
+
 ## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)
 
-**ข้อขัดกับคำตัดสินที่ว่าเจ้าของสร้างแท็บเอง:** ในโค้ดปัจจุบัน แท็บ RAW/รายละเอียดแบบต่อเนื่องถูกสร้างโดย cutover operator ขั้น `VIEWS` (`bootstrapContinuousReportViews` ใน `src/sheets/report-view-bootstrap.ts`) ในคำขอเดียวพร้อมแท็บ view อีก 2 แท็บ และตัวตรวจจะ**ล้มทันทีถ้ามีแท็บชื่อหรือ ID เดียวกันอยู่ก่อน** (`REPORT_VIEW_TARGET_UNVERIFIED`) อีกทั้งคอลัมน์ Z ทุกแถวต้องเป็น marker สุ่มที่สร้างในคำขอนั้นเท่านั้น จึงสร้างด้วยมือล่วงหน้าแทนไม่ได้ ต้องให้เจ้าของตัดสินใหม่ระหว่าง (ก) ให้ operator สร้างแท็บในขั้น `VIEWS` ที่เจ้าของอนุมัติ หรือ (ข) แก้โค้ดให้รับแท็บที่สร้างด้วยมือ (งานใหญ่ ต้องออกแบบการตรวจใหม่)
+**คำตัดสินของเจ้าของ (2026-11-18):** ให้ cutover operator สร้างแท็บในขั้น `VIEWS` ที่เจ้าของอนุมัติ (แทนคำตัดสินเดิมที่ให้เจ้าของสร้างเอง ซึ่งทำไม่ได้เพราะตัวตรวจล้มถ้ามีแท็บอยู่ก่อน และคอลัมน์ Z ต้องเป็น marker ที่สร้างในคำขอเดียวกัน) เจ้าของเลือกชื่อแท็บและ sheet ID 4 ค่าล่วงหน้า
 
-สิ่งที่ operator จะสร้าง (ทางเลือก ก):
+**ข้อยกเว้นเรื่องการเขียน Owner Master:** ระบบเขียนไฟล์ได้เฉพาะในขั้นของ operator ที่เจ้าของอนุมัติทีละขั้น (`VIEWS`, `DAILY_J`, `REPORTS`, `ACTIVATE`, `RELEASE` และขั้นของ canary operator) ภายใต้ workbook claim และอ่านผลกลับทุกครั้ง นอกจากนั้นทีมยังห้ามเขียนไฟล์
+
+สิ่งที่ operator จะสร้างในขั้น `VIEWS`:
 
 | แท็บ | ชื่อ | ขนาด | หัวแถว 1 | เนื้อหา |
 |---|---|---|---|---|
@@ -55,6 +77,8 @@ Sheet ID: **ไม่ต้องหาหลังสร้าง** เพร�
 
 ## ถ้า migration ล้มกลางไฟล์
 
+ตำแหน่ง ALTER: ใน `0048` `ALTER TABLE continuous_notice_dispatches ADD COLUMN owner_token` เป็น statement แรก ส่วนใน `0055` `ALTER TABLE continuous_publication_intents ADD COLUMN financial_journal_revision` อยู่หลัง trigger ชุดแรก (บรรทัดที่ 25)
+
 เอกสาร Cloudflare ระบุว่า migration ที่ล้มจะถูก rollback แต่ไม่ได้กำหนดขอบเขต transaction ถ้าสงสัยว่า `0048` หรือ `0055` ค้างครึ่งไฟล์:
 
 1. อ่าน `SELECT name FROM pragma_table_info('<ตาราง>')` ของ `continuous_notice_dispatches` (0048) หรือ `continuous_publication_intents` (0055) เก็บเป็น JSON `{"<ตาราง>":["<คอลัมน์>",...]}`
@@ -67,5 +91,5 @@ Sheet ID: **ไม่ต้องหาหลังสร้าง** เพร�
 ## Rollback
 
 - ขั้นที่ 3–4: ปิด flag ล่าสุดหรือ rollback Worker ไปเวอร์ชันก่อนหน้า (schema แบบเพิ่ม Worker เดิมทำงานได้ตามผล rehearsal)
-- ขั้นที่ 5 เป็นต้นไป: ทำตามขั้นตอนของ operator ห้าม deploy config ค่าเริ่มต้นทับหลัง cutover
+- ขั้นที่ 5 เป็นต้นไป: ดูหัวข้อ "Rollback หลังขั้น 5 (operator)" ห้าม deploy config ค่าเริ่มต้นทับหลัง cutover
 - ไม่ย้อน schema

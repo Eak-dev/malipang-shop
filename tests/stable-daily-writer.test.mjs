@@ -292,3 +292,23 @@ test('scoped review off: a source cancelled after claim retains the workbook rev
  await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
  assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.writes(),0);
  }finally{h.close();}});
+test('R3: D1 use per expense dispatch with candidate flags off stays far below the per-invocation limit',async()=>{
+ for(const items of [false,true]){const h=fixture(false,items),old={beginStableNotice:notice.beginStableNotice,endStableNotice:notice.endStableNotice,stableNoticePaused:notice.stableNoticePaused};try{
+  h.env.STABLE_PHASE1_ENABLED='true';h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");notice.beginStableNotice=async(env,token)=>{await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='fixture',notice_identity='fixture' WHERE spreadsheet_id=? AND operation_token=?").bind('book',token).run();};notice.endStableNotice=async()=>{};notice.stableNoticePaused=async()=>true;
+  for(const k of ['EXPENSE_SAVED_SYNC_NOTE_ENABLED','EXPENSE_FORCE_RECONCILE_HOLD_ENABLED','STABLE_REDRIVE_HOLD_ENABLED','WORKBOOK_BATCH_FAIRNESS_ENABLED','SYNC_ALERT_DURABLE_ENABLED','SYNC_ALERT_DURABLE_SINCE','STABLE_SCOPED_REVIEW_ENABLED'])delete h.env[k];
+  const prepare=h.DB.prepare,batch=h.DB.batch;let calls=0,statements=0;const perDispatch=[];
+  h.DB.prepare=function(sql){const s=prepare.call(this,sql);for(const m of ['run','first','all']){const f=s[m];s[m]=async function(...a){calls++;statements++;return f.apply(this,a);};}return s;};
+  h.DB.batch=async function(stmts){calls++;statements+=stmts.length;return batch.call(this,stmts);};
+  let outcome;for(let n=0;n<8;n++){calls=0;statements=0;outcome=await dispatchStablePhase1(h.env,h.job);perDispatch.push({calls,statements});if(outcome!=='BUSY'&&outcome!=='CONTINUE')break;}
+  assert.equal(outcome,'PROCESSED');
+  // Workers Paid allows 1,000 D1 queries per invocation and a queue batch holds
+  // up to 10 messages, so one message must stay well under 100 even counting
+  // every batched statement separately (the strictest reading of the limit).
+  // Measured on 2026-11-18 with the same fixture: pre-candidate main 2015c6a
+  // used at most 26 calls / 44 statements per dispatch; this branch 31 / 49.
+  // The guard of 60 catches a regression long before the platform limit.
+  const worst=Math.max(...perDispatch.map(x=>x.statements));
+  assert.ok(worst<=60,`worst dispatch used ${worst} D1 statements: ${JSON.stringify(perDispatch)}`);
+  console.log(`R3 measurement items=${items}: ${JSON.stringify(perDispatch)}`);
+ }finally{Object.assign(notice,old);h.close();}}
+});

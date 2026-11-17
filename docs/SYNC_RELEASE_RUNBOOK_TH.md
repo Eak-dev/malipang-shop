@@ -27,6 +27,23 @@
 
 ห้ามเปิดในรอบนี้ เพราะต้องใช้ notice worker หรือยังไม่ผ่านการทดสอบ provider จริง: `CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED`, `CONTINUOUS_NOTICE_DISPATCH_ENABLED`, `CONTINUOUS_REVIEW_CLOSE_ENABLED`, `CONTINUOUS_PUBLICATION_ENABLED`, `CONTINUOUS_UNDO_SERIALIZATION_ENABLED`, `CONTINUOUS_REVOKE_REVIEW_*`, `CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED`, `CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED`, `CONTINUOUS_PROVIDER_CANARY_ENABLED`, `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED`, `EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED` (เปิดได้ชั่วคราวเพื่ออ่านอย่างเดียวเมื่อเจ้าของอนุมัติ)
 
+## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)
+
+**ข้อขัดกับคำตัดสินที่ว่าเจ้าของสร้างแท็บเอง:** ในโค้ดปัจจุบัน แท็บ RAW/รายละเอียดแบบต่อเนื่องถูกสร้างโดย cutover operator ขั้น `VIEWS` (`bootstrapContinuousReportViews` ใน `src/sheets/report-view-bootstrap.ts`) ในคำขอเดียวพร้อมแท็บ view อีก 2 แท็บ และตัวตรวจจะ**ล้มทันทีถ้ามีแท็บชื่อหรือ ID เดียวกันอยู่ก่อน** (`REPORT_VIEW_TARGET_UNVERIFIED`) อีกทั้งคอลัมน์ Z ทุกแถวต้องเป็น marker สุ่มที่สร้างในคำขอนั้นเท่านั้น จึงสร้างด้วยมือล่วงหน้าแทนไม่ได้ ต้องให้เจ้าของตัดสินใหม่ระหว่าง (ก) ให้ operator สร้างแท็บในขั้น `VIEWS` ที่เจ้าของอนุมัติ หรือ (ข) แก้โค้ดให้รับแท็บที่สร้างด้วยมือ (งานใหญ่ ต้องออกแบบการตรวจใหม่)
+
+สิ่งที่ operator จะสร้าง (ทางเลือก ก):
+
+| แท็บ | ชื่อ | ขนาด | หัวแถว 1 | เนื้อหา |
+|---|---|---|---|---|
+| RAW ต่อเนื่อง | ค่า `CONTINUOUS_RAW_SHEET` (เสนอ `V52_EXPENSE_RAW_ต่อเนื่อง`) | 1,000 แถว × 26 คอลัมน์ (A:Z), ตรึงแถว 1 | `Expense_ID`, `Transaction_Date`, `Description`, `Amount_Baht`, `Payment_Key`, `Source_Wallet`, `Category`, `Status`, `Message_ID`, `Trace_ID`, `Submitted_By_Staff_ID`, `Branch_ID`, `Document_ID`, `Document_Type`, `Vendor`, `Document_Number`, `Order_ID`, `Sales_Addback_Basis` (A:R) | แถว 2–1000: สูตรใน A:Q อ่านค่าจาก carrier ใน Z, Z เป็น marker `MPL1_EMPTY_<แถว>_<สุ่ม>`, R เว้นให้กรอกตามธรรมเนียม addback |
+| รายละเอียดต่อเนื่อง | ค่า `CONTINUOUS_DETAIL_SHEET` (เสนอ `รายละเอียดการซื้อ_ต่อเนื่อง`) | 1,000 × 26, ตรึงแถว 1 | `Purchase_Item_ID`, `Expense_ID`, `Document_ID`, `วันที่ซื้อ`, `บริษัท/ร้านค้า`, `เลขที่เอกสาร`, `รายการสินค้า`, `จำนวน`, `หน่วย`, `ราคาต่อหน่วย`, `ส่วนลดรายการ`, `จำนวนเงินรายการ`, `ส่วนลด/ปรับยอดระดับเอกสาร`, `ยอดจ่ายจริงของ Expense`, `หมวด`, `สาขา`, `สถานะ`, `Evidence ref (private)`, `Created_At`, `Updated_At / Cancelled_At` (A:T) | แถว 2–1000: สูตรใน A:T, Z เป็น marker |
+| view รวม RAW | `V52_EXPENSE_RAW_ALL` (ตายตัว) | 9,999 × 18 | สูตร spill ใน A1 รวม `V52_EXPENSE_RAW` เดิม + RAW ต่อเนื่อง | ใช้กับรายงาน |
+| view รวมรายละเอียด | `V52_PURCHASE_DETAIL_ALL` (ตายตัว) | 9,999 × 20 | สูตร spill ใน A1 รวม `รายละเอียดการซื้อ` เดิม + รายละเอียดต่อเนื่อง | ใช้กับรายงาน |
+
+Sheet ID: **ไม่ต้องหาหลังสร้าง** เพราะ operator ใช้ค่าที่ตั้งไว้ล่วงหน้าเป็น ID ของแท็บใหม่ — เจ้าของเลือกจำนวนเต็มไม่ติดลบ 4 ค่าที่ไม่ซ้ำกันและไม่ซ้ำ ID ของแท็บใดที่มีอยู่ (ID ของแท็บที่มีอยู่ดูได้จาก `gid=` ใน URL ของแต่ละแท็บ) แล้วตั้งเป็น `CONTINUOUS_RAW_SHEET_ID`, `CONTINUOUS_DETAIL_SHEET_ID`, `CONTINUOUS_RAW_VIEW_ID`, `CONTINUOUS_DETAIL_VIEW_ID`; ส่วน `CONTINUOUS_DAILY_SHEET_ID` ต้องเป็น `gid` ของแท็บ `รายวันต่อเนื่อง_แบบร่าง` ที่มีอยู่
+
+เงื่อนไขที่ตัวตรวจบังคับก่อนสร้าง: ชื่อทั้ง 4 ไม่ซ้ำกันและยังไม่มีในไฟล์; `SHEET_EXPENSE_RAW` เป็น `V52_EXPENSE_RAW` และแท็บรายละเอียดเดิมชื่อ `รายละเอียดการซื้อ`; แท็บ RAW/รายละเอียดเดิมมีไม่เกิน 4,000 แถว (ขนาด grid ต้องตรวจในไฟล์จริงก่อน); ต้องถือ workbook claim และเปิด `STABLE_RECOVERY_GATE_ENABLED`, `STABLE_SHEETS_PACING_ENABLED`, `CONTINUOUS_REPORT_CUTOVER_ENABLED` ขั้นถัดไปของ operator (`DAILY_J`, `REPORTS`) เขียนคอลัมน์ J ของแท็บรายวันและสูตรรายงาน ซึ่งเป็นการเขียน Owner Master ที่ต้องอนุมัติเช่นกัน
+
 ## ถ้า migration ล้มกลางไฟล์
 
 เอกสาร Cloudflare ระบุว่า migration ที่ล้มจะถูก rollback แต่ไม่ได้กำหนดขอบเขต transaction ถ้าสงสัยว่า `0048` หรือ `0055` ค้างครึ่งไฟล์:

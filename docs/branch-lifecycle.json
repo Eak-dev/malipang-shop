@@ -34,6 +34,15 @@
       "primary_branch": "codex/retire-integrated-branches-20261114",
       "target_branch": "main",
       "reason": "Phase2clears28integratedrefs,15ready after scoped handoff;13retained. Task branch observation is temporary; one-branch goal remains pending."
+    },
+    {
+      "issue": 292,
+      "title": "Continuous daily expense sync candidate",
+      "mode": "MANAGED",
+      "primary_branch": "codex/revoke-review-close-20261116",
+      "target_branch": "main",
+      "coordination_chat": "PO แก้ปัญหา update ค่าใช้จ่าย",
+      "reason": "One Issue, one primary branch, one PR (#291). Supersedes closed PR #289, whose head is an ancestor. Related #248 and #251. Merge is not deployment; Production release needs separate owner approval."
     }
   ],
   "branches": [
@@ -5175,6 +5184,21 @@
       "status": "ACTIVE",
       "reason": "Temporary phase2delivery branch;15 scoped handoffs ready;13retained. Snapshot SHA precedes its registration commit.",
       "observed_at": "2026-11-14T12:26:51.927586+00:00"
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/revoke-review-close-20261116",
+      "issues": [
+        292
+      ],
+      "source_sha": "8d4bbc5b8375a2a54cbca773646e8a99c6c8405f",
+      "observed_at": "2026-11-17T04:18:59.503086+00:00",
+      "pull_requests": [
+        291
+      ],
+      "status": "ACTIVE",
+      "reason": "Primary branch for #292 with open PR #291; single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

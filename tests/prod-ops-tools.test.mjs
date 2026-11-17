@@ -4,7 +4,7 @@ import {readFileSync,readdirSync,mkdtempSync,writeFileSync,chmodSync,existsSync,
 import {execFileSync,spawnSync} from 'node:child_process';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,countBucket,workerVersionCheck,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
+import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,countBucket,workerVersionCheck,sha256Hex,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
 
 /** Strip migration file names and range labels; nothing numeric may remain. */
 const digitsOutsideAllowed=text=>text.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\| (0|1-9|10\+) \|/g,'| |').replace(/\bd1_migrations\b/g,'').match(/\d/g);
@@ -65,11 +65,15 @@ test('pending migrations are those in this commit that D1 has not applied',()=>{
 test('counts become range labels and the Worker id is only compared',()=>{
   assert.deepEqual([0,1,9,10,9999].map(countBucket),['0','1-9','1-9','10+','10+']);
   assert.throws(()=>countBucket(-1));assert.throws(()=>countBucket(1.5));
-  const id='d0000000-0000-4000-8000-000000000000';
-  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:100}]},id),'MATCH');
-  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:90},{version_id:'e0000000-0000-4000-8000-000000000000',percentage:10}]},id),'MISMATCH');
-  assert.equal(workerVersionCheck({versions:[{version_id:'e0000000-0000-4000-8000-000000000000',percentage:100}]},id),'MISMATCH');
-  assert.equal(workerVersionCheck({versions:[]},''),'NOT_CHECKED');assert.equal(workerVersionCheck({},'nope'),'INVALID_EXPECTED');
+  const id='d0000000-0000-4000-8000-000000000000',other='e0000000-0000-4000-8000-000000000000',h=sha256Hex(id);
+  assert.match(h,/^[0-9a-f]{64}$/);assert.notEqual(h,id);
+  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:100}]},h),'MATCH');
+  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:90},{version_id:other,percentage:10}]},h),'MISMATCH');
+  assert.equal(workerVersionCheck({versions:[{version_id:other,percentage:100}]},h),'MISMATCH');
+  assert.equal(workerVersionCheck({versions:[]},''),'NOT_CHECKED');
+  // The raw id is not accepted as the expected value.
+  assert.equal(workerVersionCheck({versions:[{version_id:id,percentage:100}]},id),'INVALID_EXPECTED');
+  assert.equal(workerVersionCheck({},'A'.repeat(64)),'INVALID_EXPECTED');
 });
 
 test('collect output has no Production numbers: only migration names and range labels',()=>{
@@ -83,12 +87,13 @@ test('collect output has no Production numbers: only migration names and range l
     if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:22}]}]);
     if(sql.includes('stable_workbook_claims'))return JSON.stringify([{results:[{state:'REVIEW',reason:'STABLE_DAILY_REVIEW',n:1}]}]);
     return JSON.stringify([{results:[{status:'FAILED',n:0}]}]);};
-  const text=collect(run,id,['0001_a.sql','0023_stable_recovery_admission.sql','0024_next.sql']);
+  const text=collect(run,sha256Hex(id),['0001_a.sql','0023_stable_recovery_admission.sql','0024_next.sql']);
   assert.equal(digitsOutsideAllowed(text),null,text);
   assert.match(text,/\| EXPENSE \| REVIEW \| STABLE_SYNC_REVIEW \| 10\+ \|/);assert.match(text,/\| ATTENDANCE_EVENT \| FAILED \| NONE \| 1-9 \|/);
   assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 10\+ \|/);
   assert.match(text,/### migrations_pending_in_this_commit\n- 0024_next\.sql/);
-  assert.match(text,/### worker_version\nMATCH/);assert.equal(text.includes(id),false);
+  assert.match(text,/### worker_version\nMATCH/);assert.equal(text.includes(id),false);assert.equal(text.includes(sha256Hex(id)),false);
+  assert.match(collect(run,id,[]),/### worker_version\nINVALID_EXPECTED/);
   assert.equal(snapshotIncomplete(text),false);
   assert.equal(calls.every(a=>a[0]==='deployments'||a.includes('--remote')&&a.includes('--json')),true);
   assert.equal(calls.some(a=>a.includes('apply')),false);
@@ -117,7 +122,11 @@ test('ops workflow is manual-only, main-only, gated, pinned and scopes the token
   }
   assert.match(wf,/\[ "\$EXPECTED_SHA" = "\$GITHUB_SHA" \]/);assert.match(wf,/READ PRODUCTION \$\{EXPECTED_SHA:0:7\}/);assert.match(wf,/WRITE BACKUP/);
   assert.doesNotMatch(wf,/wrangler (deploy|d1 migrations apply|versions deploy|rollback)/);
-  assert.match(wf,/blocks other database requests/);assert.match(wf,/EXPECTED_WORKER_VERSION/);
+  assert.match(wf,/blocks other database requests/);assert.match(wf,/EXPECTED_WORKER_VERSION_SHA256/);
+  // Every input reaches an env block printed in the public log: only non-sensitive ones are allowed.
+  const inputs=[...wf.slice(wf.indexOf('    inputs:'),wf.indexOf('\npermissions:')).matchAll(/^ {6}([a-z_0-9]+):$/gm)].map(m=>m[1]);
+  assert.deepEqual(inputs,['operation','expected_sha','confirmation','write_backup','expected_worker_version_sha256']);
+  assert.doesNotMatch(wf,/expected_worker_version[^_]/);
 });
 
 const hasSqlite=spawnSync('sqlite3',['-version']).status===0;

@@ -3,13 +3,15 @@
 //  - migration file names applied on D1 and still pending in this commit
 //  - table names present in D1
 //  - abnormal-work counts as range labels only: 0, 1-9 or 10+
-//  - the live Worker version compared with an expected id: MATCH, MISMATCH
-//    or NOT_CHECKED (the id itself is never printed)
+//  - the live Worker version compared with an expected SHA-256 of its id:
+//    MATCH, MISMATCH, NOT_CHECKED or INVALID_EXPECTED. Only the hash is an
+//    input, because Actions prints each step's env block in the public log.
 // Each query has a fixed column allowlist in QUERIES, sanitizeRows() rejects
 // rows that do not match it, and tests pin the SQL and check the rendered
 // output for digits. These checks narrow what a query can expose; they do not
 // prove that a future change to QUERIES is safe, which still needs review.
 import {execFileSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
 import {readdirSync} from 'node:fs';
 import {pathToFileURL,fileURLToPath} from 'node:url';
 
@@ -75,18 +77,19 @@ export function renderTable(queryName,rows){
 export function pendingMigrations(applied,local){const done=new Set(applied);return local.filter(name=>!done.has(name));}
 export function localMigrations(dir=fileURLToPath(new URL('../migrations/',import.meta.url))){return readdirSync(dir).filter(n=>KINDS.migration(n)).sort();}
 
-const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-/** MATCH only when a single version serves 100% and equals the expected id. */
-export function workerVersionCheck(status,expected){
-  if(!expected)return 'NOT_CHECKED';
-  if(!UUID.test(expected))return 'INVALID_EXPECTED';
-  const versions=Array.isArray(status?.versions)?status.versions:[];
-  return versions.length===1&&versions[0]?.percentage===100&&versions[0]?.version_id===expected?'MATCH':'MISMATCH';
+export const sha256Hex=value=>createHash('sha256').update(value,'utf8').digest('hex');
+/** MATCH only when a single version serves 100% and the SHA-256 of its id
+ * equals the expected hash. Neither the id nor the hash is printed. */
+export function workerVersionCheck(status,expectedHash){
+  if(!expectedHash)return 'NOT_CHECKED';
+  if(!/^[0-9a-f]{64}$/.test(expectedHash))return 'INVALID_EXPECTED';
+  const versions=Array.isArray(status?.versions)?status.versions:[],only=versions[0];
+  return versions.length===1&&only?.percentage===100&&typeof only?.version_id==='string'&&sha256Hex(only.version_id)===expectedHash?'MATCH':'MISMATCH';
 }
 
 function wrangler(args){return execFileSync('npx',['wrangler',...args],{encoding:'utf8',stdio:['ignore','pipe','ignore'],maxBuffer:32*1024*1024});}
 
-export function collect(run=wrangler,expectedWorker=process.env.EXPECTED_WORKER_VERSION??'',local=localMigrations()){
+export function collect(run=wrangler,expectedWorker=process.env.EXPECTED_WORKER_VERSION_SHA256??'',local=localMigrations()){
   const out=['## Read-only Production snapshot',''];
   let applied=null;
   for(const [name,{sql}] of Object.entries(QUERIES)){
@@ -101,6 +104,7 @@ export function collect(run=wrangler,expectedWorker=process.env.EXPECTED_WORKER_
   else{const pending=pendingMigrations(applied,local);out.push(...(pending.length?pending.map(n=>`- ${n}`):['(none)']),'');}
   out.push('### worker_version');
   if(!expectedWorker)out.push('NOT_CHECKED','');
+  else if(!/^[0-9a-f]{64}$/.test(expectedWorker))out.push('INVALID_EXPECTED','');
   else{try{out.push(workerVersionCheck(JSON.parse(run(['deployments','status','--json'])),expectedWorker),'');}catch{out.push('QUERY_FAILED','');}}
   return out.join('\n')+'\n';
 }

@@ -304,6 +304,8 @@ test('R3: D1 use per expense dispatch with candidate flags off stays far below t
   // Workers Paid allows 1,000 D1 queries per invocation and a queue batch holds
   // up to 10 messages, so one message must stay well under 100 even counting
   // every batched statement separately (the strictest reading of the limit).
+  // Scope: one expense message dispatched alone; other messages in the same
+  // queue batch (parked hints, LINE events) are not counted here.
   // Measured on 2026-11-18 with the same fixture: pre-candidate main 2015c6a
   // used at most 26 calls / 44 statements per dispatch; this branch 31 / 49.
   // The guard of 60 catches a regression long before the platform limit.

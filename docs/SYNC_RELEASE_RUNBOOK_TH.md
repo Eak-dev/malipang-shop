@@ -2,6 +2,15 @@
 
 เอกสารนี้เป็นลำดับปฏิบัติที่อ้างใน [#296](https://github.com/Eak-dev/malipang-shop/issues/296) ไม่ใช่การอนุมัติ ทุกขั้นต้องมีคอมเมนต์อนุมัติจากเจ้าของใน #296 ก่อนทำ และต้องอ่านผลกลับก่อนไปขั้นถัดไป ห้าม deploy `wrangler.continuous-notice.jsonc` ในรอบนี้
 
+## คำตัดสินของเจ้าของที่ใช้กับ runbook นี้ (2026-11-18)
+
+- แท็บ RAW/รายละเอียดต่อเนื่อง: operator สร้างในขั้น `VIEWS` (ดูหัวข้อแท็บ) และระบบเขียน Owner Master ได้เฉพาะขั้นของ operator ที่อนุมัติ
+- งบตั้งต้น: เริ่มใช้แท็บใหม่วันที่ 1 ของเดือน และใส่งบเต็มของเดือนนั้นในตาราง `AA:AC` — เดือนเป้าหมายให้เจ้าของยืนยันภายหลัง (เร็วสุดที่เตรียมทันคือเดือนถัดไปหลัง PR นี้ merge และ #295 ผ่าน)
+- Back Office: นำออกจากเกณฑ์ของ release นี้ (ตัวซิงก์อ่านค่าใช้จ่ายที่ยืนยันใน D1 โดยไม่ขึ้นกับช่องทาง)
+- ล็อก workbook `REVIEW` เดิม: ใช้ `START_REVIEW` ของ operator หลังตรวจผลการเขียนเดิมในชีตแบบอ่านอย่างเดียว ในขั้นที่เจ้าของอนุมัติ
+- สองรายการที่เจ้าของสั่งลบ: ลบหลัง canary ผ่าน เป็นงานแยก (L5) เก็บบันทึกกันซ้ำของข้อความ LINE ไว้ และเปิด `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED` ก่อนลบ เจ้าของยืนยันทีละชิ้น
+- แผนบัญชี Cloudflare (Paid/Free): เจ้าของตรวจเอง ก่อนขั้น 3
+
 ## ก่อนเริ่ม
 
 - PR ที่ปิด R1–R7 merge แล้ว และ [#295](https://github.com/Eak-dev/malipang-shop/issues/295) ขั้นที่ 1 ยืนยันว่า `0048` และ `0055` ยังไม่อยู่ใน migration ที่ apply แล้ว จากนั้นขั้นที่ 2 (rehearsal กับไฟล์ฉบับ merge แล้ว) ผ่าน
@@ -25,12 +34,19 @@
 | 6 | canary รายการเดียว | `CONTINUOUS_DAILY_ENABLED=true`, `CONTINUOUS_CANARY_OPERATOR_ENABLED=true` | อ่านกลับแถว ยอด สูตร `I/J/R/S/U` และรายงาน; ส่งซ้ำจำกัดรายการแล้วไม่เพิ่ม; Undo รายการเดียวกันแล้วอ่านกลับ |
 | 7 | ขยายวง | ปิด `CONTINUOUS_CANARY_OPERATOR_ENABLED` ตามขั้นตอน operator | 24 ชั่วโมงแรก: failed jobs, REVIEW, รายการซ้ำ วันละครั้ง |
 
+**คำเตือนขั้น 4b:** ถ้าตั้ง `SYNC_ALERT_DURABLE_ENABLED=true` แต่ไม่ตั้งหรือตั้ง `SYNC_ALERT_DURABLE_SINCE` ผิดรูปแบบ ระบบจะ**ทำงานแบบ main อย่างเงียบ ๆ** (แจ้งเหตุ DLQ ตรงแบบเดิม ไม่มี error) ให้ตรวจว่าค่าเป็น ISO-8601 UTC เช่น `2026-12-01T02:00:00Z` และหลัง deploy ตรวจว่ามีการ sweep เกิดขึ้น
+
+**เงื่อนไขก่อนขั้น 5 และ 6:** ต้องมีคำตัดสินของเจ้าของใน #296 ข้อ 8 (ซิงก์ชีตอื่นหยุดระหว่างขั้น 5–7) ก่อนขั้น 5 และข้อ 7 (ยกเลิกค่าใช้จ่ายอัตโนมัติ) ก่อนขั้น 6
+
+**จังหวะเวลาของขั้น 5–6:** ตามคำตัดสินเรื่องงบ ให้ `ACTIVATE` ในช่วง 02:00–05:00 ของวันที่ 1 ของเดือนเป้าหมาย; รายการที่ยืนยันระหว่าง 00:00 จนถึง `ACTIVATE` ของวันนั้นจะยังลงแท็บเดิม เจ้าของต้องยอมรับหรือเลือกเวลาอื่น และใส่งบเต็มของเดือนใน `AA:AC` ก่อน canary
+
 ห้ามเปิดในรอบนี้ เพราะต้องใช้ notice worker หรือยังไม่ผ่านการทดสอบ provider จริง: `CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED`, `CONTINUOUS_NOTICE_DISPATCH_ENABLED`, `CONTINUOUS_REVIEW_CLOSE_ENABLED`, `CONTINUOUS_PUBLICATION_ENABLED`, `CONTINUOUS_UNDO_SERIALIZATION_ENABLED`, `CONTINUOUS_REVOKE_REVIEW_*`, `CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED`, `CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED`, `CONTINUOUS_PROVIDER_CANARY_ENABLED`, `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED`, `EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED` (เปิดได้ชั่วคราวเพื่ออ่านอย่างเดียวเมื่อเจ้าของอนุมัติ)
 
 ## ผลกระทบระหว่างขั้น 5–7 (recovery gate)
 
 - **ผล:** เมื่อ `STABLE_RECOVERY_GATE_ENABLED=true` ตัว gate (`stableRecoveryGateBlocked` ใน `src/sheets/stable-recovery-admission.ts`) อนุญาตให้เขียนชีตเฉพาะเป้าหมายที่ operator arm ไว้ทีละรายการ **การซิงก์ชีตอื่นทั้งหมดหยุด** ทั้งการลงเวลา payroll รายวัน/รายสัปดาห์ ตารางกะ และค่าใช้จ่ายรายการอื่น งานไม่หาย: ถูกเก็บใน outbox (`sync_jobs` สถานะ PENDING) และข้อความในคิวถูก ACK
 - **ระยะเวลาที่เสนอ:** ทำขั้น 5–7 ให้เสร็จภายในช่วงเงียบ 02:00–05:00 (ไม่เกิน 3 ชั่วโมง) และไม่ทำในวันที่มีรอบจ่าย payroll; ถ้าเกิน 8 ชั่วโมงให้หยุดและให้เจ้าของตัดสินว่าจะไปต่อหรือหยุดที่สถานะปัจจุบัน — ค่าเหล่านี้เป็นข้อเสนอของ Dev รอเจ้าของยืนยัน
+- **ช่วงที่ซิงก์หยุดจริงยาวกว่าขั้น 5–7:** ตั้งแต่ `START`/`START_REVIEW` (operator ถือ workbook claim แบบ HELD) จนถึง `RELEASE` ผู้เขียนชีตทุกตัวรอ claim อยู่แล้ว และ gate ทำให้หยุดต่อจนกว่าจะปิด gate
 - **การปล่อยงานที่ค้าง:** หลังขั้น 7 ผ่าน ปิด `STABLE_RECOVERY_GATE_ENABLED` (deploy config) แล้ว cron `sheets_recovery` จะส่งงาน PENDING ที่ค้างอีกครั้งเองทีละไม่เกิน 4 งานต่อรอบเมื่อเปิด pacing ไม่ต้อง replay คิวด้วยมือ; งาน FAILED หรือ lease หมดอายุจะถูกพักเป็น REVIEW ถ้า `STABLE_REDRIVE_HOLD_ENABLED=true` ตรวจด้วย snapshot ว่าช่วงจำนวนงานผิดปกติไม่เพิ่ม
 
 ## การยกเลิกค่าใช้จ่ายอัตโนมัติเมื่อเปิด `CONTINUOUS_DAILY_ENABLED` (ขั้น 6)
@@ -39,13 +55,14 @@
 
 ## Rollback หลังขั้น 5 (operator)
 
-Cutover operator (`POST /admin/stable-sync/continuous-cutover`) มี action ตามลำดับ `START` หรือ `START_REVIEW` → `VIEWS` → `DAILY_J` → `REPORTS` → `ACTIVATE` → `RELEASE` และ**ไม่มี action ย้อน cutover**:
+Cutover operator (`POST /admin/stable-sync/continuous-cutover`, `src/admin/continuous-cutover-operator.ts`) มี action ตามลำดับ `START` หรือ `START_REVIEW` → `VIEWS` → `DAILY_J` → `REPORTS` → `ACTIVATE` → `RELEASE` และ**ไม่มี action ย้อน cutover** — `RELEASE` ไม่ใช่การย้อนกลับ แต่เป็นขั้นปิดงาน: ตรวจรายงานที่ติดตั้ง ยืนยันว่า cutover เป็น `ACTIVE` แล้วปล่อย workbook claim เพื่อให้ซิงก์กลับมาทำงาน
 
-- action ใดล้ม: operator และ workbook claim ถูกตั้งเป็น REVIEW เอง (ไม่ retry อัตโนมัติ) การซิงก์ชีตทั้งหมดยังหยุด ต้องตรวจผลในชีตและ D1 แล้วให้เจ้าของตัดสินทางแก้ต่อ
-- ก่อน `ACTIVATE`: ยังไม่มีการเปลี่ยนตัวเขียน ถ้าต้องยกเลิก เจ้าของลบแท็บที่ `VIEWS` สร้างและย้อนคอลัมน์ J/สูตรรายงานที่ `DAILY_J`/`REPORTS` เขียนด้วย version history ของ Google Sheets จากสำเนาที่ทำไว้ แล้วตัดสินเรื่อง claim แยก
-- `ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการที่ต้องเป็น "ยกเลิก" หรือไม่มีอยู่ (พารามิเตอร์ `mustBeCancelledOrAbsentExpenseIds`; จากชื่อและบริบทน่าจะเป็นสองรายการที่เจ้าของสั่งลบ — ต้องยืนยันก่อนใช้) — ใส่ใน request ของ operator เท่านั้น ห้ามลงใน Issue
-- หลัง `ACTIVATE`: ตัวเขียนเดิมถูกกันถาวร (`CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED`) ห้าม deploy config ค่าเริ่มต้นทับ ทางแก้คือ forward-fix เท่านั้น
-- Canary operator (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
+- **action ใดล้ม:** operator และ workbook claim ถูกตั้งเป็น REVIEW เอง ไม่ retry อัตโนมัติ การซิงก์ชีตทั้งหมดยังหยุด ต้องตรวจผลในชีตและ D1 แล้วให้เจ้าของตัดสินทางแก้ต่อ
+- **ก่อน `ACTIVATE`:** ตัวเขียนยังเป็นแบบเดิม ถ้าจะยกเลิก: แท็บที่ `VIEWS` สร้างไม่ถูกลบอัตโนมัติ (เจ้าของลบเอง) และคอลัมน์ J ของแท็บรายวัน/สูตรรายงานที่ `DAILY_J`/`REPORTS` เขียนต้องคืนจากสำเนา Owner Master หรือ version history; จากนั้นตัดสินเรื่อง claim ที่ operator ถืออยู่แยก
+- **หลัง `ACTIVATE`:** แถว cutover ใน D1 เป็น `ACTIVE` และแก้หรือลบไม่ได้ (มี trigger กัน) ทางเขียนแบบเดิมถูกกันถาวร; สิ่งที่ย้อนได้คือคืนคอลัมน์ J/สูตรรายงานจากสำเนา และลบแท็บใหม่ด้วยมือ แต่ตัวเขียนไม่กลับไปแท็บเดิม
+- **ปิด `CONTINUOUS_DAILY_ENABLED` หลัง activation:** ทำได้ (deploy config) แต่ไม่ใช่การกลับไปแท็บเดิม — งานซิงก์ค่าใช้จ่ายจะได้ `CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED` ถูกเก็บไว้ใน outbox (ไม่หาย) และ ACK ข้อความ ค่าใช้จ่ายจึงหยุดลงชีตจนกว่าจะเปิดกลับหรือมี forward-fix; งาน HR/payroll ไม่กระทบ ใช้เป็นการหยุดฉุกเฉินได้ ห้าม deploy config ค่าเริ่มต้นทั้งชุดทับ
+- **`ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการ** ที่ต้องเป็น "ยกเลิก" หรือไม่มีอยู่ (`mustBeCancelledOrAbsentExpenseIds`; จากชื่อและบริบทน่าจะเป็นสองรายการที่เจ้าของสั่งลบ — ต้องยืนยันก่อนใช้) ใส่ใน request ของ operator เท่านั้น ห้ามลงใน Issue
+- **Canary operator** (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
 
 ## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)
 
@@ -73,7 +90,7 @@ Sheet ID: **ไม่ต้องหาหลังสร้าง** เพร�
 
 ## ขีดจำกัด D1 ต่อ invocation (R3)
 
-ผลวัดใน PR: ต่อหนึ่ง dispatch ของงานค่าใช้จ่ายใช้สูงสุด 31 calls / 49 statements (main ก่อน #291: 26 / 44) **ยังไม่ยืนยันแผนของบัญชี Cloudflare** — Workers Paid อนุญาต 1,000 queries ต่อ invocation แต่ Free อนุญาต 50 และเทสต์เดิมใน repo จำกัด subrequest ไว้ที่ 50 ก่อนขั้น 3 เจ้าของต้องยืนยันแผนจากหน้า Billing; ถ้าเป็น Free ขอบเหลือราว 19 calls ต่อ invocation (นับ batch เป็น 1) ซึ่งแคบ ต้องประเมินใหม่ก่อน release
+ผลวัดใน PR: ต่อหนึ่ง dispatch ของงานค่าใช้จ่าย**หนึ่งข้อความ**ใช้สูงสุด 31 calls / 49 statements (main ก่อน #291: 26 / 44) — ไม่รวมงานอื่นใน batch เดียวกัน (batch ที่มีงานชีตหลายข้อความจะเขียนได้ตัวเดียว ที่เหลือถูกพักด้วย D1 batch เดียว) **ยังไม่ยืนยันแผนของบัญชี Cloudflare** — Workers Paid อนุญาต 1,000 queries ต่อ invocation แต่ Free อนุญาต 50 และเทสต์เดิมใน repo จำกัด subrequest ไว้ที่ 50 ก่อนขั้น 3 เจ้าของต้องยืนยันแผนจากหน้า Billing; ถ้าเป็น Free ขอบเหลือราว 19 calls ต่อ invocation (นับ batch เป็น 1) ซึ่งแคบ ต้องประเมินใหม่ก่อน release
 
 ## ถ้า migration ล้มกลางไฟล์
 

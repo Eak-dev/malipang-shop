@@ -44,13 +44,25 @@ Sheet ID: **ไม่ต้องหาหลังสร้าง** เพร�
 
 เงื่อนไขที่ตัวตรวจบังคับก่อนสร้าง: ชื่อทั้ง 4 ไม่ซ้ำกันและยังไม่มีในไฟล์; `SHEET_EXPENSE_RAW` เป็น `V52_EXPENSE_RAW` และแท็บรายละเอียดเดิมชื่อ `รายละเอียดการซื้อ`; แท็บ RAW/รายละเอียดเดิมมีไม่เกิน 4,000 แถว (ขนาด grid ต้องตรวจในไฟล์จริงก่อน); ต้องถือ workbook claim และเปิด `STABLE_RECOVERY_GATE_ENABLED`, `STABLE_SHEETS_PACING_ENABLED`, `CONTINUOUS_REPORT_CUTOVER_ENABLED` ขั้นถัดไปของ operator (`DAILY_J`, `REPORTS`) เขียนคอลัมน์ J ของแท็บรายวันและสูตรรายงาน ซึ่งเป็นการเขียน Owner Master ที่ต้องอนุมัติเช่นกัน
 
+## ข้อควรรู้เรื่องแจ้งเหตุแบบ durable (ก่อนขั้น 4b)
+
+- **ช่วงขั้น 2 ถึง 4b ตาราง `sync_alert_incidents` โตได้:** trigger ของ 0025 บันทึก incident ทุกครั้งที่งานเปลี่ยนเป็น FAILED/REVIEW หรือ workbook เข้า REVIEW ตั้งแต่รัน migration แต่การลบ incident เก่า (retention) ทำงานเฉพาะเมื่อ durable alerts เปิด จำนวนแถวเท่ากับจำนวนเหตุการณ์ผิดปกติในช่วงนั้น ไม่ได้โตตามจำนวนรายการปกติ
+- **incident ที่ยังเปิดอยู่ก่อน cutoff จะไม่ถูกแจ้งอีก:** ก่อนตั้ง `SYNC_ALERT_DURABLE_SINCE` ให้ตรวจ incident ที่ยัง `OPEN` และยังไม่แจ้งด้วยตนเอง (อ่านอย่างเดียว เมื่อเจ้าของอนุมัติ) เช่น `SELECT kind,category,count(*) AS n FROM sync_alert_incidents WHERE state='OPEN' AND alerted_at IS NULL GROUP BY 1,2` แล้วจัดการเหตุที่ยังต้องทำก่อน เพราะหลังเปิด sweep จะตั้งเป็น `PRE_CUTOFF_SUPPRESSED` โดยไม่ส่ง
+
+## ขีดจำกัด D1 ต่อ invocation (R3)
+
+ผลวัดใน PR: ต่อหนึ่ง dispatch ของงานค่าใช้จ่ายใช้สูงสุด 31 calls / 49 statements (main ก่อน #291: 26 / 44) **ยังไม่ยืนยันแผนของบัญชี Cloudflare** — Workers Paid อนุญาต 1,000 queries ต่อ invocation แต่ Free อนุญาต 50 และเทสต์เดิมใน repo จำกัด subrequest ไว้ที่ 50 ก่อนขั้น 3 เจ้าของต้องยืนยันแผนจากหน้า Billing; ถ้าเป็น Free ขอบเหลือราว 19 calls ต่อ invocation (นับ batch เป็น 1) ซึ่งแคบ ต้องประเมินใหม่ก่อน release
+
 ## ถ้า migration ล้มกลางไฟล์
 
 เอกสาร Cloudflare ระบุว่า migration ที่ล้มจะถูก rollback แต่ไม่ได้กำหนดขอบเขต transaction ถ้าสงสัยว่า `0048` หรือ `0055` ค้างครึ่งไฟล์:
 
 1. อ่าน `SELECT name FROM pragma_table_info('<ตาราง>')` ของ `continuous_notice_dispatches` (0048) หรือ `continuous_publication_intents` (0055) เก็บเป็น JSON `{"<ตาราง>":["<คอลัมน์>",...]}`
 2. `node scripts/migration-forward-fix.mjs migrations/<ไฟล์> <columns.json> > forward-fix.sql` (ไม่ต่อฐานข้อมูล)
-3. เมื่อเจ้าของอนุมัติ: `wrangler d1 execute malipang-v5-2 --remote --file=forward-fix.sql` แล้วบันทึกชื่อไฟล์ใน `d1_migrations` ตามขั้นตอนที่อนุมัติใน #296
+3. เมื่อเจ้าของอนุมัติ: `wrangler d1 execute malipang-v5-2 --remote --file=forward-fix.sql` แล้วตรวจว่า object ของไฟล์ครบ (เทียบกับ schema ของ rehearsal)
+4. บันทึก ledger เพื่อไม่ให้ `migrations apply` ครั้งถัดไปรันไฟล์นี้ซ้ำแล้วล้มที่ ALTER (รันซ้ำได้):
+   `wrangler d1 execute malipang-v5-2 --remote --command "INSERT INTO d1_migrations(name) SELECT '<ชื่อไฟล์>' WHERE NOT EXISTS(SELECT 1 FROM d1_migrations WHERE name='<ชื่อไฟล์>')"`
+   แล้วรัน `migrations apply` ต่อสำหรับไฟล์ที่เหลือ
 
 ## Rollback
 

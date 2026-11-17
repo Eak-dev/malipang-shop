@@ -36,13 +36,13 @@
       "reason": "Phase2clears28integratedrefs,15ready after scoped handoff;13retained. Task branch observation is temporary; one-branch goal remains pending."
     },
     {
-      "issue": 292,
-      "title": "Continuous daily expense sync candidate",
-      "mode": "MANAGED",
-      "primary_branch": "codex/revoke-review-close-20261116",
+      "issue": 293,
+      "title": "Gated read-only Production ops tooling",
+      "mode": "MIGRATION_PENDING",
+      "primary_branch": "codex/feature-prod-ops-readonly-tools",
       "target_branch": "main",
-      "coordination_chat": "PO แก้ปัญหา update ค่าใช้จ่าย",
-      "reason": "One Issue, one primary branch, one PR (#291). Supersedes closed PR #289, whose head is an ancestor. Related #248 and #251. Merge is not deployment; Production release needs separate owner approval."
+      "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
+      "reason": "Branch created from canonical main 0fd75d2; becomes MANAGED once pushed and its ACTIVE record holds an observed SHA. Running the workflow on Production needs a separate Production Change issue."
     }
   ],
   "branches": [
@@ -5192,13 +5192,43 @@
       "issues": [
         292
       ],
-      "source_sha": "8d4bbc5b8375a2a54cbca773646e8a99c6c8405f",
-      "observed_at": "2026-11-17T04:18:59.503086+00:00",
+      "source_sha": "1fb58ba43fb89c89990911d8e06331b8c28cf043",
+      "observed_at": "2026-11-17T12:24:14.327302+00:00",
       "pull_requests": [
         291
       ],
-      "status": "ACTIVE",
-      "reason": "Primary branch for #292 with open PR #291; single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
+      "status": "DELETED",
+      "reason": "Remote primary of #292 deleted by the coordinator after the squash merge of PR #291; absence verified.",
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "1fb58ba43fb89c89990911d8e06331b8c28cf043",
+        "target_branch": "main",
+        "target_sha": "0fd75d24cdd93797052b7ecacea0b6ac114367c2",
+        "checked_by": "Dev session (single writer) after coordinator merge",
+        "checked_at": "2026-11-17T12:24:14.327302+00:00",
+        "integration_verified": true,
+        "integration_evidence": "PR #291 merged with head pinned at 1fb58ba; tree of 1fb58ba equals tree of main 0fd75d2",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "GitHub main CI run 44080428064 success on 0fd75d2",
+        "worktrees_clear": true,
+        "worktree_evidence": "Single writer checkout clean and switched to main; local branch retained at 1fb58ba as instructed",
+        "dependencies_clear": true,
+        "dependency_evidence": "No open PR uses the branch as head or base; PR #289 closed as superseded",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "Its push-triggered snapshot workflows were removed before merge (3743463); no remaining workflow references the branch",
+        "backup": {
+          "source_sha": "1fb58ba43fb89c89990911d8e06331b8c28cf043",
+          "verified": true,
+          "reference": "GitHub refs/pull/291/head resolves to 1fb58ba; local branch in the single-writer checkout"
+        }
+      },
+      "deletion": {
+        "verified_at": "2026-11-17T12:24:14.327302+00:00",
+        "absence_verified": true,
+        "evidence": "git ls-remote origin refs/heads/codex/revoke-review-close-20261116 returned no ref"
+      }
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",
@@ -5210,6 +5240,14 @@
       "former_primary_branch": "codex/docs-branch-lifecycle",
       "evidence": "https://github.com/Eak-dev/malipang-shop/issues/272",
       "reason": "GitHub closed/completed and PR273 merged. Historical rollout is archived; its inactive remote primary is being retired under task282."
+    },
+    {
+      "issue": 292,
+      "title": "Continuous daily expense sync candidate",
+      "completed_at": "2026-11-17T12:08:54Z",
+      "former_primary_branch": "codex/revoke-review-close-20261116",
+      "evidence": "https://github.com/Eak-dev/malipang-shop/pull/291",
+      "reason": "PR #291 squash-merged into main as 0fd75d2; Issue #292 closed. Merge is not deployment: Production release remains a separate approved change with the pre-deploy list recorded in #292."
     }
   ]
 }

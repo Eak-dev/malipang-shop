@@ -1,0 +1,82 @@
+name: Production ops (read-only snapshot / backup rehearsal)
+
+# Manual only. Runs from main, behind the `production` environment approval.
+# snapshot: aggregate counts, migration names and Worker version ids only.
+# rehearsal: exports D1 (read), restores it on the runner and rehearses
+#   pending migrations on the copy. Writes ONE private R2 backup object only
+#   when write_backup is true. Never deploys, migrates or writes D1.
+# The repository is public: scripts must print sanitized aggregates only.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: snapshot or rehearsal
+        type: choice
+        options: [snapshot, rehearsal]
+        required: true
+      expected_sha:
+        description: Exact 40-character main commit SHA being run
+        type: string
+        required: true
+      confirmation:
+        description: "Type READ PRODUCTION <first 7 of SHA>; for a backup add: WRITE BACKUP"
+        type: string
+        required: true
+      write_backup:
+        description: rehearsal only — also store one private R2 backup object
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-ops-readonly
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Verify inputs before any checkout or credential use
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OPERATION: ${{ inputs.operation }}
+          WRITE_BACKUP: ${{ inputs.write_backup }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected_sha must be 40 lowercase hex'; exit 1; }
+          [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'expected_sha does not match the main commit being run'; exit 1; }
+          want="READ PRODUCTION ${EXPECTED_SHA:0:7}"
+          if [ "$WRITE_BACKUP" = true ]; then
+            [ "$OPERATION" = rehearsal ] || { echo 'write_backup is only valid for rehearsal'; exit 1; }
+            want="$want WRITE BACKUP"
+          fi
+          [ "$CONFIRMATION" = "$want" ] || { echo 'confirmation text does not match'; exit 1; }
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm}
+      - name: Install dependencies without lifecycle scripts
+        run: npm ci --ignore-scripts
+      - name: Snapshot (sanitized aggregates)
+        if: inputs.operation == 'snapshot'
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/prod-ops-snapshot.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Backup and migration rehearsal
+        if: inputs.operation == 'rehearsal'
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_TO_R2: ${{ inputs.write_backup }}
+        run: bash scripts/prod-ops-backup-rehearsal.sh | tee -a "$GITHUB_STEP_SUMMARY"

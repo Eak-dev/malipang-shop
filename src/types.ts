@@ -32,6 +32,8 @@ export interface Env {
   /** Days to keep closed, handled incidents (7-3650, default 90). */
   SYNC_ALERT_INCIDENT_RETENTION_DAYS?: string;
   STABLE_SCOPED_REVIEW_ENABLED?: string;
+  /** Default off: enables the read-only admin expense provider diagnostic route. */
+  EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;
   CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED?: string;

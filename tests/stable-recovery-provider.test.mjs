@@ -30,12 +30,15 @@ test('invalid or truncated snapshots and raw formula mismatches fail closed',()=
  const sheets=fixture();row(sheets[2],2,0,`=${id}`,id);assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'IDENTITY_INCONSISTENT');
 });
 test('diagnostic requires admin authorization and rejects invalid targets without provider access',async()=>{
- const env={ADMIN_TOKEN:'synthetic-secret-'.repeat(4),DB:{prepare(){throw Error('unexpected DB access')}},GOOGLE_SPREADSHEET_ID:'book'};
+ const env={ADMIN_TOKEN:'synthetic-secret-'.repeat(4),DB:{prepare(){throw Error('unexpected DB access')}},GOOGLE_SPREADSHEET_ID:'book',EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED:'true'};
  const make=(auth)=>new Request('https://local.invalid/admin/stable-sync/expense-provider-diagnostic',{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({expenseId:'invalid|target'})});
  assert.equal((await handleAdmin(make('Bearer wrong'),env,{})).status,401);
  const response=await handleAdmin(make(`Bearer ${env.ADMIN_TOKEN}`),env,{});
  assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
  const result=await response.json();assert.equal(result.status,'HOLD');assert.equal(result.reason,'INVALID_INPUT');assert.equal(result.counts,null);
+ // R6: with the flag unset the route does not exist, as on main.
+ delete env.EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED;
+ assert.equal((await handleAdmin(make(`Bearer ${env.ADMIN_TOKEN}`),env,{})).status,404);
 });
 test('provider diagnostic reads all four bounded grids and rejects a changed grid',async()=>{
  const original={grid:client.getSheetGridInfo,formula:client.batchGetSheetFormulaValues,effective:client.batchGetSheetEffectiveSerialValues};

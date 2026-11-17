@@ -29,7 +29,7 @@ export interface Env {
   SYNC_ALERT_DURABLE_ENABLED?: string;
   /** ISO-8601 UTC instant; incidents opened earlier are never sent. Required with SYNC_ALERT_DURABLE_ENABLED. */
   SYNC_ALERT_DURABLE_SINCE?: string;
-  /** Days to keep closed, handled incidents (7-3650, default 90). */
+  /** Days to keep closed, handled incidents (7-3650, default 30). */
   SYNC_ALERT_INCIDENT_RETENTION_DAYS?: string;
   STABLE_SCOPED_REVIEW_ENABLED?: string;
   /** Default off: enables the read-only admin expense provider diagnostic route. */

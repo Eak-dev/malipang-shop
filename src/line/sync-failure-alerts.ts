@@ -28,10 +28,10 @@ export function syncAlertDurableCutoff(env:Env):string|null{
 /** Default off: without it the pre-candidate direct owner alert is retained.
  * Durable alerts also require a valid SYNC_ALERT_DURABLE_SINCE cutoff. */
 export function syncAlertDurableEnabled(env:Env):boolean{return env.SYNC_ALERT_DURABLE_ENABLED==='true'&&syncAlertDurableCutoff(env)!==null;}
-/** Closed, already-handled incidents are kept this many days (default 90). */
+/** Closed, already-handled incidents are kept this many days (default 30, set by the owner). */
 export function syncAlertRetentionDays(env:Env):number{
- const raw=env.SYNC_ALERT_INCIDENT_RETENTION_DAYS;if(raw===undefined||raw==='')return 90;
- const n=Number(raw);return Number.isSafeInteger(n)&&n>=7&&n<=3650?n:90;
+ const raw=env.SYNC_ALERT_INCIDENT_RETENTION_DAYS;if(raw===undefined||raw==='')return 30;
+ const n=Number(raw);return Number.isSafeInteger(n)&&n>=7&&n<=3650?n:30;
 }
 export const PRE_CUTOFF_SUPPRESSED='PRE_CUTOFF_SUPPRESSED';
 const PRUNE_BATCH=200;

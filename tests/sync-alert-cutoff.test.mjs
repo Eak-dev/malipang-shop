@@ -55,7 +55,7 @@ test('pruning removes only closed, handled incidents past retention, in bounded 
   }finally{h.close();}
 });
 
-test('retention days are bounded and default to 90',()=>{
-  assert.equal(alerts.syncAlertRetentionDays({}),90);assert.equal(alerts.syncAlertRetentionDays({SYNC_ALERT_INCIDENT_RETENTION_DAYS:'30'}),30);
-  for(const bad of ['0','6','3651','1.5','x'])assert.equal(alerts.syncAlertRetentionDays({SYNC_ALERT_INCIDENT_RETENTION_DAYS:bad}),90,bad);
+test('retention days are bounded and default to 30',()=>{
+  assert.equal(alerts.syncAlertRetentionDays({}),30);assert.equal(alerts.syncAlertRetentionDays({SYNC_ALERT_INCIDENT_RETENTION_DAYS:'90'}),90);
+  for(const bad of ['0','6','3651','1.5','x'])assert.equal(alerts.syncAlertRetentionDays({SYNC_ALERT_INCIDENT_RETENTION_DAYS:bad}),30,bad);
 });

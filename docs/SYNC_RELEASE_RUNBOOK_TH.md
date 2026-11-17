@@ -18,7 +18,7 @@
 | 2 | `wrangler d1 migrations apply malipang-v5-2 --remote` | — | snapshot: ไม่มี migration ค้าง, ช่วงงานผิดปกติไม่เพิ่ม |
 | 3 | deploy Worker จาก SHA ที่อนุมัติ | ไม่มี (flag ใหม่ทั้งหมดปิด) | snapshot `MATCH` กับ hash ของเวอร์ชันใหม่, LINE OA บันทึกรายการได้ |
 | 4a | การพักงานแบบใหม่ | `STABLE_REDRIVE_HOLD_ENABLED=true`, `STABLE_SCOPED_REVIEW_ENABLED=true`, `EXPENSE_FORCE_RECONCILE_HOLD_ENABLED=true` | ไม่มี FAILED ใหม่ที่อธิบายไม่ได้ |
-| 4b | แจ้งเหตุแบบ durable | `SYNC_ALERT_DURABLE_ENABLED=true`, `SYNC_ALERT_DURABLE_SINCE=<เวลาที่เปิด, ISO UTC>`, (`SYNC_ALERT_INCIDENT_RETENTION_DAYS` ถ้าไม่ใช้ค่าเริ่มต้น 90) | ไม่มีการแจ้งเหตุย้อนหลังก่อน cutoff |
+| 4b | แจ้งเหตุแบบ durable | `SYNC_ALERT_DURABLE_ENABLED=true`, `SYNC_ALERT_DURABLE_SINCE=<เวลาที่เปิด, ISO UTC>`, (`SYNC_ALERT_INCIDENT_RETENTION_DAYS` ถ้าไม่ใช้ค่าเริ่มต้น 30) | ไม่มีการแจ้งเหตุย้อนหลังก่อน cutoff |
 | 4c | ส่วนเสริม | `WORKBOOK_BATCH_FAIRNESS_ENABLED=true`, `EXPENSE_SAVED_SYNC_NOTE_ENABLED=true` | งาน HR และค่าใช้จ่ายสลับกันได้, การ์ด LINE แสดงข้อความใหม่ |
 | 4d | เป้าหมายแท็บ | `STABLE_CANCELLATION_PREIMAGE_ENABLED=true`, `CONTINUOUS_DAILY_SHEET`/`_ID`, `CONTINUOUS_RAW_SHEET`/`_ID`, `CONTINUOUS_DETAIL_SHEET`/`_ID` (ตามคำตัดสินเรื่องแท็บ) | `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง |
 | 5 | cutover | `STABLE_RECOVERY_GATE_ENABLED=true`, `CONTINUOUS_REPORT_CUTOVER_ENABLED=true`, `CONTINUOUS_CUTOVER_OPERATOR_ENABLED=true` แล้วสั่ง operator ตามขั้นตอนของ `/admin/stable-sync/continuous-cutover` | operator อยู่สถานะพร้อม, ไม่มีงานค้าง `PROCESSING` |

@@ -38,7 +38,7 @@
     {
       "issue": 296,
       "title": "Pre-deploy fixes R1-R7 for the continuous daily sync release",
-      "mode": "MIGRATION_PENDING",
+      "mode": "MANAGED",
       "primary_branch": "codex/fix-unwritten-expense-auto-cancel-flag",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
@@ -5313,6 +5313,18 @@
         "absence_verified": true,
         "evidence": "git ls-remote origin refs/heads/codex/fix-sync-predeploy-r1-r7 returned no ref"
       }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/fix-unwritten-expense-auto-cancel-flag",
+      "issues": [
+        296
+      ],
+      "source_sha": "f0659137ba38e512e6c6ae4d5a88327842b54a52",
+      "observed_at": "2026-11-17T23:18:56.411836+00:00",
+      "status": "ACTIVE",
+      "reason": "Second #296 delivery branch (auto-cancel flag, runbook); single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -129,7 +129,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const body=await request.json().catch(()=>({})) as {action?:unknown};
       return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
     }
-    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/expense-provider-diagnostic'){
+    // R6: default off, so the route is absent (404) exactly as on main.
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/expense-provider-diagnostic'&&env.EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED==='true'){
       const body=await request.json().catch(()=>({})) as {expenseId?:unknown};
       const evidence=await inspectRecoveryProvider(env,typeof body.expenseId==='string'?body.expenseId:'','รายวัน','รายวันต่อเนื่อง_แบบร่าง');
       return Response.json({ok:true,...evidence},{headers:{'cache-control':'no-store'}});

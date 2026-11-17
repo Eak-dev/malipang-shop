@@ -16,8 +16,37 @@ async function sendPersisted(env:Env,job:LineNotificationJob):Promise<void>{
 
 /** Trigger a separate Queue invocation: a notification failure cannot replay a
  * Sheets writer, and a failed wake-up is recovered by the scheduled sweep. */
-/** Default off: without it the pre-candidate direct owner alert is retained. */
-export function syncAlertDurableEnabled(env:Env):boolean{return env.SYNC_ALERT_DURABLE_ENABLED==='true';}
+/** Incidents opened before this instant are never sent. Migration 0025 starts
+ * recording incidents as soon as it is applied, while durable alerts may be
+ * enabled much later; without a cutoff that backlog would be sent at once.
+ * Returned in the same format as opened_at so string comparison is exact. */
+export function syncAlertDurableCutoff(env:Env):string|null{
+ const value=env.SYNC_ALERT_DURABLE_SINCE;
+ if(typeof value!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(value))return null;
+ const ms=Date.parse(value);return Number.isFinite(ms)?new Date(ms).toISOString():null;
+}
+/** Default off: without it the pre-candidate direct owner alert is retained.
+ * Durable alerts also require a valid SYNC_ALERT_DURABLE_SINCE cutoff. */
+export function syncAlertDurableEnabled(env:Env):boolean{return env.SYNC_ALERT_DURABLE_ENABLED==='true'&&syncAlertDurableCutoff(env)!==null;}
+/** Closed, already-handled incidents are kept this many days (default 30, set by the owner). */
+export function syncAlertRetentionDays(env:Env):number{
+ const raw=env.SYNC_ALERT_INCIDENT_RETENTION_DAYS;if(raw===undefined||raw==='')return 30;
+ const n=Number(raw);return Number.isSafeInteger(n)&&n>=7&&n<=3650?n:30;
+}
+export const PRE_CUTOFF_SUPPRESSED='PRE_CUTOFF_SUPPRESSED';
+const PRUNE_BATCH=200;
+/** Marks pre-cutoff incidents as handled without sending, then deletes a
+ * bounded batch of closed, handled incidents older than the retention. */
+export async function settleSyncAlertBacklog(env:Env,nowMs=Date.now()):Promise<{suppressed:number;pruned:number}>{
+ const cutoff=syncAlertDurableCutoff(env);if(!cutoff)throw Error('SYNC_ALERT_CUTOFF_INVALID');
+ const before=new Date(nowMs-syncAlertRetentionDays(env)*86400000).toISOString(),db=env.DB;
+ const [suppressed,pruned]=await db.batch([
+  db.prepare("UPDATE sync_alert_incidents SET alerted_at=? WHERE alerted_at IS NULL AND opened_at<?").bind(PRE_CUTOFF_SUPPRESSED,cutoff),
+  db.prepare("DELETE FROM sync_alert_incidents WHERE incident_id IN (SELECT incident_id FROM sync_alert_incidents WHERE state='CLOSED' AND alerted_at IS NOT NULL AND closed_at IS NOT NULL AND closed_at<? ORDER BY incident_id LIMIT ?)").bind(before,PRUNE_BATCH),
+ ]);
+ if(env.DB!==db||!suppressed||!pruned||suppressed.success===false||pruned.success===false)throw Error('SYNC_ALERT_SETTLE_UNCERTAIN');
+ return {suppressed:Number(suppressed.meta?.changes??0),pruned:Number(pruned.meta?.changes??0)};
+}
 export async function wakeSyncFailureAlerts(env:Env,budget?:ReviewRequestBudget):Promise<void>{
  if(!syncAlertDurableEnabled(env)||!lineOutputEnabled(env))return;
  try{budget?.consumeQueue();await env.JOB_QUEUE.send({kind:'SYNC_ALERT_SWEEP',traceId:'sync-alert-sweep'});}catch{ /* cron scans durable state */ }
@@ -148,5 +177,6 @@ export async function syncFailureAlertSchemaReady(env:Env):Promise<boolean>{
 }
 export async function sweepSyncFailureAlerts(env:Env,limit=4):Promise<number|null>{
  if(!syncAlertDurableEnabled(env)||!lineOutputEnabled(env)||!await syncFailureAlertSchemaReady(env))return null;
+ await settleSyncAlertBacklog(env);
  return sweepDurableSyncFailureAlerts(env,Math.min(4,Math.max(1,Math.floor(limit))));
 }

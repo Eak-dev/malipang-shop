@@ -153,9 +153,13 @@ export async function recoverArmedSheetJob(env:Env,staleAfterSeconds=300,nowMs=D
   if(!target||target.entityType==='STAFF_CONFIG_SYNC')return 0;
   const seconds=Math.min(3600,Math.max(0,Math.floor(staleAfterSeconds)));
   const now=new Date(nowMs).toISOString(),stale=new Date(nowMs-seconds*1000).toISOString();
+  // R4: with STABLE_REDRIVE_HOLD_ENABLED off the armed target is re-sent from
+  // FAILED or an expired lease exactly as on main; on, only PENDING is re-sent,
+  // matching scheduled recovery outside the gate.
+  const hold=env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true';
   const row=await env.DB.prepare(`SELECT entity_type,entity_key,entity_version,trace_id,status,updated_at,next_attempt_at,lease_until
     FROM sync_jobs s WHERE entity_type=? AND entity_key=? AND entity_version=?
-    AND status='PENDING'
+    AND ${hold?"status='PENDING'":"status IN ('PENDING','FAILED','PROCESSING')"}
     AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs'
       AND f.job_key=s.entity_type||':'||s.entity_key||':'||s.entity_version
       AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES') LIMIT 1`)
@@ -172,7 +176,9 @@ export async function recoverArmedSheetJob(env:Env,staleAfterSeconds=300,nowMs=D
     AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs'
       AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version
       AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')
-    AND status='PENDING' AND updated_at<? AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND ? IS NOT NULL`)
+    AND ${hold?"status='PENDING' AND updated_at<? AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND ? IS NOT NULL":`(((status IN ('PENDING','FAILED')) AND updated_at<? AND
+          (next_attempt_at IS NULL OR next_attempt_at<=?))
+         OR(status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))`}`)
    .bind(now,target.entityType,target.entityKey,target.entityVersion,target.epochId,env.GOOGLE_SPREADSHEET_ID,stale,now,now).run();
   if(result.success!==true||!Number.isSafeInteger(result.meta?.changes))throw Error('STABLE_RECOVERY_ENQUEUE_CAS_UNKNOWN');
   if(Number(result.meta.changes)!==1)return 0;

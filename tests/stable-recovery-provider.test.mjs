@@ -18,7 +18,7 @@ test('counts old and new identities and flags duplicates across tabs',()=>{
  const result=inspectRecoverySheetSnapshots(id,sheets);assert.equal(result.reason,'DUPLICATE_IDENTITY');assert.deepEqual(result.counts,{oldDaily:1,newDaily:1,raw:1,details:2});
 });
 test('carrier verifies Y independently of displayed formula and flags mismatches',()=>{
- const sheets=fixture(),payload=encodeAtomicDailyPayload({expenseId:id,postingYear:2026,postingMonth:4,postingDay:11,description:'Makro',amountColumn:'H',amountSatang:123,category:'Ingredients',wallet:'Shop bank account'});
+ const sheets=fixture(),payload=encodeAtomicDailyPayload({expenseId:id,postingYear:2026,postingMonth:4,postingDay:11,description:'synthetic store',amountColumn:'H',amountSatang:123,category:'Ingredients',wallet:'Shop bank account'});
  row(sheets[1],4,24,payload);row(sheets[1],4,23,'=SOME_FORMULA()',key);
  assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'SETTLEMENT_UNPROVEN');
  sheets[1].effective[4][23]='';assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'IDENTITY_INCONSISTENT');
@@ -30,12 +30,15 @@ test('invalid or truncated snapshots and raw formula mismatches fail closed',()=
  const sheets=fixture();row(sheets[2],2,0,`=${id}`,id);assert.equal(inspectRecoverySheetSnapshots(id,sheets).reason,'IDENTITY_INCONSISTENT');
 });
 test('diagnostic requires admin authorization and rejects invalid targets without provider access',async()=>{
- const env={ADMIN_TOKEN:'synthetic-secret-'.repeat(4),DB:{prepare(){throw Error('unexpected DB access')}},GOOGLE_SPREADSHEET_ID:'book'};
+ const env={ADMIN_TOKEN:'synthetic-secret-'.repeat(4),DB:{prepare(){throw Error('unexpected DB access')}},GOOGLE_SPREADSHEET_ID:'book',EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED:'true'};
  const make=(auth)=>new Request('https://local.invalid/admin/stable-sync/expense-provider-diagnostic',{method:'POST',headers:{authorization:auth,'content-type':'application/json'},body:JSON.stringify({expenseId:'invalid|target'})});
  assert.equal((await handleAdmin(make('Bearer wrong'),env,{})).status,401);
  const response=await handleAdmin(make(`Bearer ${env.ADMIN_TOKEN}`),env,{});
  assert.equal(response.status,200);assert.equal(response.headers.get('cache-control'),'no-store');
  const result=await response.json();assert.equal(result.status,'HOLD');assert.equal(result.reason,'INVALID_INPUT');assert.equal(result.counts,null);
+ // R6: with the flag unset the route does not exist, as on main.
+ delete env.EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED;
+ assert.equal((await handleAdmin(make(`Bearer ${env.ADMIN_TOKEN}`),env,{})).status,404);
 });
 test('provider diagnostic reads all four bounded grids and rejects a changed grid',async()=>{
  const original={grid:client.getSheetGridInfo,formula:client.batchGetSheetFormulaValues,effective:client.batchGetSheetEffectiveSerialValues};

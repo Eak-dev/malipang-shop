@@ -6,8 +6,9 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {sanitizeRows,SnapshotSanitizerError,QUERIES,collect,countBucket,workerVersionCheck,sha256Hex,pendingMigrations,localMigrations,snapshotIncomplete} from '../scripts/prod-ops-snapshot.mjs';
 
-/** Strip migration file names and range labels; nothing numeric may remain. */
-const digitsOutsideAllowed=text=>text.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\| (0|1-9|10\+) \|/g,'| |').replace(/\bd1_migrations\b/g,'').match(/\d/g);
+/** Strip migration file names, range labels and fixed program codes such as
+ * GOOGLE_OAUTH_HTTP_429 (a status code, not Production data); nothing numeric may remain. */
+const digitsOutsideAllowed=text=>text.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\| [A-Z][A-Z_]*_\d{3} \|/g,'| |').replace(/\| (0|1-9|10\+) \|/g,'| |').replace(/\bd1_migrations\b/g,'').match(/\d/g);
 
 const reject=(query,rows,reason)=>assert.throws(()=>sanitizeRows(query,rows),e=>e instanceof SnapshotSanitizerError&&e.message===`SNAPSHOT_SANITIZER_${reason}`);
 const code=c=>`CASE WHEN ${c} IS NULL THEN 'NONE' WHEN ${c} GLOB '*[^A-Z0-9_]*' OR ${c} GLOB '[^A-Z]*' OR length(${c})>64 THEN 'OTHER' ELSE ${c} END`;
@@ -83,13 +84,13 @@ test('collect output has no Production numbers: only migration names and range l
     const sql=args.at(-1);
     if(sql.includes('d1_migrations'))return JSON.stringify([{results:[{migration:'0001_a.sql'},{migration:'0023_stable_recovery_admission.sql'}]}]);
     if(sql.includes('sqlite_master'))return JSON.stringify([{results:[{table_name:'d1_migrations'},{table_name:'sync_jobs'}]}]);
-    if(sql.includes('sync_jobs'))return JSON.stringify([{results:[{entity_type:'EXPENSE',status:'REVIEW',error_code:'STABLE_SYNC_REVIEW',n:13},{entity_type:'ATTENDANCE_EVENT',status:'FAILED',error_code:'NONE',n:4}]}]);
+    if(sql.includes('sync_jobs'))return JSON.stringify([{results:[{entity_type:'EXPENSE',status:'REVIEW',error_code:'STABLE_SYNC_REVIEW',n:13},{entity_type:'ATTENDANCE_EVENT',status:'FAILED',error_code:'NONE',n:4},{entity_type:'DAILY_PAYROLL',status:'FAILED',error_code:'GOOGLE_OAUTH_HTTP_429',n:37}]}]);
     if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:22}]}]);
     if(sql.includes('stable_workbook_claims'))return JSON.stringify([{results:[{state:'REVIEW',reason:'STABLE_DAILY_REVIEW',n:1}]}]);
     return JSON.stringify([{results:[{status:'FAILED',n:0}]}]);};
   const text=collect(run,sha256Hex(id),['0001_a.sql','0023_stable_recovery_admission.sql','0024_next.sql']);
   assert.equal(digitsOutsideAllowed(text),null,text);
-  assert.match(text,/\| EXPENSE \| REVIEW \| STABLE_SYNC_REVIEW \| 10\+ \|/);assert.match(text,/\| ATTENDANCE_EVENT \| FAILED \| NONE \| 1-9 \|/);
+  assert.match(text,/\| EXPENSE \| REVIEW \| STABLE_SYNC_REVIEW \| 10\+ \|/);assert.match(text,/\| ATTENDANCE_EVENT \| FAILED \| NONE \| 1-9 \|/);assert.match(text,/\| DAILY_PAYROLL \| FAILED \| GOOGLE_OAUTH_HTTP_429 \| 10\+ \|/);assert.equal(text.includes('37'),false);
   assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 10\+ \|/);
   assert.match(text,/### migrations_pending_in_this_commit\n- 0024_next\.sql/);
   assert.match(text,/### worker_version\nMATCH/);assert.equal(text.includes(id),false);assert.equal(text.includes(sha256Hex(id)),false);
@@ -127,6 +128,7 @@ test('ops workflow is manual-only, main-only, gated, pinned and scopes the token
   const inputs=[...wf.slice(wf.indexOf('    inputs:'),wf.indexOf('\npermissions:')).matchAll(/^ {6}([a-z_0-9]+):$/gm)].map(m=>m[1]);
   assert.deepEqual(inputs,['operation','expected_sha','confirmation','write_backup','expected_worker_version_sha256']);
   assert.doesNotMatch(wf,/expected_worker_version[^_]/);
+  for(const step of wf.split('\n      - ').slice(1))assert.doesNotMatch(step,/inputs\.expected_worker_version\b(?!_sha256)/,'no raw Worker id input in any step env');
 });
 
 const hasSqlite=spawnSync('sqlite3',['-version']).status===0;

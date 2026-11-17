@@ -51,7 +51,7 @@
 
 - [ ] วันและเวลา: ช่วง 02:00–05:00 ของวันที่ 1 ของเดือนเป้าหมายที่เจ้าของยืนยัน และไม่ใช่วันที่มีรอบจ่าย payroll; มีผู้สั่ง action และเจ้าของพร้อมตัดสินตลอดช่วง
 - [ ] ขั้น 1–4 เสร็จและอ่านผลกลับแล้ว: migration ไม่ค้าง, Worker ที่ deploy เป็น SHA ที่อนุมัติ, flag ขั้น 4a–4d ตั้งแล้ว และ `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง (operator ทำงานเฉพาะตอนที่ยังไม่ตั้ง)
-- [ ] snapshot ล่าสุดก่อนเริ่ม: Worker version `MATCH` กับ hash ที่กรอก, ไม่มี recovery epoch สถานะ ARMED/REVIEW (ตัวตรวจของ `START_REVIEW` บังคับ — snapshot ปัจจุบันยังไม่มีส่วนนี้ ต้องอ่านแยกเมื่อเจ้าของอนุมัติ), ไม่มีงานซิงก์ `PROCESSING`
+- [ ] snapshot ล่าสุดก่อนเริ่ม: Worker version `MATCH` กับ hash ที่กรอก, ส่วน `recovery_epochs` ต้องไม่มีแถว `ARMED` หรือ `REVIEW` (ตัวตรวจของ `START_REVIEW` บังคับ; `COMPLETE`/`CLOSED` ไม่เป็นปัญหา), ไม่มีงานซิงก์ `PROCESSING`
 - [ ] header `x-malipang-expected-worker-version` ของทุก request ถึง `/admin/stable-sync/continuous-cutover` และ `/admin/stable-sync/continuous-canary` ตรงกับ Worker version ที่รันอยู่ (`src/admin/handler.ts` ตรวจ ไม่ตรงได้ `WORKER_VERSION_MISMATCH`) และใช้ admin token ที่ถูกต้อง
 - [ ] `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true` และ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` = SHA-256 ของข้อมูลระบุตัวตนล็อกเดิม เป็น JSON array ตามลำดับ `[spreadsheet, operation_token, notice_stamp, notice_identity, created_at, phase, review_reason]` (ตาม `startPrewriteReview` ใน `src/admin/continuous-cutover-operator.ts`) ที่เจ้าของยืนยัน; คำนวณจากข้อมูลส่วนตัว ห้ามลงใน Issue
 - [ ] ตรวจผลการเขียนเดิมของล็อก (ครั้งที่ทำให้ล็อกค้าง 14 พ.ย.) ในชีตแบบอ่านอย่างเดียวแล้ว และเจ้าของยืนยันว่าไม่ต้องเขียนซ้ำ

@@ -22,6 +22,7 @@ test('the snapshot SQL and column allowlists are pinned exactly',()=>{
     open_failed_jobs:{sql:"SELECT count(*) AS n FROM failed_jobs WHERE status='OPEN'",columns:{n:'count'}},
     workbook_claims:{sql:`SELECT state,${code('review_reason')} AS reason,count(*) AS n FROM stable_workbook_claims GROUP BY 1,2`,columns:{state:'claimState',reason:'code',n:'count'}},
     abnormal_inbound:{sql:"SELECT status,count(*) AS n FROM inbound_events WHERE status IN ('FAILED','REVIEW') GROUP BY 1 ORDER BY 1",columns:{status:'inboundStatus',n:'count'}},
+    recovery_epochs:{sql:"SELECT state,count(*) AS n FROM stable_recovery_epochs GROUP BY 1 ORDER BY 1",columns:{state:'epochState',n:'count'}},
   });
   assert.equal(Object.isFrozen(QUERIES),true);
 });
@@ -52,6 +53,8 @@ test('sanitizer blocks the bypasses found in review',()=>{
   reject('abnormal_sync_jobs',[{entity_type:'SYNTHETIC_STORE_NAME',status:'REVIEW',error_code:'NONE',n:1}],'VALUE');
   reject('abnormal_sync_jobs',[{entity_type:'EXPENSE',status:'COMPLETED',error_code:'NONE',n:1}],'VALUE');
   reject('workbook_claims',[{state:'REVIEW',reason:'1597',n:1}],'VALUE');
+  reject('recovery_epochs',[{state:'synthetic-epoch-0001',n:1}],'VALUE');reject('recovery_epochs',[{state:'ARMED',n:1,target_key:'exp_1'}],'COLUMNS');
+  assert.deepEqual(sanitizeRows('recovery_epochs',[{state:'CLOSED',n:3}]),[{state:'CLOSED',n:3}]);
   reject('open_failed_jobs',[{n:-1}],'VALUE');reject('open_failed_jobs',[{n:1.5}],'VALUE');reject('open_failed_jobs',[{n:'7'}],'VALUE');
   reject('open_failed_jobs',[['x']],'NOT_OBJECT');reject('open_failed_jobs','rows','NOT_ROWS');
   reject('open_failed_jobs',Array.from({length:401},()=>({n:1})),'TOO_MANY_ROWS');
@@ -87,11 +90,13 @@ test('collect output has no Production numbers: only migration names and range l
     if(sql.includes('sync_jobs'))return JSON.stringify([{results:[{entity_type:'EXPENSE',status:'REVIEW',error_code:'STABLE_SYNC_REVIEW',n:13},{entity_type:'ATTENDANCE_EVENT',status:'FAILED',error_code:'NONE',n:4},{entity_type:'DAILY_PAYROLL',status:'FAILED',error_code:'GOOGLE_OAUTH_HTTP_429',n:37}]}]);
     if(sql.includes('failed_jobs'))return JSON.stringify([{results:[{n:22}]}]);
     if(sql.includes('stable_workbook_claims'))return JSON.stringify([{results:[{state:'REVIEW',reason:'STABLE_DAILY_REVIEW',n:1}]}]);
+    if(sql.includes('stable_recovery_epochs'))return JSON.stringify([{results:[{state:'CLOSED',n:12},{state:'REVIEW',n:1}]}]);
     return JSON.stringify([{results:[{status:'FAILED',n:0}]}]);};
   const text=collect(run,sha256Hex(id),['0001_a.sql','0023_stable_recovery_admission.sql','0024_next.sql']);
   assert.equal(digitsOutsideAllowed(text),null,text);
   assert.match(text,/\| EXPENSE \| REVIEW \| STABLE_SYNC_REVIEW \| 10\+ \|/);assert.match(text,/\| ATTENDANCE_EVENT \| FAILED \| NONE \| 1-9 \|/);assert.match(text,/\| DAILY_PAYROLL \| FAILED \| GOOGLE_OAUTH_HTTP_429 \| 10\+ \|/);assert.equal(text.includes('37'),false);
   assert.match(text,/### open_failed_jobs\n\| n \|\n\|---\|\n\| 10\+ \|/);
+  assert.match(text,/### recovery_epochs\n\| state \| n \|\n\|---\|---\|\n\| CLOSED \| 10\+ \|\n\| REVIEW \| 1-9 \|/);
   assert.match(text,/### migrations_pending_in_this_commit\n- 0024_next\.sql/);
   assert.match(text,/### worker_version\nMATCH/);assert.equal(text.includes(id),false);assert.equal(text.includes(sha256Hex(id)),false);
   assert.match(collect(run,id,[]),/### worker_version\nINVALID_EXPECTED/);

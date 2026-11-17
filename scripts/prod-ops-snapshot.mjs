@@ -3,6 +3,7 @@
 //  - migration file names applied on D1 and still pending in this commit
 //  - table names present in D1
 //  - abnormal-work counts as range labels only: 0, 1-9 or 10+
+//  - recovery epochs by state (range labels): START_REVIEW needs none ARMED/REVIEW
 //  - the live Worker version compared with an expected SHA-256 of its id:
 //    MATCH, MISMATCH, NOT_CHECKED or INVALID_EXPECTED. Only the hash is an
 //    input, because Actions prints each step's env block in the public log.
@@ -27,6 +28,8 @@ const KINDS={
   jobStatus:v=>typeof v==='string'&&['FAILED','REVIEW'].includes(v),
   claimState:v=>typeof v==='string'&&['HELD','REVIEW'].includes(v),
   inboundStatus:v=>typeof v==='string'&&['FAILED','REVIEW'].includes(v),
+  // Mirrors the CHECK constraint on stable_recovery_epochs.state (migration 0023).
+  epochState:v=>typeof v==='string'&&['ARMED','COMPLETE','REVIEW','CLOSED'].includes(v),
 };
 
 const errorCode=col=>`CASE WHEN ${col} IS NULL THEN 'NONE' WHEN ${col} GLOB '*[^A-Z0-9_]*' OR ${col} GLOB '[^A-Z]*' OR length(${col})>64 THEN 'OTHER' ELSE ${col} END`;
@@ -38,6 +41,7 @@ export const QUERIES=Object.freeze({
   open_failed_jobs:{sql:"SELECT count(*) AS n FROM failed_jobs WHERE status='OPEN'",columns:{n:'count'}},
   workbook_claims:{sql:`SELECT state,${errorCode('review_reason')} AS reason,count(*) AS n FROM stable_workbook_claims GROUP BY 1,2`,columns:{state:'claimState',reason:'code',n:'count'}},
   abnormal_inbound:{sql:"SELECT status,count(*) AS n FROM inbound_events WHERE status IN ('FAILED','REVIEW') GROUP BY 1 ORDER BY 1",columns:{status:'inboundStatus',n:'count'}},
+  recovery_epochs:{sql:"SELECT state,count(*) AS n FROM stable_recovery_epochs GROUP BY 1 ORDER BY 1",columns:{state:'epochState',n:'count'}},
 });
 
 export class SnapshotSanitizerError extends Error{

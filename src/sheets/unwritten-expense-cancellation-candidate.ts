@@ -54,7 +54,11 @@ export async function buildUnwrittenExpenseCancellationCandidate(env:Env,input:U
 /** Caller must pass only a typed, proven pre-dispatch failure while it still
  * owns the claim. D1 batch atomically cancels and persists owner outbox; an
  * enqueue failure is recovered by the existing LINE outbox cron. */
+/** Default off (owner decision, #296): without UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED=true a
+ * confirmed expense is never cancelled automatically; callers keep the job held for review. */
+export function unwrittenExpenseAutoCancelEnabled(env:Env):boolean{return env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED==='true';}
 export async function executeUnwrittenExpenseCancellation(env:Env,input:UnwrittenCancelInput,budget?:ReviewRequestBudget):Promise<boolean>{
+ if(!unwrittenExpenseAutoCancelEnabled(env))return false;
  const recoverySetting=env.STABLE_RECOVERY_GATE_ENABLED,db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,owner=env.LINE_OWNER_USER_ID,enabled=lineOutputEnabled(env),gate=await buildUnwrittenExpenseCancellationCandidate(env,input);if(!gate)return false;
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.LINE_OWNER_USER_ID!==owner||lineOutputEnabled(env)!==enabled||env.STABLE_RECOVERY_GATE_ENABLED!==recoverySetting||!await assertContinuousDailyActivated(env))throw Error('SYNC_PRE_DISPATCH_SCOPE_CHANGED');
  const result=await db.batch(gate.statements);

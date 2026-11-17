@@ -31,6 +31,9 @@ export interface Env {
   SYNC_ALERT_DURABLE_SINCE?: string;
   /** Days to keep closed, handled incidents (7-3650, default 30). */
   SYNC_ALERT_INCIDENT_RETENTION_DAYS?: string;
+  /** Default off: true restores automatic cancellation of a confirmed expense whose sheet write
+   * definitely failed before dispatch. Unset holds the job for review instead (#296). */
+  UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED?: string;
   STABLE_SCOPED_REVIEW_ENABLED?: string;
   /** Default off: enables the read-only admin expense provider diagnostic route. */
   EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED?: string;

@@ -38,11 +38,11 @@
     {
       "issue": 293,
       "title": "Gated read-only Production ops tooling",
-      "mode": "MIGRATION_PENDING",
+      "mode": "MANAGED",
       "primary_branch": "codex/feature-prod-ops-readonly-tools",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
-      "reason": "Branch created from canonical main 0fd75d2; becomes MANAGED once pushed and its ACTIVE record holds an observed SHA. Running the workflow on Production needs a separate Production Change issue."
+      "reason": "One Issue, one primary branch, one PR. Created from canonical main 0fd75d2. Running the workflow on Production needs a separate Production Change issue."
     }
   ],
   "branches": [
@@ -5229,6 +5229,18 @@
         "absence_verified": true,
         "evidence": "git ls-remote origin refs/heads/codex/revoke-review-close-20261116 returned no ref"
       }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/feature-prod-ops-readonly-tools",
+      "issues": [
+        293
+      ],
+      "source_sha": "3efa1988a24a9bc72f7cd3d05a96462864923f74",
+      "observed_at": "2026-11-17T12:25:58.372634+00:00",
+      "status": "ACTIVE",
+      "reason": "Primary branch for #293; single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

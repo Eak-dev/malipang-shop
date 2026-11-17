@@ -27,6 +27,10 @@ export interface Env {
   STABLE_REDRIVE_HOLD_ENABLED?: string;
   WORKBOOK_BATCH_FAIRNESS_ENABLED?: string;
   SYNC_ALERT_DURABLE_ENABLED?: string;
+  /** ISO-8601 UTC instant; incidents opened earlier are never sent. Required with SYNC_ALERT_DURABLE_ENABLED. */
+  SYNC_ALERT_DURABLE_SINCE?: string;
+  /** Days to keep closed, handled incidents (7-3650, default 90). */
+  SYNC_ALERT_INCIDENT_RETENTION_DAYS?: string;
   STABLE_SCOPED_REVIEW_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;

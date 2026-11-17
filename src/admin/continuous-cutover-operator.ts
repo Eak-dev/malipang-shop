@@ -8,6 +8,7 @@ import {captureContinuousReportInputs,runContinuousReportCutoverStage} from '../
 import {continuousDailyCutoverStatements} from '../sheets/continuous-daily-cutover';
 import {batchGetSheetFormulaValues,getSpreadsheetSheetProperties} from '../sheets/client';
 import {columnName} from '../sheets/daily-expense';
+import {STABLE_DAILY_REVIEW_REASONS} from '../sheets/stable-daily-writer';
 
 type OperatorEnv=Env & {CONTINUOUS_CUTOVER_OPERATOR_ENABLED?:string;CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED?:string;CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT?:string;CONTINUOUS_REPORT_CUTOVER_ENABLED?:string;CONTINUOUS_RAW_VIEW_ID?:string;CONTINUOUS_DETAIL_VIEW_ID?:string};
 type Action='START'|'START_REVIEW'|'VIEWS'|'DAILY_J'|'REPORTS'|'ACTIVATE'|'RELEASE';
@@ -16,6 +17,9 @@ const integrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tb
 const noUnknown="NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED') AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED')";
 const hash=async(x:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(x))),b=>b.toString(16).padStart(2,'0')).join('');
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
+// Pinned by fingerprint below; the list only lets the lookup find a claim whose
+// reason came from a specific preflight code (STABLE_SCOPED_REVIEW_ENABLED).
+const dailyReviewReasons=STABLE_DAILY_REVIEW_REASONS.map(quote).join(',');
 function enabled(env:OperatorEnv):boolean{return env.CONTINUOUS_CUTOVER_OPERATOR_ENABLED==='true'&&env.CONTINUOUS_REPORT_CUTOVER_ENABLED==='true'&&env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_RECOVERY_GATE_ENABLED==='true'&&env.STABLE_SHEETS_PACING_ENABLED==='true'&&[undefined,'','false'].includes(env.CONTINUOUS_DAILY_ENABLED)&&!!env.GOOGLE_SPREADSHEET_ID;}
 const scope=(e:OperatorEnv)=>JSON.stringify([e.GOOGLE_SPREADSHEET_ID,e.GOOGLE_SERVICE_ACCOUNT_EMAIL,e.GOOGLE_PRIVATE_KEY_BASE64,e.EXTERNAL_API_TIMEOUT_MS,e.CONTINUOUS_CUTOVER_OPERATOR_ENABLED,e.CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED,e.CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT,e.CONTINUOUS_REPORT_CUTOVER_ENABLED,e.STABLE_PHASE1_ENABLED,e.STABLE_RECOVERY_GATE_ENABLED,e.STABLE_SHEETS_PACING_ENABLED,e.CONTINUOUS_DAILY_ENABLED,e.SHEET_EXPENSE_DAILY,e.SHEET_EXPENSE_RAW,e.SHEET_PURCHASE_DETAILS,e.CONTINUOUS_DAILY_SHEET,e.CONTINUOUS_DAILY_SHEET_ID,e.CONTINUOUS_RAW_SHEET,e.CONTINUOUS_RAW_SHEET_ID,e.CONTINUOUS_DETAIL_SHEET,e.CONTINUOUS_DETAIL_SHEET_ID,e.CONTINUOUS_RAW_VIEW_ID,e.CONTINUOUS_DETAIL_VIEW_ID]);
 async function marker(env:OperatorEnv):Promise<Marker|null>{return env.DB.prepare(`SELECT operation_token,state FROM continuous_cutover_operator WHERE spreadsheet_id=? AND ${integrity}`).bind(env.GOOGLE_SPREADSHEET_ID).first<Marker>();}
@@ -55,14 +59,14 @@ type ReviewClaim={operation_token:string;notice_stamp:string;notice_identity:str
 async function startPrewriteReview(env:OperatorEnv):Promise<void>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID!,initial=scope(env),fingerprint=env.CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT;
  if(env.CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED!=='true'||!fingerprint||!/^[a-f0-9]{64}$/.test(fingerprint))throw Error('CUTOVER_REVIEW_RECOVERY_DISABLED');
- const c=await db.prepare("SELECT operation_token,notice_stamp,notice_identity,created_at,phase,review_reason FROM stable_workbook_claims WHERE spreadsheet_id=? AND state='REVIEW' AND phase='OPERATION' AND review_reason='STABLE_DAILY_REVIEW'").bind(book).first<ReviewClaim>();
+ const c=await db.prepare(`SELECT operation_token,notice_stamp,notice_identity,created_at,phase,review_reason FROM stable_workbook_claims WHERE spreadsheet_id=? AND state='REVIEW' AND phase='OPERATION' AND review_reason IN (${dailyReviewReasons})`).bind(book).first<ReviewClaim>();
  if(!c?.operation_token||!c.notice_stamp||!c.notice_identity||!c.created_at||await hash(JSON.stringify([book,c.operation_token,c.notice_stamp,c.notice_identity,c.created_at,c.phase,c.review_reason]))!==fingerprint||!await stableNoticePaused(env,c.notice_stamp,c.notice_identity)||env.DB!==db||scope(env)!==initial)throw Error('CUTOVER_REVIEW_IDENTITY_UNVERIFIED');
  const token=c.operation_token;
  const results=await db.batch([
   db.prepare(`INSERT INTO continuous_cutover_operator(spreadsheet_id,operation_token,origin,original_fingerprint,state,created_at,updated_at)
    SELECT ?,?,'PREWRITE_REVIEW',?,'STARTING',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${integrity}
    AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='stable_projection_writes' AND name IN ('stable_projection_no_delete','stable_projection_no_replace','stable_projection_transition'))=3
-   AND EXISTS(SELECT 1 FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND review_reason='STABLE_DAILY_REVIEW' AND notice_stamp=? AND notice_identity=? AND created_at=?)
+   AND EXISTS(SELECT 1 FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND review_reason IN (${dailyReviewReasons}) AND notice_stamp=? AND notice_identity=? AND created_at=?)
    AND NOT EXISTS(SELECT 1 FROM continuous_cutover_operator WHERE spreadsheet_id=?)
    AND NOT EXISTS(SELECT 1 FROM stable_projection_writes WHERE spreadsheet_id=? AND operation_token=?)
    AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes WHERE spreadsheet_id=? AND operation_token=?)
@@ -71,7 +75,7 @@ async function startPrewriteReview(env:OperatorEnv):Promise<void>{
    AND NOT EXISTS(SELECT 1 FROM stable_recovery_operations o JOIN stable_recovery_epochs e ON e.epoch_id=o.epoch_id WHERE e.spreadsheet_id=? AND o.state='ADMITTED')
    AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM staff_config_sync_outbox WHERE status='PROCESSING')
    AND NOT EXISTS(SELECT 1 FROM continuous_report_cutover_attempts WHERE spreadsheet_id=?) AND ${noUnknown}`).bind(book,token,fingerprint,book,token,c.notice_stamp,c.notice_identity,c.created_at,book,book,token,book,token,token,book,book,book,book,book),
-  db.prepare("UPDATE stable_workbook_claims SET state='HELD',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND review_reason='STABLE_DAILY_REVIEW' AND notice_stamp=? AND notice_identity=? AND created_at=? AND EXISTS(SELECT 1 FROM continuous_cutover_operator o WHERE o.spreadsheet_id=stable_workbook_claims.spreadsheet_id AND o.operation_token=stable_workbook_claims.operation_token AND o.origin='PREWRITE_REVIEW' AND o.original_fingerprint=? AND o.state='STARTING')").bind(book,token,c.notice_stamp,c.notice_identity,c.created_at,fingerprint),
+  db.prepare(`UPDATE stable_workbook_claims SET state='HELD',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='REVIEW' AND phase='OPERATION' AND review_reason IN (${dailyReviewReasons}) AND notice_stamp=? AND notice_identity=? AND created_at=? AND EXISTS(SELECT 1 FROM continuous_cutover_operator o WHERE o.spreadsheet_id=stable_workbook_claims.spreadsheet_id AND o.operation_token=stable_workbook_claims.operation_token AND o.origin='PREWRITE_REVIEW' AND o.original_fingerprint=? AND o.state='STARTING')`).bind(book,token,c.notice_stamp,c.notice_identity,c.created_at,fingerprint),
   db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
  ]);
  if(env.DB!==db||scope(env)!==initial||!results.every(r=>r.success===true))throw Error('CUTOVER_REVIEW_RECOVERY_UNCERTAIN');

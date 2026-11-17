@@ -48,6 +48,9 @@ function untouchedNoticeFailureCode(error:unknown):string|null{
  * absence of all projection intents are proven in the same D1 statement.
  * The recovery gate has its own epoch lifecycle; leave it fail-closed. */
 async function holdUnwrittenExpenseReview(env:Env,job:SheetsSyncJob,lease:string,claim:string,reason:string,mode:'STALE'|'PREFLIGHT',revision?:number):Promise<boolean>{
+ // Flag off: decline, so the caller rethrows and the workbook claim is
+ // retained for review exactly as on main.
+ if(env.STABLE_SCOPED_REVIEW_ENABLED!=='true')return false;
  if(recoveryGateConfigured(env)||!env.GOOGLE_SPREADSHEET_ID)return false;
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
  // Before migration 0023 there is no epoch table to fence. Retain the

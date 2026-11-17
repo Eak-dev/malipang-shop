@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {createHash} from 'node:crypto';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),notice=require('../dist/sheets/stable-edit-notice.js'),{dispatchStablePhase1}=require('../dist/sheets/stable-phase1-dispatch.js'),{readStableExpenseSource}=require('../dist/sheets/stable-expense-source.js'),{writeNewDailyUnderClaim}=require('../dist/sheets/stable-daily-writer.js'),{runStableExpenseJob}=require('../dist/sheets/stable-expense-job.js'),{resumeStableCapacity}=require('../dist/admin/stable-capacity-resume.js'),{withStableWorkbookClaim}=require('../dist/sheets/stable-workbook-claim.js'),{expectedHelperFormulae}=require('../dist/sheets/daily-stable-row-writes.js');
 const blank=()=>Array(25).fill(null);
@@ -279,3 +280,15 @@ test('exact expense canary plus nine HR jobs stays within measured D1 budget',as
  for(let i=0;i<1;i++){external=0;internal=0;let ack=0;const jobs=[h.job,...Array.from({length:9},(_,n)=>({...h.job,entityType:'DAILY_PAYROLL',entityKey:'hr_parked_'+n}))],messages=jobs.map(body=>({body,attempts:1,ack(){ack++},retry(){assert.fail('unexpected retry')}}));await worker.queue({queue:'malipang-jobs',messages},h.env,{});assert.equal(ack,10);maxExternal=Math.max(maxExternal,external);maxInternal=Math.max(maxInternal,internal);maxCombined=Math.max(maxCombined,external+internal);if(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status==='COMPLETED')break}
  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'PENDING');assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE entity_type='DAILY_PAYROLL'").get().n,9);assert.ok(maxExternal<=50,`external ${maxExternal}`);assert.ok(maxInternal<=1000,`Paid D1 queries ${maxInternal}`);t.diagnostic(`maximum mocked stage: external ${maxExternal}, Paid D1 queries ${maxInternal}, sum ${maxCombined}; publication schema checks add 2 calls versus the prior 45-call fixture; excludes unmodelled calls and provider retries`)
  }finally{h.DB.prepare=prep;h.DB.batch=batch;pacing.admitPacedWorkbookOperation=oldPace;Object.assign(notice,old);h.close()}});
+test('scoped review off: a month-specific failure retains the workbook review with the main code',async()=>{const h=fixture();try{
+ delete h.env.STABLE_SCOPED_REVIEW_ENABLED;
+ h.f[6][9]='=unexpected';await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/^Error: STABLE_DAILY_REVIEW$/);
+ assert.deepEqual({...h.sqlite.prepare('SELECT state,review_reason FROM stable_workbook_claims').get()},{state:'REVIEW',review_reason:'STABLE_DAILY_REVIEW'});
+ assert.notEqual(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.writes(),0);
+ }finally{h.close();}});
+test('scoped review off: a source cancelled after claim retains the workbook review instead of a job hold',async()=>{const h=fixture();try{
+ delete h.env.STABLE_SCOPED_REVIEW_ENABLED;
+ h.sqlite.prepare("UPDATE expense_events SET status='CANCELLED',version=version+1").run();
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_EXPENSE_SOURCE_UNVERIFIED/);
+ assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.writes(),0);
+ }finally{h.close();}});

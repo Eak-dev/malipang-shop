@@ -141,7 +141,7 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
   // either state before the scheduled recovery has isolated it for review.
   // Keep both time placeholders so the personal-use serialization arguments
   // retain their existing positions in either mode.
-  const eligible=env.STABLE_PHASE1_ENABLED==='true'
+  const eligible=env.STABLE_PHASE1_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true'
     ? "(status='PENDING' AND (next_attempt_at IS NULL OR next_attempt_at<=?) AND ? IS NOT NULL)"
     : "(((status='PENDING' OR status='FAILED') AND (next_attempt_at IS NULL OR next_attempt_at<=?)) OR (status='PROCESSING' AND lease_until IS NOT NULL AND lease_until<=?))";
   // This is part of the same CAS that acquires the legacy expense lease.

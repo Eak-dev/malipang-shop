@@ -15,10 +15,14 @@ import {stableExpensePreimageStatement} from './stable-expense-preimage';
  * release the workbook while retaining the individual job for review. */
 export class StableDailyCapacityError extends Error{constructor(){super('STABLE_DAILY_CAPACITY');this.name='StableDailyCapacityError';}}
 /** The reason is a static planner code, never a cell value or provider message. */
+const PREFLIGHT_REVIEW_REASONS=['INCOMPLETE_SNAPSHOT','DUPLICATE_OR_INVALID_ID','MONTH_BLOCK_NOT_UNIQUE','FINANCIAL_ROW_OUTSIDE_MONTH','SUBTOTAL_FORMULA_UNVERIFIED','MONTH_OPENING_UNVERIFIED','BLANK_ROW_BALANCE_UNVERIFIED','FINANCIAL_ROW_DATE_UNVERIFIED','FINANCIAL_ROW_VALUE_UNVERIFIED','MULTIPLE_OUTFLOW_CHANNELS','ROW_HELPER_FORMULA_UNVERIFIED','ROW_ACCOUNTING_UNVERIFIED','SUBTOTAL_VALUE_UNVERIFIED','INVALID_EXPENSE_ID','PREVIOUS_BALANCE_UNVERIFIED','INVALID_POSTING_MONTH','DUPLICATE_STABLE_ID','IDENTITY_OUTSIDE_POSTING_MONTH','MISSING_TRUSTED_PREIMAGE','IDENTITY_PREIMAGE_MISMATCH','INPUT_CONTAINS_FORMULA','MULTIPLE_OR_INVALID_AMOUNT_CELLS','LEGACY_OR_MISSING_ID_UNVERIFIED','APPEND_ROW_NOT_EMPTY','APPEND_HELPER_FORMULA_UNVERIFIED'] as const;
+/** Every claim review_reason a daily preflight can produce: the legacy code
+ * (flag off, as on main) and each specific code (STABLE_SCOPED_REVIEW_ENABLED). */
+export const STABLE_DAILY_REVIEW_REASONS:readonly string[]=['STABLE_DAILY_REVIEW','STABLE_DAILY_UNCLASSIFIED',...PREFLIGHT_REVIEW_REASONS.map(r=>`STABLE_DAILY_${r}`)];
 export class StableDailyPreflightReviewError extends Error{
  readonly reason:string;
  constructor(reason:string){
-  const allowed=new Set(['INCOMPLETE_SNAPSHOT','DUPLICATE_OR_INVALID_ID','MONTH_BLOCK_NOT_UNIQUE','FINANCIAL_ROW_OUTSIDE_MONTH','SUBTOTAL_FORMULA_UNVERIFIED','MONTH_OPENING_UNVERIFIED','BLANK_ROW_BALANCE_UNVERIFIED','FINANCIAL_ROW_DATE_UNVERIFIED','FINANCIAL_ROW_VALUE_UNVERIFIED','MULTIPLE_OUTFLOW_CHANNELS','ROW_HELPER_FORMULA_UNVERIFIED','ROW_ACCOUNTING_UNVERIFIED','SUBTOTAL_VALUE_UNVERIFIED','INVALID_EXPENSE_ID','PREVIOUS_BALANCE_UNVERIFIED','INVALID_POSTING_MONTH','DUPLICATE_STABLE_ID','IDENTITY_OUTSIDE_POSTING_MONTH','MISSING_TRUSTED_PREIMAGE','IDENTITY_PREIMAGE_MISMATCH','INPUT_CONTAINS_FORMULA','MULTIPLE_OR_INVALID_AMOUNT_CELLS','LEGACY_OR_MISSING_ID_UNVERIFIED','APPEND_ROW_NOT_EMPTY','APPEND_HELPER_FORMULA_UNVERIFIED']);
+  const allowed=new Set<string>(PREFLIGHT_REVIEW_REASONS);
   const safeReason=allowed.has(reason)?reason:'UNCLASSIFIED';
   super(`STABLE_DAILY_${safeReason}`);this.name='StableDailyPreflightReviewError';this.reason=safeReason;
  }
@@ -45,7 +49,8 @@ export async function writeNewDailyUnderClaim(env:Env,job:SheetsSyncJob,lease:st
   const previous=journal&&found.length?Array.from({length:25},(_,i)=>s.formula[found[0]!-1]?.[i]??null):undefined;
   const p=inspectDailyAppendSnapshot({formula:s.formula,effective:s.effective,rowCount:grid.rowCount,expenseId:job.entityKey,year:payment.postingYear,month:payment.postingMonth,...previous?{expectedPrevious:previous}:{}});
   if(p.status==='CAPACITY_REQUIRED')throw new StableDailyCapacityError();
-  if(p.status==='REVIEW')throw new StableDailyPreflightReviewError(p.reason);
+  // Flag off keeps main's single code, so the workbook-wide review reason is unchanged.
+  if(p.status==='REVIEW')throw env.STABLE_SCOPED_REVIEW_ENABLED==='true'?new StableDailyPreflightReviewError(p.reason):Error('STABLE_DAILY_REVIEW');
   if(journal&&p.status!=='FOUND'||!journal&&p.status!=='APPEND')throw Error('STABLE_DAILY_IDENTITY_REVIEW');
   const values:StableDailyValues={month:payment.postingMonth,day:payment.postingDay,description:record.description.trim(),amountColumn:payment.amountColumn,amountBaht:record.amountBaht,category:record.category,sourceWallet:legacySourceWallet(record.paymentKey,record.sourceWallet)};
   return{payment,block,key,plan:p,values};};

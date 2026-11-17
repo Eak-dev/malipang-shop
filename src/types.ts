@@ -27,6 +27,7 @@ export interface Env {
   STABLE_REDRIVE_HOLD_ENABLED?: string;
   WORKBOOK_BATCH_FAIRNESS_ENABLED?: string;
   SYNC_ALERT_DURABLE_ENABLED?: string;
+  STABLE_SCOPED_REVIEW_ENABLED?: string;
   /** Experimental opt-in; requires the carrier template and migration 0026. */
   CONTINUOUS_PUBLICATION_ENABLED?: string;
   CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED?: string;

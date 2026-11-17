@@ -11,7 +11,7 @@ const expense={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_default_of
 const spy=h=>{const seen=[],prepare=h.DB.prepare;h.DB.prepare=function(sql){seen.push(sql);return prepare.call(this,sql);};return seen;};
 
 test('fixture leaves every candidate behaviour flag unset',()=>{const h=expenseSqlite();try{
- for(const flag of ['EXPENSE_SAVED_SYNC_NOTE_ENABLED','EXPENSE_FORCE_RECONCILE_HOLD_ENABLED','STABLE_REDRIVE_HOLD_ENABLED','WORKBOOK_BATCH_FAIRNESS_ENABLED','SYNC_ALERT_DURABLE_ENABLED'])assert.equal(h.env[flag],undefined,flag);
+ for(const flag of ['EXPENSE_SAVED_SYNC_NOTE_ENABLED','EXPENSE_FORCE_RECONCILE_HOLD_ENABLED','STABLE_REDRIVE_HOLD_ENABLED','WORKBOOK_BATCH_FAIRNESS_ENABLED','SYNC_ALERT_DURABLE_ENABLED','STABLE_SCOPED_REVIEW_ENABLED'])assert.equal(h.env[flag],undefined,flag);
 }finally{h.close();}});
 
 test('fairness off: a mixed paced batch runs its first workbook job and never reads fairness state',async()=>{
@@ -49,3 +49,20 @@ test('force hold off: forced reconciliation enqueues expense jobs as on main',as
   assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key='exp_default_off'").get().status,'PENDING');
   assert.equal(h.queue.length,1);
  }finally{h.close();}});
+
+test('redrive hold off: a queued duplicate claims a FAILED job and an expired PROCESSING lease as on main',async()=>{
+ const {claimSheetSyncJob}=require('../dist/sheets/sync.js');
+ const h=expenseSqlite();try{
+  Object.assign(h.env,{STABLE_PHASE1_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book'});
+  const past='2026-01-01T00:00:00.000Z';
+  h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,next_attempt_at) VALUES('j_failed','DAILY_PAYROLL','hr_failed',1,'t','FAILED',?,?)").run(past,past);
+  h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,lease_until,lease_token) VALUES('j_expired','DAILY_PAYROLL','hr_expired',1,'t','PROCESSING',?,?,'old')").run(past,past);
+  for(const key of ['hr_failed','hr_expired'])assert.equal(typeof await claimSheetSyncJob(h.env,{kind:'SHEETS_SYNC',entityType:'DAILY_PAYROLL',entityKey:key,entityVersion:1,traceId:'t'}),'string',key);
+  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM sync_jobs WHERE job_id IN ('j_failed','j_expired') AND status='PROCESSING'").get().n,2);
+ }finally{h.close();}});
+
+test('scoped review off: a daily preflight review throws the main code STABLE_DAILY_REVIEW',async()=>{
+ const {STABLE_DAILY_REVIEW_REASONS}=require('../dist/sheets/stable-daily-writer.js');
+ assert.equal(STABLE_DAILY_REVIEW_REASONS.includes('STABLE_DAILY_REVIEW'),true);
+ assert.equal(STABLE_DAILY_REVIEW_REASONS.includes('STABLE_DAILY_MONTH_OPENING_UNVERIFIED'),true);
+});

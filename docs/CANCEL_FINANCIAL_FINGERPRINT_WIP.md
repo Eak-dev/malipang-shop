@@ -22,6 +22,12 @@ notice/FINAL lifecycle, mixed-generation rollout, real D1 or provider behavior.
 The prototype adds D1 reads to the budget, which have not been validated across
 the worst-case invocation. Keep every production gate closed.
 
+The selector remembers a positive activation-schema probe per D1 binding
+object, so each later protocol check costs one D1 batch instead of a probe plus
+a batch. A missing schema is never remembered and is probed again every time.
+If the table disappeared after a positive probe, the batch fails and the
+caller holds; that path has synthetic coverage only.
+
 The prototype snapshots a cancelled expense and its previous-version VERIFIED
 projection/preimage manifest, with a separate monotonic journal revision. A
 PUBLISHED marker must name exactly DAILY, RAW, and its `detailCount` DETAIL

@@ -1,0 +1,102 @@
+name: Production ops (read-only snapshot / backup rehearsal)
+
+# Manual only. Runs from main, behind the `production` environment approval.
+# snapshot: SELECT-only reads; prints migration names, table names, range
+#   labels (0, 1-9, 10+) for abnormal work and a Worker version MATCH/MISMATCH
+#   against the SHA-256 of the expected id. Actions prints every step's env block
+#   (only secrets are masked), so inputs must never carry sensitive values.
+# rehearsal: `wrangler d1 export --remote`, then restores the copy on the
+#   runner and rehearses pending migrations there. Cloudflare's D1 docs state
+#   that a running export blocks other database requests, so a rehearsal must
+#   run in a quiet window recorded in its Production Change issue (an earlier
+#   export took about ten seconds). It writes ONE private R2 backup object only
+#   when write_backup is true. Never deploys, migrates or writes D1.
+# The repository is public: scripts print no Production numbers or identifiers.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: snapshot or rehearsal
+        type: choice
+        options: [snapshot, rehearsal]
+        required: true
+      expected_sha:
+        description: Exact 40-character main commit SHA being run
+        type: string
+        required: true
+      confirmation:
+        description: "Type READ PRODUCTION <first 7 of SHA>; for a backup add: WRITE BACKUP"
+        type: string
+        required: true
+      write_backup:
+        description: rehearsal only — also store one private R2 backup object
+        type: boolean
+        default: false
+      expected_worker_version_sha256:
+        description: "snapshot only, optional — SHA-256 (64 lowercase hex) of the Worker version id expected at 100%. Compute it locally: printf '%s' <version id> | shasum -a 256. This hash appears in the log; the id does not."
+        type: string
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+concurrency:
+  group: prod-ops-readonly
+  cancel-in-progress: false
+
+jobs:
+  ops:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    steps:
+      - name: Verify inputs before any checkout or credential use
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OPERATION: ${{ inputs.operation }}
+          WRITE_BACKUP: ${{ inputs.write_backup }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected_sha must be 40 lowercase hex'; exit 1; }
+          [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'expected_sha does not match the main commit being run'; exit 1; }
+          want="READ PRODUCTION ${EXPECTED_SHA:0:7}"
+          if [ "$WRITE_BACKUP" = true ]; then
+            [ "$OPERATION" = rehearsal ] || { echo 'write_backup is only valid for rehearsal'; exit 1; }
+            want="$want WRITE BACKUP"
+          fi
+          [ "$CONFIRMATION" = "$want" ] || { echo 'confirmation text does not match'; exit 1; }
+          if [ -n "$EXPECTED_WORKER_VERSION_SHA256" ]; then
+            [[ "$EXPECTED_WORKER_VERSION_SHA256" =~ ^[0-9a-f]{64}$ ]] || { echo 'expected_worker_version_sha256 must be 64 lowercase hex (a hash, not the id)'; exit 1; }
+            [ "$OPERATION" = snapshot ] || { echo 'expected_worker_version_sha256 is only valid for snapshot'; exit 1; }
+          fi
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 22, cache: npm}
+      - name: Install dependencies without lifecycle scripts
+        shell: bash
+        run: npm ci --ignore-scripts
+      - name: Snapshot (sanitized aggregates)
+        if: inputs.operation == 'snapshot'
+        # bash runs with -eo pipefail, so a failing script fails the step despite tee.
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+        run: node scripts/prod-ops-snapshot.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Backup and migration rehearsal
+        if: inputs.operation == 'rehearsal'
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          BACKUP_TO_R2: ${{ inputs.write_backup }}
+        run: bash scripts/prod-ops-backup-rehearsal.sh | tee -a "$GITHUB_STEP_SUMMARY"

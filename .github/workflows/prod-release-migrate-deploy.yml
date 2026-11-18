@@ -1,7 +1,13 @@
-name: Production release (migrate / deploy / rollback_worker)
+name: Production release (preflight / review_fingerprint / migrate / deploy / rollback_worker)
 
 # Manual only. Runs from main, behind the `production` environment approval.
 # One operation per run (#299, runbook docs/SYNC_RELEASE_RUNBOOK_TH.md):
+#   preflight        no D1 or Worker write: reads the ledger, Worker status and
+#                    settings, runs a dry-run deploy and writes/reads one probe
+#                    object in private R2. Run it before migrate.
+#   review_fingerprint  read-only: prints only the SHA-256 for
+#                    CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT when exactly one
+#                    claim exists and START_REVIEW would accept it.
 #   migrate          apply pending D1 migrations; the confirmation must name
 #                    the live ledger head and the last file in this commit.
 #   deploy           deploy this commit's Worker and wrangler.jsonc; refuses
@@ -18,16 +24,16 @@ on:
   workflow_dispatch:
     inputs:
       operation:
-        description: migrate, deploy or rollback_worker
+        description: preflight, review_fingerprint, migrate, deploy or rollback_worker
         type: choice
-        options: [migrate, deploy, rollback_worker]
+        options: [preflight, review_fingerprint, migrate, deploy, rollback_worker]
         required: true
       expected_sha:
         description: Exact 40-character main commit SHA being run
         type: string
         required: true
       confirmation:
-        description: "MIGRATE <sha7> FROM <head> TO <last> | DEPLOY <sha7> CHANGES <names or NONE> | ROLLBACK <sha7> BEFORE RUN <deploy run id>"
+        description: "PREFLIGHT <sha7> | FINGERPRINT <sha7> | MIGRATE <sha7> FROM <head> TO <last> | DEPLOY <sha7> CHANGES <names or NONE> | ROLLBACK <sha7> BEFORE RUN <deploy run id>"
         type: string
         required: true
 
@@ -58,6 +64,8 @@ jobs:
           [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'expected_sha does not match the main commit being run'; exit 1; }
           s="${EXPECTED_SHA:0:7}"
           case "$OPERATION" in
+            preflight) [[ "$CONFIRMATION" =~ ^PREFLIGHT\ $s$ ]] ;;
+            review_fingerprint) [[ "$CONFIRMATION" =~ ^FINGERPRINT\ $s$ ]] ;;
             migrate) [[ "$CONFIRMATION" =~ ^MIGRATE\ $s\ FROM\ [0-9]{4}\ TO\ [0-9]{4}$ ]] ;;
             deploy) [[ "$CONFIRMATION" =~ ^DEPLOY\ $s\ CHANGES\ (NONE|[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*)$ ]] ;;
             rollback_worker) [[ "$CONFIRMATION" =~ ^ROLLBACK\ $s\ BEFORE\ RUN\ [1-9][0-9]*$ ]] ;;

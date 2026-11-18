@@ -5,8 +5,10 @@
 ## คำตัดสินของเจ้าของที่ใช้กับ runbook นี้ (2026-11-18)
 
 - แท็บ RAW/รายละเอียดต่อเนื่อง: operator สร้างในขั้น `VIEWS` (ดูหัวข้อแท็บ) และระบบเขียน Owner Master ได้เฉพาะขั้นของ operator ที่อนุมัติ
-- งบตั้งต้น (แทนคำตัดสินเดิมเรื่องวันที่ 1): เริ่มกลางเดือน พ.ย. 2569 ตามแผนเร่ง — รายละเอียดและข้อที่รอเจ้าของยืนยันอยู่ในหัวข้อ "งบตั้งต้นเมื่อเริ่มกลางเดือน"
-- แผนเร่ง (แทนวันที่ 1 ธ.ค.): ขั้น 1–4 คืนศุกร์ 20 → เสาร์ 21 พ.ย. 2569 02:00–05:00 แล้วเฝ้าดู 1 วัน; ขั้น 5–6 คืนอาทิตย์ 22 → จันทร์ 23 พ.ย. 02:00–05:00 (สำรอง จันทร์ 23 → อังคาร 24); **ห้ามคืนอังคาร 24 → พุธ 25** เพราะพุธ 25 เป็นวันจ่าย payroll (รอบ พฤ.–พ., `payrollPeriodFor` ใน `src/shared/time.ts`)
+- งบตั้งต้น (แทนคำตัดสินเดิมทั้งหมด): เริ่มกลางเดือน พ.ย. 2569 โดย**ใช้งบหัวเดือนในแท็บ `รายวัน` เดิม ไม่ใส่แถว `AA:AC` ของ พ.ย.** เจ้าของตรวจว่างบหัวเดือน พ.ย. ถูกต้อง; ยกเลิกคำตัดสิน "งบเต็มลบรายจ่าย" (จะหักซ้ำ) ดูหัวข้อ "งบตั้งต้นเมื่อเริ่มกลางเดือน"
+- แผนเร่ง (แทนแผนก่อนหน้าทั้งหมด): ขั้น 1–4 เช้ามืดวันพฤหัสบดี 19 พ.ย. 2569 02:00–05:00 แล้วเฝ้าดู 1 วัน; ขั้น 5–6 เช้ามืดวันศุกร์ 20 พ.ย. 02:00–05:00 (สำรอง เสาร์ 21 พ.ย.); **ห้ามทำในวันพุธ** ซึ่งเป็นวันจ่าย payroll (รอบ พฤ.–พ., `payrollPeriodFor` ใน `src/shared/time.ts`; วันจ่ายถัดไปคือพุธ 25 พ.ย.)
+- สองรายการใน `ACTIVATE`: ถ้ายังไม่ยกเลิก เจ้าของ Undo ทั้งสองก่อนคืนวันศุกร์ 20 พ.ย. แล้วลบถาวรหลัง canary ตามแผน L5 เดิม
+- fingerprint ของล็อกเดิม: อ่านด้วย workflow `review_fingerprint` (อ่านอย่างเดียว) เจ้าของยอมรับว่าค่า hash อยู่ใน log และ `wrangler.jsonc` ที่เป็นสาธารณะ
 - ผู้รันขั้น 2–7: workflow `prod-release-migrate-deploy.yml` (#299) ที่เจ้าของอนุมัติผ่าน environment `production` ทุกครั้ง ไม่รัน wrangler จากเครื่องใคร; ไม่หยุด cron/queue ระหว่าง migrate กับ deploy และ deploy ต่อทันทีในคืนเดียวกัน
 - Back Office: นำออกจากเกณฑ์ของ release นี้ (ตัวซิงก์อ่านค่าใช้จ่ายที่ยืนยันใน D1 โดยไม่ขึ้นกับช่องทาง)
 - ล็อก workbook `REVIEW` เดิม: ใช้ `START_REVIEW` ของ operator หลังตรวจผลการเขียนเดิมในชีตแบบอ่านอย่างเดียว ในขั้นที่เจ้าของอนุมัติ
@@ -33,11 +35,21 @@
 - `migrate`: ตรวจว่า ledger head และไฟล์สุดท้ายตรงกับข้อความยืนยันก่อน apply แล้วอ่าน ledger กลับเสมอ ถ้าได้ `migrate: INCOMPLETE` ห้ามรันซ้ำทันที ให้ดู `pending_after` แล้วทำตามหัวข้อ "ถ้า migration ล้มกลางไฟล์"
 - `deploy`: ปฏิเสธถ้ามี migration ค้าง, Worker ไม่ใช่เวอร์ชันเดียว 100%, หรือรายชื่อ var ที่เปลี่ยนไม่ตรงกับข้อความ; dry-run ก่อน; เก็บเวอร์ชันเดิมใน R2 private (`release-versions/<run id>.json`) และอ่านกลับก่อน deploy; ถ้า ACK หายจะอ่านเวอร์ชันที่รันอยู่แทนการ deploy ซ้ำ; ห้ามกด re-run (ระบบปฏิเสธ attempt ที่ 2) ให้ dispatch run ใหม่หลังอ่าน snapshot
 - `rollback_worker`: ยืนยัน `ROLLBACK <sha7> BEFORE RUN <run id ของ deploy>` ย้อนไปเวอร์ชันที่ run นั้นแทนที่ เฉพาะเมื่อ Worker ที่รันอยู่ยังเป็นเวอร์ชันที่ run นั้น deploy; ถ้ามี deploy หลายครั้งให้ใช้ run แรกของชุดที่ต้องการย้อน
+- `review_fingerprint` (อ่านอย่างเดียว): ยืนยัน `FINGERPRINT <sha7>` พิมพ์เฉพาะ SHA-256 สำหรับ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` เมื่อมี claim เพียงหนึ่งเดียวและเป็น `REVIEW` / `OPERATION` / `STABLE_DAILY_REVIEW` ที่มี notice; ฟิลด์และลำดับเหมือน `startPrewriteReview` (เทสต์ล็อกไว้)
+- `preflight` (ไม่เขียน D1 หรือ Worker): รันก่อน `migrate` เสมอ เพื่อให้รู้ว่า token ขาดสิทธิ์ก่อนที่ schema จะเปลี่ยน ไม่ใช่ระหว่าง migrate กับ deploy
 - log แสดงเฉพาะสถานะ ชื่อไฟล์ migration ชื่อ var และ SHA-256 ของ version id
+
+**ข้อควรรู้ของขั้น 3 (`deploy`):**
+- รายชื่อ var ที่เปลี่ยนมาจาก binding แบบ `plain_text` ที่ API settings ของ Worker คืนมา ถ้า API ไม่คืนค่า `text` ของ var ระบบจะหยุดที่ `LIVE_SETTINGS_UNREADABLE` ก่อนเขียน และถ้าคืนค่าต่างจากที่คาด รอบแรกอาจได้ `CONFIRMATION_MISMATCH` พร้อม `expected_confirmation` — ให้ตรวจว่ารายชื่อนั้นสมเหตุผล (ควรเป็น `NONE` สำหรับ deploy ครั้งแรกถ้า Worker ที่รันอยู่มาจาก config เดียวกับ main) ก่อน dispatch ใหม่ด้วยข้อความนั้น ห้ามคัดลอกโดยไม่อ่าน
+- binding ชนิดอื่น (D1, Queue, R2, Durable Object, secret, `version_metadata` ฯลฯ) ไม่อยู่ในข้อความยืนยัน การเปลี่ยน binding เหล่านี้ใน `wrangler.jsonc` ต้องตรวจใน PR เอง
+- `preflight` แสดง `config_changes` แบบเดียวกันล่วงหน้า ใช้ดูได้ก่อนคืนนั้น
+
+**ย้อน Worker ด้วยมือ (สำรองถ้า workflow ใช้ไม่ได้):** เจ้าของเข้า Cloudflare dashboard → Workers & Pages → `malipang-backend-v5-2` → แท็บ Deployments → เลือกเวอร์ชันก่อนหน้า (เวอร์ชันที่ deploy ก่อนคืนนั้น; เทียบ SHA-256 ของ version id กับ `live_version_sha256` ที่ `preflight` พิมพ์) → Rollback แล้วรัน snapshot กรอก hash นั้นให้ได้ `MATCH`; schema ไม่ย้อน (Worker เดิมทำงานบน schema ใหม่ได้ตาม smoke ของ rehearsal)
 
 | ขั้น | การเปลี่ยน | ค่าที่ตั้งเพิ่ม | อ่านผลกลับก่อนไปต่อ |
 |---|---|---|---|
 | 1 | backup | — (#295 ขั้นที่ 3, ช่วง 02:00–05:00) | `backup_checksum: PASS` |
+| 1b | workflow `preflight` (หลัง backup ก่อน migrate): ยืนยัน `PREFLIGHT <sha7>` | — | `preflight: PASS` (อ่าน ledger/สถานะ Worker/settings ได้, dry-run ผ่าน, เขียน-อ่าน R2 ได้) และจด `expected_migrate_confirmation`; ถ้าไม่ผ่าน**หยุดคืนนั้น** ยังไม่มีอะไรถูกเขียน |
 | 2 | workflow `migrate`: ยืนยัน `MIGRATE <sha7> FROM 0023 TO <เลขไฟล์สุดท้าย>` (35 ไฟล์ตาม rehearsal #295) | — | ผล `migrate: PASS`, `pending_after: none`; snapshot: ไม่มี migration ค้าง, ช่วงงานผิดปกติไม่เพิ่ม |
 | 3 | workflow `deploy` จาก SHA ที่อนุมัติ: ยืนยัน `DEPLOY <sha7> CHANGES <รายชื่อ var ที่เปลี่ยน หรือ NONE>` | ไม่มี (flag ใหม่ทั้งหมดปิด) | ผล `deploy: PASS` และ `deployed_version_sha256`; snapshot กรอก hash นั้นได้ `MATCH`; LINE OA บันทึกรายการได้ |
 | 4a | การพักงานแบบใหม่ | `STABLE_REDRIVE_HOLD_ENABLED=true`, `STABLE_SCOPED_REVIEW_ENABLED=true`, `EXPENSE_FORCE_RECONCILE_HOLD_ENABLED=true` | ไม่มี FAILED ใหม่ที่อธิบายไม่ได้ |
@@ -52,7 +64,7 @@
 
 **เงื่อนไขก่อนขั้น 5 และ 6:** ขั้น 5 เริ่มได้เมื่อผ่าน preflight checklist ด้านล่างครบทุกข้อ; ขั้น 6 เริ่มได้เมื่อ PR ที่เพิ่ม `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` merge และ Worker ที่ deploy อยู่มีโค้ดนั้นแล้ว และค่านี้ไม่ได้ตั้ง (ตรวจจาก config ที่ deploy)
 
-**จังหวะเวลาของขั้น 5–6:** ตามแผนเร่ง `ACTIVATE` ในช่วง 02:00–05:00 ของคืนอาทิตย์ 22 → จันทร์ 23 พ.ย. 2569 (สำรอง จันทร์ 23 → อังคาร 24); รายการที่ยืนยันก่อน `ACTIVATE` ลงแท็บเดิม และหลังจากนั้นลงแท็บต่อเนื่อง ยอดคงเหลือรวมทั้งสองแท็บตามหัวข้อ "งบตั้งต้นเมื่อเริ่มกลางเดือน" 
+**จังหวะเวลาของขั้น 5–6:** ตามแผนเร่ง `ACTIVATE` ในช่วง 02:00–05:00 ของเช้ามืดวันศุกร์ 20 พ.ย. 2569 (สำรอง เสาร์ 21 พ.ย.); รายการที่ยืนยันก่อน `ACTIVATE` ลงแท็บเดิม และหลังจากนั้นลงแท็บต่อเนื่อง ยอดคงเหลือรวมทั้งสองแท็บตามหัวข้อ "งบตั้งต้นเมื่อเริ่มกลางเดือน" 
 
 ห้ามเปิดในรอบนี้ เพราะต้องใช้ notice worker หรือยังไม่ผ่านการทดสอบ provider จริง: `CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED`, `CONTINUOUS_NOTICE_DISPATCH_ENABLED`, `CONTINUOUS_REVIEW_CLOSE_ENABLED`, `CONTINUOUS_PUBLICATION_ENABLED`, `CONTINUOUS_UNDO_SERIALIZATION_ENABLED`, `CONTINUOUS_REVOKE_REVIEW_*`, `CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED`, `CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED`, `CONTINUOUS_PROVIDER_CANARY_ENABLED`, `EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED`, `EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED` (เปิดได้ชั่วคราวเพื่ออ่านอย่างเดียวเมื่อเจ้าของอนุมัติ)
 
@@ -60,16 +72,16 @@
 
 เมื่อเริ่มแล้วต้องไปให้ถึง `RELEASE` ข้อใดขาดจะทำให้ action ล้มกลางทางขณะที่ซิงก์ชีตทุกประเภทหยุด
 
-- [ ] วันและเวลา: ช่วง 02:00–05:00 ของคืนที่เจ้าของยืนยัน (22 → 23 พ.ย. หรือสำรอง 23 → 24 พ.ย.) ไม่ใช่คืนก่อนวันพุธที่เป็นวันจ่าย payroll; มีผู้สั่ง action และเจ้าของพร้อมตัดสินตลอดช่วง
+- [ ] วันและเวลา: ช่วง 02:00–05:00 ของวันที่เจ้าของยืนยัน (ศุกร์ 20 พ.ย. หรือสำรอง เสาร์ 21 พ.ย.) ไม่ใช่วันพุธที่เป็นวันจ่าย payroll; มีผู้สั่ง action และเจ้าของพร้อมตัดสินตลอดช่วง
 - [ ] ขั้น 1–4 เสร็จและอ่านผลกลับแล้ว: migration ไม่ค้าง, Worker ที่ deploy เป็น SHA ที่อนุมัติ, flag ขั้น 4a–4d ตั้งแล้ว และ `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง (operator ทำงานเฉพาะตอนที่ยังไม่ตั้ง)
 - [ ] snapshot ล่าสุดก่อนเริ่ม (ไม่เกิน 30 นาที): Worker version `MATCH` กับ hash ที่กรอก และทุกข้อในตาราง "เงื่อนไขของ `START_REVIEW` ที่อ่านจาก snapshot" ด้านล่างผ่าน
 - [ ] header `x-malipang-expected-worker-version` ของทุก request ถึง `/admin/stable-sync/continuous-cutover` และ `/admin/stable-sync/continuous-canary` ตรงกับ Worker version ที่รันอยู่ (`src/admin/handler.ts` ตรวจ ไม่ตรงได้ `WORKER_VERSION_MISMATCH`) และใช้ admin token ที่ถูกต้อง
-- [ ] `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true` และ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` = SHA-256 ของข้อมูลระบุตัวตนล็อกเดิม เป็น JSON array ตามลำดับ `[spreadsheet, operation_token, notice_stamp, notice_identity, created_at, phase, review_reason]` (ตาม `startPrewriteReview` ใน `src/admin/continuous-cutover-operator.ts`) ที่เจ้าของยืนยัน; คำนวณจากข้อมูลส่วนตัว ห้ามลงใน Issue
+- [ ] `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true` และ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` = ค่าจาก workflow `review_fingerprint` (รันหลัง snapshot ล่าสุด) = SHA-256 ของข้อมูลระบุตัวตนล็อกเดิม เป็น JSON array ตามลำดับ `[spreadsheet, operation_token, notice_stamp, notice_identity, created_at, phase, review_reason]` (ตาม `startPrewriteReview` ใน `src/admin/continuous-cutover-operator.ts`) ที่เจ้าของยืนยัน; คำนวณจากข้อมูลส่วนตัว ห้ามลงใน Issue
 - [ ] ตรวจผลการเขียนเดิมของล็อก (ครั้งที่ทำให้ล็อกค้าง 14 พ.ย.) ในชีตแบบอ่านอย่างเดียวแล้ว และเจ้าของยืนยันว่าไม่ต้องเขียนซ้ำ
 - [ ] ชื่อแท็บและ sheet ID 4 ค่าสำหรับขั้น `VIEWS` เลือกแล้วและตั้งใน config; แท็บ `V52_EXPENSE_RAW` และ `รายละเอียดการซื้อ` เดิมไม่เกิน 4,000 แถว
 - [ ] request ของ `ACTIVATE` เตรียมไว้: body `{"action":"ACTIVATE","expenseIds":["<รหัสที่ 1>","<รหัสที่ 2>"]}` — ชื่อช่องใน HTTP คือ `expenseIds` (ภายในโค้ดคือ `mustBeCancelledOrAbsentExpenseIds`) ใช้ชื่ออื่นจะได้ `CUTOVER_RECEIPTS_INVALID`; รหัสมาจากหลักฐานส่วนตัว
 - [ ] สำเนา Owner Master ภายใน 1 วันก่อน และ backup D1 ภายใน 1 ชั่วโมงก่อน (#295 ขั้นที่ 3)
-- [ ] งบเดือน พ.ย. ตามหัวข้อ "งบตั้งต้นเมื่อเริ่มกลางเดือน" พร้อมแล้ว และแท็บ `รายวัน` เดิมมีบล็อกเดือน ธ.ค. 2569 ก่อน 1 ธ.ค.
+- [ ] เจ้าของยืนยันว่างบหัวเดือน พ.ย. ในแท็บ `รายวัน` เดิมถูกต้อง และแท็บรายวันต่อเนื่องไม่มีแถว `AA:AC` ของ พ.ย.
 
 ### เงื่อนไขของ `START_REVIEW` ที่อ่านจาก snapshot
 
@@ -95,9 +107,9 @@
 - **ยอดคงเหลือ** = งบตั้งต้น − รายจ่ายของเดือนนั้นในแท็บ `รายวัน` เดิม (อ่านสดทุกครั้ง) − รายจ่ายในแท็บต่อเนื่อง
 - ดังนั้นการเริ่มกลางเดือนให้ใส่ **งบเต็มของเดือน** (หรือไม่ใส่ถ้างบหัวเดือนในแท็บเดิมถูกต้อง) **ห้ามใส่ "งบเต็ม − รายจ่ายในแท็บเดิม"** เพราะรายจ่ายแท็บเดิมจะถูกหักสองครั้ง
 
-**รอเจ้าของยืนยัน:** คำตัดสินที่ส่งมา (2026-11-18) ให้ใส่ "งบเต็มเดือน พ.ย. ลบรายจ่ายในแท็บเดิม ณ วันเปลี่ยน" ซึ่งจะหักซ้ำตามข้างบน Dev เสนอให้ใส่งบเต็มแทน และรอคำยืนยันก่อนขั้น 6
+**คำตัดสินของเจ้าของ (2026-11-18):** เดือน พ.ย. ใช้งบหัวเดือนในแท็บ `รายวัน` เดิม **ไม่ใส่แถว `AA:AC`** (เจ้าของตรวจว่างบหัวเดือนถูกต้อง) ยกเลิกคำตัดสิน "งบเต็มลบรายจ่าย" ที่จะหักซ้ำ
 
-**เดือนถัดไป:** ทุกครั้งที่ลงรายการ ระบบตรวจบล็อกเดือนนั้นในแท็บ `รายวัน` เดิม ถ้าแท็บเดิมไม่มีบล็อกเดือน ธ.ค. 2569 (แถวหัว "รายรับทั้งหมดในบัญชี" เดือน 12 และแถว "รวม") รายการแรกของเดือน ธ.ค. จะล้มแบบแน่นอน (`LEGACY_COVERAGE`) และพักทั้ง workbook ตามหัวข้อ `InsertDailyDefiniteFailure` ต้องตรวจและเตรียมบล็อกนั้น (หรือแถว `AA:AC` ของเดือน ธ.ค. ตามที่เจ้าของเลือก) ก่อน 1 ธ.ค. 00:00 เดือนของปีถัดไป (ม.ค. 2570) ใช้เส้นทางปีใหม่ที่ต้องมีแถว `AA:AC` ของเดือนนั้น
+**เดือนถัดไป (เช็กลิสต์หลัง cutover — ต้องเสร็จก่อน 1 ธ.ค. 2569 00:00):** ทุกครั้งที่ลงรายการ ระบบตรวจบล็อกเดือนนั้นในแท็บ `รายวัน` เดิม ถ้าแท็บเดิมไม่มีบล็อกเดือน ธ.ค. 2569 (แถวหัว "รายรับทั้งหมดในบัญชี" เดือน 12 และแถว "รวม") รายการแรกของเดือน ธ.ค. จะล้มแบบแน่นอน (`LEGACY_COVERAGE`) และพักทั้ง workbook ตามหัวข้อ `InsertDailyDefiniteFailure` ต้องตรวจและเตรียมบล็อกนั้น (หรือแถว `AA:AC` ของเดือน ธ.ค. ตามที่เจ้าของเลือก) ก่อน 1 ธ.ค. 00:00 เดือนของปีถัดไป (ม.ค. 2570) ใช้เส้นทางปีใหม่ที่ต้องมีแถว `AA:AC` ของเดือนนั้น
 
 ## ผลกระทบระหว่างขั้น 5–7 (recovery gate)
 

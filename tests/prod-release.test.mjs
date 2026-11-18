@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
-import {runOperation,varChanges,ReleaseStop,DB,WORKER,BUCKET} from '../scripts/prod-release.mjs';
+import {runOperation,varChanges,fingerprintOf,ReleaseStop,DB,WORKER,BUCKET} from '../scripts/prod-release.mjs';
 import {sha256Hex} from '../scripts/prod-ops-snapshot.mjs';
 
 const SHA='fdb3cc24e9e440a4bdcaa6842aed5984f56f96c6',S=SHA.slice(0,7);
@@ -12,11 +12,12 @@ const LOCAL=['0001_init.sql','0023_stable_recovery_admission.sql','0024_next.sql
 const CONFIG={name:WORKER,vars:{APP_ENV:'production',FLAG_A_ENABLED:'false'}};
 
 /** A fake wrangler + Cloudflare API with Production-like state. */
-function world({ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
+function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
   const calls=[],r2=new Map(),w={ledger:[...ledger],live,calls,r2,lines:[]};
   w.run=(args,opts)=>{
     calls.push(args.join(' '));
     const [a,b]=args;
+    if(a==='d1'&&b==='execute'&&args.at(-1).includes('stable_workbook_claims')){if(fail.claim)throw Error('x');return JSON.stringify([{success:true,results:claims}]);}
     if(a==='d1'&&b==='execute'){if(fail.ledger)throw Error('x');return JSON.stringify([{success:true,results:w.ledger.map(migration=>({migration}))}]);}
     if(a==='d1'&&b==='migrations'){assert.equal(opts?.input,'y\n');const pending=LOCAL.filter(n=>!w.ledger.includes(n));for(const n of pending.slice(0,fail.applyAfter??pending.length))w.ledger.push(n);if(fail.apply)throw Error('x');return 'private wrangler output '+V1;}
     if(a==='deployments'){if(fail.status)throw Error('x');return JSON.stringify({versions:fail.split?[{version_id:w.live,percentage:90},{version_id:V2,percentage:10}]:[{version_id:w.live,percentage:100}]});}
@@ -38,7 +39,7 @@ function world({ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',F
 const dw=(o={})=>world({ledger:LOCAL,...o});
 const noIds=w=>{const t=w.text();for(const id of [V0,V1,V2])assert.equal(t.includes(id),false,t);assert.equal(t.includes('private'),false,t);
   // Only migration names, the short SHA, run ids in an expected confirmation and 64-hex hashes may carry digits.
-  assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
+  assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(/: (0|1-9|10\+)$/gm,':').replace(/SINGLE_VERSION_100/g,'').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
 
 test('migrate applies only when the confirmation names the live head and the last file',async()=>{
   const w=world();
@@ -163,6 +164,46 @@ test('rollback_worker returns to the recorded prior version only from that run\'
   assert.equal(await lost.go('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`),0);assert.match(lost.text(),/rollback_ack: LOST/);
 });
 
+test('preflight reads every input and probes R2 without any D1 or Worker write',async()=>{
+  const w=world();
+  assert.equal(await w.go('preflight',`PREFLIGHT ${S}`),0,w.text());
+  assert.match(w.text(),/ledger_head: 0023_stable_recovery_admission\.sql/);assert.match(w.text(),/pending_migrations: 1-9/);
+  assert.match(w.text(),new RegExp(`expected_migrate_confirmation: MIGRATE ${S} FROM 0023 TO 0061`));
+  assert.match(w.text(),new RegExp(`live_version_sha256: ${sha256Hex(V0)}`));assert.match(w.text(),/config_changes: NONE/);assert.match(w.text(),/dry_run: PASS/);assert.match(w.text(),/rollback_record_probe: PASS/);assert.match(w.text(),/preflight: PASS/);
+  assert.equal(w.calls.some(c=>/^(d1 migrations|deploy$|rollback)/.test(c)),false);
+  assert.deepEqual([...w.r2.keys()],[`${BUCKET}/release-versions/preflight-44300000001.json`]);
+  assert.equal(w.live,V0);assert.deepEqual(w.ledger,LOCAL.slice(0,2));noIds(w);
+  for(const [setup,code] of [[{fail:{api:true}},'LIVE_SETTINGS_UNREADABLE'],[{fail:{r2Put:true}},'RECORD_WRITE_FAILED'],[{fail:{split:true}},'WORKER_NOT_SINGLE_VERSION'],[{fail:{dryRun:true}},'DRY_RUN_FAILED']]){
+    const x=world(setup);assert.equal(await x.go('preflight',`PREFLIGHT ${S}`),1);assert.match(x.text(),new RegExp(`stop: ${code}`));assert.equal(x.calls.some(c=>/^(d1 migrations|deploy$|rollback)/.test(c)),false);
+  }
+  const y=world();assert.equal(await y.go('preflight',`PREFLIGHT 0000000`),1);assert.deepEqual(y.calls,[]);
+});
+
+const CLAIM={spreadsheet_id:'sheet-synthetic',operation_token:'token-synthetic',notice_stamp:'stamp',notice_identity:'identity',created_at:'2026-11-14T00:00:00.000Z',phase:'OPERATION',review_reason:'STABLE_DAILY_REVIEW',claims:1};
+test('review_fingerprint prints only the hash START_REVIEW computes, for exactly one matching claim',async()=>{
+  const w=world({claims:[CLAIM]});
+  assert.equal(await w.go('review_fingerprint',`FINGERPRINT ${S}`),0,w.text());
+  // The operator hashes JSON.stringify([book,token,stamp,identity,created_at,phase,reason]).
+  const want=sha256Hex(JSON.stringify(['sheet-synthetic','token-synthetic','stamp','identity','2026-11-14T00:00:00.000Z','OPERATION','STABLE_DAILY_REVIEW']));
+  assert.equal(fingerprintOf(CLAIM),want);assert.match(w.text(),new RegExp(`review_fingerprint: ${want}`));
+  for(const v of ['sheet-synthetic','token-synthetic','stamp','identity','2026-11-14'])assert.equal(w.text().includes(v),false,v);
+  assert.equal(w.calls.every(c=>c.startsWith('d1 execute')),true);assert.equal(w.calls.length,1);
+  for(const [claims,code] of [[[],'NOT_EXACTLY_ONE_MATCHING_CLAIM'],[[CLAIM,CLAIM],'NOT_EXACTLY_ONE_MATCHING_CLAIM'],[[{...CLAIM,claims:2}],'NOT_EXACTLY_ONE_MATCHING_CLAIM'],[[{...CLAIM,notice_identity:null}],'CLAIM_FIELD_MISSING']]){
+    const x=world({claims});assert.equal(await x.go('review_fingerprint',`FINGERPRINT ${S}`),1);assert.match(x.text(),new RegExp(`stop: ${code}`));assert.doesNotMatch(x.text(),/review_fingerprint: [0-9a-f]/);
+  }
+  const bad=world({claims:[CLAIM]});assert.equal(await bad.go('review_fingerprint','FINGERPRINT 0000000'),1);assert.deepEqual(bad.calls,[]);
+});
+
+test('the fingerprint fields and order match startPrewriteReview and trigger 0031',()=>{
+  const op=readFileSync(new URL('../src/admin/continuous-cutover-operator.ts',import.meta.url),'utf8');
+  assert.ok(op.includes('JSON.stringify([book,c.operation_token,c.notice_stamp,c.notice_identity,c.created_at,c.phase,c.review_reason])'));
+  const src=readFileSync(new URL('../scripts/prod-release.mjs',import.meta.url),'utf8');
+  assert.ok(src.includes('JSON.stringify([c.spreadsheet_id,c.operation_token,c.notice_stamp,c.notice_identity,c.created_at,c.phase,c.review_reason])'));
+  // The claim lookup uses spreadsheet_id = GOOGLE_SPREADSHEET_ID, so the row's id is the operator's book.
+  assert.ok(op.includes("FROM stable_workbook_claims WHERE spreadsheet_id=? AND state='REVIEW' AND phase='OPERATION'"));
+  assert.match(readFileSync(new URL('../migrations/0031_continuous_cutover_operator.sql',import.meta.url),'utf8'),/c\.review_reason='STABLE_DAILY_REVIEW'/);
+});
+
 test('unknown operations and invalid SHA stop with a fixed code',async()=>{
   const w=world();assert.equal(await w.go('nuke','x'),1);assert.match(w.text(),/## Production release: unknown\n- stop: UNKNOWN_OPERATION/);
   const bad=world();assert.equal(await runOperation('migrate',{run:bad.run,api:bad.api,local:LOCAL,env:{EXPECTED_SHA:'abc',CONFIRMATION:'x'},say:l=>bad.lines.push(l)}),1);assert.match(bad.text(),/stop: EXPECTED_SHA_INVALID/);
@@ -204,6 +245,10 @@ test('the workflow input check accepts only the three confirmation shapes',()=>{
   };
   return Promise.all([
     check('migrate',`MIGRATE ${S} FROM 0023 TO 0061`).then(s=>assert.equal(s,0)),
+    check('preflight',`PREFLIGHT ${S}`).then(s=>assert.equal(s,0)),
+    check('review_fingerprint',`FINGERPRINT ${S}`).then(s=>assert.equal(s,0)),
+    check('preflight',`PREFLIGHT ${S} x`).then(s=>assert.notEqual(s,0)),
+    check('review_fingerprint',`PREFLIGHT ${S}`).then(s=>assert.notEqual(s,0)),
     check('deploy',`DEPLOY ${S} CHANGES NONE`).then(s=>assert.equal(s,0)),
     check('deploy',`DEPLOY ${S} CHANGES A_ENABLED,B_VAR`).then(s=>assert.equal(s,0)),
     check('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`).then(s=>assert.equal(s,0)),

@@ -2,6 +2,10 @@
 // (#299). One operation per run, each confirmed by an exact text that is
 // derived from the live state, so a stale or mistyped request stops before it
 // writes anything:
+//   preflight        PREFLIGHT <sha7>  (no D1 or Worker write; proves the
+//                    token can read every input and write/read private R2)
+//   review_fingerprint  FINGERPRINT <sha7>  (read-only; prints only the
+//                    SHA-256 that CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT needs)
 //   migrate          MIGRATE <sha7> FROM <ledger head prefix> TO <last file prefix>
 //   deploy           DEPLOY <sha7> CHANGES <sorted var names that change | NONE>
 //   rollback_worker  ROLLBACK <sha7> BEFORE RUN <deploy run id>
@@ -66,7 +70,7 @@ export async function liveVars(api){
 }
 
 function withTemp(fn){const dir=mkdtempSync(join(tmpdir(),'release-'));try{return fn(dir);}finally{rmSync(dir,{recursive:true,force:true});}}
-const recordKey=runId=>{if(!RUN_ID.test(runId??''))stop('RUN_ID_INVALID');return `${BUCKET}/${RECORD_PREFIX}${runId}.json`;};
+const recordKey=runId=>{if(!RUN_ID.test(String(runId??'').replace(/^preflight-/,'')))stop('RUN_ID_INVALID');return `${BUCKET}/${RECORD_PREFIX}${runId}.json`;};
 
 /** Writes the record, reads it back and compares, so a stored rollback target
  * is proven before the deploy that needs it. */
@@ -87,6 +91,45 @@ export function getRecord(run,runId){
     if(!record||typeof record!=='object'||!VERSION_ID.test(record.prior??'')||record.deployed!==null&&!VERSION_ID.test(record.deployed??''))stop('RECORD_UNREADABLE');
     return record;
   });
+}
+
+/** Read-only for D1 and the Worker: every read that migrate/deploy depend on,
+ * a dry-run deploy and one probe object in private R2. Run it first so a
+ * missing permission is found before the migration, not between migration and
+ * deploy. */
+export async function preflight({run,api,sha,confirmation,local,config,runId,say}){
+  const s=short(sha);
+  if(confirmation!==`PREFLIGHT ${s}`)stop('CONFIRMATION_MISMATCH');
+  if(config?.name!==WORKER)stop('CONFIG_WORKER_NAME_MISMATCH');
+  const applied=readLedger(run),pending=pendingMigrations(applied,local);
+  say(`- ledger_head: ${applied.at(-1)??'none'}`);say(`- pending_migrations: ${pending.length?pending.length>9?'10+':'1-9':'0'}`);
+  if(pending.length)say(`- expected_migrate_confirmation: MIGRATE ${s} FROM ${(applied.at(-1)??'0000').slice(0,4)} TO ${local.at(-1).slice(0,4)}`);
+  const live=liveVersion(run);say('- worker_status: SINGLE_VERSION_100');say(`- live_version_sha256: ${sha256Hex(live)}`);
+  const changes=varChanges(await liveVars(api),config.vars);say(`- config_changes: ${changes.join(',')||'NONE'}`);
+  try{run(['deploy','--dry-run']);}catch{stop('DRY_RUN_FAILED');}
+  say('- dry_run: PASS');
+  putRecord(run,`preflight-${runId}`,{probe:true,sha});
+  say('- rollback_record_probe: PASS');say('- preflight: PASS');return 0;
+}
+
+// Same fields and order as startPrewriteReview in
+// src/admin/continuous-cutover-operator.ts; a test pins that source line.
+const REVIEW_CLAIM_SQL="SELECT spreadsheet_id,operation_token,notice_stamp,notice_identity,created_at,phase,review_reason,(SELECT count(*) FROM stable_workbook_claims) AS claims FROM stable_workbook_claims WHERE state='REVIEW' AND phase='OPERATION' AND review_reason='STABLE_DAILY_REVIEW' AND notice_stamp IS NOT NULL AND notice_identity IS NOT NULL";
+export const fingerprintOf=c=>sha256Hex(JSON.stringify([c.spreadsheet_id,c.operation_token,c.notice_stamp,c.notice_identity,c.created_at,c.phase,c.review_reason]));
+
+/** Read-only. Prints the fingerprint only when exactly one claim exists and
+ * it is the REVIEW claim START_REVIEW accepts (trigger 0031 requires
+ * STABLE_DAILY_REVIEW). The row itself is never printed. */
+export function reviewFingerprint({run,sha,confirmation,say}){
+  if(confirmation!==`FINGERPRINT ${short(sha)}`)stop('CONFIRMATION_MISMATCH');
+  let out;try{out=JSON.parse(run(['d1','execute',DB,'--remote','--json','--command',REVIEW_CLAIM_SQL]));}catch{stop('CLAIM_UNREADABLE');}
+  const rows=out?.[0]?.results;
+  if(out?.[0]?.success===false||!Array.isArray(rows))stop('CLAIM_UNREADABLE');
+  if(rows.length!==1||rows[0]?.claims!==1)stop('NOT_EXACTLY_ONE_MATCHING_CLAIM');
+  const c=rows[0];
+  for(const k of ['spreadsheet_id','operation_token','notice_stamp','notice_identity','created_at','phase','review_reason'])if(typeof c[k]!=='string'||!c[k])stop('CLAIM_FIELD_MISSING');
+  say('- matching_claim: EXACTLY_ONE (REVIEW / OPERATION / STABLE_DAILY_REVIEW / notice recorded)');
+  say(`- review_fingerprint: ${fingerprintOf(c)}`);say('- review_fingerprint_read: PASS');return 0;
 }
 
 export function migrate({run,sha,confirmation,local,say}){
@@ -156,11 +199,14 @@ async function cloudflare(path){
 }
 
 export async function runOperation(op,{run=wrangler,api=cloudflare,env=process.env,local=localMigrations(),config,say=line=>process.stdout.write(line+'\n')}={}){
-  say(`## Production release: ${['migrate','deploy','rollback_worker'].includes(op)?op:'unknown'}`);
+  say(`## Production release: ${['preflight','review_fingerprint','migrate','deploy','rollback_worker'].includes(op)?op:'unknown'}`);
   const base={run,sha:env.EXPECTED_SHA,confirmation:env.CONFIRMATION,say};
   try{
+    const cfg=()=>config??JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
+    if(op==='preflight')return await preflight({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID});
+    if(op==='review_fingerprint')return reviewFingerprint(base);
     if(op==='migrate')return migrate({...base,local});
-    if(op==='deploy')return await deploy({...base,api,local,config:config??JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8')),runId:env.GITHUB_RUN_ID,attempt:env.GITHUB_RUN_ATTEMPT});
+    if(op==='deploy')return await deploy({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID,attempt:env.GITHUB_RUN_ATTEMPT});
     if(op==='rollback_worker')return rollbackWorker(base);
     stop('UNKNOWN_OPERATION');
   }catch(error){say(`- stop: ${error instanceof ReleaseStop?error.message:'UNEXPECTED_ERROR'}`);return 1;}

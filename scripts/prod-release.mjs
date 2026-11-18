@@ -49,6 +49,19 @@ export function liveVersion(run){
   return versions[0].version_id;
 }
 
+/** Reads the live version up to `attempts` times, `waitMs` apart, until it
+ * satisfies `done`. Returns the last version read, or null when every read
+ * failed. A slow status after a deploy is not taken as a failure on one read. */
+export async function settle(run,sleep,done,{attempts=3,waitMs=10000}={}){
+  let last=null;
+  for(let i=0;i<attempts;i++){
+    if(i)await sleep(waitMs);
+    try{last=liveVersion(run);}catch{last=null;}
+    if(last!==null&&done(last))return last;
+  }
+  return last;
+}
+
 /** Sorted names of vars that a deploy of `configVars` would add, remove or
  * change, compared with the plain-text vars of the live Worker. Values are
  * compared, never returned. */
@@ -154,7 +167,7 @@ export function migrate({run,sha,confirmation,local,say}){
   say(`- ledger_head_after: ${after.at(-1)}`);say('- migrate: PASS');return 0;
 }
 
-export async function deploy({run,api,sha,confirmation,local,config,runId,attempt,say}){
+export async function deploy({run,api,sleep,sha,confirmation,local,config,runId,attempt,say}){
   const s=short(sha);
   // A rerun would record the first attempt's new version as the rollback target.
   if(attempt!=='1')stop('RERUN_NOT_ALLOWED_DISPATCH_A_NEW_RUN');
@@ -170,15 +183,16 @@ export async function deploy({run,api,sha,confirmation,local,config,runId,attemp
   putRecord(run,runId,{sha,prior,deployed:null});
   say('- rollback_record: STORED');
   let ackLost=false;try{run(['deploy']);}catch{ackLost=true;}
-  let after;try{after=liveVersion(run);}catch{say('- deploy: UNKNOWN — read the live version (snapshot) before any further action');return 1;}
-  if(after===prior){say(ackLost?'- deploy: FAIL (live version unchanged)':'- deploy: UNKNOWN (command returned but live version unchanged)');return 1;}
+  const after=await settle(run,sleep,v=>v!==prior);
+  if(after===null){say('- deploy: UNKNOWN — status unreadable after 3 reads; do not dispatch another deploy, compare the snapshot hash with live_version_sha256 from preflight');return 1;}
+  if(after===prior){say(ackLost?'- deploy: FAIL (live version unchanged after 3 reads)':'- deploy: UNKNOWN (command returned but live version unchanged after 3 reads; do not dispatch another deploy)');return 1;}
   try{putRecord(run,runId,{sha,prior,deployed:after});say('- rollback_record_update: STORED');}
   catch{say('- rollback_record_update: FAIL — the prior version is stored, but rollback_worker will refuse this run until the record names the deployed version');}
   if(ackLost)say('- deploy_ack: LOST (live version changed)');
   say(`- deployed_version_sha256: ${sha256Hex(after)}`);say('- deploy: PASS');return 0;
 }
 
-export function rollbackWorker({run,sha,confirmation,say}){
+export async function rollbackWorker({run,sleep,sha,confirmation,say}){
   const s=short(sha),m=/^ROLLBACK ([0-9a-f]{7}) BEFORE RUN ([1-9][0-9]{0,19})$/.exec(confirmation??'');
   if(!m||m[1]!==s)stop('CONFIRMATION_MISMATCH');
   const record=getRecord(run,m[2]),live=liveVersion(run);
@@ -186,7 +200,8 @@ export function rollbackWorker({run,sha,confirmation,say}){
   if(record.deployed===null)stop('DEPLOYED_VERSION_NOT_RECORDED');
   if(live!==record.deployed)stop('LIVE_VERSION_NOT_FROM_THAT_RUN');
   let ackLost=false;try{run(['rollback',record.prior,'--yes',`--message=rollback before release run ${m[2]}`]);}catch{ackLost=true;}
-  let after;try{after=liveVersion(run);}catch{say('- rollback_worker: UNKNOWN — read the live version before any further action');return 1;}
+  const after=await settle(run,sleep,v=>v===record.prior);
+  if(after===null){say('- rollback_worker: UNKNOWN — status unreadable after 3 reads; read the live version before any further action');return 1;}
   if(after!==record.prior){say(`- rollback_worker: ${ackLost?'FAIL':'UNKNOWN'} (live version is not the recorded prior version)`);return 1;}
   if(ackLost)say('- rollback_ack: LOST (live version is the recorded prior version)');
   say(`- live_version_sha256: ${sha256Hex(after)}`);say('- rollback_worker: PASS');return 0;
@@ -198,16 +213,16 @@ async function cloudflare(path){
   return res.json();
 }
 
-export async function runOperation(op,{run=wrangler,api=cloudflare,env=process.env,local=localMigrations(),config,say=line=>process.stdout.write(line+'\n')}={}){
+export async function runOperation(op,{run=wrangler,api=cloudflare,sleep=ms=>new Promise(r=>setTimeout(r,ms)),env=process.env,local=localMigrations(),config,say=line=>process.stdout.write(line+'\n')}={}){
   say(`## Production release: ${['preflight','review_fingerprint','migrate','deploy','rollback_worker'].includes(op)?op:'unknown'}`);
-  const base={run,sha:env.EXPECTED_SHA,confirmation:env.CONFIRMATION,say};
+  const base={run,sleep,sha:env.EXPECTED_SHA,confirmation:env.CONFIRMATION,say};
   try{
     const cfg=()=>config??JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
     if(op==='preflight')return await preflight({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID});
     if(op==='review_fingerprint')return reviewFingerprint(base);
     if(op==='migrate')return migrate({...base,local});
     if(op==='deploy')return await deploy({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID,attempt:env.GITHUB_RUN_ATTEMPT});
-    if(op==='rollback_worker')return rollbackWorker(base);
+    if(op==='rollback_worker')return await rollbackWorker(base);
     stop('UNKNOWN_OPERATION');
   }catch(error){say(`- stop: ${error instanceof ReleaseStop?error.message:'UNEXPECTED_ERROR'}`);return 1;}
 }

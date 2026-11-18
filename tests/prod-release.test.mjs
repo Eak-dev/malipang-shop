@@ -13,24 +13,24 @@ const CONFIG={name:WORKER,vars:{APP_ENV:'production',FLAG_A_ENABLED:'false'}};
 
 /** A fake wrangler + Cloudflare API with Production-like state. */
 function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
-  const calls=[],r2=new Map(),w={ledger:[...ledger],live,calls,r2,lines:[]};
+  const calls=[],r2=new Map(),w={ledger:[...ledger],live,calls,r2,lines:[],sleeps:[],statusFailures:fail.statusFailures??0,deployed:false};
   w.run=(args,opts)=>{
     calls.push(args.join(' '));
     const [a,b]=args;
     if(a==='d1'&&b==='execute'&&args.at(-1).includes('stable_workbook_claims')){if(fail.claim)throw Error('x');return JSON.stringify([{success:true,results:claims}]);}
     if(a==='d1'&&b==='execute'){if(fail.ledger)throw Error('x');return JSON.stringify([{success:true,results:w.ledger.map(migration=>({migration}))}]);}
     if(a==='d1'&&b==='migrations'){assert.equal(opts?.input,'y\n');const pending=LOCAL.filter(n=>!w.ledger.includes(n));for(const n of pending.slice(0,fail.applyAfter??pending.length))w.ledger.push(n);if(fail.apply)throw Error('x');return 'private wrangler output '+V1;}
-    if(a==='deployments'){if(fail.status)throw Error('x');return JSON.stringify({versions:fail.split?[{version_id:w.live,percentage:90},{version_id:V2,percentage:10}]:[{version_id:w.live,percentage:100}]});}
+    if(a==='deployments'){if(fail.status)throw Error('x');if(w.deployed&&w.statusFailures>0){w.statusFailures--;throw Error('x');}return JSON.stringify({versions:fail.split?[{version_id:w.live,percentage:90},{version_id:V2,percentage:10}]:[{version_id:w.live,percentage:100}]});}
     if(a==='deploy'&&b==='--dry-run'){if(fail.dryRun)throw Error('x');return '';}
-    if(a==='deploy'){if(!fail.deployNoChange)w.live=V1;if(fail.deploy)throw Error('x');return 'https://private.example '+V1;}
-    if(a==='rollback'){if(!fail.rollbackNoChange)w.live=args[1];if(fail.rollback)throw Error('x');return '';}
+    if(a==='deploy'){w.deployed=true;if(!fail.deployNoChange)w.live=V1;if(fail.deploy)throw Error('x');return 'https://private.example '+V1;}
+    if(a==='rollback'){w.deployed=true;if(!fail.rollbackNoChange)w.live=args[1];if(fail.rollback)throw Error('x');return '';}
     if(a==='r2'){const key=args[3],file=args.find(x=>x.startsWith('--file=')).slice(7);
       if(args[2]==='put'){if(fail.r2Put)throw Error('x');r2.set(key,readFileSync(file,'utf8'));return '';}
       if(args[2]==='get'){if(!r2.has(key))throw Error('missing');writeFileSync(file,r2.get(key));return '';}}
     throw Error('unexpected call '+args.join(' '));
   };
   w.api=async path=>{assert.equal(path,`/workers/scripts/${WORKER}/settings`);if(fail.api)return{success:false};return{success:true,result:{bindings:[...Object.entries(liveVars).map(([name,text])=>({type:'plain_text',name,text})),{type:'secret_text',name:'GOOGLE_PRIVATE_KEY_BASE64'}]}};};
-  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1'},say:l=>w.lines.push(l)});
+  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,sleep:async ms=>{w.sleeps.push(ms);},local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1'},say:l=>w.lines.push(l)});
   w.text=()=>w.lines.join('\n');
   w.writes=()=>calls.filter(c=>/^(d1 migrations|deploy$|rollback|r2 object put)/.test(c));
   return w;
@@ -39,7 +39,7 @@ function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'pro
 const dw=(o={})=>world({ledger:LOCAL,...o});
 const noIds=w=>{const t=w.text();for(const id of [V0,V1,V2])assert.equal(t.includes(id),false,t);assert.equal(t.includes('private'),false,t);
   // Only migration names, the short SHA, run ids in an expected confirmation and 64-hex hashes may carry digits.
-  assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(/: (0|1-9|10\+)$/gm,':').replace(/SINGLE_VERSION_100/g,'').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
+  assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(/: (0|1-9|10\+)$/gm,':').replace(/SINGLE_VERSION_100/g,'').replace(/after 3 reads/g,'').replace(/live_version_sha256/g,'').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
 
 test('migrate applies only when the confirmation names the live head and the last file',async()=>{
   const w=world();
@@ -130,7 +130,7 @@ test('a lost deploy ACK is resolved by reading the live version, never by deploy
   assert.equal(await changed.go('deploy',`DEPLOY ${S} CHANGES NONE`),0);assert.match(changed.text(),/deploy_ack: LOST \(live version changed\)/);
   assert.equal(changed.calls.filter(c=>c==='deploy').length,1);
   const same=dw({fail:{deploy:true,deployNoChange:true}});
-  assert.equal(await same.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(same.text(),/deploy: FAIL \(live version unchanged\)/);
+  assert.equal(await same.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(same.text(),/deploy: FAIL \(live version unchanged after 3 reads\)/);
   assert.equal(same.calls.filter(c=>c==='deploy').length,1);
   const quiet=dw({fail:{deployNoChange:true}});assert.equal(await quiet.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(quiet.text(),/deploy: UNKNOWN/);
   // The prior version stays stored even when the follow-up record write fails.
@@ -139,6 +139,22 @@ test('a lost deploy ACK is resolved by reading the live version, never by deploy
   assert.equal(await rec.go('deploy',`DEPLOY ${S} CHANGES NONE`),0);assert.match(rec.text(),/rollback_record_update: FAIL/);
   assert.equal(JSON.parse([...rec.r2.values()][0]).prior,V0);
   for(const w of [changed,same,quiet,rec])noIds(w);
+});
+
+test('deploy polls the live version up to three times before concluding',async()=>{
+  // Status unreadable twice after the deploy, then readable: PASS after waiting.
+  const slow=dw({fail:{statusFailures:2}});
+  assert.equal(await slow.go('deploy',`DEPLOY ${S} CHANGES NONE`),0,slow.text());assert.deepEqual(slow.sleeps,[10000,10000]);
+  assert.equal(slow.calls.filter(c=>c==='deploy').length,1);
+  // Never readable: UNKNOWN with the instruction not to deploy again.
+  const dark=dw({fail:{statusFailures:9}});
+  assert.equal(await dark.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(dark.text(),/deploy: UNKNOWN — status unreadable after 3 reads; do not dispatch another deploy/);
+  assert.equal(dark.calls.filter(c=>c==='deployments status --json').length,4,'one read before and three after the deploy');
+  // Unchanged on every read: three reads, then FAIL/UNKNOWN; never a second deploy.
+  const same=dw({fail:{deployNoChange:true}});
+  assert.equal(await same.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(same.text(),/unchanged after 3 reads/);assert.deepEqual(same.sleeps,[10000,10000]);
+  assert.equal(same.calls.filter(c=>c==='deploy').length,1);
+  for(const w of [slow,dark,same])noIds(w);
 });
 
 test('rollback_worker returns to the recorded prior version only from that run\'s version',async()=>{

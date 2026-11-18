@@ -41,8 +41,10 @@ on:
 permissions:
   contents: read
 
+# Shared with prod-release-migrate-deploy.yml: an export blocks D1, so a
+# snapshot or backup must never overlap a migrate or deploy.
 concurrency:
-  group: prod-ops-readonly
+  group: malipang-release-control
   cancel-in-progress: false
 
 jobs:

@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -146,4 +147,30 @@ test('Sheets response bodies have a deadline and mutations with lost replies rem
   mode='stall';await assert.rejects(client.batchUpdateSpreadsheetWithReply(env,[{}]),e=>e instanceof SheetsMutationOutcomeUnknownError);
   assert.deepEqual(calls,['GET','POST','POST']);
  }finally{globalThis.fetch=oldFetch}
+});
+
+// QA (#298): the untouched-notice handler (stable-expense-job.ts:284) with the
+// auto-cancel flag unset or not exactly 'true' returns before any recovery
+// admission, so nothing is admitted, cancelled or alerted.
+for(const value of [undefined,'false','TRUE','1'])for(const [name,error] of [
+ ['Sheets permission',new SheetsHttpError(403,'STABLE_NOTICE_READ')],
+ ['OAuth network',new GoogleOAuthPreflightError('GOOGLE_OAUTH_NETWORK')],
+ ['notice read timeout',new OperationTimeoutError('Stable notice read',100)]
+])test(`auto-cancel flag ${value===undefined?'unset':`'${value}'`}: ${name} before notice POST admits and cancels nothing`,async()=>{
+ const h=fixture(error);try{
+  if(value===undefined)delete h.env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED;else h.env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED=value;
+  const before=h.sqlite.prepare('SELECT count(*) n FROM failed_jobs').get().n;
+  await assert.rejects(h.run());
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_recovery_operations').get().n,0,'no recovery admission');
+  assert.equal(h.sqlite.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id='epoch-test'").get().state,'ARMED');
+  assert.deepEqual({...h.sqlite.prepare("SELECT status,version FROM expense_events WHERE expense_id='exp_test'").get()},{status:'CONFIRMED',version:1});
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM expense_events').get().n,1);
+  assert.notEqual(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'COMPLETED');
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);
+  assert.equal(h.sent.length,0,'no LINE alert');
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM failed_jobs').get().n,before,'no deferred alert');
+  // The original fence: the claim is retained for review at BEGIN_NOTICE.
+  const claims=h.sqlite.prepare('SELECT state,phase FROM stable_workbook_claims').all().map(r=>({...r}));
+  assert.deepEqual(claims,[{state:'REVIEW',phase:'BEGIN_NOTICE'}]);
+ }finally{h.close()}
 });

@@ -719,3 +719,15 @@ test('synthetic REVOKE cancels daily, raw and detail and final verifier rejects 
  health.readContinuousReportHealth=async()=>report;const run=()=>verifyStableCancellationFinal(h.env,h.undoJob,projections,writes,'2026-11-15T11:00:00.000Z',h.claim,publication,policy,{before:image,after:structuredClone(image)});
  await run();assert.equal(h.cancelWrites(),3);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_cancellation_writes WHERE state='VERIFIED'").get().n,3);report='CAPACITY';await assert.rejects(run(),/CANCEL_FINAL_REPORT_UNVERIFIED/);report='OK';image.effective[1][1][3]=999;await assert.rejects(run(),/LEDGER|CANCEL_FINAL/);
  }finally{health.readContinuousReportHealth=oldHealth;h.close();}});
+for(const [kind,code] of [['report','REPORT_HEALTH_FORMULA'],['legacy','LEGACY_COVERAGE_READ_UNAVAILABLE']])test(`auto-cancel flag off: an unwritten ${kind} preflight is held for review, the expense stays confirmed`,async()=>{const h=await fixture(),oldClaim=claimApi.withStableWorkbookClaim,oldInsert=insertWriter.insertDailyExpenseUnderClaim;try{
+ delete h.env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED;
+ h.env.STABLE_RECOVERY_GATE_ENABLED='true';h.env.STABLE_SHEETS_PACING_ENABLED='true';h.env.LINE_OWNER_USER_ID='';
+ h.sqlite.exec("UPDATE stable_workbook_claims SET operation_token='claim-token-123'; INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) VALUES('epoch-v1','book','ARMED','EXPENSE','exp_test',1,'now','now'); INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('claim-token-123','epoch-v1','ADMITTED','now')");
+ claimApi.withStableWorkbookClaim=async(_env,fn)=>fn('claim-token-123');insertWriter.insertDailyExpenseUnderClaim=async()=>{throw new insertWriter.InsertDailyPreflightReviewError(code)};
+ // Under the recovery gate the scoped job hold is fail-closed, so the error
+ // propagates and the workbook claim fences the job, as before automation.
+ await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'));
+ assert.deepEqual({...h.sqlite.prepare("SELECT status,version FROM expense_events WHERE expense_id='exp_test'").get()},{status:'CONFIRMED',version:1});assert.equal(h.writes(),0);
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='CANCEL'").get().n,0);
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM failed_jobs WHERE error IN ('SYNC_AUTO_CANCEL_AWAITING_RECIPIENT','PENDING_LINE_NOTIFICATION_DELIVERY')").get().n,0);
+ }finally{insertWriter.insertDailyExpenseUnderClaim=oldInsert;claimApi.withStableWorkbookClaim=oldClaim;h.close()}});

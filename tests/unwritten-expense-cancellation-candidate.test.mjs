@@ -97,3 +97,13 @@ test('deferred oversized Sheets response retains the exact safe error code',asyn
  h.env.LINE_OWNER_USER_ID='';assert.equal(await executeUnwrittenExpenseCancellation(h.env,{...h.input(),reason:'SHEETS_READ',errorCode:'SHEETS_READ_RESPONSE_TOO_LARGE'}),true);
  h.env.LINE_OWNER_USER_ID='owner';assert.equal(await recoverDeferredAutoCancelAlerts(h.env),1);assert.match(h.notifications[0].messages[0].text,/SHEETS_READ_RESPONSE_TOO_LARGE/);assert.equal(await recoverDeferredAutoCancelAlerts(h.env),0);
 }finally{h.close()}});
+
+test('auto-cancel flag off: a definite pre-dispatch failure cancels nothing and sends no alert',async()=>{const h=fixture();try{
+ delete h.env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED;
+ assert.equal(await executeUnwrittenExpenseCancellation(h.env,h.input()),false);
+ assert.deepEqual({...h.sqlite.prepare('SELECT status,version FROM expense_events').get()},{status:'CONFIRMED',version:1});
+ assert.equal(h.sqlite.prepare('SELECT status FROM sync_jobs').get().status,'PROCESSING','the caller keeps the job and holds it for review');
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='CANCEL'").get().n,0);
+ assert.equal(h.sqlite.prepare('SELECT count(*) n FROM failed_jobs').get().n,0);assert.equal(h.notifications.length,0);
+ h.env.UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED='false';assert.equal(await executeUnwrittenExpenseCancellation(h.env,h.input()),false);
+}finally{h.close();}});

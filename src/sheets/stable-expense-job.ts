@@ -16,7 +16,7 @@ import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {chooseContinuousDailyCutover,continuousAdmissionIntegrity,continuousDailyCutoverIntegrity} from './continuous-daily-cutover';
 import {InsertDailyDefiniteFailure,InsertDailyPendingCancellationError,InsertDailyPreflightReviewError,insertDailyExpenseUnderClaim} from './insert-daily-writer';
 import {writeCarrierLedgerUnderClaim} from './atomic-expense-ledger-writer';
-import {executeUnwrittenExpenseCancellation} from './unwritten-expense-cancellation-candidate';
+import {executeUnwrittenExpenseCancellation,unwrittenExpenseAutoCancelEnabled} from './unwritten-expense-cancellation-candidate';
 import {resolvePublicationTarget} from './continuous-publication-route';
 import {publicationOperationUnderClaim} from './continuous-publication-operation';
 import {decodePublicationCarrier} from './continuous-publication-template';
@@ -280,6 +280,8 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   if(completed.success!==true||Number(completed.meta?.changes)!==1)throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
   return 'COMPLETED';
  },job,target?async(claim,error)=>{
+  // Flag off: keep the original fence before any recovery admission is written.
+  if(!unwrittenExpenseAutoCancelEnabled(env))return null;
   const errorCode=untouchedNoticeFailureCode(error);
   if(!errorCode||targetScope!==scope())return null;
   const source=await readStableExpenseSource(env,job,lease,claim);

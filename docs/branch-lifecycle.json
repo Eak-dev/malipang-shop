@@ -43,6 +43,15 @@
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
       "reason": "Production change for the continuous daily sync. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Flag PRs for steps 4-7 will register their own branch. Merge is not deployment; each Production step needs owner approval in #296."
+    },
+    {
+      "issue": 299,
+      "title": "Gated migrate/deploy/rollback_worker workflow for the #296 release",
+      "mode": "MANAGED",
+      "primary_branch": "codex/feature-prod-release-migrate-deploy",
+      "target_branch": "main",
+      "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
+      "reason": "Owner chose a GitHub workflow (option A) to run steps 2-7 of the #296 runbook. Merge is not deployment; every run needs owner approval of that step."
     }
   ],
   "branches": [
@@ -5355,6 +5364,18 @@
         "absence_verified": true,
         "evidence": "git ls-remote origin refs/heads/codex/fix-unwritten-expense-auto-cancel-flag returned no ref"
       }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/feature-prod-release-migrate-deploy",
+      "issues": [
+        299
+      ],
+      "source_sha": "b88cb924c08dee026de9ba255fb636928a28933b",
+      "observed_at": "2026-11-18T05:08:39.499009+00:00",
+      "status": "ACTIVE",
+      "reason": "#299 delivery branch (migrate/deploy/rollback_worker workflow for the #296 release); single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

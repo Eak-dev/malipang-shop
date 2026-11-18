@@ -1,0 +1,216 @@
+// #299: Production migrate / deploy / rollback_worker. Every refusal must
+// happen before a write, and output must carry no ids or Production numbers.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync,writeFileSync} from 'node:fs';
+import {runOperation,varChanges,ReleaseStop,DB,WORKER,BUCKET} from '../scripts/prod-release.mjs';
+import {sha256Hex} from '../scripts/prod-ops-snapshot.mjs';
+
+const SHA='fdb3cc24e9e440a4bdcaa6842aed5984f56f96c6',S=SHA.slice(0,7);
+const V0='d0000000-0000-4000-8000-000000000000',V1='e1111111-1111-4111-8111-111111111111',V2='f2222222-2222-4222-8222-222222222222';
+const LOCAL=['0001_init.sql','0023_stable_recovery_admission.sql','0024_next.sql','0061_last.sql'];
+const CONFIG={name:WORKER,vars:{APP_ENV:'production',FLAG_A_ENABLED:'false'}};
+
+/** A fake wrangler + Cloudflare API with Production-like state. */
+function world({ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
+  const calls=[],r2=new Map(),w={ledger:[...ledger],live,calls,r2,lines:[]};
+  w.run=(args,opts)=>{
+    calls.push(args.join(' '));
+    const [a,b]=args;
+    if(a==='d1'&&b==='execute'){if(fail.ledger)throw Error('x');return JSON.stringify([{success:true,results:w.ledger.map(migration=>({migration}))}]);}
+    if(a==='d1'&&b==='migrations'){assert.equal(opts?.input,'y\n');const pending=LOCAL.filter(n=>!w.ledger.includes(n));for(const n of pending.slice(0,fail.applyAfter??pending.length))w.ledger.push(n);if(fail.apply)throw Error('x');return 'private wrangler output '+V1;}
+    if(a==='deployments'){if(fail.status)throw Error('x');return JSON.stringify({versions:fail.split?[{version_id:w.live,percentage:90},{version_id:V2,percentage:10}]:[{version_id:w.live,percentage:100}]});}
+    if(a==='deploy'&&b==='--dry-run'){if(fail.dryRun)throw Error('x');return '';}
+    if(a==='deploy'){if(!fail.deployNoChange)w.live=V1;if(fail.deploy)throw Error('x');return 'https://private.example '+V1;}
+    if(a==='rollback'){if(!fail.rollbackNoChange)w.live=args[1];if(fail.rollback)throw Error('x');return '';}
+    if(a==='r2'){const key=args[3],file=args.find(x=>x.startsWith('--file=')).slice(7);
+      if(args[2]==='put'){if(fail.r2Put)throw Error('x');r2.set(key,readFileSync(file,'utf8'));return '';}
+      if(args[2]==='get'){if(!r2.has(key))throw Error('missing');writeFileSync(file,r2.get(key));return '';}}
+    throw Error('unexpected call '+args.join(' '));
+  };
+  w.api=async path=>{assert.equal(path,`/workers/scripts/${WORKER}/settings`);if(fail.api)return{success:false};return{success:true,result:{bindings:[...Object.entries(liveVars).map(([name,text])=>({type:'plain_text',name,text})),{type:'secret_text',name:'GOOGLE_PRIVATE_KEY_BASE64'}]}};};
+  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1'},say:l=>w.lines.push(l)});
+  w.text=()=>w.lines.join('\n');
+  w.writes=()=>calls.filter(c=>/^(d1 migrations|deploy$|rollback|r2 object put)/.test(c));
+  return w;
+}
+// Deploy and rollback start with every migration applied.
+const dw=(o={})=>world({ledger:LOCAL,...o});
+const noIds=w=>{const t=w.text();for(const id of [V0,V1,V2])assert.equal(t.includes(id),false,t);assert.equal(t.includes('private'),false,t);
+  // Only migration names, the short SHA, run ids in an expected confirmation and 64-hex hashes may carry digits.
+  assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
+
+test('migrate applies only when the confirmation names the live head and the last file',async()=>{
+  const w=world();
+  assert.equal(await w.go('migrate',`MIGRATE ${S} FROM 0023 TO 0061`),0,w.text());
+  assert.deepEqual(w.ledger,LOCAL);
+  assert.match(w.text(),/ledger_head_before: 0023_stable_recovery_admission\.sql/);assert.match(w.text(),/pending_before: 0024_next\.sql 0061_last\.sql/);
+  assert.match(w.text(),/pending_after: none/);assert.match(w.text(),/migrate: PASS/);noIds(w);
+  assert.equal(w.calls.filter(c=>c.startsWith('d1 migrations apply')).length,1);
+  assert.equal(w.calls.find(c=>c.startsWith('d1 migrations')),`d1 migrations apply ${DB} --remote`);
+});
+
+test('migrate refuses before applying on a stale or wrong request',async()=>{
+  for(const [setup,confirmation,code] of [
+    [{},`MIGRATE ${S} FROM 0022 TO 0061`,'CONFIRMATION_MISMATCH'],
+    [{},`MIGRATE ${S} FROM 0023 TO 0060`,'CONFIRMATION_MISMATCH'],
+    [{},`MIGRATE 0000000 FROM 0023 TO 0061`,'CONFIRMATION_MISMATCH'],
+    [{ledger:LOCAL},`MIGRATE ${S} FROM 0061 TO 0061`,'NOTHING_TO_APPLY'],
+    [{ledger:[...LOCAL.slice(0,2),'0099_unknown.sql']},`MIGRATE ${S} FROM 0099 TO 0061`,'LEDGER_HAS_MIGRATION_NOT_IN_THIS_COMMIT'],
+    [{ledger:['0001_init.sql','0024_next.sql']},`MIGRATE ${S} FROM 0024 TO 0061`,'PENDING_FILE_OLDER_THAN_HEAD'],
+    [{ledger:[]},`MIGRATE ${S} FROM 0000 TO 0061`,'LEDGER_EMPTY'],
+    [{fail:{ledger:true}},`MIGRATE ${S} FROM 0023 TO 0061`,'LEDGER_UNREADABLE'],
+  ]){
+    const w=world(setup);assert.equal(await w.go('migrate',confirmation),1);
+    assert.match(w.text(),new RegExp(`stop: ${code}`),w.text());assert.deepEqual(w.writes(),[],code);noIds(w);
+  }
+  const w=world();await w.go('migrate',`MIGRATE ${S} FROM 0022 TO 0061`);assert.match(w.text(),new RegExp(`expected_confirmation: MIGRATE ${S} FROM 0023 TO 0061`));
+});
+
+test('migrate that stops midway reads the ledger back and reports what is left',async()=>{
+  const w=world({fail:{apply:true,applyAfter:1}});
+  assert.equal(await w.go('migrate',`MIGRATE ${S} FROM 0023 TO 0061`),1);
+  assert.match(w.text(),/applied_now: 0024_next\.sql/);assert.match(w.text(),/pending_after: 0061_last\.sql/);assert.match(w.text(),/migrate: INCOMPLETE/);
+  assert.equal(w.calls.filter(c=>c.startsWith('d1 migrations')).length,1,'never retried');noIds(w);
+  // An error after every file applied is still not a PASS.
+  const x=world({fail:{apply:true}});assert.equal(await x.go('migrate',`MIGRATE ${S} FROM 0023 TO 0061`),1);assert.match(x.text(),/pending_after: none/);assert.match(x.text(),/INCOMPLETE/);
+});
+
+test('var changes compare values without returning them',()=>{
+  const live=new Map([['A','1'],['B','x'],['GONE','y']]);
+  assert.deepEqual(varChanges(live,{A:'1',B:'z',NEW_ENABLED:'true'}),['B','GONE','NEW_ENABLED']);
+  assert.deepEqual(varChanges(new Map([['A','1']]),{A:'1'}),[]);
+  assert.throws(()=>varChanges(live,{A:1}),e=>e instanceof ReleaseStop&&e.message==='CONFIG_VARS_INVALID');
+  assert.throws(()=>varChanges(live,{'bad name':'1'}),e=>e instanceof ReleaseStop);
+});
+
+test('deploy stores the replaced version in R2 before deploying and prints only a hash',async()=>{
+  const w=dw();
+  assert.equal(await w.go('deploy',`DEPLOY ${S} CHANGES NONE`),0,w.text());
+  const firstPut=w.calls.findIndex(c=>c.startsWith('r2 object put')),realDeploy=w.calls.indexOf('deploy');
+  assert.ok(firstPut>=0&&firstPut<realDeploy,'record stored before the deploy');
+  assert.ok(w.calls.indexOf('deploy --dry-run')<firstPut,'dry run first');
+  const record=JSON.parse(w.r2.get(`${BUCKET}/release-versions/44300000001.json`));
+  assert.deepEqual(record,{sha:SHA,prior:V0,deployed:V1});
+  assert.match(w.text(),/config_changes: NONE/);assert.match(w.text(),new RegExp(`deployed_version_sha256: ${sha256Hex(V1)}`));assert.match(w.text(),/deploy: PASS/);noIds(w);
+});
+
+test('deploy confirmation must list exactly the vars that change against the live Worker',async()=>{
+  const config={name:WORKER,vars:{APP_ENV:'production',FLAG_A_ENABLED:'true',FLAG_B_ENABLED:'true'}};
+  const w=dw();assert.equal(await w.go('deploy',`DEPLOY ${S} CHANGES NONE`,{config}),1);
+  assert.match(w.text(),/config_changes: FLAG_A_ENABLED,FLAG_B_ENABLED/);assert.match(w.text(),new RegExp(`expected_confirmation: DEPLOY ${S} CHANGES FLAG_A_ENABLED,FLAG_B_ENABLED`));
+  assert.deepEqual(w.writes(),[]);assert.equal(w.text().includes('true'),false,'values are never printed');
+  const ok=dw();assert.equal(await ok.go('deploy',`DEPLOY ${S} CHANGES FLAG_A_ENABLED,FLAG_B_ENABLED`,{config}),0,ok.text());
+  // A var removed from config would be deleted by wrangler deploy: it must be named too.
+  const removed=dw({liveVars:{APP_ENV:'production',FLAG_A_ENABLED:'false',OLD_VAR:'x'}});
+  assert.equal(await removed.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(removed.text(),/config_changes: OLD_VAR/);assert.deepEqual(removed.writes(),[]);
+});
+
+test('deploy refuses before any write when the state is not exactly as expected',async()=>{
+  for(const [setup,code,extra] of [
+    [{ledger:LOCAL.slice(0,3)},'PENDING_MIGRATIONS'],
+    [{fail:{split:true}},'WORKER_NOT_SINGLE_VERSION'],
+    [{fail:{status:true}},'WORKER_STATUS_UNREADABLE'],
+    [{fail:{api:true}},'LIVE_SETTINGS_UNREADABLE'],
+    [{fail:{dryRun:true}},'DRY_RUN_FAILED'],
+    [{fail:{r2Put:true}},'RECORD_WRITE_FAILED'],
+    [{},'RERUN_NOT_ALLOWED_DISPATCH_A_NEW_RUN',{attempt:'2'}],
+    [{},'CONFIG_WORKER_NAME_MISMATCH',{config:{name:'other',vars:{}}}],
+  ]){
+    const w=dw(setup);assert.equal(await w.go('deploy',`DEPLOY ${S} CHANGES NONE`,extra),1,code);
+    assert.match(w.text(),new RegExp(`stop: ${code}`),w.text());
+    assert.equal(w.calls.includes('deploy'),false,code);noIds(w);
+  }
+  const w=dw({ledger:LOCAL.slice(0,3)});await w.go('deploy',`DEPLOY ${S} CHANGES NONE`);assert.match(w.text(),/pending_migrations: 0061_last\.sql/);
+});
+
+test('a lost deploy ACK is resolved by reading the live version, never by deploying again',async()=>{
+  const changed=dw({fail:{deploy:true}});
+  assert.equal(await changed.go('deploy',`DEPLOY ${S} CHANGES NONE`),0);assert.match(changed.text(),/deploy_ack: LOST \(live version changed\)/);
+  assert.equal(changed.calls.filter(c=>c==='deploy').length,1);
+  const same=dw({fail:{deploy:true,deployNoChange:true}});
+  assert.equal(await same.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(same.text(),/deploy: FAIL \(live version unchanged\)/);
+  assert.equal(same.calls.filter(c=>c==='deploy').length,1);
+  const quiet=dw({fail:{deployNoChange:true}});assert.equal(await quiet.go('deploy',`DEPLOY ${S} CHANGES NONE`),1);assert.match(quiet.text(),/deploy: UNKNOWN/);
+  // The prior version stays stored even when the follow-up record write fails.
+  const rec=dw();
+  rec.run=(orig=>(args,o)=>{if(args[0]==='r2'&&args[2]==='put'&&rec.r2.size>=1)throw Error('x');return orig(args,o);})(rec.run);
+  assert.equal(await rec.go('deploy',`DEPLOY ${S} CHANGES NONE`),0);assert.match(rec.text(),/rollback_record_update: FAIL/);
+  assert.equal(JSON.parse([...rec.r2.values()][0]).prior,V0);
+  for(const w of [changed,same,quiet,rec])noIds(w);
+});
+
+test('rollback_worker returns to the recorded prior version only from that run\'s version',async()=>{
+  const w=dw();await w.go('deploy',`DEPLOY ${S} CHANGES NONE`);w.lines.length=0;
+  assert.equal(await w.go('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`),0,w.text());
+  assert.equal(w.live,V0);assert.ok(w.calls.some(c=>c.startsWith(`rollback ${V0} --yes`)));
+  assert.match(w.text(),new RegExp(`live_version_sha256: ${sha256Hex(V0)}`));assert.match(w.text(),/rollback_worker: PASS/);noIds(w);
+  // Already back, another deploy since, unknown run, wrong text: refused without a rollback call.
+  for(const [prep,confirmation,code] of [
+    [()=>{},`ROLLBACK ${S} BEFORE RUN 44300000001`,'ALREADY_AT_PRIOR_VERSION'],
+    [x=>{x.live=V2;},`ROLLBACK ${S} BEFORE RUN 44300000001`,'LIVE_VERSION_NOT_FROM_THAT_RUN'],
+    [()=>{},`ROLLBACK ${S} BEFORE RUN 1`,'RECORD_UNREADABLE'],
+    [()=>{},`ROLLBACK 0000000 BEFORE RUN 44300000001`,'CONFIRMATION_MISMATCH'],
+  ]){
+    prep(w);const before=w.calls.filter(c=>c.startsWith('rollback')).length;w.lines.length=0;
+    assert.equal(await w.go('rollback_worker',confirmation),1);assert.match(w.text(),new RegExp(`stop: ${code}`),w.text());
+    assert.equal(w.calls.filter(c=>c.startsWith('rollback')).length,before,code);w.live=V0;
+  }
+  // A record without the deployed version cannot prove which version to replace.
+  const x=dw();x.r2.set(`${BUCKET}/release-versions/44300000001.json`,JSON.stringify({sha:SHA,prior:V0,deployed:null}));x.live=V1;
+  assert.equal(await x.go('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`),1);assert.match(x.text(),/stop: DEPLOYED_VERSION_NOT_RECORDED/);
+  const lost=dw();await lost.go('deploy',`DEPLOY ${S} CHANGES NONE`);lost.run=(o=>(a,p)=>{if(a[0]==='rollback'){o(a,p);throw Error('x');}return o(a,p);})(lost.run);lost.lines.length=0;
+  assert.equal(await lost.go('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`),0);assert.match(lost.text(),/rollback_ack: LOST/);
+});
+
+test('unknown operations and invalid SHA stop with a fixed code',async()=>{
+  const w=world();assert.equal(await w.go('nuke','x'),1);assert.match(w.text(),/## Production release: unknown\n- stop: UNKNOWN_OPERATION/);
+  const bad=world();assert.equal(await runOperation('migrate',{run:bad.run,api:bad.api,local:LOCAL,env:{EXPECTED_SHA:'abc',CONFIRMATION:'x'},say:l=>bad.lines.push(l)}),1);assert.match(bad.text(),/stop: EXPECTED_SHA_INVALID/);
+});
+
+test('the live wrangler.jsonc parses as the deploy config',()=>{
+  const config=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
+  assert.equal(config.name,WORKER);
+  assert.doesNotThrow(()=>varChanges(new Map(),config.vars));
+});
+
+test('release workflow is manual-only, main-only, gated, pinned and scopes the token to the script step',()=>{
+  const wf=readFileSync(new URL('../.github/workflows/prod-release-migrate-deploy.yml',import.meta.url),'utf8');
+  const on=wf.slice(wf.indexOf('\non:'),wf.indexOf('\npermissions:'));
+  assert.match(on,/workflow_dispatch:/);assert.doesNotMatch(on,/\n {2}(push|pull_request|schedule|workflow_run):/);
+  assert.match(wf,/if: github\.ref == 'refs\/heads\/main'/);assert.match(wf,/environment: production/);assert.match(wf,/permissions:\n {2}contents: read/);
+  assert.match(wf,/npm ci --ignore-scripts/);assert.match(wf,/persist-credentials: false/);assert.match(wf,/group: malipang-release-control/);
+  for(const line of wf.split('\n').filter(l=>/uses:/.test(l)))assert.match(line,/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,line);
+  const job=wf.slice(wf.indexOf('\n  release:'),wf.indexOf('\n    steps:'));assert.doesNotMatch(job,/CLOUDFLARE_/,'token must not be set at job level');
+  const steps=wf.split('\n      - ').slice(1);
+  for(const step of steps){
+    const usesToken=/CLOUDFLARE_API_TOKEN/.test(step),runsScript=/node scripts\/prod-release\.mjs/.test(step);
+    assert.equal(usesToken,runsScript,step.split('\n')[0]);
+    if(/run: .*\|/.test(step))assert.match(step,/shell: bash/);
+  }
+  // No wrangler call outside the script, so every write goes through its checks.
+  assert.doesNotMatch(wf,/npx wrangler|wrangler (d1|deploy|rollback|r2|versions|secret)/);
+  assert.match(wf,/\[ "\$EXPECTED_SHA" = "\$GITHUB_SHA" \]/);
+  const inputs=[...on.matchAll(/^ {6}([a-z_0-9]+):$/gm)].map(m=>m[1]);
+  assert.deepEqual(inputs,['operation','expected_sha','confirmation']);
+});
+
+test('the workflow input check accepts only the three confirmation shapes',()=>{
+  const wf=readFileSync(new URL('../.github/workflows/prod-release-migrate-deploy.yml',import.meta.url),'utf8');
+  const script=wf.slice(wf.indexOf('set -euo pipefail'),wf.indexOf('      - uses: actions/checkout')).split('\n').map(l=>l.replace(/^ {10}/,'')).join('\n');
+  const check=(operation,confirmation,sha=SHA)=>{
+    const r=JSON.parse(JSON.stringify(process.env));
+    return import('node:child_process').then(({spawnSync})=>spawnSync('bash',['-c',script],{env:{...r,EXPECTED_SHA:sha,GITHUB_SHA:SHA,OPERATION:operation,CONFIRMATION:confirmation}}).status);
+  };
+  return Promise.all([
+    check('migrate',`MIGRATE ${S} FROM 0023 TO 0061`).then(s=>assert.equal(s,0)),
+    check('deploy',`DEPLOY ${S} CHANGES NONE`).then(s=>assert.equal(s,0)),
+    check('deploy',`DEPLOY ${S} CHANGES A_ENABLED,B_VAR`).then(s=>assert.equal(s,0)),
+    check('rollback_worker',`ROLLBACK ${S} BEFORE RUN 44300000001`).then(s=>assert.equal(s,0)),
+    check('migrate',`DEPLOY ${S} CHANGES NONE`).then(s=>assert.notEqual(s,0)),
+    check('deploy',`DEPLOY ${S} CHANGES NONE; rm -rf /`).then(s=>assert.notEqual(s,0)),
+    check('deploy',`DEPLOY 0000000 CHANGES NONE`).then(s=>assert.notEqual(s,0)),
+    check('migrate',`MIGRATE ${S} FROM 0023 TO 0061`,'0'.repeat(40)).then(s=>assert.notEqual(s,0)),
+    check('other','x').then(s=>assert.notEqual(s,0)),
+  ]);
+});

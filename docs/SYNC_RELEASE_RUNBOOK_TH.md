@@ -51,7 +51,7 @@
 
 - [ ] วันและเวลา: ช่วง 02:00–05:00 ของวันที่ 1 ของเดือนเป้าหมายที่เจ้าของยืนยัน และไม่ใช่วันที่มีรอบจ่าย payroll; มีผู้สั่ง action และเจ้าของพร้อมตัดสินตลอดช่วง
 - [ ] ขั้น 1–4 เสร็จและอ่านผลกลับแล้ว: migration ไม่ค้าง, Worker ที่ deploy เป็น SHA ที่อนุมัติ, flag ขั้น 4a–4d ตั้งแล้ว และ `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง (operator ทำงานเฉพาะตอนที่ยังไม่ตั้ง)
-- [ ] snapshot ล่าสุดก่อนเริ่ม: Worker version `MATCH` กับ hash ที่กรอก, ส่วน `recovery_epochs` ต้องไม่มีแถว `ARMED` หรือ `REVIEW` (ตัวตรวจของ `START_REVIEW` บังคับ; `COMPLETE`/`CLOSED` ไม่เป็นปัญหา), ไม่มีงานซิงก์ `PROCESSING`
+- [ ] snapshot ล่าสุดก่อนเริ่ม (ไม่เกิน 30 นาที): Worker version `MATCH` กับ hash ที่กรอก และทุกข้อในตาราง "เงื่อนไขของ `START_REVIEW` ที่อ่านจาก snapshot" ด้านล่างผ่าน
 - [ ] header `x-malipang-expected-worker-version` ของทุก request ถึง `/admin/stable-sync/continuous-cutover` และ `/admin/stable-sync/continuous-canary` ตรงกับ Worker version ที่รันอยู่ (`src/admin/handler.ts` ตรวจ ไม่ตรงได้ `WORKER_VERSION_MISMATCH`) และใช้ admin token ที่ถูกต้อง
 - [ ] `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true` และ `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT` = SHA-256 ของข้อมูลระบุตัวตนล็อกเดิม เป็น JSON array ตามลำดับ `[spreadsheet, operation_token, notice_stamp, notice_identity, created_at, phase, review_reason]` (ตาม `startPrewriteReview` ใน `src/admin/continuous-cutover-operator.ts`) ที่เจ้าของยืนยัน; คำนวณจากข้อมูลส่วนตัว ห้ามลงใน Issue
 - [ ] ตรวจผลการเขียนเดิมของล็อก (ครั้งที่ทำให้ล็อกค้าง 14 พ.ย.) ในชีตแบบอ่านอย่างเดียวแล้ว และเจ้าของยืนยันว่าไม่ต้องเขียนซ้ำ
@@ -59,6 +59,23 @@
 - [ ] request ของ `ACTIVATE` เตรียมไว้: body `{"action":"ACTIVATE","expenseIds":["<รหัสที่ 1>","<รหัสที่ 2>"]}` — ชื่อช่องใน HTTP คือ `expenseIds` (ภายในโค้ดคือ `mustBeCancelledOrAbsentExpenseIds`) ใช้ชื่ออื่นจะได้ `CUTOVER_RECEIPTS_INVALID`; รหัสมาจากหลักฐานส่วนตัว
 - [ ] สำเนา Owner Master ภายใน 1 วันก่อน และ backup D1 ภายใน 1 ชั่วโมงก่อน (#295 ขั้นที่ 3)
 - [ ] งบเต็มของเดือนเป้าหมายพร้อมใส่ใน `AA:AC` ก่อน canary
+
+### เงื่อนไขของ `START_REVIEW` ที่อ่านจาก snapshot
+
+ตัวตรวจอยู่ใน `startPrewriteReview` (`src/admin/continuous-cutover-operator.ts:62-77`) และ trigger `continuous_operator_insert` ของ migration `0031` ถ้าข้อใดไม่ผ่าน action จะถูกปฏิเสธทั้งชุด (D1 batch เดียว) ไม่มีอะไรเปลี่ยน แต่ห้ามลองสั่งเพื่อดูผล ให้แก้ตามคอลัมน์ขวาหรือหยุด snapshot นับรวมทุก workbook จึงเข้มกว่าตัวตรวจที่นับเฉพาะ workbook นี้ ถ้าพบแถวที่น่าจะเป็นของ workbook อื่นก็ยังต้องหยุดและตรวจแยกแบบส่วนตัวก่อน
+
+หลังขั้น 2 ส่วนเหล่านี้ต้องไม่มี `TABLE_ABSENT` (ถ้ามี = migration ไม่ครบ หยุด) ก่อนขั้น 2 การเห็น `TABLE_ABSENT` เป็นเรื่องปกติ
+
+| ส่วนใน snapshot | ต้องเป็น | อ้างโค้ด | ถ้าไม่ผ่าน |
+|---|---|---|---|
+| `workbook_claims` | มีแถวเดียว: `REVIEW` / `OPERATION` / `STABLE_DAILY_REVIEW` / notice `YES` | `:62`, `:69`, trigger `0031` บรรทัด 17 | โค้ดรับ reason `STABLE_DAILY_*` อื่นด้วย แต่ trigger ของ `0031` รับเฉพาะ `STABLE_DAILY_REVIEW` จึงใช้ได้ค่าเดียว; ถ้า reason/phase อื่นหรือ notice `NO` ใช้ `START_REVIEW` ไม่ได้ (และ `START` ต้องไม่มี claim เลย) หยุดและถามเจ้าของ ห้ามแก้แถว claim ด้วยมือ |
+| (ในชีต ไม่อยู่ใน snapshot) | ช่องสถานะของ notice ในชีตยังแสดงว่าพักอยู่ | `:63` `stableNoticePaused` | **ห้ามแก้ช่องสถานะ/notice ในชีตก่อนวันทำ** ถ้าถูกแก้ไปแล้ว ตัวตรวจจะได้ `CUTOVER_REVIEW_IDENTITY_UNVERIFIED` หยุดและถามเจ้าของ |
+| `processing_sync_jobs`, `processing_staff_outbox` | `0` | `:76` | รอให้งานจบหรือ lease หมด แล้ว snapshot ใหม่; ถ้ายังไม่เป็น `0` หลัง 15 นาที หยุด ไม่เริ่มในรอบนี้ ห้ามแก้สถานะงานด้วยมือหรือ replay คิว |
+| `projection_writes`, `cancellation_writes` | ทุกแถว state `VERIFIED` และไม่มีแถว token_scope `REVIEW_CLAIM` | `:17` (`noUnknown`), `:71-72` | `IN_FLIGHT`/`REVIEW` = ผลการเขียนชีตยังไม่รู้; `REVIEW_CLAIM` = ล็อกเดิมเขียนไปแล้วบางส่วน ทั้งสองกรณีใช้ `START_REVIEW` ไม่ได้ หยุด อ่านชีตแบบอ่านอย่างเดียวว่าเขียนจริงหรือไม่ แล้วเสนอแผนแยกให้เจ้าของ (แถวเหล่านี้ลบไม่ได้ด้วย trigger และห้ามแก้ด้วยมือ) |
+| `recovery_operations` | ไม่มี state `ADMITTED` และไม่มีแถว token_scope `REVIEW_CLAIM` | `:73`, `:75` | `ADMITTED` = recovery ที่ arm ไว้ยังไม่จบ; `REVIEW_CLAIM` = ล็อกเดิมผูกกับ recovery หยุดและถามเจ้าของ ห้ามปิดด้วยมือ |
+| `recovery_epochs` | ไม่มี `ARMED` หรือ `REVIEW` (`COMPLETE`/`CLOSED` ได้) | `:74` | หยุดและถามเจ้าของ |
+| `cutover_operator` | `(no rows)` | `:70` | เคยเริ่ม cutover แล้ว `START_REVIEW` ใช้ซ้ำไม่ได้ อ่าน state แล้วทำตามหัวข้อ "Rollback หลังขั้น 5 (operator)" |
+| `report_cutover_attempts` | `(no rows)` | `:77` | เคยมี report cutover แล้ว หยุดและถามเจ้าของ |
 
 ## ผลกระทบระหว่างขั้น 5–7 (recovery gate)
 
@@ -70,6 +87,23 @@
 ## การยกเลิกค่าใช้จ่ายอัตโนมัติเมื่อเปิด `CONTINUOUS_DAILY_ENABLED` (ขั้น 6)
 
 เดิมเมื่อแท็บต่อเนื่องเปิดใช้ ระบบจะเปลี่ยนค่าใช้จ่ายที่ยืนยันแล้วเป็น "ยกเลิก" ใน D1 เองในบางกรณีที่การเขียนชีตล้มแบบแน่นอนก่อนส่งคำขอ (`src/sheets/unwritten-expense-cancellation-candidate.ts`) ตามคำตัดสินของเจ้าของ (#296 ข้อ 7) พฤติกรรมนี้อยู่หลัง `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED`: **ไม่ตั้ง = พักงานรอคนตรวจ ไม่ยกเลิก** ซึ่งเป็นค่าที่ใช้ใน release นี้; `true` = ยกเลิกแบบเดิม ใช้เมื่อเจ้าของอนุมัติแยกเท่านั้น
+
+## ถ้าเขียนแถวรายวันล้มแบบแน่นอนหลังเปิดแท็บต่อเนื่อง (`InsertDailyDefiniteFailure`)
+
+ตั้งแต่ขั้น 6 (`CONTINUOUS_DAILY_ENABLED=true`) การเพิ่มแถวในแท็บรายวันต่อเนื่องอาจล้มก่อนส่งคำขอเขียนด้วยเหตุที่แน่นอน 4 แบบ (`src/sheets/insert-daily-writer.ts`): `CAPACITY` (แท็บถึง 5,000 แถวหรือไม่มีแถวว่าง), `MONTH_OPENING` (แถวงบตั้งต้นของเดือนใน `AA:AC` ไม่มี มีหลายแถว หรือค่าไม่ถูกต้อง), `ROW_FORMULA` (สูตรช่วยของแถวไม่ตรงแบบ), `LEGACY_COVERAGE` (ตรวจยอดของแท็บเดิมไม่ได้)
+
+**ผล:** เมื่อ `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` ไม่ตั้ง (ค่าของ release นี้) ระบบไม่ยกเลิกรายการ และ error ถูกส่งต่อ (`src/sheets/stable-expense-job.ts:212-215`) ทำให้ workbook claim เป็น `REVIEW` ทั้ง workbook (`retainForReview` ใน `src/sheets/stable-workbook-claim.ts`) reason เป็น `INSERT_DAILY_<เหตุ>` **การซิงก์ชีตทุกประเภทหยุด รวม HR การลงเวลาและ payroll** ไม่ได้หยุดเฉพาะค่าใช้จ่ายรายการนั้น ไม่มีการเขียนชีตเกิดขึ้นสำหรับรายการนั้น และรายการใน D1 ยังเป็นสถานะยืนยัน
+
+**ข้อจำกัดของ release นี้:** ยังไม่มี action ที่อนุมัติให้ปล่อย claim ที่มี reason นี้ — `START_REVIEW` รับเฉพาะ `STABLE_DAILY_REVIEW` และใช้ไม่ได้อีกเมื่อมีแถว `continuous_cutover_operator` แล้ว ส่วนเส้นทางปิด review (`CONTINUOUS_REVIEW_CLOSE_ENABLED`) อยู่ในรายการห้ามเปิดรอบนี้ การกู้จึงต้องเป็นแผนแยกที่เจ้าของอนุมัติ ข้อเสนอให้พักเฉพาะรายการ (scoped hold) แทนการพักทั้ง workbook บันทึกไว้ใน #296 เป็นงานของ PR ถัดไป
+
+**ป้องกันก่อนขั้น 6 และทุกวันในช่วง 24 ชั่วโมงแรกของขั้น 7 (อ่านอย่างเดียว):** แท็บรายวันต่อเนื่องยังมีแถวว่างเหลือมากและห่างจาก 5,000 แถว, แถวงบตั้งต้นของเดือนใน `AA:AC` มีแถวเดียวและค่าไม่ติดลบ, สูตรช่วยของแถวล่าสุดตรงแบบ, แท็บเดิมที่ใช้ตรวจยอดไม่ถูกแก้โครงสร้าง
+
+**เมื่อเกิด:**
+1. ยืนยันจาก snapshot: `workbook_claims` เป็น `REVIEW` และ reason ขึ้นต้น `INSERT_DAILY_` บันทึกเวลา (เวลาไทย) และช่วงจำนวนใน #296 โดยไม่ใส่ชื่อร้าน ยอดเงิน หรือ ID
+2. แจ้งเจ้าของทันทีว่า HR/payroll หยุดซิงก์ชีต งานไม่หาย (ค้างใน outbox) และพนักงานยังบันทึกผ่าน LINE OA ได้
+3. ห้ามปลด REVIEW เหมา ห้าม replay คิว ห้ามแก้แถว claim หรือ journal ด้วยมือ ห้ามตั้ง `UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED=true` เพื่อให้ผ่าน (เป็นการยกเลิกรายการ ต้องได้อนุมัติแยก)
+4. อ่านชีตแบบอ่านอย่างเดียวตามเหตุ: `CAPACITY` จำนวนแถวของแท็บ; `MONTH_OPENING` แถวใน `AA:AC` ของเดือน; `ROW_FORMULA` สูตรช่วยของแถวท้าย; `LEGACY_COVERAGE` แท็บเดิม แล้วสรุปให้เจ้าของพร้อมแผนแก้ชีต
+5. เสนอแผนปล่อย claim เป็นงานแยก (Production Change ใหม่) ให้เจ้าของอนุมัติ ถ้าเกิน 8 ชั่วโมงให้ตัดสินกับเจ้าของว่าจะ rollback ตามหัวข้อด้านล่างหรือไม่
 
 ## Rollback หลังขั้น 5 (operator)
 

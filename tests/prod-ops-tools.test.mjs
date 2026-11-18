@@ -186,6 +186,9 @@ test('ops workflow is manual-only, main-only, gated, pinned and scopes the token
   const on=wf.slice(wf.indexOf('\non:'),wf.indexOf('\npermissions:'));
   assert.match(on,/workflow_dispatch:/);assert.doesNotMatch(on,/\n {2}(push|pull_request|schedule|workflow_run):/);
   assert.match(wf,/if: github\.ref == 'refs\/heads\/main'/);assert.match(wf,/environment: production/);
+  // Same group as the release workflow: an export blocks D1 and must never overlap a migrate or deploy.
+  assert.match(wf,/concurrency:\n {2}group: malipang-release-control\n {2}cancel-in-progress: false/);
+  assert.match(readFileSync(new URL('../.github/workflows/prod-release-migrate-deploy.yml',import.meta.url),'utf8'),/concurrency:\n {2}group: malipang-release-control\n {2}cancel-in-progress: false/);
   assert.match(wf,/npm ci --ignore-scripts/);assert.match(wf,/persist-credentials: false/);
   for(const line of wf.split('\n').filter(l=>/uses:/.test(l)))assert.match(line,/uses: [\w.-]+\/[\w.-]+@[0-9a-f]{40} # v\d+\.\d+\.\d+$/,line);
   const job=wf.slice(wf.indexOf('\n  ops:'),wf.indexOf('\n    steps:'));

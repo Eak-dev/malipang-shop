@@ -6,7 +6,7 @@ on:
         description: One operator action; never retry on an unknown outcome
         required: true
         type: choice
-        options: [PRECHECK, START_REVIEW, VIEWS, DAILY_J, REPORTS, ACTIVATE, RELEASE]
+        options: [PRECHECK, START_REVIEW, RECONCILE_VIEWS, VIEWS, DAILY_J, REPORTS, ACTIVATE, RELEASE]
       expected_sha:
         description: Exact reviewed 40-character main HEAD
         required: true

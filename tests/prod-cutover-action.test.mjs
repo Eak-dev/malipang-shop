@@ -16,7 +16,7 @@ const review=[{state:'REVIEW',phase:'OPERATION',review_reason:'STABLE_DAILY_REVI
 const stages=(...xs)=>xs.map(stage=>({stage,state:'VERIFIED'}));
 const zero={projections:0,cancellations:0,epochs:0,recovery:0,processing:0,staff:0,claim_writes:0,claim_cancels:0};
 test('manual only, exact immutable commit and action confirmation',()=>{
- assert.equal(allowedActions.length,7);
+ assert.equal(allowedActions.length,8);
  assert.equal(validateInputs(valid()).action,'PRECHECK');
  assert.throws(()=>validateInputs({...valid(),GITHUB_REF:'refs/heads/dev'}),/CUTOVER_SHA_GUARD/);
  assert.throws(()=>validateInputs({...valid(),GITHUB_SHA:'b'.repeat(40)}),/CUTOVER_SHA_GUARD/);
@@ -64,4 +64,13 @@ test('single no-retry guarded POST, protected workflow credentials and runlock',
  assert.match(workflow,/MALIPANG_ADMIN_TOKEN: \$\{\{ secrets\.MALIPANG_ADMIN_TOKEN \}\}/);
  assert.match(workflow,/MALIPANG_CUTOVER_RECEIPTS: \$\{\{ secrets\.MALIPANG_CUTOVER_RECEIPTS \}\}/);
  assert.doesNotMatch(workflow,/^\s+push:/m);
+});
+
+test('one-shot RECONCILE_VIEWS accepts only REVIEW with a single VIEWS IN_FLIGHT',()=>{
+ const claim=[{state:'REVIEW',phase:'OPERATION',review_reason:'CONTINUOUS_CUTOVER_REVIEW'}];
+ const operator=[{state:'REVIEW'}],attempt=[{stage:'VIEWS',state:'IN_FLIGHT'}];
+ assert.doesNotThrow(()=>verifyReadiness('RECONCILE_VIEWS',claim,operator,attempt,[],zero));
+ assert.throws(()=>verifyReadiness('RECONCILE_VIEWS',claim,operator,[{stage:'VIEWS',state:'VERIFIED'}],[],zero),/CUTOVER_VIEWS_RECOVERY_NOT_READY/);
+ assert.throws(()=>verifyReadiness('RECONCILE_VIEWS',claim,[{state:'HELD'}],attempt,[],zero),/CUTOVER_VIEWS_RECOVERY_NOT_READY/);
+ assert.throws(()=>verifyReadiness('RECONCILE_VIEWS',claim,operator,attempt,[],{...zero,processing:1}),/CUTOVER_UNRESOLVED_D1/);
 });

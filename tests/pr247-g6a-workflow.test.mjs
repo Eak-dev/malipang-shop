@@ -14,9 +14,13 @@ test("G6a manual-only and serialized with other production releases",()=>{
  assert.match(text,/cancel-in-progress: false/);
  assert.match(text,/OWNER APPROVED G6A GATE ON AFTER VERIFIED G5/);
 });
-test("PR-B gate literal false prevents G6a workflow execution under wrong config",()=>{
- assert.equal(wrangler.vars.STABLE_RECOVERY_GATE_ENABLED,"false");
+// #296 step 5 sets the gate to "true" in main for the continuous cutover. The
+// G6a workflow then no longer fails its flag check, so its exact-source guard
+// (src/migrations must equal REVIEWED_SOURCE_SHA, which main no longer does)
+// is what keeps a re-trigger from deploying.
+test("G6a workflow stays blocked by its exact reviewed-source guard",()=>{
  assert.equal(wrangler.vars.STABLE_SHEETS_PACING_ENABLED,"true");
+ assert.match(text,/git diff --quiet "\$REVIEWED_SOURCE_SHA" HEAD -- src migrations package\.json package-lock\.json tsconfig\.json/);
  assert.equal(Object.hasOwn(wrangler.vars,"STABLE_SHEETS_READ_BUDGET_PER_MINUTE"),false);
  assert.match(text,/CONFIG_DRIFT_OUTSIDE_TWO_FLAGS/);
  assert.match(text,/REVIEWED_SOURCE_SHA: 4bb84a4869920f70981477de0ef69607438e2c74/);

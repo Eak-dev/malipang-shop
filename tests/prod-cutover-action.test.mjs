@@ -59,6 +59,7 @@ test('single no-retry guarded POST, protected workflow credentials and runlock',
  assert.match(script,/redirect:'error'/);
  assert.match(workflow,/environment: production/);
  assert.match(workflow,/group: malipang-release-control/);
+ assert.match(workflow,/Assert latest remote main has not moved/);
  assert.match(workflow,/CLOUDFLARE_API_TOKEN: \$\{\{ secrets\.CLOUDFLARE_API_TOKEN \}\}/);
  assert.match(workflow,/MALIPANG_ADMIN_TOKEN: \$\{\{ secrets\.MALIPANG_ADMIN_TOKEN \}\}/);
  assert.match(workflow,/MALIPANG_CUTOVER_RECEIPTS: \$\{\{ secrets\.MALIPANG_CUTOVER_RECEIPTS \}\}/);

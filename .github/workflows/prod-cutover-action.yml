@@ -1,4 +1,4 @@
-name: MaliPang #296 staged cutover operator (manual, one action)
+name: "MaliPang #296 staged cutover operator (manual, one action)"
 on:
   workflow_dispatch:
     inputs:
@@ -57,6 +57,10 @@ jobs:
           node-version: 22
       - name: Run cutover guard regression tests
         run: node --test tests/prod-cutover-action.test.mjs
+      - name: Assert latest remote main has not moved
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
       - name: One action — NEVER auto-retry
         env:
           GITHUB_REF: ${{ github.ref }}

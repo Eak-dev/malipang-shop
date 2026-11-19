@@ -4,6 +4,7 @@ import {beginStableNotice,stableNoticePaused} from '../sheets/stable-edit-notice
 import {releaseContinuousCutoverNotice} from './continuous-cutover-notice';
 import {stableWorkbookClaimOwned} from '../sheets/stable-workbook-claim';
 import {bootstrapContinuousReportViews} from '../sheets/report-view-bootstrap';
+import {reconcileContinuousViewsIncident} from '../sheets/continuous-views-incident-recovery';
 import {captureContinuousReportInputs,runContinuousReportCutoverStage} from '../sheets/report-cutover-controller';
 import {continuousDailyCutoverStatements} from '../sheets/continuous-daily-cutover';
 import {batchGetSheetFormulaValues,getSpreadsheetSheetProperties} from '../sheets/client';
@@ -11,7 +12,7 @@ import {columnName} from '../sheets/daily-expense';
 import {STABLE_DAILY_REVIEW_REASONS} from '../sheets/stable-daily-writer';
 
 type OperatorEnv=Env & {CONTINUOUS_CUTOVER_OPERATOR_ENABLED?:string;CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED?:string;CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT?:string;CONTINUOUS_REPORT_CUTOVER_ENABLED?:string;CONTINUOUS_RAW_VIEW_ID?:string;CONTINUOUS_DETAIL_VIEW_ID?:string};
-type Action='START'|'START_REVIEW'|'VIEWS'|'DAILY_J'|'REPORTS'|'ACTIVATE'|'RELEASE';
+type Action='START'|'START_REVIEW'|'RECONCILE_VIEWS'|'VIEWS'|'DAILY_J'|'REPORTS'|'ACTIVATE'|'RELEASE';
 type Marker={operation_token:string;state:string};
 const integrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator' AND name IN ('continuous_operator_insert','continuous_operator_update','continuous_operator_no_delete','continuous_operator_no_replace'))=4";
 const noUnknown="NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED') AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED')";
@@ -137,8 +138,8 @@ async function stageReady(env:OperatorEnv,action:Exclude<Action,'START'|'START_R
  * verified independently before enabling this feature flag. Each mutation has
  * an operator-owned durable in-flight state and is never automatically retried. */
 export async function operateContinuousCutover(env:OperatorEnv,action:unknown,expenseIds?:unknown):Promise<{action:Action;ok:true}>{
- if(!enabled(env)||!['START','START_REVIEW','VIEWS','DAILY_J','REPORTS','ACTIVATE','RELEASE'].includes(String(action)))throw Error('CUTOVER_OPERATOR_DISABLED');
- const a=action as Action,db=env.DB,initial=scope(env);if(a==='START'){await start(env);return{action:a,ok:true};}if(a==='START_REVIEW'){await startPrewriteReview(env);return{action:a,ok:true};}
+ if(!enabled(env)||!['START','START_REVIEW','RECONCILE_VIEWS','VIEWS','DAILY_J','REPORTS','ACTIVATE','RELEASE'].includes(String(action)))throw Error('CUTOVER_OPERATOR_DISABLED');
+ const a=action as Action,db=env.DB,initial=scope(env);if(a==='START'){await start(env);return{action:a,ok:true};}if(a==='START_REVIEW'){await startPrewriteReview(env);return{action:a,ok:true};}if(a==='RECONCILE_VIEWS'){await reconcileContinuousViewsIncident(env);return{action:a,ok:true};}
  if(a==='ACTIVATE'&&(!Array.isArray(expenseIds)||expenseIds.length!==2||expenseIds[0]===expenseIds[1]||expenseIds.some(x=>typeof x!=='string'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(x))))throw Error('CUTOVER_RECEIPTS_INVALID');
  const record=await marker(env);if(!record||record.state!=='HELD'||!await stableWorkbookClaimOwned(env,record.operation_token)||env.DB!==db||scope(env)!==initial)throw Error('CUTOVER_OPERATOR_NOT_HELD');
  if(!await stageReady(env,a)||env.DB!==db||scope(env)!==initial)throw Error('CUTOVER_STAGE_NOT_READY');

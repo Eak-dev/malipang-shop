@@ -30,7 +30,7 @@ function fixture(){
    f[25]=mode==='drift'&&row===7?'changed':markers[row-2];e[25]=f[25];formula.push(f);effective.push(e);
   }return{formula,effective};
  };
- client.batchGetSheetFormulaValues=async()=>{const a=ledger('EXPENSE_RAW',4),b=ledger('DETAIL',5),raw=requests.find(r=>r.updateCells?.start?.sheetId===6).updateCells.rows[0].values[0].userEnteredValue.formulaValue,detail=requests.find(r=>r.updateCells?.start?.sheetId===7).updateCells.rows[0].values[0].userEnteredValue.formulaValue;return[a.formula,b.formula,[[raw]],[[detail]]];};
+ client.batchGetSheetFormulaValues=async()=>{const a=ledger('EXPENSE_RAW',4),b=ledger('DETAIL',5),raw=(mode==='canonical'?requests.find(r=>r.updateCells?.start?.sheetId===6).updateCells.rows[0].values[0].userEnteredValue.formulaValue.replaceAll("'V52_EXPENSE_RAW'","V52_EXPENSE_RAW"):requests.find(r=>r.updateCells?.start?.sheetId===6).updateCells.rows[0].values[0].userEnteredValue.formulaValue),detail=requests.find(r=>r.updateCells?.start?.sheetId===7).updateCells.rows[0].values[0].userEnteredValue.formulaValue;return[a.formula,b.formula,[[raw]],[[detail]]];};
  client.batchGetSheetEffectiveSerialValues=async()=>[ledger('EXPENSE_RAW',4).effective,ledger('DETAIL',5).effective];
  client.batchGetSheetValues=async()=>[[['Expense_ID']],[['Purchase_Item_ID']]];
  return{env,sqlite,setMode(x){mode=x},get dispatches(){return dispatches},close(){client.getSpreadsheetSheetProperties=originals.props;client.batchGetSheetFormulaValues=originals.formula;client.batchGetSheetEffectiveSerialValues=originals.effective;client.batchGetSheetValues=originals.values;client.batchUpdateSpreadsheetWithReply=originals.update;workbook.stableWorkbookClaimOwned=originals.claim;sqlite.close()}};
@@ -52,3 +52,11 @@ test('existing helper ID or disabled gate prevents dispatch',async()=>{const h=f
 test('legacy ledger configuration must match the formula sources',async()=>{const h=fixture();try{
  h.env.SHEET_EXPENSE_RAW='another_raw';await assert.rejects(()=>bootstrapContinuousReportViews(h.env,'claim'),/DISABLED/);assert.equal(h.dispatches,0);
  }finally{h.close()}});
+
+test('provider canonicalizes optional quotes in ASCII-only legacy sheet references',async()=>{
+ const h=fixture();try{
+  h.setMode('canonical');
+  assert.deepEqual(await bootstrapContinuousReportViews(h.env,'claim'),{stage:'VIEWS',verifiedSheets:4});
+  assert.equal(h.sqlite.prepare("SELECT state FROM continuous_report_cutover_attempts WHERE stage='VIEWS'").get().state,'VERIFIED');
+ }finally{h.close()}
+});

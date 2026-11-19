@@ -9,6 +9,8 @@ import {forwardFixSql,alteredColumns,SUPPORTED} from '../scripts/migration-forwa
 
 const dir=new URL('../migrations/',import.meta.url);
 const names=readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
+const INCIDENT_MIGRATION='0062_views_incident_recovery.sql';
+const baselineNames=names.filter(n=>n!==INCIDENT_MIGRATION);
 const read=n=>readFileSync(new URL(n,dir),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
 // the other migration files byte for byte, and the schema all files produced.
@@ -22,11 +24,11 @@ const columns=(db,table)=>db.prepare(`SELECT name FROM pragma_table_info('${tabl
 const build=(source,upto=names.length)=>{const db=new DatabaseSync(':memory:');for(const n of names.slice(0,upto))db.exec(source(n));return db;};
 
 test('every migration other than 0048 and 0055 is byte-identical to main b9c3e00',()=>{
-  assert.equal(sha(names.filter(n=>!SUPPORTED.includes(n)).map(n=>n+'\n'+read(n)).join('\n')),OTHERS_SHA256);
+  assert.equal(sha(baselineNames.filter(n=>!SUPPORTED.includes(n)).map(n=>n+'\n'+read(n)).join('\n')),OTHERS_SHA256);
 });
 
 test('a clean apply of the edited files yields exactly the original schema and seed rows',()=>{
-  const edited=build(read);
+  const edited=build(read,baselineNames.length);
   assert.equal(sha(JSON.stringify(schema(edited))),ORIGINAL_SCHEMA_SHA256);
   assert.deepEqual(edited.prepare('SELECT * FROM continuous_financial_journal_revision').all().map(r=>({...r})),[{singleton:1,revision:0}]);
 });
@@ -65,4 +67,12 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
   assert.deepEqual(kept.skipped,[]);assert.match(kept.sql,/^ALTER TABLE continuous_notice_dispatches ADD COLUMN owner_token/m);
   assert.throws(()=>forwardFixSql('0001_initial.sql',sql,{}),/UNSUPPORTED/);
   assert.throws(()=>forwardFixSql(n,sql,{}),/COLUMNS_MISSING/);
+});
+
+test('issue296 incident recovery is a single new append-only migration with preserved trigger names',()=>{
+ assert.equal(names[names.length-1],INCIDENT_MIGRATION);
+ const db=build(read);
+ assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
+ assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);
+ assert.equal(db.prepare("SELECT count(*) n FROM continuous_views_incident_recovery").get().n,0);
 });

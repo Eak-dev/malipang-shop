@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
-export const allowedActions=['PRECHECK','START_REVIEW','VIEWS','DAILY_J','REPORTS','ACTIVATE','RELEASE'];
+export const allowedActions=['PRECHECK','START_REVIEW','RECONCILE_VIEWS','VIEWS','DAILY_J','REPORTS','ACTIVATE','RELEASE'];
 const fail=c=>{throw new Error(c)};
 export function validateInputs(e){
  const sha=e.EXPECTED_SHA||'',action=e.CUTOVER_ACTION||'';
@@ -16,10 +16,13 @@ export function validateInputs(e){
  if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||!(url.pathname==='/'||url.pathname===''))fail('CUTOVER_URL_INVALID');
  return {sha,action,base:url.origin};
 }
-export const expectedBefore={PRECHECK:[],START_REVIEW:[],VIEWS:[],DAILY_J:['VIEWS'],REPORTS:['VIEWS','DAILY_J'],ACTIVATE:['VIEWS','DAILY_J','REPORTS'],RELEASE:['VIEWS','DAILY_J','REPORTS']};
+export const expectedBefore={PRECHECK:[],START_REVIEW:[],RECONCILE_VIEWS:[],VIEWS:[],DAILY_J:['VIEWS'],REPORTS:['VIEWS','DAILY_J'],ACTIVATE:['VIEWS','DAILY_J','REPORTS'],RELEASE:['VIEWS','DAILY_J','REPORTS']};
 export function verifyReadiness(action,claims,operators,attempts,cutover,unknown){
  if(Object.values(unknown).some(x=>Number(x)!==0))fail('CUTOVER_UNRESOLVED_D1');
  if(claims.length!==1||!['REVIEW','HELD'].includes(claims[0].state))fail('CUTOVER_CLAIM_INVALID');
+ if(action==='RECONCILE_VIEWS'){
+  if(claims[0].state!=='REVIEW'||claims[0].review_reason!=='CONTINUOUS_CUTOVER_REVIEW'||operators.length!==1||operators[0].state!=='REVIEW'||attempts.length!==1||attempts[0].stage!=='VIEWS'||attempts[0].state!=='IN_FLIGHT'||cutover.length!==0)fail('CUTOVER_VIEWS_RECOVERY_NOT_READY');return;
+ }
  if(action==='PRECHECK'||action==='START_REVIEW'){
   if(claims[0].state!=='REVIEW'||claims[0].phase!=='OPERATION'||claims[0].review_reason!=='STABLE_DAILY_REVIEW'||operators.length!==0||attempts.length!==0||cutover.length!==0)fail('CUTOVER_START_NOT_READY');return;
  }
@@ -75,7 +78,7 @@ async function main(){
   if(afterClaims.length!==0||afterOperators.length!==1||afterOperators[0].state!=='COMPLETE'||afterCutover.length!==1||afterCutover[0].state!=='ACTIVE'||afterAttempts.length!==3||afterAttempts.some(x=>x.state!=='VERIFIED'))fail('CUTOVER_POSTSTATE_UNVERIFIED_NO_RETRY');
  }else{
   if(afterClaims.length!==1||afterClaims[0].state!=='HELD'||afterOperators.length!==1||afterOperators[0].state!=='HELD')fail('CUTOVER_POSTSTATE_UNVERIFIED_NO_RETRY');
-  const expectedAfter=action==='START_REVIEW'?[]:[...expectedBefore[action],action==='ACTIVATE'?'':action].filter(Boolean);
+  const expectedAfter=action==='START_REVIEW'?[]:action==='RECONCILE_VIEWS'?['VIEWS']:[...expectedBefore[action],action==='ACTIVATE'?'':action].filter(Boolean);
   if(afterAttempts.length!==expectedAfter.length||!expectedAfter.every(s=>afterAttempts.some(x=>x.stage===s&&x.state==='VERIFIED'))||action==='ACTIVATE'&&!(afterCutover.length===1&&afterCutover[0].state==='ACTIVE'))fail('CUTOVER_POSTSTATE_UNVERIFIED_NO_RETRY');
  }
  console.log('CUTOVER_'+action+': PASS; WORKER_MATCH; D1_READBACK_PASS');

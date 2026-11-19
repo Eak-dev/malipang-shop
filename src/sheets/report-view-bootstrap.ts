@@ -11,6 +11,9 @@ const rawView='V52_EXPENSE_RAW_ALL',detailView='V52_PURCHASE_DETAIL_ALL',count=1
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 const hash=async(s:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s))),x=>x.toString(16).padStart(2,'0')).join('');
 const blank=(x:unknown)=>x===undefined||x===null||x==='';
+/** Google canonicalizes quoted ASCII-only tab names without changing meaning.
+ * Allow only this exact provider normalization, not arbitrary formula changes. */
+export function viewFormulaEquivalent(observed:unknown,expected:string):boolean{return typeof observed==='string'&&(observed===expected||observed===expected.replaceAll("'V52_EXPENSE_RAW'","V52_EXPENSE_RAW"));}
 const triggerIntegrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_report_cutover_attempts' AND name IN ('continuous_report_attempt_insert','continuous_report_attempt_transition','continuous_report_attempt_no_delete','continuous_report_attempt_no_replace'))=4";
 const identifier=(v:string|undefined):number=>{if(!v||!/^(0|[1-9]\d*)$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)>2147483647)throw Error('REPORT_VIEW_TARGET_INVALID');return Number(v);};
 function sameSheet(a:Sheet,b:Sheet|undefined):boolean{return !!b&&a.sheetId===b.sheetId&&a.title===b.title&&a.rowCount===b.rowCount&&a.columnCount===b.columnCount;}
@@ -19,7 +22,7 @@ function expectedMarkers(requests:unknown[]):string[]{
  const rows=value.updateCells?.rows;if(!Array.isArray(rows)||rows.length!==count-1)throw Error('REPORT_VIEW_BOOTSTRAP_INVALID');
  return rows.map((row,i)=>{const marker=row.values?.[0]?.userEnteredValue?.stringValue;if(typeof marker!=='string'||!new RegExp(`^MPL1_EMPTY_${i+2}_[0-9a-f]{32}$`).test(marker))throw Error('REPORT_VIEW_BOOTSTRAP_INVALID');return marker;});
 }
-function verifyEmptyLedger(formula:unknown[][],effective:unknown[][],projection:CarrierLedger,markers:readonly string[]):boolean{
+export function verifyEmptyLedger(formula:unknown[][],effective:unknown[][],projection:CarrierLedger,markers:readonly string[]):boolean{
  const headers=projection==='EXPENSE_RAW'?[...rawCarrierHeaders,'Sales_Addback_Basis']:detailCarrierHeaders;
  if(headers.some((h,i)=>formula[0]?.[i]!==h||effective[0]?.[i]!==h)||formula.length>count||effective.length>count)return false;
  for(let row=2;row<=count;row++){
@@ -64,7 +67,7 @@ export async function bootstrapContinuousReportViews(env:ReportEnv,claim:string)
  if(!stable()||!initialSheets.every(s=>sameSheet(s,after.find(x=>x.sheetId===s.sheetId)))||titles.some((title,i)=>{const s=after.find(x=>x.sheetId===ids[i]);return !s||s.title!==title||s.rowCount<(i<2?count:viewCapacity)||s.columnCount<(i<2?26:i===2?18:20);}))throw Error('REPORT_VIEW_READBACK_UNVERIFIED');
  const ranges=[`${quote(raw)}!A1:Z${count}`,`${quote(detail)}!A1:Z${count}`,`${quote(rawView)}!A1`,`${quote(detailView)}!A1`];
  const [f,e,viewValues]=await Promise.all([batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy),batchGetSheetEffectiveSerialValues(env,ranges.slice(0,2),continuousSheetsReadPolicy),batchGetSheetValues(env,ranges.slice(2),continuousSheetsReadPolicy)]);
- if(f.length!==4||e.length!==2||viewValues.length!==2||!verifyEmptyLedger(f[0]!,e[0]!,'EXPENSE_RAW',markers[0]!)||!verifyEmptyLedger(f[1]!,e[1]!,'DETAIL',markers[1]!)||f[2]?.[0]?.[0]!==formula.raw||f[3]?.[0]?.[0]!==formula.detail||viewValues[0]?.[0]?.[0]!=='Expense_ID'||viewValues[1]?.[0]?.[0]!=='Purchase_Item_ID'||!stable()||!await stableWorkbookClaimOwned(env,claim))throw Error('REPORT_VIEW_READBACK_UNVERIFIED');
+ if(f.length!==4||e.length!==2||viewValues.length!==2||!verifyEmptyLedger(f[0]!,e[0]!,'EXPENSE_RAW',markers[0]!)||!verifyEmptyLedger(f[1]!,e[1]!,'DETAIL',markers[1]!)||!viewFormulaEquivalent(f[2]?.[0]?.[0],formula.raw)||!viewFormulaEquivalent(f[3]?.[0]?.[0],formula.detail)||viewValues[0]?.[0]?.[0]!=='Expense_ID'||viewValues[1]?.[0]?.[0]!=='Purchase_Item_ID'||!stable()||!await stableWorkbookClaimOwned(env,claim))throw Error('REPORT_VIEW_READBACK_UNVERIFIED');
  const verified=await db.prepare(`UPDATE continuous_report_cutover_attempts SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND stage='VIEWS' AND operation_token=? AND manifest_digest=? AND state='IN_FLIGHT' AND ${triggerIntegrity} AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD')`).bind(book,claim,digest,book,claim).run();
  if(!stable()||verified.success!==true||Number(verified.meta?.changes)!==1)throw Error('REPORT_VIEW_VERIFICATION_UNCERTAIN');
  return{stage:'VIEWS',verifiedSheets:4};

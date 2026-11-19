@@ -86,9 +86,10 @@ export function planLedgerCarrierCancellation(input:{sheetId:number;row:number;p
 }
 /** addSheet + all markers and formulas must be one atomic batch for a new
  * sheet ID. Unknown bootstrap response requires reconciliation. */
-export function ledgerCarrierBootstrapRequests(projection:CarrierLedger,sheetId:number,title:string,rowCount:number):unknown[]{
+export function ledgerCarrierBootstrapRequests(projection:CarrierLedger,sheetId:number,title:string,rowCount:number,markersOverride?:readonly string[]):unknown[]{
  if(!['EXPENSE_RAW','DETAIL'].includes(projection)||!Number.isSafeInteger(sheetId)||sheetId<0||!title.trim()||title.length>80||!Number.isSafeInteger(rowCount)||rowCount<2||rowCount>5000)throw Error('LEDGER_BOOTSTRAP_INVALID');
- const headers=projection==='EXPENSE_RAW'?[...rawCarrierHeaders,'Sales_Addback_Basis']:detailCarrierHeaders,markers=Array.from({length:rowCount-1},(_,i)=>ledgerCarrierMarker(i+2));
+ const headers=projection==='EXPENSE_RAW'?[...rawCarrierHeaders,'Sales_Addback_Basis']:detailCarrierHeaders,markers=markersOverride?[...markersOverride]:Array.from({length:rowCount-1},(_,i)=>ledgerCarrierMarker(i+2));
+ if(markers.length!==rowCount-1||markers.some((v,i)=>typeof v!=='string'||!new RegExp('^MPL1_EMPTY_'+(i+2)+'_[0-9a-f]{32}$').test(v)))throw Error('LEDGER_MARKER_INVALID');
  if(new Set(markers.map(v=>v.slice(-32))).size!==markers.length)throw Error('LEDGER_MARKER_COLLISION');
  const formulas=ledgerCarrierFormulas(projection,2);
  return [{addSheet:{properties:{sheetId,title,gridProperties:{rowCount,columnCount:26,frozenRowCount:1}}}},

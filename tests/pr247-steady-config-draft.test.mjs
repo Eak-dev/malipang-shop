@@ -6,8 +6,10 @@ const cfg=JSON.parse(fs.readFileSync(new URL("../wrangler.jsonc",import.meta.url
 const g6a=fs.readFileSync(new URL("../.github/workflows/production-pr247-g6a-gate-on.yml",import.meta.url),"utf8");
 const doc=fs.readFileSync(new URL("../docs/ISSUE248_STEADY_PR_B_PREP_TH.md",import.meta.url),"utf8");
 
-test("PR-B local candidate is gate literal false with pacing true",()=>{
- assert.equal(cfg.vars.STABLE_RECOVERY_GATE_ENABLED,"false");
+// #296 step 5 turns the gate on in main for the continuous cutover; the
+// steady gate-off value returns with the step 7 config.
+test("PR-B local candidate keeps pacing true (gate is on for #296 step 5)",()=>{
+ assert.equal(cfg.vars.STABLE_RECOVERY_GATE_ENABLED,"true");
  assert.equal(cfg.vars.STABLE_SHEETS_PACING_ENABLED,"true");
  assert.equal(Object.hasOwn(cfg.vars,"STABLE_SHEETS_READ_BUDGET_PER_MINUTE"),false);
 });

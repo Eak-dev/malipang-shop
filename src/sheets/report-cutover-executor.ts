@@ -3,6 +3,7 @@ import type {Env} from '../types';
 import {batchGetSheetFormulaValues,batchUpdateSpreadsheetWithReply,getSheetGridInfo} from './client';
 import {columnName} from './daily-expense';
 import {stableWorkbookClaimOwned} from './stable-workbook-claim';
+import {viewFormulaEquivalent} from './report-view-bootstrap';
 import {planContinuousReportCutover,planManualDailyBudgetUpgrade,reportFormulaCompareAndSwapRequests,type ReportCutoverSnapshots,type ReportFormulaChange,type ReportSheetSnapshot} from './report-cutover-plan';
 import type {LedgerReportTitles} from '../../scripts/combined-ledger-report-formulas.mjs';
 
@@ -62,7 +63,7 @@ export async function executeContinuousReportCutover(env:ReportEnv,claim:string,
  const replies=reply&&typeof reply==='object'?(reply as {replies?:Array<{findReplace?:{formulasChanged?:unknown;occurrencesChanged?:unknown}}>}).replies:undefined;
  if(!Array.isArray(replies)||replies.length!==changes.length||replies.some(r=>r?.findReplace?.formulasChanged!==1||r.findReplace.occurrencesChanged!==1))throw Error('REPORT_CUTOVER_PARTIAL_OR_UNKNOWN');
  const after=await readCurrent(env,changes,groups);
- if(after.some((v,i)=>v!==changes[i]!.after)||!stable()||!await stableWorkbookClaimOwned(env,claim))throw Error('REPORT_CUTOVER_READBACK_UNVERIFIED');
+ if(after.some((v,i)=>!viewFormulaEquivalent(v,changes[i]!.after))||!stable()||!await stableWorkbookClaimOwned(env,claim))throw Error('REPORT_CUTOVER_READBACK_UNVERIFIED');
  const verified=await db.prepare(`UPDATE continuous_report_cutover_attempts SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
   WHERE spreadsheet_id=? AND stage=? AND operation_token=? AND manifest_digest=? AND state='IN_FLIGHT' AND ${triggerIntegrity}
   AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD')`).bind(book,input.stage,claim,digest,book,claim).run();

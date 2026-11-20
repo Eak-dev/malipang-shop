@@ -17,6 +17,15 @@ type Marker={operation_token:string;state:string};
 const integrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator' AND name IN ('continuous_operator_insert','continuous_operator_update','continuous_operator_no_delete','continuous_operator_no_replace'))=4";
 const noUnknown="NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED') AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes p WHERE p.spreadsheet_id=? AND p.state<>'VERIFIED')";
 const hash=async(x:string)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(x))),b=>b.toString(16).padStart(2,'0')).join('');
+/** Google's FORMULA readback may remove optional quotes from these three
+ * ASCII-only sheet references. The incident's stored after-hash is still
+ * required to match exactly after the single known provider rewrite. */
+export async function expectedReportFormulaHashMatches(observed:unknown,recordedHash:unknown):Promise<boolean>{
+ if(typeof observed!=='string'||!observed.startsWith('=')||typeof recordedHash!=='string'||!/^[0-9a-f]{64}$/.test(recordedHash))return false;
+ if(await hash(observed)===recordedHash)return true;
+ const requoted=observed.replace(/(?<![A-Za-z0-9_'])(V52_EXPENSE_RAW_ALL|V52_PURCHASE_DETAIL_ALL|V52_EXPENSE_RAW)!/g,(_,name:string)=>"'"+name+"'!");
+ return requoted!==observed&&await hash(requoted)===recordedHash;
+}
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 // Pinned by fingerprint below; the list only lets the lookup find a claim whose
 // reason came from a specific preflight code (STABLE_SCOPED_REVIEW_ENABLED).
@@ -103,7 +112,7 @@ async function verifyInstalledReports(env:OperatorEnv):Promise<void>{
   const grouped=[...groups.values()];if(grouped.length>10)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
   const values=await batchGetSheetFormulaValues(env,grouped.map(g=>`${quote(g.name)}!${columnName(g.minColumn)}${g.minRow}:${columnName(g.maxColumn)}${g.maxRow}`),continuousSheetsReadPolicy);
   if(values.length!==grouped.length)throw Error('CUTOVER_REPORT_NOT_VERIFIED');
-  for(let i=0;i<grouped.length;i++){const g=grouped[i]!;for(const e of g.entries){const value=values[i]?.[e.row-g.minRow]?.[e.column-g.minColumn];if(typeof value!=='string'||await hash(value)!==e.after)throw Error('CUTOVER_REPORT_NOT_VERIFIED');}}
+  for(let i=0;i<grouped.length;i++){const g=grouped[i]!;for(const e of g.entries){const value=values[i]?.[e.row-g.minRow]?.[e.column-g.minColumn];if(!await expectedReportFormulaHashMatches(value,e.after))throw Error('CUTOVER_REPORT_NOT_VERIFIED');}}
  }
 }
 async function activate(env:OperatorEnv,token:string,expenseIds:readonly [string,string]):Promise<void>{

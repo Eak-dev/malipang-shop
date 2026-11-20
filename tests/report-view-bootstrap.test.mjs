@@ -60,3 +60,14 @@ test('provider canonicalizes optional quotes in ASCII-only legacy sheet referenc
   assert.equal(h.sqlite.prepare("SELECT state FROM continuous_report_cutover_attempts WHERE stage='VIEWS'").get().state,'VERIFIED');
  }finally{h.close()}
 });
+
+test('reports accept only provider-normalized quotes around known ASCII-only tab names',()=>{
+ const {viewFormulaEquivalent}=require('../dist/sheets/report-view-bootstrap.js');
+ assert.equal(viewFormulaEquivalent('=V52_EXPENSE_RAW!A2',"='V52_EXPENSE_RAW'!A2"),true);
+ assert.equal(viewFormulaEquivalent('=V52_EXPENSE_RAW_ALL!A2',"='V52_EXPENSE_RAW_ALL'!A2"),true);
+ assert.equal(viewFormulaEquivalent('=V52_PURCHASE_DETAIL_ALL!A2',"='V52_PURCHASE_DETAIL_ALL'!A2"),true);
+ assert.equal(viewFormulaEquivalent("='รายวัน'!A2","='รายวัน'!A2"),true);
+ assert.equal(viewFormulaEquivalent('=V52_EXPENSE_RAW_ALL!A3',"='V52_EXPENSE_RAW_ALL'!A2"),false);
+ assert.equal(viewFormulaEquivalent('=OTHER_SHEET!A2',"='OTHER_SHEET'!A2"),false);
+ assert.equal(viewFormulaEquivalent("='V52_EXPENSE_RAW_ต่อเนื่อง'!A2",'=V52_EXPENSE_RAW_ต่อเนื่อง!A2'),false);
+});

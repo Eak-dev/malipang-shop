@@ -13,7 +13,10 @@ const hash=async(s:string)=>Array.from(new Uint8Array(await crypto.subtle.digest
 const blank=(x:unknown)=>x===undefined||x===null||x==='';
 /** Google canonicalizes quoted ASCII-only tab names without changing meaning.
  * Allow only this exact provider normalization, not arbitrary formula changes. */
-export function viewFormulaEquivalent(observed:unknown,expected:string):boolean{return typeof observed==='string'&&(observed===expected||observed===expected.replaceAll("'V52_EXPENSE_RAW'","V52_EXPENSE_RAW"));}
+const canonicalizeKnownProviderSheetQuotes=(value:string)=>value.replace(/'(V52_EXPENSE_RAW|V52_EXPENSE_RAW_ALL|V52_PURCHASE_DETAIL_ALL)'!/g,'$1!');
+export function viewFormulaEquivalent(observed:unknown,expected:string):boolean{
+ return typeof observed==='string'&&canonicalizeKnownProviderSheetQuotes(observed)===canonicalizeKnownProviderSheetQuotes(expected);
+}
 const triggerIntegrity="(SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_report_cutover_attempts' AND name IN ('continuous_report_attempt_insert','continuous_report_attempt_transition','continuous_report_attempt_no_delete','continuous_report_attempt_no_replace'))=4";
 const identifier=(v:string|undefined):number=>{if(!v||!/^(0|[1-9]\d*)$/.test(v)||!Number.isSafeInteger(Number(v))||Number(v)>2147483647)throw Error('REPORT_VIEW_TARGET_INVALID');return Number(v);};
 function sameSheet(a:Sheet,b:Sheet|undefined):boolean{return !!b&&a.sheetId===b.sheetId&&a.title===b.title&&a.rowCount===b.rowCount&&a.columnCount===b.columnCount;}

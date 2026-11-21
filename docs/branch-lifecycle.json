@@ -7338,6 +7338,32 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T11:02:27Z",
       "reason": "Writer readback fix is a supporting branch for Issue 296; integrate PR #333 to main before the separate exact-target recovery operator. Snapshot precedes this registry update; no Production state is implied."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-hold-trigger-count-20261121",
+      "source_sha": "4e2a913f735219a5a86a0dcf4d4e9067bdb0c6d5",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T12:16:42Z",
+      "reason": "Supporting fix for Issue 296; integrate before releasing the exact-target incident recovery. The snapshot precedes this registry update and does not imply Production deployment."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-hold-trigger-count-20261121",
+      "source_sha": "4e2a913f735219a5a86a0dcf4d4e9067bdb0c6d5",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T12:16:42Z",
+      "reason": "Supporting fix for Issue 296; integrate before releasing the exact-target incident recovery. The snapshot precedes this registry update and does not imply Production deployment."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

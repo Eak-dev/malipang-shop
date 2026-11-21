@@ -8,6 +8,9 @@ const {runStableExpenseCancellationJob}=require('../dist/sheets/stable-expense-c
 const {pendingDailyCancellations,verifyDailyCarrierEvidence}=require('../dist/sheets/daily-carrier-auth.js');
 const {matchesCommittedDailyInsert}=require('../dist/sheets/continuous-daily-write-evidence.js');
 const {readObservedDailyIncidentSource}=require('../dist/sheets/stable-expense-source.js');
+const {DAILY_FAILED_INCIDENT_EVIDENCE_SQL,failedDailyIncidentFingerprint,readFailedDailyIncidentEvidence}=require('../dist/admin/exact-daily-proof-evidence.js');
+const {operateExactDailySettlement,parseExactDailyOperation}=require('../dist/admin/exact-daily-settlement.js');
+const probeExactFailedDailyOnly=async(env,fingerprint,version)=>(await operateExactDailySettlement(env,{action:'PROBE',fingerprint},version)).outcome==='MATCHED';
 const {operateMonthlyReport}=require('../dist/sheets/monthly-report-operator.js'),googleAuth=require('../dist/sheets/google-auth.js');
 const {verifyReviewedDailyProjection}=require('../dist/sheets/continuous-daily-positive-recovery.js'),notice=require('../dist/sheets/stable-edit-notice.js');
 const {cancelAtomicDailyCandidateUnderClaim}=require('../dist/sheets/atomic-daily-cancellation-candidate.js');
@@ -880,3 +883,131 @@ test('QA deterministic Miniflare monthly diagnostics and multi-run',async t=>{t.
  if(mode==='undo'||mode==='content-drift'){assert.equal(preview.ready,1);result=await operateMonthlyReport(h.env,'APPEND_ONE',workerHash,preview.candidate);assert.equal(result.status,'DONE');assert.equal(posts,2);const after=await realdb.prepare("SELECT status,version,description FROM expense_events WHERE expense_id='exp_aa'").first();if(mode==='undo')assert.deepEqual(after,{status:'CANCELLED',version:2,description:'=literal'});else assert.deepEqual(after,{status:'CONFIRMED',version:1,description:'SYNTHETIC EDIT'});let next=await operateMonthlyReport(h.env,'PREVIEW',workerHash);assert.equal(next.stale,1);console.log('QA_STALE',JSON.stringify({mode,otherContinued:true,stale:next.stale,oldReceiptRetained:(await realdb.prepare("SELECT count(*) n FROM monthly_report_intents WHERE expense_id='exp_aa' AND state='VERIFIED'").first()).n}));}
  assert.deepEqual(await realdb.prepare("SELECT * FROM expense_events WHERE expense_id='exp_test'").first(),beforeExpense);const businessAfter={jobs:await realdb.prepare('SELECT * FROM sync_jobs ORDER BY job_id').all(),claims:await realdb.prepare('SELECT * FROM stable_workbook_claims').all(),projection:await realdb.prepare('SELECT * FROM stable_projection_writes').all()};for(const key of ['jobs','claims','projection'])assert.deepEqual(businessAfter[key].results,businessBefore[key].results);
  }finally{budgetClass.prototype.consumeRead=oldRead;budgetClass.prototype.claimMutation=oldClaim;if(mf)await mf.dispose();if(dir)(await import('node:fs')).rmSync(dir,{recursive:true,force:true});client.readMonthlyReportGrid=originalRead;client.getSheetGridInfo=originalInfo;client.batchUpdateSpreadsheetWithReply=originalPost;notice.stableNoticePaused=originalNotice;googleAuth.createGoogleOAuthLease=originalLease;h.close();}}});
+
+test('failed-hold read-only proof selects exactly one pinned row and rejects all drift',async()=>{for(const mode of ['exact','payload','error','attempt','trace','resolved','other-open','revision']){const h=await fixture(false,true,'claim-token-recovery');try{
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
+ h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+ h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+ const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book');assert.ok(row);const hash=await failedDailyIncidentFingerprint(row);
+ if(mode==='payload')h.sqlite.exec("UPDATE failed_jobs SET payload_json='{}' WHERE id='failed'");
+ if(mode==='error')h.sqlite.exec("UPDATE failed_jobs SET error='DEAD_LETTER_MAX_RETRIES' WHERE id='failed'");
+ if(mode==='attempt')h.sqlite.exec("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'");
+ if(mode==='trace')h.sqlite.exec("UPDATE failed_jobs SET trace_id='other' WHERE id='failed'");
+ if(mode==='resolved')h.sqlite.exec("UPDATE failed_jobs SET status='RESOLVED' WHERE id='failed'");
+ if(mode==='other-open')h.sqlite.exec("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('other','other','other','EXPENSE:exp_test:2','{}','failure','OPEN',1,'now','now')");
+ if(mode==='revision')h.sqlite.exec('UPDATE stable_source_revision SET revision=revision+1 WHERE singleton=1');
+ assert.equal(!!await readFailedDailyIncidentEvidence(h.env,hash),mode==='exact');
+
+ assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('failed-hold provider probe is read-only and rejects changed failed row',async()=>{const h=await fixture(false,true,'claim-token-recovery'),oldStyle=notice.stableNoticeStyleFingerprint;try{
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
+ h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+ h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+ h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+ const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book'),hash=await failedDailyIncidentFingerprint(row);notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+ const statements=[],prepare=h.DB.prepare;h.DB.prepare=function(sql){statements.push(sql);return prepare.call(this,sql)};
+ client.batchUpdateSpreadsheetWithReply=async()=>{throw Error('unexpected provider mutation')};
+ Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',CF_VERSION_METADATA:{id:'synthetic-version'}});h.env.EXACT_DAILY_SETTLEMENT_ENABLED='true';const workerHash='synthetic-version';
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),true);assert.equal(h.writes(),1);
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,'f'.repeat(64)),false);
+ h.env.STABLE_RECOVERY_GATE_ENABLED='false';assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),true);
+ const oldInfo=client.getSheetGridInfo;for(const [before,after] of [['false','true'],['true','false']]){h.env.STABLE_RECOVERY_GATE_ENABLED=before;let drifted=false;client.getSheetGridInfo=async(...args)=>{const value=await oldInfo(...args);if(!drifted){drifted=true;h.env.STABLE_RECOVERY_GATE_ENABLED=after;}return value;};assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);assert.equal(drifted,true);client.getSheetGridInfo=oldInfo;}
+ for(const invalid of ['invalid','',undefined]){h.env.STABLE_RECOVERY_GATE_ENABLED=invalid;assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);}h.env.STABLE_RECOVERY_GATE_ENABLED='true';
+ h.formula().at(-1)[28]='=1';assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);h.formula().at(-1)[28]=null;
+ notice.stableNoticeStyleFingerprint=async()=>null;assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+ assert.ok(statements.length>0);assert.ok(statements.every(sql=>/^\s*SELECT\b/i.test(sql)));
+ const get=client.batchGetSheetFormulaValues;let changed=false;
+ client.batchGetSheetFormulaValues=async(...args)=>{if(!changed){changed=true;h.sqlite.exec("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'");}return get(...args);};
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);assert.equal(changed,true);
+ assert.equal(h.sqlite.prepare("SELECT status FROM failed_jobs WHERE id='failed'").get().status,'OPEN');assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;h.close();}});
+
+test('exact DAILY settlement validates request shape and owner observations',()=>{
+ const fingerprint='a'.repeat(64),preimageDigest='b'.repeat(64);
+ const settle={action:'SETTLE',fingerprint,preimageDigest,externalWritersFenced:true,ownerSupervising:true};
+ for(const body of [null,[],{}, {action:'INSPECT',extra:true}, {action:'PROBE',fingerprint:'no'},
+  {...settle,externalWritersFenced:false},{...settle,ownerSupervising:false},{...settle,extra:true}])
+  assert.equal(parseExactDailyOperation(body),null);
+ for(const body of [{action:'INSPECT'}, {action:'PROBE',fingerprint},settle])assert.deepEqual(parseExactDailyOperation(body),body);
+});
+
+for(const finalAck of ['received','lost'])
+test('Miniflare exact DAILY settlement preserves both holds when the commit ACK is '+finalAck,async()=>{
+ const h=await fixture(false,true,'claim-token-recovery'),oldStyle=notice.stableNoticeStyleFingerprint;
+ const {mkdtempSync,readdirSync,copyFileSync,rmSync}=await import('node:fs');
+ const {join}=await import('node:path'),{tmpdir}=await import('node:os'),{Miniflare}=await import('miniflare');
+ const dir=mkdtempSync(join(tmpdir(),'exact-daily-d1-'));
+ let mf;
+ try{
+  h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+  h.sqlite.exec("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id='book'");
+  h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+  h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+  const fixturePath=join(dir,'fixture.sqlite');h.sqlite.exec(`VACUUM INTO '${fixturePath.replaceAll("'","''")}'`);
+  const options={modules:true,d1Databases:{DB:'fixture'},d1Persist:dir,script:'export default {async fetch(_r,e){await e.DB.prepare("SELECT 1").first();return new Response("ok")}}'};
+  mf=new Miniflare(options);await mf.dispatchFetch('http://local/');await mf.dispose();mf=null;
+  const folder=join(dir,'miniflare-D1DatabaseObject'),dbfile=readdirSync(folder).find(x=>x.endsWith('.sqlite'));
+  for(const ext of ['-wal','-shm'])rmSync(join(folder,dbfile+ext),{force:true});
+  copyFileSync(fixturePath,join(folder,dbfile));mf=new Miniflare(options);
+  const db=await mf.getD1Database('DB'),version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  let fault='',batches=0;
+  const updates=new WeakSet();
+  h.env.DB={prepare(sql){
+   const statement=db.prepare(sql);
+   if(!sql.startsWith('UPDATE stable_projection_writes'))return statement;
+   return {bind(...args){const bound=statement.bind(...args);updates.add(bound);return bound;}};
+  },async batch(statements){
+   if(!updates.has(statements[0]))return db.batch(statements);
+   batches++;
+   if(fault==='rollback')return db.batch([statements[0],db.prepare("SELECT json_extract('invalid-json','$')"),...statements.slice(1)]);
+   if(fault==='race')await db.prepare("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'").run();
+   const result=await db.batch(statements);if(fault==='lostAck')throw Error('synthetic D1 acknowledgement lost');return result;
+  }};
+  Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',EXACT_DAILY_SETTLEMENT_ENABLED:'true',CF_VERSION_METADATA:{id:version}});
+  const before=async()=>Promise.all(['stable_workbook_claims','sync_jobs','failed_jobs','expense_events','sync_alert_incidents'].map(async table=>(await db.prepare('SELECT * FROM '+table).all()).results));
+  const baseline=await before(),call=operation=>operateExactDailySettlement(h.env,operation,version);
+  const inspect=await call({action:'INSPECT'});assert.equal(inspect.outcome,'INSPECTED',JSON.stringify(inspect));assert.equal(inspect.projectionState,'IN_FLIGHT');
+  const probe=await call({action:'PROBE',fingerprint:inspect.fingerprint});assert.equal(probe.outcome,'MATCHED',JSON.stringify(probe));
+  const settle={action:'SETTLE',fingerprint:inspect.fingerprint,preimageDigest:probe.preimageDigest,externalWritersFenced:true,ownerSupervising:true};
+  h.env.STABLE_RECOVERY_GATE_ENABLED='false';assert.equal((await call(settle)).stage,'CONFIG');h.env.STABLE_RECOVERY_GATE_ENABLED='true';
+  h.env.MONTHLY_REPORT_OPERATOR_ENABLED='true';assert.equal((await call(settle)).stage,'CONFIG');h.env.MONTHLY_REPORT_OPERATOR_ENABLED='false';
+  h.env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED='true';assert.equal((await call(settle)).stage,'CONFIG');h.env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED='false';
+  assert.equal((await call({...settle,preimageDigest:'f'.repeat(64)})).stage,'PREIMAGE');assert.equal(batches,0);
+  for(const failure of ['rollback','race']){
+   fault=failure;const result=await call(settle);assert.equal(result.outcome,'UNCERTAIN',JSON.stringify(result));
+   if(fault==='race')await db.prepare("UPDATE failed_jobs SET attempt_count=1 WHERE id='failed'").run();
+   assert.equal((await call({action:'INSPECT'})).projectionState,'IN_FLIGHT');
+   assert.equal((await db.prepare('SELECT count(*) n FROM stable_expense_projection_preimages').first()).n,0);
+  }
+  fault=finalAck==='lost'?'lostAck':'';
+  const done=await call(settle);assert.equal(done.outcome,finalAck==='lost'?'UNCERTAIN':'SETTLED',JSON.stringify(done));
+  const recovered=await call({action:'INSPECT'});assert.equal(recovered.projectionState,'VERIFIED',JSON.stringify(recovered));assert.equal(recovered.preimageDigest,probe.preimageDigest);assert.equal(recovered.fingerprint,inspect.fingerprint);
+  const {verifiedHeldDailyGuard}=require('../dist/admin/exact-daily-settlement.js');
+  const pinned=await readFailedDailyIncidentEvidence(h.env,recovered.fingerprint),guard=verifiedHeldDailyGuard(pinned,recovered.preimageDigest);
+  assert.equal((await db.prepare('SELECT 1 ok WHERE '+guard.sql).bind(...guard.args).first()).ok,1);
+  assert.equal((await call(settle)).outcome,'HELD');assert.equal(batches,3);
+  assert.deepEqual(await before(),baseline);assert.equal(h.writes(),1);
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;if(mf)await mf.dispose();rmSync(dir,{recursive:true,force:true});h.close();}
+});
+
+
+test('exact daily admin settlement pins the Worker before all D1 reads',async()=>{
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ const version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',token='a'.repeat(40);
+ const env={ADMIN_TOKEN:token,EXACT_DAILY_SETTLEMENT_ENABLED:'true',CF_VERSION_METADATA:{id:version}};
+ const request=(headers,body)=>new Request('https://example.test/admin/stable-sync/exact-daily-settlement',{
+  method:'POST',headers,body:JSON.stringify(body)
+ });
+ const body={action:'INSPECT'}, auth={authorization:'Bearer '+token};
+ assert.equal((await handleAdmin(request({},body),env,{})).status,401);
+ assert.equal((await handleAdmin(request(auth,body),env,{})).status,409);
+ const pinned={...auth,'x-malipang-expected-worker-version':version};
+ assert.equal((await handleAdmin(request(pinned,{action:'SETTLE'}),env,{})).status,400);
+ const gated=await handleAdmin(request(pinned,body),env,{});
+ assert.equal(gated.headers.get('cache-control'),'no-store');
+ assert.deepEqual(await gated.json(),{ok:false,outcome:'HELD',stage:'CONFIG',servedVersion:version});
+});

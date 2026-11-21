@@ -1,0 +1,13 @@
+# ตรวจผล DAILY ของรายการค้าง #296
+
+**ขอบเขต** งานซิงก์เดิมอยู่ใน REVIEW หลังการส่ง insert ที่มี marker และ journal สถานะ IN_FLIGHT ส่วน failed job เดิมยัง OPEN การอ่าน grid ของ writer รุ่นเดิมรองรับการเพิ่มหนึ่งแถว หลักฐานจำลองสร้างกรณีเพิ่มสองแถวเมื่อมี padding ได้ สาเหตุของผลอ่านแต่แรกใน Production และสถานะปัจจุบันต้องตรวจสด เป้าหมายขั้นนี้คือยืนยันผลที่เขียนไปแล้ว ตรวจสูตร ค่า รายการและยอดที่ D1 คาดไว้ กริดก่อน insert ที่สร้างย้อนจาก postimage แถวว่างท้ายสุด รูปแบบตัวเลขของรายการ notice และรายงาน
+
+**ผู้ปฏิบัติ** เรียก POST /admin/stable-sync/exact-daily-settlement ด้วย admin authorization และ x-malipang-expected-worker-version ที่ได้จากการตรวจ version ที่รับ traffic ทั้งหมด ณ เวลานั้น เปิด EXACT_DAILY_SETTLEMENT_ENABLED เฉพาะขั้นตอนนี้ ส่ง JSON ตามลำดับต่อไปนี้
+
+1. ส่ง `{"action":"INSPECT"}` เพื่ออ่าน fingerprint ของ incident ที่ตรงเงื่อนไขเพียงหนึ่งรายการ ค่า projectionState คือ IN_FLIGHT หรือ VERIFIED หากได้รับ VERIFIED ให้ตรวจ preimageDigest เทียบผล PROBE ที่เก็บไว้
+2. ส่ง `{"action":"PROBE","fingerprint":"<hash จาก INSPECT>"}` ต้องได้ MATCHED พร้อม preimageDigest รักษารั้วผู้เขียนตลอดการตรวจ การอ่านซ้ำช่วยตรวจการเปลี่ยนระหว่างรอบ ขอบเขตหลักฐาน DAILY ครอบคลุมสูตร ค่าและรูปแบบตัวเลขที่ระบุ การตรวจนี้ไม่ได้เก็บ notes, validation, protection หรือ comment anchor ของทั้ง grid
+3. ก่อน SETTLE ยืนยันสิทธิ์และ gate การเปลี่ยน Production ตาม AGENTS.md ใช้ version ที่รับ traffic ทั้งหมด เปิด STABLE_RECOVERY_GATE_ENABLED ปิด monthly operator และ normal auto-arm และตรวจการสิ้นสุด invocation เดิม ตรวจการพักผู้เขียนภายนอกและผู้ดูแลที่เฝ้าดูในขณะนั้นอีกครั้ง หลังเปลี่ยน Worker ให้ทำ INSPECT และ PROBE สด
+4. ส่ง `{"action":"SETTLE","fingerprint":"<hash>","preimageDigest":"<hash จาก PROBE>","externalWritersFenced":true,"ownerSupervising":true}` ตัวดำเนินการตรวจ Google ใหม่ทั้งหมดก่อนบันทึก journal VERIFIED และ preimage ใน D1 transaction เดียว โดยตรวจ exact failed job/claim/source revision และสถานะเดิมภายใน UPDATE
+5. ตรวจ INSPECT อีกครั้ง ต้องได้ fingerprint และ preimageDigest ตรงกับ PROBE ตรวจว่า synced job กับ claim เดิมยัง REVIEW, failed job ยัง OPEN, ไม่มี epoch ที่ active, ไม่มีการเพิ่มธุรกรรมหรือเปลี่ยน notice จากขั้นตอนนี้ หากได้รับ UNCERTAIN หรือไม่ได้คำตอบ ให้ตรวจด้วย INSPECT อย่างเดียวและคง gate ต่อไป อย่าส่ง SETTLE ซ้ำจากผลที่ไม่ชัดเจน
+
+**ทดสอบและกู้ต่อ** กรณีจำลองใช้ Miniflare D1 ตรวจผลรับ ACK, ACK หายหลัง commit, rollback ภายใน batch, failed job เปลี่ยนก่อน CAS และการส่งคำขอเก่าหลัง VERIFIED หลังบันทึกให้คง journal และ preimage ซึ่งย้อนค่าไม่ได้ตาม trigger หากขั้นตอนถัดไปยังไม่พร้อม ให้คง claim และงานเดิมใน REVIEW และปิด operator เพื่อระงับการเรียกเพิ่มเติม การย้าย claim, ปล่อย notice และอนุญาตงานทดสอบตัวถัดไปต้องมีหลักฐานและการตรวจผลแยกต่างหาก

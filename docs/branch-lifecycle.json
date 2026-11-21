@@ -7535,6 +7535,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:10:38Z",
       "reason": "Supporting Issue 296 read-only diagnostics after PREVIEW reported a grid HTTP error; identifies the failed GET before a separately tested fix. Snapshot is the branch base before this change and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-exact-held-proof-20261122",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:49:12Z",
+      "reason": "Supporting Issue 296 branch from synchronized main for the original DAILY projection only. Integration target is the named queue recovery change after independent review. Worker and queue state require separate provider verification."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

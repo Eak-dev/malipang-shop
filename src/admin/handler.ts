@@ -142,11 +142,12 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/canary-daily-incident'&&env.CANARY_UNWRITTEN_RECOVERY_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as unknown;
       const action=body&&typeof body==='object'&&!Array.isArray(body)&&Object.keys(body).length===1?(body as {action?:unknown}).action:null;
-      if(action!=='VERIFY'&&action!=='TIME'&&action!=='TIME_READBACK'&&action!=='STATUS'&&action!=='COMMIT')return Response.json({ok:false,error:'CANARY_DAILY_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
+      if(action!=='VERIFY'&&action!=='TIME'&&action!=='TIME_READBACK'&&action!=='PROBE_STATUS'&&action!=='STATUS'&&action!=='COMMIT')return Response.json({ok:false,error:'CANARY_DAILY_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
+      const diagnostic=action==='PROBE_STATUS'?{stage:'PRECHECK',remaining:-1}:undefined;
       try{
-        const outcome=await closeExactCanaryDailyIncident(env,action),ok=outcome==='IN_PROGRESS'||outcome==='RESUMED';
-        return Response.json({ok,action,outcome,servedVersion:served},{status:ok?200:409,headers:{'cache-control':'no-store'}});
-      }catch{return Response.json({ok:false,error:'CANARY_DAILY_UNVERIFIED_NO_RETRY',servedVersion:served},{status:409,headers:{'cache-control':'no-store'}});}
+        const outcome=await closeExactCanaryDailyIncident(env,action,diagnostic),ok=outcome==='IN_PROGRESS'||outcome==='RESUMED'||outcome==='READY';
+        return Response.json({ok,action,outcome,...(diagnostic?{diagnostic}:{}),servedVersion:served},{status:ok?200:409,headers:{'cache-control':'no-store'}});
+      }catch{return Response.json({ok:false,error:'CANARY_DAILY_UNVERIFIED_NO_RETRY',...(diagnostic?{diagnostic}:{}),servedVersion:served},{status:409,headers:{'cache-control':'no-store'}});}
     }
     // R6: default off, so the route is absent (404) exactly as on main.
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/expense-provider-diagnostic'&&env.EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED==='true'){

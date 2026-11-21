@@ -6,6 +6,7 @@ const phases={
  VERIFY:{before:['IN_FLIGHT',null],after:['VERIFIED',null]},
  TIME:{before:['VERIFIED',null],after:['VERIFIED','TIME_IN_FLIGHT']},
  TIME_READBACK:{before:['VERIFIED','TIME_IN_FLIGHT'],after:['VERIFIED','TIME_VERIFIED']},
+ PROBE_STATUS:{before:['VERIFIED','TIME_VERIFIED'],after:['VERIFIED','TIME_VERIFIED']},
  STATUS:{before:['VERIFIED','TIME_VERIFIED'],after:['VERIFIED','STATUS_ACKED']},
  COMMIT:{before:['VERIFIED','STATUS_ACKED'],after:['VERIFIED','COMPLETE']}
 };
@@ -45,7 +46,8 @@ async function main(){
  verifyState(phase,await read());console.log('DAILY_PRECHECK: PASS');
  let response;try{response=await fetch(base+'/admin/stable-sync/canary-daily-incident',{method:'POST',headers:{Authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'Content-Type':'application/json','x-malipang-expected-worker-version':workerVersion},body:JSON.stringify({action:phase}),redirect:'error',signal:AbortSignal.timeout(240000)});}catch{fail('DAILY_OUTCOME_UNKNOWN_NO_RETRY')}
  let result;try{result=await response.json()}catch{fail('DAILY_OUTCOME_UNKNOWN_NO_RETRY')}
- if(!response.ok||result?.ok!==true||result.action!==phase||result.outcome!==(phase==='COMMIT'?'RESUMED':'IN_PROGRESS')||result.servedVersion!==workerVersion)fail('DAILY_OUTCOME_UNVERIFIED_NO_RETRY');
+ if(phase==='PROBE_STATUS'&&result?.ok===false){const d=result.diagnostic;if(/^(PRECHECK|AUTH|SCOPE|ACTIVATION|D1_EVIDENCE|SOURCE|GRID|SNAPSHOT|LEGACY|FORMAT|NOTICE|POSTIMAGE|ACCOUNTING|CARRIER|REPORT|FINAL_READS|RETAINED|NOTICE_STYLE)$/.test(d?.stage||'')&&Number.isInteger(d.remaining)&&d.remaining>=-1&&d.remaining<=40)console.log(`DAILY_PROBE_${d.stage}_REMAINING_${d.remaining}`);}
+ if(!response.ok||result?.ok!==true||result.action!==phase||result.outcome!==(phase==='COMMIT'?'RESUMED':phase==='PROBE_STATUS'?'READY':'IN_PROGRESS')||result.servedVersion!==workerVersion)fail('DAILY_OUTCOME_UNVERIFIED_NO_RETRY');
  try{verifyState(phase,await read(),true)}catch{fail('DAILY_POSTSTATE_UNVERIFIED_NO_RETRY')}
  console.log(`DAILY_${phase}: PASS; WORKER_MATCH; D1_READBACK_PASS`);
 }

@@ -14,6 +14,7 @@ test('every phase requires exact durable preimage and readback',()=>{
  for(const [phase,before,after] of [
   ['VERIFY',base,verified],['TIME',verified,{...verified,notice:'TIME_IN_FLIGHT',notice_count:1}],
   ['TIME_READBACK',{...verified,notice:'TIME_IN_FLIGHT',notice_count:1},{...verified,notice:'TIME_VERIFIED',notice_count:1}],
+  ['PROBE_STATUS',{...verified,notice:'TIME_VERIFIED',notice_count:1},{...verified,notice:'TIME_VERIFIED',notice_count:1}],
   ['STATUS',{...verified,notice:'TIME_VERIFIED',notice_count:1},{...verified,notice:'STATUS_ACKED',notice_count:1}],
   ['COMMIT',{...verified,notice:'STATUS_ACKED',notice_count:1},{...verified,notice:'COMPLETE',notice_count:1,claims:0,admissions:0,verified_admissions:1,job:'PENDING'}]
  ]){

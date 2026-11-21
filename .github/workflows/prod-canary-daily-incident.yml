@@ -6,7 +6,7 @@ on:
         description: One exact incident phase; never retry an uncertain outcome
         required: true
         type: choice
-        options: [VERIFY, TIME, TIME_READBACK, STATUS, COMMIT]
+        options: [VERIFY, TIME, TIME_READBACK, PROBE_STATUS, STATUS, COMMIT]
       expected_sha:
         description: Exact reviewed main SHA
         required: true

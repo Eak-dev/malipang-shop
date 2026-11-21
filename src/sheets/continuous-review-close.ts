@@ -272,6 +272,48 @@ export async function closeExactCanaryRawIncident(env:Env & {CANARY_UNWRITTEN_RE
  return closePhase(env,job,x.operation_token,budget,'REVIEW');
 }
 
+/** Exact synthetic Undo RAW timeout: authenticate the provider postimage and
+ * close one review without resending the uncertain cancellation request. */
+export async function closeExactCanaryRawUndoIncident(env:Env & {CANARY_UNWRITTEN_RECOVERY_ENABLED?:string;CONTINUOUS_CANARY_OPERATOR_ENABLED?:string},phase:'VERIFY'|'TIME'|'TIME_READBACK'|'PROBE_STATUS'|'STATUS'|'COMMIT'):Promise<ReviewCloseOutcome|'READY'>{
+ if(env.CANARY_UNWRITTEN_RECOVERY_ENABLED!=='true'||env.CONTINUOUS_CANARY_OPERATOR_ENABLED!=='true'||env.CONTINUOUS_PUBLICATION_ENABLED==='true'||env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true')return 'DISABLED';
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book)return 'HELD';
+ const expected={VERIFY:null,TIME:null,TIME_READBACK:'TIME_IN_FLIGHT',PROBE_STATUS:'TIME_VERIFIED',STATUS:'TIME_VERIFIED',COMMIT:'STATUS_ACKED'} as const;if(!Object.hasOwn(expected,phase))return 'HELD';
+ const rows=await db.prepare(`SELECT c.expense_id,c.trace_id,w.operation_token,p.state projection_state,n.state notice_state
+ FROM continuous_canary_operator c JOIN expense_events src ON src.expense_id=c.expense_id AND src.status='CANCELLED' AND src.version=2
+ JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=c.expense_id AND j.entity_version=2 AND j.status='REVIEW' AND j.last_error='STABLE_SYNC_REVIEW' AND j.lease_token IS NULL AND j.lease_until IS NULL
+ JOIN sync_jobs old ON old.entity_type='EXPENSE' AND old.entity_key=c.expense_id AND old.entity_version=1 AND old.status='COMPLETED'
+ JOIN stable_workbook_claims w ON w.spreadsheet_id=c.spreadsheet_id AND w.state='REVIEW' AND w.phase='OPERATION' AND w.review_reason='TIMEOUT'
+ JOIN stable_recovery_epochs e ON e.spreadsheet_id=c.spreadsheet_id AND e.target_type='EXPENSE' AND e.target_key=c.expense_id AND e.target_version=2 AND e.state='ARMED'
+ JOIN stable_recovery_operations o ON o.epoch_id=e.epoch_id AND o.operation_token=w.operation_token AND o.state='ADMITTED'
+ JOIN stable_expense_cancellation_writes p ON p.spreadsheet_id=c.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=c.expense_id AND p.projection='EXPENSE_RAW' AND p.cancellation_version=2 AND p.previous_version=1 AND p.operation_token=w.operation_token AND p.state IN ('IN_FLIGHT','VERIFIED')
+ JOIN stable_projection_writes original ON original.spreadsheet_id=p.spreadsheet_id AND original.entity_type=p.entity_type AND original.entity_id=p.entity_id AND original.projection=p.projection AND original.source_version=1 AND original.state='VERIFIED'
+ JOIN continuous_ledger_write_evidence d ON d.spreadsheet_id=p.spreadsheet_id AND d.entity_id=p.entity_id AND d.projection=p.projection AND d.operation_kind='CANCEL' AND d.source_version=p.cancellation_version AND d.operation_token=p.operation_token AND d.sheet_id=original.sheet_id AND d.sheet_name=original.sheet_name AND d.sheet_id=2026111901 AND d.sheet_name='V52_EXPENSE_RAW_ต่อเนื่อง' AND d.target_row=2 AND d.before_rows=1000 AND d.write_mode='REPLACE'
+ JOIN stable_expense_cancellation_writes daily ON daily.spreadsheet_id=c.spreadsheet_id AND daily.entity_type='EXPENSE' AND daily.entity_id=c.expense_id AND daily.projection='DAILY' AND daily.cancellation_version=2 AND daily.state='VERIFIED'
+ JOIN canary_completed_recovery previous ON previous.spreadsheet_id=c.spreadsheet_id AND previous.expense_id=c.expense_id AND previous.state='COMPLETE'
+ LEFT JOIN continuous_review_notice_close n ON n.spreadsheet_id=c.spreadsheet_id AND n.operation_token=w.operation_token
+ WHERE c.spreadsheet_id=? AND c.state='ARMED_UNDO' AND src.description='[SYSTEM TEST] Synthetic expense - cancel after verification' AND src.amount_satang=100 AND src.trace_id=c.trace_id AND src.line_user_id=c.line_user_id
+ AND (n.operation_token IS NULL OR (n.expense_id=c.expense_id AND n.source_version=2 AND n.epoch_id=e.epoch_id AND n.projection='EXPENSE_RAW' AND n.journal_entity=c.expense_id AND n.operation_kind='CANCEL' AND n.claim_mode='REVIEW'))
+ AND (SELECT count(*) FROM continuous_canary_operator)=1 AND (SELECT count(*) FROM stable_workbook_claims)=1 AND (SELECT count(*) FROM stable_recovery_epochs WHERE state IN ('ARMED','REVIEW'))=1 AND (SELECT count(*) FROM stable_recovery_operations WHERE state='ADMITTED')=1
+ AND NOT EXISTS(SELECT 1 FROM sync_jobs other WHERE other.entity_type='EXPENSE' AND other.entity_key=c.expense_id AND other.entity_version NOT IN (1,2))
+ AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM staff_config_sync_outbox WHERE status='PROCESSING')
+ AND NOT EXISTS(SELECT 1 FROM stable_projection_writes WHERE state<>'VERIFIED')
+ AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes other WHERE other.state<>'VERIFIED' AND NOT(other.spreadsheet_id=p.spreadsheet_id AND other.entity_type='EXPENSE' AND other.entity_id=p.entity_id AND other.projection='EXPENSE_RAW' AND other.operation_token=p.operation_token))
+ AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key='EXPENSE:'||c.expense_id||':2' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`).bind(book).all<{expense_id:string;trace_id:string;operation_token:string;projection_state:string;notice_state:string|null}>();
+ if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||rows.success!==true||rows.results?.length!==1)return 'HELD';const x=rows.results[0]!;
+ if(!/^exp_canary_[a-f0-9]{32}$/.test(x.expense_id)||!/^trace_canary_[a-f0-9]{32}$/.test(x.trace_id)||!x.operation_token||x.notice_state!==expected[phase]||x.projection_state!==(phase==='VERIFY'?'IN_FLIGHT':'VERIFIED'))return 'HELD';
+ const job:SheetsSyncJob={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:x.expense_id,entityVersion:2,traceId:x.trace_id},budget=new ReviewRequestBudget(40),policy:ContinuousSheetsReadPolicy={kind:'continuous-expense',budget};
+ if(phase==='VERIFY')return await verifyReviewedLedgerProjection(env,job,x.operation_token,'EXPENSE_RAW','CANCEL',undefined,'PAUSED',policy,'REVIEW')?'IN_PROGRESS':'HELD';
+ if(phase==='PROBE_STATUS'){
+  let ticket:{release:()=>void}|undefined;
+  try{const intent=await readIntent(env,book,x.operation_token),revision=await sourceRevision(env),selected=await expectedReady(env,'REVIEW');
+   if(!intent||revision===null||!selected||!budget.reserveMutation())return 'HELD';await getGoogleAccessToken(env,budget);ticket=budget.claimMutation();
+   if(!await verifyReviewedLedgerProjection(env,job,x.operation_token,'EXPENSE_RAW','CANCEL',undefined,'PAUSED',policy,'REVIEW'))return 'HELD';
+   if(await expectedReady(env,'REVIEW')!==selected||revision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent.notice_identity,paused,intent.next_stamp,budget)!==intent.style_digest||revision!==await sourceRevision(env)||env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book)return 'HELD';return 'READY';
+  }finally{ticket?.release();budget.releaseMutation();}
+ }
+ return closePhase(env,job,x.operation_token,budget,'REVIEW');
+}
+
 async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRequestBudget,authority:NormalNoticeAuthority,allowExtraBlankTail=false):Promise<ReviewCloseOutcome>{
  const policy:ContinuousSheetsReadPolicy={kind:'continuous-expense',budget};
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=scope(env),identity=JSON.stringify([job.kind,job.entityType,job.entityKey,job.entityVersion]),stable=()=>env.DB===db&&scope(env)===initial&&JSON.stringify([job.kind,job.entityType,job.entityKey,job.entityVersion])===identity;

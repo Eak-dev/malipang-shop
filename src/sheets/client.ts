@@ -36,7 +36,7 @@ export async function retryIdempotentRead(read:()=>Promise<Response>,allowInClai
 type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
 /** Explicit opt-in for continuous expense operations. Other callers retain the
  * pre-existing read behavior, including their own retry and body handling. */
-export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense';readonly budget?:ReviewRequestBudget;readonly oauthLease?:GoogleOAuthLease};
+export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense';readonly budget?:ReviewRequestBudget;readonly oauthLease?:GoogleOAuthLease;readonly postWriteRead?:true};
 export const continuousSheetsReadPolicy:ContinuousSheetsReadPolicy=Object.freeze({kind:'continuous-expense'});
 async function readContinuousSheetsBody(response:Response,remainingMs:number,label:string):Promise<Uint8Array>{
   try{return await readSheetsBody(response,remainingMs,label);}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
@@ -50,7 +50,7 @@ async function sheetsFetch(env:Env,path:string,init:RequestInit,mutation=false,b
   // Run the caller's final CAS only after auth, immediately before the Sheet
   // request can be dispatched, so that wait is outside the mutation fence.
   if(mutation&&beforeMutationDispatch)await beforeMutationDispatch();
-  const timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),label=`Google Sheets ${init.method||"GET"}`;let deadline=0;
+  const baseTimeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),timeout=!mutation&&readPolicy?.postWriteRead===true?Math.max(baseTimeout,45000):baseTimeout,label=`Google Sheets ${init.method||"GET"}`;let deadline=0;
   // Manual prevents redirect forwarding and is supported by Workers; every
   // 3xx is non-OK and follows the ordinary fail-closed error path below.
   const send=()=>{(readPolicy?.oauthLease??mutationLease)?.tokenFor(env);if(ticket)ticket.consume();else budget?.consumeRead();deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SPREADSHEET_ID}${path}`,{...init,headers,...(budget?{redirect:"manual" as RequestRedirect}:{})},timeout,label);};

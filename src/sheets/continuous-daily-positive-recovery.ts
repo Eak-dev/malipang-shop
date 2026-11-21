@@ -46,7 +46,7 @@ export async function verifyReviewedDailyProjection(env:Env,job:SheetsSyncJob,op
  const source=await readReviewedDailyExpenseSource(env,job,operationToken,authority);if(!source||source.digest!==row.source_digest||!stable())return false;
  const record=planStableExpenseProjections(source).record,date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(record.transactionDate);if(!date||!paymentOptionForPair(record.paymentKey,record.sourceWallet))return false;
  const grid=await getSheetGridInfo(env,target.sheet,policy),coords={sheetId:row.sheet_id,row:row.target_row,rowCount:row.before_rows,columnCount:row.before_columns};
- if(grid.sheetId!==row.sheet_id||grid.columnCount!==row.before_columns||!(grid.rowCount===row.before_rows+1||allowExtraBlankTail&&grid.rowCount===row.before_rows+2)||!stable())return false;
+ if(grid.sheetId!==row.sheet_id||grid.columnCount!==row.before_columns||grid.rowCount!==row.before_rows+(allowExtraBlankTail?2:1)||!stable())return false;
  const range=`'${target.sheet.replace(/'/g,"''")}'!A1:${columnName(grid.columnCount)}${grid.rowCount}`;
  const take=async()=>{const a=await getSheetGridInfo(env,target.sheet,policy),f=await batchGetSheetFormulaValues(env,[range],policy),e=await batchGetSheetEffectiveSerialValues(env,[range],policy),b=await getSheetGridInfo(env,target.sheet,policy);if(!stable()||JSON.stringify(a)!==JSON.stringify(grid)||JSON.stringify(b)!==JSON.stringify(grid)||f.length!==1||e.length!==1)throw Error('DAILY_POSITIVE_READ_UNVERIFIED');return {formula:f[0]!,effective:e[0]!};};
  const snapshot=await take(),payment=verifiedInsertDailyPayment(snapshot.formula,record.paymentKey,Number(date[1]),Number(date[2]),Number(date[3]));

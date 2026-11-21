@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 
 const require=createRequire(import.meta.url);
@@ -52,6 +54,12 @@ test('two notice cells close in separate guarded phases before exact D1 resume',
  assert.equal(h.sqlite.prepare("SELECT state FROM continuous_review_notice_close").get().state,'COMPLETE');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  assert.equal(h.sqlite.prepare('SELECT status FROM sync_jobs').get().status,'PENDING');assert.equal(h.sqlite.prepare('SELECT state FROM stable_recovery_operations').get().state,'VERIFIED');assert.equal(h.sqlite.prepare('SELECT state FROM stable_recovery_epochs').get().state,'ARMED');
  assert.equal(await h.run(),'ALREADY_COMPLETED');assert.equal(h.get().writes,2);
+ }finally{h.close();}});
+test('reviewed daily notice-close statements compile at the D1 expression limit',async()=>{const h=fixture(),sql=[],prepare=h.DB.prepare;try{
+ h.DB.prepare=function(statement){sql.push(statement);return prepare.call(this,statement)};
+ assert.equal(await h.run(),'RESUMED');assert.ok(sql.some(x=>x.includes('UPDATE stable_recovery_operations')));
+ const check=spawnSync('python3',[fileURLToPath(new URL('./helpers/sqlite-expression-limit.py',import.meta.url))],{input:JSON.stringify(sql),encoding:'utf8'});
+ assert.equal(check.status,0,check.stderr||check.error?.message);
  }finally{h.close();}});
 for(const mode of ['time-not-applied','status-not-applied'])test(`${mode} never replays the uncertain notice write`,async()=>{const h=fixture();try{
  h.setMode(mode);assert.equal(await h.run(),'HELD');const before=h.get().writes;assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.get().status,'พักแก้ไฟล์');

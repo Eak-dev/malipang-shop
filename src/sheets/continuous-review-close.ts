@@ -60,10 +60,10 @@ async function findStage(env:Env,job:SheetsSyncJob,token:string,authority:Normal
  const s=rows.results[0]!;if(!s.notice_stamp||!s.notice_identity||!['DAILY','EXPENSE_RAW','DETAIL','FINAL','PUBLICATION'].includes(s.projection)||!['CONFIRM','CANCEL'].includes(s.operation_kind)||(s.projection==='PUBLICATION'?!s.journal_entity:s.projection==='DETAIL'?!s.journal_entity.startsWith(`${job.entityKey}|`):s.journal_entity!==job.entityKey))return null;
  return s;
 }
-async function verifyStage(env:Env,job:SheetsSyncJob,token:string,s:Stage,mode:'PAUSED'|'REVIEW_READY',policy:ContinuousSheetsReadPolicy,authority:NormalNoticeAuthority):Promise<boolean>{
+async function verifyStage(env:Env,job:SheetsSyncJob,token:string,s:Stage,mode:'PAUSED'|'REVIEW_READY',policy:ContinuousSheetsReadPolicy,authority:NormalNoticeAuthority,allowExtraBlankTail=false):Promise<boolean>{
  if(s.projection==='PUBLICATION')return (authority==='HANDOFF'||authority==='REVIEW'&&s.operation_kind==='CANCEL'&&env.CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED==='true')&&verifyPublicationHandoff(env,job,token,s.journal_entity,mode,policy,authority);
  if(s.projection==='FINAL')return authority==='HANDOFF'&&verifyFinalHandoff(env,job,token,mode,policy);
- if(s.projection==='DAILY')return s.operation_kind==='CONFIRM'?verifyReviewedDailyProjection(env,job,token,mode,policy,authority):verifyReviewedDailyCancellation(env,job,token,mode,policy,authority);
+ if(s.projection==='DAILY')return s.operation_kind==='CONFIRM'?verifyReviewedDailyProjection(env,job,token,mode,policy,authority,allowExtraBlankTail):verifyReviewedDailyCancellation(env,job,token,mode,policy,authority);
  const item=s.projection==='DETAIL'?s.journal_entity.slice(job.entityKey.length+1):undefined;
  return verifyReviewedLedgerProjection(env,job,token,s.projection,s.operation_kind,item,mode,policy,authority);
 }
@@ -178,7 +178,42 @@ export async function closeReviewedContinuousExpense(env:Env,job:SheetsSyncJob,t
  if(authority==='HANDOFF'&&!normalNoticeHandoffEnabled(env))return 'DISABLED';
  try{return await closePhase(env,job,token,budget,authority);}catch(error){if(error instanceof ReviewRequestBudgetError&&authority!=='HANDOFF')return 'HELD';throw error;}
 }
-async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRequestBudget,authority:NormalNoticeAuthority):Promise<ReviewCloseOutcome>{
+
+/** Only the one synthetic #296 DAILY insert with a positively verified
+ * extra blank tail. No IDs are accepted from callers and no generic review
+ * dispatcher is enabled. One explicit phase per invocation. */
+export async function closeExactCanaryDailyIncident(env:Env & {CANARY_UNWRITTEN_RECOVERY_ENABLED?:string;CONTINUOUS_CANARY_OPERATOR_ENABLED?:string},phase:'VERIFY'|'TIME'|'TIME_READBACK'|'STATUS'|'COMMIT'):Promise<ReviewCloseOutcome>{
+ if(env.CANARY_UNWRITTEN_RECOVERY_ENABLED!=='true'||env.CONTINUOUS_CANARY_OPERATOR_ENABLED!=='true'||env.CONTINUOUS_PUBLICATION_ENABLED==='true'||env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true')return 'DISABLED';
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book)return 'HELD';
+ const expected={VERIFY:null,TIME:null,TIME_READBACK:'TIME_IN_FLIGHT',STATUS:'TIME_VERIFIED',COMMIT:'STATUS_ACKED'} as const;
+ if(!Object.hasOwn(expected,phase))return 'HELD';
+ const rows=await db.prepare(`SELECT c.expense_id,c.trace_id,w.operation_token,p.state projection_state,n.state notice_state
+ FROM continuous_canary_operator c JOIN expense_events src ON src.expense_id=c.expense_id AND src.status='CONFIRMED' AND src.version=1
+ JOIN sync_jobs j ON j.entity_type='EXPENSE' AND j.entity_key=c.expense_id AND j.entity_version=1 AND j.status='REVIEW' AND j.last_error='STABLE_SYNC_REVIEW' AND j.lease_token IS NULL AND j.lease_until IS NULL
+ JOIN stable_workbook_claims w ON w.spreadsheet_id=c.spreadsheet_id AND w.state='REVIEW' AND w.phase='OPERATION' AND w.review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED'
+ JOIN stable_recovery_epochs e ON e.spreadsheet_id=c.spreadsheet_id AND e.target_type='EXPENSE' AND e.target_key=c.expense_id AND e.target_version=1 AND e.state='ARMED'
+ JOIN stable_recovery_operations o ON o.epoch_id=e.epoch_id AND o.operation_token=w.operation_token AND o.state='ADMITTED'
+ JOIN stable_projection_writes p ON p.spreadsheet_id=c.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=c.expense_id AND p.projection='DAILY' AND p.source_version=1 AND p.operation_token=w.operation_token AND p.state IN ('IN_FLIGHT','VERIFIED')
+ JOIN continuous_daily_write_evidence d ON d.spreadsheet_id=p.spreadsheet_id AND d.entity_id=p.entity_id AND d.source_version=p.source_version AND d.operation_token=p.operation_token AND d.source_digest=p.source_digest
+ JOIN atomic_daily_marker_reservations m ON m.spreadsheet_id=d.spreadsheet_id AND m.entity_id=d.entity_id AND m.sheet_id=d.sheet_id AND m.source_version=d.source_version AND m.operation_token=d.operation_token AND m.marker=d.marker
+ JOIN canary_unwritten_recovery previous ON previous.spreadsheet_id=c.spreadsheet_id AND previous.expense_id=c.expense_id AND previous.state='COMPLETE'
+ LEFT JOIN continuous_review_notice_close n ON n.spreadsheet_id=c.spreadsheet_id AND n.operation_token=w.operation_token
+ WHERE c.spreadsheet_id=? AND c.state='ARMED_CONFIRM' AND src.description='[SYSTEM TEST] Synthetic expense - cancel after verification' AND src.amount_satang=100 AND src.trace_id=c.trace_id AND src.line_user_id=c.line_user_id
+ AND (n.operation_token IS NULL OR (n.expense_id=c.expense_id AND n.source_version=1 AND n.epoch_id=e.epoch_id AND n.projection='DAILY' AND n.journal_entity=c.expense_id AND n.operation_kind='CONFIRM' AND n.claim_mode='REVIEW'))
+ AND (SELECT count(*) FROM continuous_canary_operator)=1 AND (SELECT count(*) FROM stable_workbook_claims)=1 AND (SELECT count(*) FROM stable_recovery_epochs WHERE state IN ('ARMED','REVIEW'))=1 AND (SELECT count(*) FROM stable_recovery_operations WHERE state='ADMITTED')=1
+ AND NOT EXISTS(SELECT 1 FROM sync_jobs other WHERE other.entity_type='EXPENSE' AND other.entity_key=c.expense_id AND other.entity_version<>1)
+ AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM staff_config_sync_outbox WHERE status='PROCESSING')
+ AND NOT EXISTS(SELECT 1 FROM stable_projection_writes other WHERE other.state<>'VERIFIED' AND NOT(other.spreadsheet_id=p.spreadsheet_id AND other.entity_type='EXPENSE' AND other.entity_id=p.entity_id AND other.projection='DAILY' AND other.operation_token=p.operation_token))
+ AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes WHERE state<>'VERIFIED')
+ AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key='EXPENSE:'||c.expense_id||':1' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`).bind(book).all<{expense_id:string;trace_id:string;operation_token:string;projection_state:string;notice_state:string|null}>();
+ if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||rows.success!==true||rows.results?.length!==1)return 'HELD';
+ const x=rows.results[0]!;
+ if(!/^exp_canary_[a-f0-9]{32}$/.test(x.expense_id)||!/^trace_canary_[a-f0-9]{32}$/.test(x.trace_id)||!x.operation_token||x.notice_state!==expected[phase]||x.projection_state!==(phase==='VERIFY'?'IN_FLIGHT':'VERIFIED'))return 'HELD';
+ const job:SheetsSyncJob={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:x.expense_id,entityVersion:1,traceId:x.trace_id},budget=new ReviewRequestBudget(40);
+ if(phase==='VERIFY')return await verifyReviewedDailyProjection(env,job,x.operation_token,'PAUSED',{kind:'continuous-expense',budget},'REVIEW',true)?'IN_PROGRESS':'HELD';
+ return closePhase(env,job,x.operation_token,budget,'REVIEW',true);
+}
+async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRequestBudget,authority:NormalNoticeAuthority,allowExtraBlankTail=false):Promise<ReviewCloseOutcome>{
  const policy:ContinuousSheetsReadPolicy={kind:'continuous-expense',budget};
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=scope(env),identity=JSON.stringify([job.kind,job.entityType,job.entityKey,job.entityVersion]),stable=()=>env.DB===db&&scope(env)===initial&&JSON.stringify([job.kind,job.entityType,job.entityKey,job.entityVersion])===identity;
  if(env.SHEETS_SYNC_ENABLED!=='true'||!book||env.SHEET_EXPENSE_DAILY!=='รายวัน'||env.STABLE_PHASE1_ENABLED!=='true'||env.STABLE_RECOVERY_GATE_ENABLED!=='true'||env.STABLE_SHEETS_PACING_ENABLED!=='true'||env.CONTINUOUS_DAILY_ENABLED!=='true'||job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(job.entityKey)||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1||!token)return 'HELD';
@@ -197,7 +232,7 @@ async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRe
   try{
    await batchUpdateSpreadsheetWithReply(env,[request(2,stage.notice_stamp,next)],async()=>{
     const revision=await sourceRevision(env);
-    if(revision===null||await expectedReady(env,readyAuthority,needsNonce?nonceHex:undefined)!==ready||!await verifyStage(env,job,token,stage,'PAUSED',policy,authority)||revision!==await sourceRevision(env)||!stable())throw Error('REVIEW_CLOSE_TIME_PREIMAGE');
+    if(revision===null||await expectedReady(env,readyAuthority,needsNonce?nonceHex:undefined)!==ready||!await verifyStage(env,job,token,stage,'PAUSED',policy,authority,allowExtraBlankTail)||revision!==await sourceRevision(env)||!stable())throw Error('REVIEW_CLOSE_TIME_PREIMAGE');
     const style=await stableNoticeStyleFingerprint(env,stage.notice_identity,paused,stage.notice_stamp,budget);
     if(!style||revision!==await sourceRevision(env)||!stable())throw Error('REVIEW_CLOSE_TIME_NOTICE');
     const created=await db.prepare(`INSERT INTO continuous_review_notice_close(operation_token,spreadsheet_id,epoch_id,expense_id,source_version,projection,journal_entity,operation_kind,claim_mode,ready_status,notice_identity,paused_stamp,next_stamp,style_digest,state,created_at,updated_at) SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,'TIME_IN_FLIGHT',strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${integrity} AND EXISTS(SELECT 1 FROM stable_source_revision WHERE singleton=1 AND revision=?)`).bind(token,book,stage.epoch_id,job.entityKey,job.entityVersion,stage.projection,stage.journal_entity,stage.operation_kind,authority,ready,stage.notice_identity,stage.notice_stamp,next,style,revision).run();
@@ -224,7 +259,7 @@ async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRe
   try{
    const reply=await batchUpdateSpreadsheetWithReply(env,[request(1,paused,selected)],async()=>{
     const revision=await sourceRevision(env);
-    if(revision===null||await expectedReady(env,readyAuthority,needsNonce?intent!.next_stamp.slice(-32):undefined)!==selected||!await verifyStage(env,job,token,stage,'PAUSED',policy,authority)||revision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent!.notice_identity,paused,intent!.next_stamp,budget)!==intent!.style_digest||revision!==await sourceRevision(env)||!stable())throw Error('REVIEW_CLOSE_STATUS_PREIMAGE');
+    if(revision===null||await expectedReady(env,readyAuthority,needsNonce?intent!.next_stamp.slice(-32):undefined)!==selected||!await verifyStage(env,job,token,stage,'PAUSED',policy,authority,allowExtraBlankTail)||revision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent!.notice_identity,paused,intent!.next_stamp,budget)!==intent!.style_digest||revision!==await sourceRevision(env)||!stable())throw Error('REVIEW_CLOSE_STATUS_PREIMAGE');
     const updated=await db.batch([
      db.prepare(`INSERT INTO continuous_notice_status_attempts(operation_token,spreadsheet_id,initial_ready_status,dispatch_ready_status,next_stamp,source_revision,created_at) SELECT ?,?,?,?,?,?,strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE ${integrity}`).bind(token,book,intent!.ready_status,selected,intent!.next_stamp,revision),
      db.prepare(`UPDATE continuous_review_notice_close SET state='STATUS_IN_FLIGHT',ready_status=?,source_revision=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='TIME_VERIFIED' AND changes()=1 AND ${integrity} AND EXISTS(SELECT 1 FROM stable_source_revision WHERE singleton=1 AND revision=?) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE spreadsheet_id=? AND operation_token=? AND ${reviewedClaimState('c',authority)} AND notice_stamp=? AND notice_identity=?)`).bind(selected,revision,book,token,revision,book,token,intent!.next_stamp,intent!.notice_identity),
@@ -249,7 +284,7 @@ async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRe
   if(publicationEnabled&&(!marker||!stable()))return 'HELD';
   const markerGuard=publicationEnabled?finalPublicationCommitGuard:'';
  const currentRevision=await sourceRevision(env);
- if(currentRevision===null||await expectedReady(env,readyAuthority,needsNonce?intent.next_stamp.slice(-32):undefined)!==intent.ready_status||await stableNoticeStyleFingerprint(env,intent.notice_identity,intent.ready_status,intent.next_stamp,budget)!==intent.style_digest||!await verifyStage(env,job,token,stage,'REVIEW_READY',policy,authority)||currentRevision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent.notice_identity,intent.ready_status,intent.next_stamp,budget)!==intent.style_digest||!stable())return 'HELD';
+ if(currentRevision===null||await expectedReady(env,readyAuthority,needsNonce?intent.next_stamp.slice(-32):undefined)!==intent.ready_status||await stableNoticeStyleFingerprint(env,intent.notice_identity,intent.ready_status,intent.next_stamp,budget)!==intent.style_digest||!await verifyStage(env,job,token,stage,'REVIEW_READY',policy,authority,allowExtraBlankTail)||currentRevision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent.notice_identity,intent.ready_status,intent.next_stamp,budget)!==intent.style_digest||!stable())return 'HELD';
  if(stage.projection==='FINAL'){
   let finished:D1Result[];
   try{finished=await db.batch([

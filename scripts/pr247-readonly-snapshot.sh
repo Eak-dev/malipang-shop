@@ -75,6 +75,8 @@ if [[ "$mode" == B_* ]]; then
   epoch_sql="WITH target AS (SELECT * FROM stable_recovery_epochs WHERE epoch_id='$epoch_id' AND target_type='EXPENSE')
    SELECT (SELECT count(*) FROM target) AS epoch_found,
      (SELECT state FROM target LIMIT 1) AS epoch_state,
+     (SELECT created_at FROM target LIMIT 1) AS epoch_created_at,
+     (SELECT updated_at FROM target LIMIT 1) AS epoch_updated_at,
      (SELECT count(*) FROM stable_recovery_operations o JOIN target e ON o.epoch_id=e.epoch_id WHERE o.state='ADMITTED') AS unverified_ops,
      (SELECT count(*) FROM stable_recovery_operations o JOIN target e ON o.epoch_id=e.epoch_id WHERE o.state='VERIFIED') AS verified_ops,
      (SELECT count(*) FROM sync_jobs j JOIN target e ON j.entity_type=e.target_type AND j.entity_key=e.target_key AND j.entity_version=e.target_version WHERE j.status='COMPLETED') AS job_completed,

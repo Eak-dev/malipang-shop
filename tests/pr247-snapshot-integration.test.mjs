@@ -23,7 +23,7 @@ const g6 = '22222222-2222-4222-8222-222222222222';
 const prior = '310192aa-8a04-4b61-8a72-4455231b3339';
 const queue = 'synthetic-queue';
 
-function run(mode, d1Override, epochOverride) {
+function run(mode, d1Override, epochOverride, receiptOverride) {
   const dir = mkdtempSync(path.join(os.tmpdir(), 'mp248-snapshot-test-'));
   try {
     mkdirSync(path.join(dir, 'node_modules/.bin'), {recursive: true});
@@ -40,11 +40,12 @@ function run(mode, d1Override, epochOverride) {
       stale_held:0, unleased_inflight:0,
       canary_jobs_completed:isA?0:1, canary_daily:isA?0:1, canary_raw:isA?0:1, canary_detail:isA?0:1
     };
-    const epoch={epoch_found:1,epoch_state:'COMPLETE',unverified_ops:0,verified_ops:3,job_completed:1,daily:1,raw:1,detail:1};
-    const ownerReceipt={schema:'MP248_G7_RECEIPT_V1',state:'OWNER_VERIFIED',epoch_id:'syntheticEpoch01',
+    const epoch={epoch_found:1,epoch_state:'COMPLETE',epoch_created_at:'2020-01-01T00:01:10.000Z',epoch_updated_at:'2020-01-01T00:01:50.000Z',unverified_ops:0,verified_ops:3,job_completed:1,daily:1,raw:1,detail:1};
+    let ownerReceipt={schema:'MP248_G7_RECEIPT_V1',state:'OWNER_VERIFIED',epoch_id:'syntheticEpoch01',
       g5_sha:sha,g6a_worker_version:g5,expected_detail_count:1,g7_canary_verified:true,
       provider_readback_verified:true,no_duplicate_stable_ids:true,no_new_429_observed:true,
       gcp_quotas_checked:true,gcp_429_delta:0,owner_approved_g8:true};
+    if(receiptOverride)ownerReceipt=receiptOverride(ownerReceipt);
     const fixture = {
       receipt: {release:'PR247', state:'VERIFIED_COMPLETED', expected_sha:sha,
         prior_worker_version:prior, queue_was_active:true, queue_id:queue},
@@ -115,7 +116,7 @@ for (const mode of ['A_PRE','A_POST','B_PRE','B_POST']) test(mode+' realistic Wr
   assert.match(result.stdout, new RegExp('STAGE_GUARD_'+mode+'_PASS'));
   assert.equal(result.snapshot.d1.migration, '0023_stable_recovery_admission.sql');
   assert.equal(result.snapshot.d1.review,mode.startsWith('A_')?1:0);
-  assert.deepEqual(result.snapshot.epoch,mode.startsWith('A_')?null:{epoch_found:1,epoch_state:'COMPLETE',unverified_ops:0,verified_ops:3,job_completed:1,daily:1,raw:1,detail:1});
+  assert.deepEqual(result.snapshot.epoch,mode.startsWith('A_')?null:{epoch_found:1,epoch_state:'COMPLETE',epoch_created_at:'2020-01-01T00:01:10.000Z',epoch_updated_at:'2020-01-01T00:01:50.000Z',unverified_ops:0,verified_ops:3,job_completed:1,daily:1,raw:1,detail:1});
 });
 for (const [name,make] of [
   ['top-level object',d=>({success:true,results:[d]})],
@@ -150,3 +151,7 @@ for(const [label,change] of [
  const result=run('B_POST',d=>[{success:true,results:[change(d)]}]);
  assert.notEqual(result.status,0,result.stdout);assert.match(result.stderr,/NO_GO_STALE_WRITER_AFTER_GATE_EXIT/);
 });
+
+const acceptedRisk = r => {const x={...r,schema:'MP248_G7_RECEIPT_V2_RISK_ACCEPTED',monitoring_coverage:'PARTIAL_PROJECT_UNBOUND',monitoring_project:'malipang-backend',gcp_quotas_checked:false,gcp_429_delta:null,gcp_ingestion_lag_ms:null,owner_accepted_429_observability_risk:true,limited_observed_429:false,observation_source:'GCP_UI_UNBOUND_AND_WORKER_LOGS_PARTIAL',monitoring_window_start:'2020-01-01T00:00:00.000Z',canary_started_at:'2020-01-01T00:01:00.000Z',canary_completed_at:'2020-01-01T00:02:00.000Z',monitoring_window_end:'2020-01-01T00:03:00.000Z',observed_at:'2020-01-01T00:05:00.000Z'};delete x.no_new_429_observed;return x};
+test('B_PRE real snapshot shell emits explicit partial-monitoring marker',jqTestOptions,()=>{const r=run('B_PRE',undefined,undefined,acceptedRisk);assert.equal(r.status,0,r.stderr);assert.match(r.stdout,/MONITORING_PARTIAL_OWNER_RISK_ACCEPTED_NOT_429_ZERO/);assert.equal(r.snapshot.receipt.gcp_429_delta,null)});
+test('B_PRE risk exception rejects epoch outside receipt canary window',jqTestOptions,()=>{const r=run('B_PRE',undefined,e=>[{success:true,results:[{...e,epoch_updated_at:'2020-01-01T00:02:30.000Z'}]}],acceptedRisk);assert.notEqual(r.status,0);assert.doesNotMatch(r.stdout,/STAGE_GUARD_B_PRE_PASS/)});

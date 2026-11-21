@@ -17,6 +17,25 @@ function integer(value) {
 function val(x, key) { return x && typeof x === "object" ? x[key] : undefined; }
 function same(a, b) { return typeof a === "string" && a.length > 0 && a === b; }
 
+// Explicit V2 risk exception: unknown is recorded as null, never as measured zero.
+// Attested limited observations are NOT full Google provider coverage.
+function receiptMonitoring(r,epoch,nowMs=Date.now()) {
+  if(r?.schema === "MP248_G7_RECEIPT_V1") return r.no_new_429_observed === true && r.gcp_quotas_checked === true && r.gcp_429_delta === 0;
+  if(r?.schema !== "MP248_G7_RECEIPT_V2_RISK_ACCEPTED" ||
+     r.monitoring_coverage !== "PARTIAL_PROJECT_UNBOUND" ||
+     r.monitoring_project !== "malipang-backend" ||
+     r.gcp_quotas_checked !== false || r.gcp_429_delta !== null ||
+     r.gcp_ingestion_lag_ms !== null || r.no_new_429_observed !== undefined ||
+     r.owner_accepted_429_observability_risk !== true ||
+     r.limited_observed_429 !== false ||
+     r.observation_source !== "GCP_UI_UNBOUND_AND_WORKER_LOGS_PARTIAL") return false;
+  const fields=[r.monitoring_window_start,r.canary_started_at,r.canary_completed_at,r.monitoring_window_end,r.observed_at];
+  const times=fields.map(x=>{if(typeof x!=="string"||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(x))return NaN;const n=Date.parse(x);return Number.isFinite(n)&&new Date(n).toISOString()===x?n:NaN});
+  const utc=x=>typeof x==="string"&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(x)&&Number.isFinite(Date.parse(x))&&new Date(x).toISOString()===x?Date.parse(x):NaN;
+  const epochStart=utc(epoch?.epoch_created_at),epochEnd=utc(epoch?.epoch_updated_at);
+  return times.every(Number.isFinite) && times.every((x,i)=>i===0||x>=times[i-1]) && times[0]<times[3] && times[4]<=nowMs && Number.isFinite(epochStart) && Number.isFinite(epochEnd) && times[1]<=epochStart && epochStart<=epochEnd && epochEnd<=times[2];
+}
+
 export function verifyStage(mode, evidence) {
   guard(["A_PRE", "A_POST", "B_PRE", "B_POST"].includes(mode), "UNKNOWN_MODE");
   const e = evidence ?? {};
@@ -98,14 +117,11 @@ export function verifyStage(mode, evidence) {
       epoch.unverified_ops === 0 && integer(epoch.verified_ops) &&
       epoch.job_completed === 1 && epoch.daily === 1 && epoch.raw === 1 &&
       integer(epoch.detail) && epoch.detail >= 1, "CANARY_JOURNAL");
-    guard(e.receipt?.schema === "MP248_G7_RECEIPT_V1" &&
+    guard(receiptMonitoring(e.receipt,epoch) &&
       e.receipt?.state === "OWNER_VERIFIED" &&
       e.receipt?.g7_canary_verified === true &&
       e.receipt?.provider_readback_verified === true &&
       e.receipt?.no_duplicate_stable_ids === true &&
-      e.receipt?.no_new_429_observed === true &&
-      e.receipt?.gcp_quotas_checked === true &&
-      e.receipt?.gcp_429_delta === 0 &&
       same(e.receipt?.g5_sha, params.g5Sha) &&
       same(e.receipt?.g6a_worker_version, params.priorWorkerVersion) &&
       typeof e.receipt?.epoch_id === "string" &&
@@ -137,6 +153,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const evidence = JSON.parse(readFileSync(file, "utf8"));
     verifyStage(mode, evidence);
+    if(mode.startsWith("B_") && evidence.receipt?.schema === "MP248_G7_RECEIPT_V2_RISK_ACCEPTED")
+      console.log("MONITORING_PARTIAL_OWNER_RISK_ACCEPTED_NOT_429_ZERO");
     console.log("STAGE_GUARD_" + mode + "_PASS");
   } catch (error) {
     console.error(error instanceof Error && error.message.startsWith("NO_GO_") ?

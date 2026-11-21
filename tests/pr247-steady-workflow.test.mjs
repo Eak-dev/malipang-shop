@@ -117,3 +117,5 @@ test("runbook states that Provider metrics and Owner release gate are mandatory"
     assert.ok(runbook.includes(s),"runbook missing "+s);
   }
 });
+
+test('monitoring exception appears explicitly in workflow summary',()=>{assert.match(workflow,/MONITORING_PARTIAL_OWNER_RISK_ACCEPTED_NOT_429_ZERO/);assert.match(runbook,/gcp_429_delta=null/);assert.match(runbook,/not proof that no 429 occurred/)});

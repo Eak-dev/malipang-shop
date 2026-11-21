@@ -7308,6 +7308,36 @@
         "absence_verified": true,
         "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-daily-tail-readback-20261121",
+      "source_sha": "9230fa2cd095349b5adcb127e450d1bc3c13e75e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        333
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T11:02:27Z",
+      "reason": "Writer readback fix is a supporting branch for Issue 296; integrate PR #333 to main before the separate exact-target recovery operator. Snapshot precedes this registry update; no Production state is implied."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-daily-tail-readback-20261121",
+      "source_sha": "9230fa2cd095349b5adcb127e450d1bc3c13e75e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        333
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T11:02:27Z",
+      "reason": "Writer readback fix is a supporting branch for Issue 296; integrate PR #333 to main before the separate exact-target recovery operator. Snapshot precedes this registry update; no Production state is implied."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -95,4 +95,6 @@ Canary ที่ job COMPLETED แต่ claim ยัง REVIEW จาก D1 น
 
 Canary Undo RAW ที่มี timeout มีทางกู้ positive-only เฉพาะรายการ โดยไม่ส่ง Undo ซ้ำ ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md); สาเหตุ timeout เชิงลึกและ Production status ต้องตรวจสด.
 
+ตัวเขียน DAILY ตรวจ readback เมื่อท้ายกริดว่างได้ทั้งกรณีกริดเพิ่มหนึ่งหรือสองแถว โดยตรวจแถวส่วนเกินว่างทุกคอลัมน์และตรวจ digest ของกริดก่อนเขียนซ้ำก่อนยืนยัน journal; ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md). โค้ดไม่กู้รายการที่ค้างอยู่เองและไม่ยืนยันสถานะ Production.
+
 การอ่านตรวจผล RAW หลัง POST ตอบรับใช้ deadline อย่างน้อย 45 วินาทีโดยไม่ retry การเขียน; รายละเอียดและข้อจำกัดอยู่ใน [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md).

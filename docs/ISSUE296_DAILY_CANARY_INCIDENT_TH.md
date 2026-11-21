@@ -47,3 +47,12 @@ Canary v2 ผ่านการยกเลิก DAILY แล้วค้าง
 ### ระยะรออ่าน RAW หลังผู้ให้บริการตอบรับ
 
 Canary v1 และ v2 มี marker ที่จองไว้ปรากฏจริงเพียงครั้งเดียว แต่ journal ยัง IN_FLIGHT และ fault เป็น `TIMEOUT` แทน `SHEETS_MUTATION_OUTCOME_UNKNOWN`; ตามลำดับโค้ดและหลักฐานนี้ชี้ว่าการอ่านหลัง POST หมดเวลา ขณะที่ log ไม่บอก GET ที่แน่ชัด. จึงเพิ่ม deadline เป็นอย่างน้อย 45 วินาทีเฉพาะ Google Sheets GET ที่ใช้ตรวจ postimage RAW หลังได้รับคำตอบ POST ยืนยันสำเร็จ; preflight, DETAIL, publication, OAuth และ POST ยังคง deadline เดิม. ไม่มี retry POST หรือเปลี่ยน guard/digest. หากอ่านยังไม่ผ่านยังคง REVIEW; ผลทดสอบในเครื่องพิสูจน์ขอบเขต deadline ไม่ได้ยืนยันว่า Google จะตอบทันในทุกครั้ง.
+
+### DAILY readback หลังเพิ่มแถวว่างท้ายกริด
+
+- OBSERVED: incident ค่าใช้จ่ายจริงมี claim REVIEW เหตุ `INSERT_DAILY_SNAPSHOT_UNVERIFIED`; evidence ระบุกริดก่อนเขียน 1002 แถว ขณะที่การอ่าน Google พบ 1004 แถว. พบ carrier ที่ marker ตรงหนึ่งรายการ แต่ยังต้องตรวจ provider/source/บัญชีครบก่อนกู้ journal.
+- EXPECTED: เมื่อ provider ตอบรับและ postimage ผ่านทุก guard ต้องบันทึก journal VERIFIED โดยไม่ส่ง POST ซ้ำ; เมื่อหลักฐานขัดแย้งต้องคง IN_FLIGHT และ REVIEW.
+- REPRODUCTION / ROOT CAUSE: fixture ที่จำลอง `appendDimension` และ `insertRange` เพิ่มกริดรวมสองแถวทำให้ capture เดิมซึ่งบังคับขนาดก่อนเขียนบวกหนึ่งล้มด้วยเหตุเดียวกัน. การจำลองและ snapshot สอดคล้องกัน แต่ยังไม่พิสูจน์ลำดับภายใน Google หรือว่าปราศจากผู้เขียนอื่นในช่วงเกิดเหตุ.
+- AFFECTED PATH / DATA IMPACT: readback ของ DAILY เมื่อ tail ว่าง; การเขียน carrier อาจเกิดแล้วแต่ journal ไม่ยืนยันและ claim ล็อกทั้งสมุด. ห้ามส่งคำขอเดิมซ้ำ.
+- FIX: อ่านขนาดจริงหลัง ACK เฉพาะกรณี tail ว่าง ยอมรับ +1 หรือ +2 ภายใน 5000 แถวเท่านั้น; กรณี +2 ต้องตรวจแถวสุดท้ายว่างทุกคอลัมน์ทั้งสูตรและค่า แล้วเทียบ transform และ digest ของกริดก่อนเขียน รวมทั้ง accounting, identity, format, legacy และ report ตาม guard เดิม. เพิ่ม post-read budget รวม OAuth สำหรับ publication; หากกริดก่อนเขียนเกิน 4998 แถวและต้อง padding ให้หยุดก่อน intent. ไม่เปลี่ยนวิธีกู้ incident ที่ค้างอยู่.
+- VALIDATION / ROLLBACK: fixture ตรวจ +1/+2, tail ที่มีค่าหรือสูตร, identity/grid drift, lost ACK ไม่ส่งซ้ำ, publication budget และขอบ 4998/4999. ก่อน release ต้องผ่าน CI, dry-run, backup และขั้น Production ของ #296; หากผลไม่ตรงคง claim และตรวจ evidence ห้ามลบหรือ replay รายการ.

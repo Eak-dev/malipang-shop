@@ -7557,6 +7557,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:55:31Z",
       "reason": "Supporting exact pilot lease expiry watchdog, based on the normal recovery integration branch for independent testing and integration there. Local work only."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-readback-tests",
+      "source_sha": "d07a9a68e44e221815d2b057f2e96fe27d1473f6",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:59:50Z",
+      "reason": "Independent row readback regression and drift guard for the Issue 296 pilot on its integration branch. Integrate after local tests and review, without asserting Production status."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

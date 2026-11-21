@@ -21,7 +21,7 @@ function nextStamp():string{const p=new Intl.DateTimeFormat('en-GB',{timeZone:'A
  * provider writer and obtain exact owner approval. A database flag, elapsed
  * time, this function, and an absent synthetic row do not prove that fence.
  * IN_FLIGHT and ambiguous replies are permanent holds, never auto-retried. */
-export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROBE'|'TIME'|'STATUS'|'COMMIT',diagnostic?:CanaryProofDiagnostic):Promise<'DISABLED'|'HELD'|'READY'|'IN_PROGRESS'|'RESUMED'|'ALREADY_COMMITTED'>{
+export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROBE'|'PROBE_TIME'|'TIME'|'STATUS'|'COMMIT',diagnostic?:CanaryProofDiagnostic):Promise<'DISABLED'|'HELD'|'READY'|'IN_PROGRESS'|'RESUMED'|'ALREADY_COMMITTED'>{
  if(env.CANARY_UNWRITTEN_RECOVERY_ENABLED!=='true')return 'DISABLED';
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
  const scope=()=>canaryUnwrittenScope(env);
@@ -36,6 +36,24 @@ export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROB
    return await inspectCanaryUnwrittenProvider(env,undefined,budget,diagnostic)&&stable()?'READY':'HELD';
   }
   if(expected==='COMMIT'&&(intent?.state==='STATUS_ACKED'||intent?.state==='COMPLETE'))return finalizeCanaryUnwrittenRecovery(env);
+  if(expected==='PROBE_TIME'){
+   if(intent?.state!=='TIME_ACKED'){if(diagnostic){diagnostic.stage='OPERATOR_STATE';diagnostic.reason='CHECK_FAILED'}return 'HELD';}
+   const evidence=await readCanaryUnwrittenEvidence(env);
+   if(!evidence||intent.operation_token!==evidence.claim_token||intent.epoch_id!==evidence.epoch_id||intent.expense_id!==evidence.expense_id||intent.source_revision!==evidence.source_revision||intent.paused_stamp!==evidence.notice_stamp||intent.notice_identity!==evidence.notice_identity||!stable()){if(diagnostic){diagnostic.stage='D1_EVIDENCE';diagnostic.reason='CHECK_FAILED'}return 'HELD';}
+   const proof=await inspectCanaryUnwrittenProvider(env,{status:paused,stamp:intent.next_stamp},budget,diagnostic);
+   if(!proof||!stable())return 'HELD';
+   if(diagnostic){diagnostic.stage='DIGEST';diagnostic.reason=proof.styleDigest!==intent.style_digest?'STYLE_CHANGED':proof.fingerprint!==intent.provider_digest?'PROVIDER_CHANGED':'OK';}
+   if(proof.fingerprint!==intent.provider_digest||proof.styleDigest!==intent.style_digest)return 'HELD';
+   // Rehearse the second read under the same reserved request budget, without
+   // dispatching a provider mutation or changing the durable phase.
+   if(!budget.reserveMutation()){if(diagnostic){diagnostic.stage='CONSISTENCY';diagnostic.reason='REQUEST_BUDGET'}return 'HELD';}
+   try{
+    const again=await inspectCanaryUnwrittenProvider(env,{status:paused,stamp:intent.next_stamp},budget,diagnostic),latest=await readCanaryUnwrittenEvidence(env);
+    if(!again||!latest||!same(again,proof)||!same(latest,evidence)||!stable()){if(diagnostic&&again){diagnostic.stage='CONSISTENCY';diagnostic.reason='CHECK_FAILED'}return 'HELD';}
+    if(diagnostic){diagnostic.stage='COMPLETE';diagnostic.reason='OK'}
+    return 'READY';
+   }finally{budget.releaseMutation();}
+  }
   if(expected==='TIME'&&intent||expected==='STATUS'&&intent?.state!=='TIME_ACKED'||expected!=='TIME'&&expected!=='STATUS')return 'HELD';
   const evidence=await readCanaryUnwrittenEvidence(env);if(!evidence||!stable())return 'HELD';
   if(!intent){

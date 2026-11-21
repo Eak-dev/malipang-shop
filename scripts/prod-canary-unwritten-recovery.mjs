@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
-const phases={PROBE:{before:null,after:null},TIME:{before:null,after:'TIME_ACKED'},STATUS:{before:'TIME_ACKED',after:'STATUS_ACKED'},COMMIT:{before:'STATUS_ACKED',after:'COMPLETE'}};
+const phases={PROBE:{before:null,after:null},PROBE_TIME:{before:'TIME_ACKED',after:'TIME_ACKED'},TIME:{before:null,after:'TIME_ACKED'},STATUS:{before:'TIME_ACKED',after:'STATUS_ACKED'},COMMIT:{before:'STATUS_ACKED',after:'COMPLETE'}};
 const fail=code=>{throw Error(code)};
 export function validateInputs(e){
  const sha=e.EXPECTED_SHA||'',phase=e.RECOVERY_PHASE||'';
@@ -29,7 +29,7 @@ export function verifyPreflight(rows){
 }
 export function safeProbeDiagnostic(result){
  const d=result?.diagnostic;
- if(result?.ok!==false||!/^(OPERATOR_STATE|D1_EVIDENCE|ACTIVATION|NOTICE_INITIAL|SNAPSHOT_INITIAL|REPORT_HEALTH|SNAPSHOT_FINAL|NOTICE_FINAL|CONSISTENCY)$/.test(d?.stage||'')||!/^(CHECK_FAILED|UNVERIFIED|REQUEST_BUDGET|TIMEOUT|SHEETS_READ_NETWORK|SHEETS_RESPONSE_TOO_LARGE|SHEETS_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_(CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|REPORT_HEALTH_(MANIFEST|TARGET|READ|FORMULA|SCOPE|CAPACITY|UNVERIFIED))$/.test(d?.reason||''))return null;
+ if(result?.ok!==false||!/^(OPERATOR_STATE|D1_EVIDENCE|ACTIVATION|NOTICE_INITIAL|SNAPSHOT_INITIAL|REPORT_HEALTH|SNAPSHOT_FINAL|NOTICE_FINAL|CONSISTENCY|DIGEST)$/.test(d?.stage||'')||!/^(CHECK_FAILED|UNVERIFIED|REQUEST_BUDGET|TIMEOUT|PROVIDER_CHANGED|STYLE_CHANGED|SHEETS_READ_NETWORK|SHEETS_RESPONSE_TOO_LARGE|SHEETS_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_(CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|REPORT_HEALTH_(MANIFEST|TARGET|READ|FORMULA|SCOPE|CAPACITY|UNVERIFIED))$/.test(d?.reason||''))return null;
  return `INCIDENT_PROBE_${d.stage}_${d.reason}`;
 }
 async function main(){
@@ -53,8 +53,8 @@ async function main(){
  console.log('INCIDENT_PRECHECK: PASS');
  let response;try{response=await fetch(base+'/admin/stable-sync/canary-unwritten-recovery',{method:'POST',headers:{Authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'Content-Type':'application/json','x-malipang-expected-worker-version':workerVersion},body:JSON.stringify({action:phase}),redirect:'error',signal:AbortSignal.timeout(240000)});}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
  let result;try{result=await response.json()}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
- const outcome=phase==='PROBE'?'READY':phase==='COMMIT'?'RESUMED':'IN_PROGRESS';
- if(phase==='PROBE'){const diagnostic=safeProbeDiagnostic(result);if(diagnostic)console.log(diagnostic);}
+ const outcome=phase==='PROBE'||phase==='PROBE_TIME'?'READY':phase==='COMMIT'?'RESUMED':'IN_PROGRESS';
+ if(phase==='PROBE'||phase==='PROBE_TIME'){const diagnostic=safeProbeDiagnostic(result);if(diagnostic)console.log(diagnostic);}
  if(!response.ok||result?.ok!==true||result.action!==phase||result.outcome!==outcome||result.servedVersion!==workerVersion)fail('INCIDENT_OUTCOME_UNVERIFIED_NO_RETRY');
  try{verifyPhase(phase,await query('SELECT state FROM canary_unwritten_recovery'),true)}catch{fail('INCIDENT_POSTSTATE_UNVERIFIED_NO_RETRY')}
  console.log(`INCIDENT_${phase}: PASS; WORKER_MATCH; D1_READBACK_PASS`);

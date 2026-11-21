@@ -270,6 +270,21 @@ test('PROBE reads evidence without a database or provider mutation',async()=>{
   assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE'),'HELD');assert.equal(x.provider.writes,1);
  }finally{x.close()}
 });
+test('PROBE_TIME is read-only, requires TIME_ACKED and checks the saved provider digest',async()=>{
+ const x=await dispatchFixture();try{
+  const d={stage:'',reason:''};
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE_TIME',d),'HELD');
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'TIME'),'IN_PROGRESS');
+  const before=x.h.sqlite.prepare('SELECT total_changes() n').get().n;
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE_TIME',d),'READY');
+  assert.equal(x.provider.writes,1);assert.equal(x.h.sqlite.prepare('SELECT total_changes() n').get().n,before);
+  assert.equal(x.h.sqlite.prepare('SELECT state FROM canary_unwritten_recovery').get().state,'TIME_ACKED');
+  put(x.m.state.s,'effective',0,1,1,'changed');
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE_TIME',d),'HELD');
+  assert.deepEqual(d,{stage:'DIGEST',reason:'PROVIDER_CHANGED'});
+  assert.equal(x.provider.writes,1);assert.equal(x.h.sqlite.prepare('SELECT total_changes() n').get().n,before);
+ }finally{x.close()}
+});
 test('each dispatcher call is pinned to its explicitly selected phase',async()=>{
  const x=await dispatchFixture();try{
   assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'STATUS'),'HELD');

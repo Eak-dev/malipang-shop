@@ -10,6 +10,7 @@ test('requires pinned main, exact incident approval, Worker hash and owner attes
 });
 test('phase preimage and readback are exact and cannot advance another phase',()=>{
  assert.doesNotThrow(()=>verifyPhase('PROBE',[]));assert.doesNotThrow(()=>verifyPhase('PROBE',[],true));assert.throws(()=>verifyPhase('PROBE',[{state:'TIME_ACKED'}]));
+ assert.doesNotThrow(()=>verifyPhase('PROBE_TIME',[{state:'TIME_ACKED'}]));assert.doesNotThrow(()=>verifyPhase('PROBE_TIME',[{state:'TIME_ACKED'}],true));assert.throws(()=>verifyPhase('PROBE_TIME',[{state:'STATUS_IN_FLIGHT'}]));
  for(const [phase,before,after] of [['TIME',null,'TIME_ACKED'],['STATUS','TIME_ACKED','STATUS_ACKED'],['COMMIT','STATUS_ACKED','COMPLETE']]){
   assert.doesNotThrow(()=>verifyPhase(phase,before?[{state:before}]:[]));assert.doesNotThrow(()=>verifyPhase(phase,[{state:after}],true));
   assert.throws(()=>verifyPhase(phase,[{state:'TIME_IN_FLIGHT'}]));assert.throws(()=>verifyPhase(phase,[{state:'STATUS_IN_FLIGHT'}],true));
@@ -29,6 +30,7 @@ test('manual protected path pins phase, uses one POST and never retries uncertai
 test('probe diagnostics are strictly allowlisted and never print provider content',()=>{
  assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'REPORT_HEALTH',reason:'REPORT_HEALTH_FORMULA'}}),'INCIDENT_PROBE_REPORT_HEALTH_REPORT_HEALTH_FORMULA');
  assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'NOTICE_INITIAL',reason:'SHEETS_HTTP_403'}}),'INCIDENT_PROBE_NOTICE_INITIAL_SHEETS_HTTP_403');
+ assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'DIGEST',reason:'PROVIDER_CHANGED'}}),'INCIDENT_PROBE_DIGEST_PROVIDER_CHANGED');
  assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'NOTICE_INITIAL',reason:'private provider detail'}}),null);
  assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'SECRET',reason:'CHECK_FAILED'}}),null);
 });

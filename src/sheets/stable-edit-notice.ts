@@ -21,7 +21,7 @@ function overlaps(a:Range,r:Record<string,unknown>):boolean{
 }
 async function get(env:Env,path:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<unknown>{
  const token=await getGoogleAccessToken(env,budget,oauthLease),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);let deadline=0,res:Response;
- try{res=await retryIdempotentRead(()=>{oauthLease?.tokenFor(env);budget?.consumeRead();deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`},...(budget?{redirect:'error' as RequestRedirect}:{})},timeout,'Stable notice read');},env.STABLE_SHEETS_PACING_ENABLED!=='true',true);}
+ try{res=await retryIdempotentRead(()=>{oauthLease?.tokenFor(env);budget?.consumeRead();deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`},...(budget?{redirect:'manual' as RequestRedirect}:{})},timeout,'Stable notice read');},env.STABLE_SHEETS_PACING_ENABLED!=='true',true);}
  catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
  // Keep the HTTP status for diagnostics; the message stays a stable code.
  if(!res.ok){try{await Promise.race([res.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);}catch{}throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));}

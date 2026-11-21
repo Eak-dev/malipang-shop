@@ -66,7 +66,9 @@ export async function getGoogleAccessToken(env:Env,budget?:ReviewRequestBudget,l
     const key=await importKey(env.GOOGLE_PRIVATE_KEY_BASE64),sig=await crypto.subtle.sign("RSASSA-PKCS1-v1_5",key,new TextEncoder().encode(input));assertion=`${input}.${b64url(new Uint8Array(sig))}`;
   }catch{throw new GoogleOAuthPreflightError('GOOGLE_OAUTH_CREDENTIAL_INVALID');}
   let res:Response;const timeoutMs=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),startedAt=Date.now();
-  try{budget?.consumeRead();res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion}),...(budget?{redirect:"error" as RequestRedirect}:{})},timeoutMs,"Google OAuth");}
+  // Workers supports manual, not the Fetch-standard error mode. A manual
+  // redirect is returned as non-OK below and is never followed with credentials.
+  try{budget?.consumeRead();res=await fetchWithTimeout("https://oauth2.googleapis.com/token",{method:"POST",headers:{"content-type":"application/x-www-form-urlencoded"},body:new URLSearchParams({grant_type:"urn:ietf:params:oauth:grant-type:jwt-bearer",assertion}),...(budget?{redirect:"manual" as RequestRedirect}:{})},timeoutMs,"Google OAuth");}
   catch(error){if(error instanceof TypeError)throw new GoogleOAuthPreflightError('GOOGLE_OAUTH_NETWORK');throw error;}
   if(!res.ok){try{await Promise.race([res.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);}catch{}throw new GoogleOAuthHttpError(res.status);}
   const data=await readOAuthBody(res,Math.max(1,Math.floor(timeoutMs-(Date.now()-startedAt))));

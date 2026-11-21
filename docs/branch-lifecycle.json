@@ -7394,6 +7394,36 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T13:52:35.049Z",
       "reason": "Supporting Issue 296 monthly report pilot, PR #335. Retain while review, CI, rehearsal and any authorized rollout remain open; base depends on main b930101 and separate incident/production gates. This record snapshots the code commit before the registry commit and does not imply deployment or completion."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-isolated-grid-probe-20261121",
+      "source_sha": "1b50a3ac98614891a9f865808c61efcadc943ffd",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        336
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:26:12.283Z",
+      "reason": "Supporting Issue 296 read-only isolated Google grid rehearsal, dependent on monthly pilot PR #335 and protected Production release controls. Retain through review, CI, rehearsal and subsequent cleanup. This snapshots the code commit before registry update and does not imply Production deployment."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-isolated-grid-probe-20261121",
+      "source_sha": "1b50a3ac98614891a9f865808c61efcadc943ffd",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        336
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:26:12.284Z",
+      "reason": "Supporting Issue 296 read-only isolated Google grid rehearsal, dependent on monthly pilot PR #335 and protected Production release controls. Retain through review, CI, rehearsal and subsequent cleanup. This snapshots the code commit before registry update and does not imply Production deployment."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

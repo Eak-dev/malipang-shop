@@ -13,6 +13,10 @@ test('logical insertion grows the grid and shifts A:Y only, leaving the budget p
  assert.equal(requests[1].updateCells.start.rowIndex,4);assert.equal(requests[1].updateCells.fields,'userEnteredValue,userEnteredFormat.numberFormat');
  const cells=requests[1].updateCells.rows[0].values;assert.equal(cells.length,25);assert.deepEqual(cells[4],{userEnteredFormat:{numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}});assert.deepEqual(cells[20].userEnteredFormat,{numberFormat:{type:'DATE',pattern:'dd/MM/yyyy'}});assert.deepEqual(cells[24],{userEnteredValue:{stringValue:payload()}});
 });
+test('a verified blank last row gets exactly one padding row before insertion',()=>{
+ const requests=insertContinuousDailyRowRequests(7,5,1000,payload(),undefined,true);
+ assert.equal(requests.length,3);assert.deepEqual(requests[0],{appendDimension:{sheetId:7,dimension:'ROWS',length:1}});assert.ok(requests[1].insertRange);assert.ok(requests[2].updateCells);
+});
 
 test('carrier formulas refer to their current row and preserve absolute budget references',()=>{
  const f=appendDailyRowFormulas();assert.ok(f[0].includes('INDEX(Y:Y,ROW())'));assert.ok(f[9].includes('$AA$4:$AA$243'));

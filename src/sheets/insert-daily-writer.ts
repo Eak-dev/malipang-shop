@@ -114,10 +114,12 @@ export async function verifyInsertedDailyFinalSnapshot(env:Env,job:SheetsSyncJob
 export function verifyInsertedDailyTransform(before:Snapshot,after:Snapshot,oldRows:number,columns:number,row:number,publication?:{sheet:string;rows:number}):boolean{
  if(row<5||row>oldRows||oldRows>=5000||columns<29||columns>100||before.formula.length>oldRows||after.formula.length>oldRows+1)return false;
  const upgradedJ=appendDailyRowFormulas(publication)[9],shiftedColumns=publication?26:25;
+ const blankLast=Array.from({length:shiftedColumns},(_,c)=>blank(before.formula[oldRows-1]?.[c])&&blank(before.effective[oldRows-1]?.[c])).every(Boolean);
  for(let r=0;r<oldRows;r++)for(let c=0;c<columns;c++){
   const b=before.formula[r]?.[c],be=before.effective[r]?.[c];
   if(c>=shiftedColumns||r<row-1){if(!same(b,after.formula[r]?.[c])||!same(be,after.effective[r]?.[c]))return false;continue;}
   if(helper.has(c)){
+   if(blankLast&&r===oldRows-1&&blank(after.formula[r+1]?.[c])&&blank(after.effective[r+1]?.[c]))continue;
    const upgraded=c===9&&b===upgradedJ,expected=upgraded?upgradedJ:continuousDailyHelperFormulas(r+2)[c];
    if(!upgraded&&b!==continuousDailyHelperFormulas(r+1)[c]||after.formula[r+1]?.[c]!==expected||!blank(be)||!blank(after.effective[r+1]?.[c]))return false;
   }else if(!blank(b)||!blank(be)||!blank(after.formula[r+1]?.[c])||!blank(after.effective[r+1]?.[c]))return false;
@@ -206,8 +208,10 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  const row=Math.max(5,last+1);if(row>grid.rowCount)throw new InsertDailyDefiniteFailure('CAPACITY');
  // Prove the whole shifted tail has only known blank template formulas.
  const upgradedJ=appendDailyRowFormulas(publication)[9],shiftedColumns=publication?26:25;
+ const blankTail=Array.from({length:shiftedColumns},(_,c)=>blank(before.formula[grid.rowCount-1]?.[c])&&blank(before.effective[grid.rowCount-1]?.[c])).every(Boolean);
  for(let i=row-1;i<grid.rowCount;i++)for(let c=0;c<shiftedColumns;c++){
   const f=before.formula[i]?.[c],e=before.effective[i]?.[c];
+  if(blankTail&&i===grid.rowCount-1)continue;
   if(helper.has(c)){if(!blank(e))throw Error('INSERT_DAILY_TAIL_UNVERIFIED');if(f!==continuousDailyHelperFormulas(i+1)[c]&&(c!==9||f!==upgradedJ))throw new InsertDailyDefiniteFailure('ROW_FORMULA');}
   else if(!blank(f)||!blank(e))throw Error('INSERT_DAILY_TAIL_UNVERIFIED');
  }
@@ -234,13 +238,13 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
   db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
  ]);
  if(!stable()||reserved.length!==4||reserved.some(r=>r.success!==true)||Number(reserved[0]!.meta?.changes)!==1||Number(reserved[1]!.meta?.changes)!==1||Number(reserved[2]!.meta?.changes)!==1)throw Error('INSERT_DAILY_RESERVATION_UNCERTAIN');
- const reply=await batchUpdateSpreadsheetWithReply(env,insertContinuousDailyRowRequests(sheetId,row,grid.rowCount,payload,publication),async()=>{
+ const reply=await batchUpdateSpreadsheetWithReply(env,insertContinuousDailyRowRequests(sheetId,row,grid.rowCount,payload,publication,blankTail),async()=>{
   if(!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
   const current=await capture(grid),captured=current.batch;
   if(publication&&JSON.stringify(captured)!==JSON.stringify(beforeBatch)||!await publicationMatches(captured)||JSON.stringify(current.daily)!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,captured))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,captured?{snapshot:captured,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env,reportExpected,reportPublication,policy,captured)!=='OK'||!await sourceMatches()||publication&&budget!.postReserved!==14)throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
  },publication?budget:undefined);
  if(heldPost){budget!.releasePost();heldPost=false;}
- const replies=reply&&typeof reply==='object'?(reply as {replies?:unknown[]}).replies:undefined;if(!Array.isArray(replies)||replies.length!==2||replies.some(r=>!r||typeof r!=='object'))throw Error('INSERT_DAILY_OUTCOME_UNKNOWN');
+ const replies=reply&&typeof reply==='object'?(reply as {replies?:unknown[]}).replies:undefined;if(!Array.isArray(replies)||replies.length!==(blankTail?3:2)||replies.some(r=>!r||typeof r!=='object'))throw Error('INSERT_DAILY_OUTCOME_UNKNOWN');
  const afterGrid={...grid,rowCount:grid.rowCount+1},afterCapture=await capture(afterGrid),after=afterCapture.daily,afterBatch=afterCapture.batch;
  if(!await verifyInsertedNumberFormats(env,sheet,sheetId,row,policy))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
  if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row,publication)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||(publication?!blank(after.effective[row-1]?.[23]):after.effective[row-1]?.[23]!==key)||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage,publicationBefore)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||!await publicationMatches(afterBatch)||publication&&await readContinuousReportHealth(env,reportExpected,reportPublication,policy,afterBatch)!=='OK'||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,afterBatch))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,afterBatch?{snapshot:afterBatch,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');

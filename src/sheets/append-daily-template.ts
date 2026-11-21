@@ -25,10 +25,10 @@ export function appendDailyRowRequest(sheetId:number,payload:string):unknown{
 }
 
 /** Insert one logical transaction row while leaving the AA:AC budget panel
- * at its physical coordinates. Both requests must be one atomic Google
+ * at its physical coordinates. The requests must be one atomic Google
  * batch; the planner alone does not establish that shifted formulas, other
  * workbook references, or an uncertain response are safe. */
-export function insertContinuousDailyRowRequests(sheetId:number,row:number,rowCount:number,payload:string,publication?:{sheet:string;rows:number}):unknown[]{
+export function insertContinuousDailyRowRequests(sheetId:number,row:number,rowCount:number,payload:string,publication?:{sheet:string;rows:number},blankTail=false):unknown[]{
  // Row 4 is a permanent anchor. Inserting there makes Sheets silently shift
  // absolute $A$4/$I$4 references and omit the new transaction from totals.
  if(!Number.isSafeInteger(sheetId)||sheetId<0||!Number.isSafeInteger(rowCount)||rowCount<5||rowCount>=5000||!Number.isSafeInteger(row)||row<5||row>rowCount||!decodeAtomicDailyPayload(payload))throw Error('INSERT_DAILY_REQUEST_INVALID');
@@ -39,8 +39,9 @@ export function insertContinuousDailyRowRequests(sheetId:number,row:number,rowCo
   return {...value,...format};
  });
  return [
-  // The checked tail contains formulas through the last row. Sheets expands
-  // the grid for insertRange itself; appending first would add a second row.
+  // A populated last row makes insertRange grow the grid itself. An entirely
+  // blank last row does not, so pad only in that explicitly verified case.
+  ...(blankTail?[{appendDimension:{sheetId,dimension:'ROWS',length:1}}]:[]),
   {insertRange:{range:{sheetId,startRowIndex:row-1,endRowIndex:row,startColumnIndex:0,endColumnIndex:dataColumns},shiftDimension:'ROWS'}},
   {updateCells:{start:{sheetId,rowIndex:row-1,columnIndex:0},rows:[{values}],fields:'userEnteredValue,userEnteredFormat.numberFormat'}}
  ];

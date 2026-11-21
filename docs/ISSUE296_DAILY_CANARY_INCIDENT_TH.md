@@ -31,3 +31,7 @@
 ### COMMIT สำเร็จแต่ workflow ไม่ได้รับผลยืนยัน
 
 Cloudflare D1 รายงาน `meta.changes=2` เมื่อคำสั่งลบ claim หนึ่งแถวทำให้ trigger ปิด alert incident หนึ่งแถวด้วย จึงเกิด `REVIEW_CLOSE_COMMIT_UNCERTAIN` หลังธุรกรรม commit แล้ว. จำลองบน Miniflare D1 ได้จำนวน `[1,1,2,1,0]` และตรวจ Production พบ notice COMPLETE, admission VERIFIED, ไม่มี claim และงาน PENDING; ห้ามส่ง COMMIT ซ้ำ. ตัวตรวจใหม่ยอมรับจำนวนรวม 1 หรือ 2 เฉพาะคำสั่งลบ claim โดย guard `changes()=1` ใน transaction ยังคงบังคับว่าลบ claim โดยตรงหนึ่งแถว และยังปฏิเสธจำนวนอื่น. ไม่เปลี่ยน policy หรือรายการธุรกิจ.
+
+### กู้ล็อกหลังงานสังเคราะห์ COMPLETED
+
+เพิ่ม migration `0065` และ operator เฉพาะเหตุ `STABLE_EXPENSE_COMPLETION_UNCERTAIN` ของ Canary v1: ตรวจ job COMPLETED, alert ปิดพร้อมเวลา job, projection ทั้งสาม VERIFIED พร้อม preimage/marker, epoch/admission, source revision, ล็อกเดิมและรายงานจริง ก่อนเปลี่ยน notice. Workflow ใช้ PROBE → TIME → PROBE_STATUS → STATUS → COMMIT แยกครั้ง พร้อม intent ก่อนแต่ละ provider POST และบันทึก ACK เฉพาะผลตอบรับแน่ชัด; คำตอบไม่แน่ชัดต้องคง REVIEW และห้ามส่ง POST ซ้ำ. COMMIT ตรวจซ้ำแล้วปิด admission/epoch และปล่อย claim เฉพาะรายการใน transaction เดียว โดยไม่เปลี่ยนธุรกรรมหรือ journal. ซ้อมบนสำเนา Production และ Miniflare D1 รวม integrity/FK; ผล provider ในการซ้อมจำลอง จึงต้องตรวจ PROBE จริงก่อนใช้งาน. สำรองส่วนตัวและซ้อม migration ใหม่ก่อน Production; หากไม่ผ่านคง gate และใช้ forward-fix ห้ามแก้ฐานข้อมูลย้อนหลังหรือ replay งาน.

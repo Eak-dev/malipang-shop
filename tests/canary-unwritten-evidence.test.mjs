@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 import {cutoverReadySql} from './helpers/cutover-ready.mjs';
 const require=createRequire(import.meta.url);
@@ -259,6 +261,19 @@ test('one-shot dispatcher verifies two acknowledgements before committing',async
   assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'COMMIT'),'ALREADY_COMMITTED');
   assert.equal(x.provider.status,'พร้อมแก้ไข');assert.equal(x.provider.writes,2);
   assert.deepEqual(recoveryState(x.h),{recovery:'COMPLETE',claim:null,job:'PENDING',admission:'VERIFIED',epoch:'ARMED'});
+ }finally{x.close()}
+});
+test('recovery transition statements compile with D1 expression depth limit',async()=>{
+ const x=await dispatchFixture(),sql=[],prepare=x.h.DB.prepare;
+ try{
+  x.h.DB.prepare=function(statement){if(/^\s*(?:UPDATE|INSERT|DELETE)\b/i.test(statement))sql.push(statement);return prepare.call(this,statement)};
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'TIME'),'IN_PROGRESS');
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'STATUS'),'IN_PROGRESS');
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'COMMIT'),'RESUMED');
+  assert.ok(sql.some(s=>s.includes("SET state='STATUS_IN_FLIGHT'")));
+  assert.ok(sql.some(s=>s.includes('UPDATE stable_recovery_operations')));
+  const check=spawnSync('python3',[fileURLToPath(new URL('./helpers/sqlite-expression-limit.py',import.meta.url))],{input:JSON.stringify(sql),encoding:'utf8'});
+  assert.equal(check.status,0,check.stderr||check.error?.message);
  }finally{x.close()}
 });
 test('PROBE reads evidence without a database or provider mutation',async()=>{

@@ -1,3 +1,4 @@
+import {verifyNormalPilotRow} from './normal-pilot-readback';
 import {armSingleNormalExpense} from '../sheets/continuous-normal-recovery';
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
@@ -47,7 +48,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
   // Prevent an old or mixed deployment from executing a cutover/canary step.
   // The authenticated caller pins the Worker version obtained independently
   // from Cloudflare; an absent/malformed metadata binding fails closed.
-  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report','/admin/stable-sync/normal-expense-pilot','/admin/stable-sync/exact-daily-settlement'].includes(url.pathname);
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report','/admin/stable-sync/normal-expense-pilot','/admin/stable-sync/exact-daily-settlement','/admin/stable-sync/normal-pilot-readback'].includes(url.pathname);
   const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
   if(guardedMutation){
@@ -134,6 +135,14 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-canary'){
       const body=await request.json().catch(()=>({})) as {action?:unknown};
       return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-pilot-readback'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
+      const headers={'cache-control':'no-store'};
+      const body=await request.json().catch(()=>null);
+      if(!body||body.action!=='READBACK'||Object.keys(body).length!==1)return Response.json({ok:false},{status:400,headers});
+      let matched=false;
+      try{matched=await verifyNormalPilotRow(env);}catch{/* Unavailable evidence keeps the pilot held. */}
+      return Response.json({ok:matched,outcome:matched?'MATCHED':'UNVERIFIED',servedVersion:served},{status:matched?200:409,headers});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-expense-pilot'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as {jobId?:unknown}|null;

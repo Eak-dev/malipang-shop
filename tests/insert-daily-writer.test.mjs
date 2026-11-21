@@ -1,5 +1,6 @@
 process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {createHash} from 'node:crypto';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),route=require('../dist/sheets/continuous-daily-route.js'),claimApi=require('../dist/sheets/stable-workbook-claim.js'),coverage=require('../dist/sheets/legacy-daily-coverage.js'),insertWriter=require('../dist/sheets/insert-daily-writer.js');
 const {continuousDailyCutoverStatements}=require('../dist/sheets/continuous-daily-cutover.js'),{readStableExpenseSource}=require('../dist/sheets/stable-expense-source.js'),{continuousDailyHelperFormulas}=require('../dist/sheets/continuous-daily-plan.js'),{decodeAtomicDailyPayload}=require('../dist/sheets/atomic-daily-template.js'),{insertDailyExpenseUnderClaim}=require('../dist/sheets/insert-daily-writer.js');
 const {runStableExpenseJob}=require('../dist/sheets/stable-expense-job.js');
@@ -333,6 +334,22 @@ test('positive daily recovery verifies only exact projection and preserves REVIE
  assert.equal(h.writes(),1);assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),true);
  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_projection_preimages WHERE projection='DAILY'").get().n,1);assert.equal(h.writes(),1);
  h.formula()[4][24]='tampered';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ }finally{h.close();}});
+test('an explicitly scoped extra trailing row must be entirely blank before positive recovery',async()=>{const h=await reviewedLostDaily();try{
+ h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ h.formula().at(-1)[28]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
+ h.formula().at(-1)[28]=null;h.effective().at(-1)[1]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
+ h.effective().at(-1)[1]=null;assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),true);
+ assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ }finally{h.close();}});
+test('positive daily recovery SQL compiles at the D1 expression limit',async()=>{const h=await reviewedLostDaily(),sql=[],prepare=h.DB.prepare;try{
+ h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+ h.DB.prepare=function(statement){sql.push(statement);return prepare.call(this,statement)};
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),true);
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),true);
+ const check=spawnSync('python3',[fileURLToPath(new URL('./helpers/sqlite-expression-limit.py',import.meta.url))],{input:JSON.stringify(sql),encoding:'utf8'});
+ assert.equal(check.status,0,check.stderr||check.error?.message);
  }finally{h.close();}});
 test('daily positive recovery forwards one request policy through all nested read paths',async()=>{const h=await reviewedLostDaily();try{
  const budget={},policy={kind:'continuous-expense',budget},seen=new Set();

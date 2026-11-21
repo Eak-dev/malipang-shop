@@ -25,7 +25,7 @@ export function appendDailyRowRequest(sheetId:number,payload:string):unknown{
 }
 
 /** Insert one logical transaction row while leaving the AA:AC budget panel
- * at its physical coordinates. All three requests must be one atomic Google
+ * at its physical coordinates. Both requests must be one atomic Google
  * batch; the planner alone does not establish that shifted formulas, other
  * workbook references, or an uncertain response are safe. */
 export function insertContinuousDailyRowRequests(sheetId:number,row:number,rowCount:number,payload:string,publication?:{sheet:string;rows:number}):unknown[]{
@@ -39,7 +39,8 @@ export function insertContinuousDailyRowRequests(sheetId:number,row:number,rowCo
   return {...value,...format};
  });
  return [
-  {appendDimension:{sheetId,dimension:'ROWS',length:1}},
+  // The checked tail contains formulas through the last row. Sheets expands
+  // the grid for insertRange itself; appending first would add a second row.
   {insertRange:{range:{sheetId,startRowIndex:row-1,endRowIndex:row,startColumnIndex:0,endColumnIndex:dataColumns},shiftDimension:'ROWS'}},
   {updateCells:{start:{sheetId,rowIndex:row-1,columnIndex:0},rows:[{values}],fields:'userEnteredValue,userEnteredFormat.numberFormat'}}
  ];

@@ -8,10 +8,10 @@ const payload=()=>encodeAtomicDailyPayload({expenseId:'exp_test',postingYear:202
 
 test('logical insertion grows the grid and shifts A:Y only, leaving the budget panel at AA:AC',()=>{
  const requests=insertContinuousDailyRowRequests(7,5,1000,payload());
- assert.deepEqual(requests[0],{appendDimension:{sheetId:7,dimension:'ROWS',length:1}});
- assert.deepEqual(requests[1],{insertRange:{range:{sheetId:7,startRowIndex:4,endRowIndex:5,startColumnIndex:0,endColumnIndex:25},shiftDimension:'ROWS'}});
- assert.equal(requests[2].updateCells.start.rowIndex,4);assert.equal(requests[2].updateCells.fields,'userEnteredValue,userEnteredFormat.numberFormat');
- const cells=requests[2].updateCells.rows[0].values;assert.equal(cells.length,25);assert.deepEqual(cells[4],{userEnteredFormat:{numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}});assert.deepEqual(cells[20].userEnteredFormat,{numberFormat:{type:'DATE',pattern:'dd/MM/yyyy'}});assert.deepEqual(cells[24],{userEnteredValue:{stringValue:payload()}});
+ assert.equal(requests.length,2);
+ assert.deepEqual(requests[0],{insertRange:{range:{sheetId:7,startRowIndex:4,endRowIndex:5,startColumnIndex:0,endColumnIndex:25},shiftDimension:'ROWS'}});
+ assert.equal(requests[1].updateCells.start.rowIndex,4);assert.equal(requests[1].updateCells.fields,'userEnteredValue,userEnteredFormat.numberFormat');
+ const cells=requests[1].updateCells.rows[0].values;assert.equal(cells.length,25);assert.deepEqual(cells[4],{userEnteredFormat:{numberFormat:{type:'NUMBER',pattern:'#,##0.00'}}});assert.deepEqual(cells[20].userEnteredFormat,{numberFormat:{type:'DATE',pattern:'dd/MM/yyyy'}});assert.deepEqual(cells[24],{userEnteredValue:{stringValue:payload()}});
 });
 
 test('carrier formulas refer to their current row and preserve absolute budget references',()=>{

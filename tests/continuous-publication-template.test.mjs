@@ -50,7 +50,7 @@ test('opt-in publication ties the marker to exact carrier version and shifts onl
  const state=dailyPublicationStateFormula(5,"pub's tab",1000);assert.match(state,/'pub''s tab'!\$A\$2:\$A\$1000/);assert.match(state,/COUNTIF\(/);assert.match(state,/"REVOKED"/);assert.match(state,/NA\(\)/);
  const legacy=atomicDailyRowFormulas(5),visible=atomicDailyRowFormulas(5,{sheet:'pub',rows:1000});assert.equal(legacy[25],undefined);assert.match(visible[0],/\$Z5="PUBLISHED"/);assert.match(visible[25],/COUNTIF\(/);
  const old=insertContinuousDailyRowRequests(7,5,1000,encodeAtomicDailyPayload(data)),next=insertContinuousDailyRowRequests(7,5,1000,encodeAtomicDailyPayload(data),{sheet:'pub',rows:1000});
- assert.equal(old[1].insertRange.range.endColumnIndex,25);assert.equal(next[1].insertRange.range.endColumnIndex,26);assert.equal(next[2].updateCells.rows[0].values.length,26);
+ assert.equal(old[0].insertRange.range.endColumnIndex,25);assert.equal(next[0].insertRange.range.endColumnIndex,26);assert.equal(next[1].updateCells.rows[0].values.length,26);
 });
 test('publication journal holds unknown writes and requires complete verified projections',()=>{
  const h=expenseSqlite(),db=h.sqlite;

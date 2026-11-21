@@ -63,15 +63,15 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   await before();
   if(requests[0].findReplace?.range.sheetId===2){const x=requests[0].findReplace,i=x.range.startRowIndex;if(f[i][24]!==x.find)return{replies:[{findReplace:{}}]};assert.equal(x.matchEntireCell,true);assert.equal(x.includeFormulas,false);writes++;f[i][24]=e[i][24]=x.replacement;for(const c of [0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23])e[i][c]='';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,ledgerF=change.range.sheetId===4?detailF:rawF,ledgerE=change.range.sheetId===4?detailE:rawE;if(ledgerF[i][25]!==change.find)return{replies:[{findReplace:{}}]};ledgerF[i][25]=ledgerE[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{ledgerE[i][c]=v});writes++;return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
-  const index=requests[1].insertRange.range.startRowIndex,values=requests[2].updateCells.rows[0].values;
-  assert.equal(index,4);assert.equal(requests[1].insertRange.range.endColumnIndex,25);writes++;
+  const index=requests[0].insertRange.range.startRowIndex,values=requests[1].updateCells.rows[0].values;
+  assert.equal(index,4);assert.equal(requests[0].insertRange.range.endColumnIndex,25);writes++;
   const oldF=f.map(r=>r.slice()),oldE=e.map(r=>r.slice());f.push(Array(29).fill(null));e.push(Array(29).fill(null));
   for(let i=index;i<oldF.length;i++)for(let c=0;c<25;c++){f[i+1][c]=oldF[i][c];e[i+1][c]=oldE[i][c];}
   for(let i=index+1;i<f.length;i++)Object.assign(f[i],continuousDailyHelperFormulas(i+1));
   for(let c=0;c<25;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   const payload=decodeAtomicDailyPayload(f[index][24]);assert.ok(payload);
   Object.assign(e[index],{0:2026,1:11,2:15,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
-  if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';return{replies:[{},{},{}]};
+  if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';return{replies:[{},{}]};
  };
  return {...h,job,source,legacy,claim,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,'draft',2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
 }
@@ -117,13 +117,13 @@ async function publicationFixture(mode='ok',includeItem=false){
   if(mode==='budget-before')while(budget.remaining>6)budget.consumeRead();
   await before();ticket?.consume();writes++;
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,lf=change.range.sheetId===4?h.detailFormula():h.rawFormula(),le=change.range.sheetId===4?h.detailEffective():h.rawEffective();assert.equal(lf[i][25],change.find);lf[i][25]=le[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{le[i][c]=v});if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
-  const index=requests[1].insertRange.range.startRowIndex,values=requests[2].updateCells.rows[0].values,f=h.formula(),e=h.effective();assert.equal(requests[1].insertRange.range.endColumnIndex,26);
+  const index=requests[0].insertRange.range.startRowIndex,values=requests[1].updateCells.rows[0].values,f=h.formula(),e=h.effective();assert.equal(requests[0].insertRange.range.endColumnIndex,26);
   const oldF=structuredClone(f),oldE=structuredClone(e);f.push(Array(29).fill(null));e.push(Array(29).fill(null));
   for(let i=index;i<oldF.length;i++)for(let c=0;c<26;c++){f[i+1][c]=oldF[i][c];e[i+1][c]=oldE[i][c];}
   for(let i=index+1;i<f.length;i++)Object.assign(f[i],continuousDailyHelperFormulas(i+1));
   for(let c=0;c<26;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   e[index][24]=f[index][24];e[index][25]='STAGED';
-  if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:[{},{},{}]};
+  if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:[{},{}]};
   }finally{ticket?.release();}
  };
  const {ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js');let lastBudget;

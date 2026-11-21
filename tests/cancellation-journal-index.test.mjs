@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';
+const require=createRequire(import.meta.url),{indexCancellationJournal}=require('../dist/sheets/stable-cancellation-final-check.js');
+function item(id,projection='DETAIL'){return{entity_id:id,projection};}
+function watched(a,counter){return new Proxy(a,{get(target,prop,receiver){if(prop==='filter'||prop==='find'||prop==='some')throw Error('nested scan forbidden');if(typeof prop==='string'&&/^\d+$/.test(prop))counter.n++;return Reflect.get(target,prop,receiver);}});}
+test('502 projections and cancellations match with bounded iteration',()=>{const c={n:0},p=Array.from({length:502},(_,i)=>item(`exp_x|item_${i}`)),w=p.map(x=>({...x})),index=indexCancellationJournal(watched(p,c),watched(w,c));assert.equal(index.size,502);for(const row of p)assert.ok(index.has(JSON.stringify([row.entity_id,row.projection])));assert.ok(c.n<=4*(p.length+w.length));});
+test('duplicate, missing and extraneous items are rejected',()=>{const a=item('exp_a'),b=item('exp_b');assert.equal(indexCancellationJournal([a,b],[a,a]),null);assert.equal(indexCancellationJournal([a,a],[a,b]),null);assert.equal(indexCancellationJournal([a,b],[a,item('exp_c')]),null);assert.equal(indexCancellationJournal([a,b],[a]),null);});
+test('tuple key prevents delimiter collisions',()=>{const a=item('a|b','c'),b=item('a','b|c'),index=indexCancellationJournal([a,b],[b,a]);assert.equal(index.size,2);});

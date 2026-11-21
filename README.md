@@ -466,7 +466,15 @@ Owner ที่ยืนยันตัวตนแล้วบันทึก�
 - `ส่วนตัว | 40,000 | KBank ร้าน | จ่ายบัตรเครดิต`
 - `คืนเงินส่วนตัว | 5,000 | เงินสดหน้าร้าน | คืนเงินเข้าร้าน`
 
+prefix คำสั่งส่วนตัวที่รองรับทั้งหมดเป็นคำสงวน: หากรูปแบบหรือข้อมูลหลัง prefix ไม่ถูกต้อง ระบบต้องตอบวิธีใช้และหยุดก่อน Expense parser เสมอ
+
 ระบบต้องให้ Owner กดยืนยันใน Flex ก่อนบันทึกจริง เก็บใน ledger และ audit แยก (`owner_personal_transactions`) แล้ว sync ไป `V52_PERSONAL_USE_RAW` เท่านั้น รายการนี้ **ไม่ใช่ Expense และไม่กระทบ P&L** แต่ `04_OWNER_MONTH_CLOSE` ใช้เป็นส่วนประกอบของการกระทบยอดเงินคงเหลือร้านได้
+
+การ sync `PERSONAL_USE` ใช้ lease แยกต่อธุรกรรมและตรวจ version ล่าสุดจาก D1 อีกครั้งก่อนเขียน Google Sheets; งาน version เก่าจะจบแบบ no-op ส่วน version ปัจจุบันที่ติด writer ของธุรกรรมเดียวกันจะสร้าง delayed replacement message แล้ว ack delivery เดิม เพื่อไม่ใช้ retry/DLQ budget หมดระหว่างรอ โดยไม่ลด concurrency ของธุรกรรมอื่น
+
+หลังได้ Google OAuth access token และก่อนส่ง mutation จริง ระบบทำ final CAS แล้ว renew per-entity lease อย่างน้อย 15 นาที ซึ่งยาวกว่า [ขีดจำกัดการประมวลผลหนึ่งคำขอของ Google Sheets ที่ 180 วินาที](https://developers.google.com/workspace/sheets/api/limits); หาก auth ใช้เวลาจน lease เดิมหมด CAS จะหยุดก่อน dispatch และหากกำหนด client timeout ยาวกว่าค่าปกติ lease จะขยายตาม mutation timeout + provider bound + safety margin ด้วย ระบบคง lease/token เดิมไว้เมื่อผลลัพธ์ยังไม่แน่ชัด เช่น client timeout, network disconnect, HTTP 408 หรือ HTTP 5xx และไม่ถือว่า `AbortController` ยืนยันการยกเลิกฝั่ง Google งาน version ใหม่จึงเขียนได้หลัง writer เดิมตอบสำเร็จ หรือหลัง uncertainty lease หมดและ recovery รับช่วงแล้วเท่านั้น ส่วน HTTP rejection ที่ระบุว่าไม่ได้รับ mutation เช่น validation/auth/quota 4xx จะเข้าสู่ retry/DLQ เดิมโดยไม่ถูกกัก 15 นาที
+
+`POST /admin/bootstrap-sheets` ตรวจสูตร PERSONAL_USE ใน `04_OWNER_MONTH_CLOSE` แบบ idempotent: เติมเฉพาะเซลล์ที่ว่าง และหยุดด้วย layout conflict หากพบข้อความหรือสูตรอื่นอยู่แล้ว เพื่อไม่เขียนทับสูตรที่ Owner ดูแลเอง
 
 ### Bank Slip
 
@@ -499,19 +507,61 @@ Source wallet = SHOP_BANK
 
 ในชีท `รายวัน` แสดงเป็น `บัญชีร้าน`
 
+เงินสดที่จ่ายจากเงินบัญชีร้านใช้คู่ `cash` + `SHOP_BANK` ได้ โดยไม่แปลงเป็นเงินโอน:
+เลือก **Shop-bank cash** ใน LINE; RAW คงวิธีจ่ายและแหล่งเงินแยกกัน ส่วน `รายวัน`
+ลงคอลัมน์เงินสดและ W=`บัญชีร้าน`. **Drawer cash** / Quick Save `ทอน` ยังคง
+`cash` + `CASH_DRAWER`; Bank slip ยังคงล็อก `transfer` + `SHOP_BANK`.
+การแก้นี้ไม่เปลี่ยนแถวข้อมูลเก่าหรือยอดย้อนหลังอัตโนมัติ.
+
 ### Duplicate protection
 
 ตรวจทั้ง:
 
 - reference number
 - image hash
+- LINE message ID (ส่ง webhook เดิมซ้ำไม่สร้างธุรกรรมใหม่)
+- ผู้ขาย + เลขเอกสารที่ปรับเฉพาะรูปแบบ Unicode/ตัวพิมพ์/ช่องว่าง ใช้ SHA-256
+  `receipt:v1:` ใน UNIQUE `reference_key` เดิม จึงป้องกันส่งพร้อมกัน แม้ไม่มี
+  legal vendor name หรือใช้ LINE คนละบัญชี; ไม่ใช้ LINE user ID เป็นตัวแทนใบเสร็จ
 - exact trimmed `order_id` สำหรับ `ONLINE_ORDER` โดยใช้ D1 unique identity claim
 
 ภาพหรือ LINE message ใหม่ของ Online Order เดิมต้องกลับไปแสดงรายการเดิมและห้ามสร้าง Expense หรือ primary purchase document ใหม่ แม้เกิดพร้อมกันหลาย event. เอกสารคนละชนิดที่มี order ID เดียวกันยัง link เป็น supporting evidence ได้ตาม relation model เดิม; ข้อมูลเก่า `WAITING_REVIEW` จะไม่ถูกยกระดับอัตโนมัติ.
 
+เอกสารต่างชนิดของ exact order ที่มี Expense owner เดียว แม้ issuer/เลขเอกสารตรงกัน
+ต้องเก็บเอกสาร, items, link และ audit ได้ โดยไม่สร้าง Expense หรือยอดใหม่.
+เฉพาะหลักฐาน linked ที่ไม่มี `expense_id` ใช้ `receipt:linked:v1:` ซึ่งผูก order,
+owner, document type และ receipt identity; UNIQUE order/type claim ป้องกัน concurrent
+uploads. Image เดิม, order อื่น และ primary receipt ยังผ่าน duplicate guard เดิม.
+
+ก่อนยืนยันทุกเส้นทาง รวมถึงการแก้ field สุดท้าย ระบบตรวจตัวระบุใบเสร็จซ้ำอีกครั้ง
+โดยใช้ข้อมูลเอกสารต้นฉบับ ไม่ใช้วันที่/คำอธิบาย Expense ที่แก้จาก Flex หลบการตรวจ.
+ถ้าเลขเอกสารต่างหนึ่งอักขระ แต่ผู้ขาย วันที่ ยอดจ่าย และชุดจำนวน/ราคาสินค้าตรงกัน
+จะ **พักตรวจ** เท่านั้น (ไม่มี CONFIRM หรือ Sheets job) ไม่รวม/ลบรายการอัตโนมัติ.
+จำนวน line items ซ้ำในใบเดียวกันยังคงครบ; VAT ที่ OCR อ่านต่างกันไม่ทำให้หลบการพักตรวจ.
+ตรวจหลักฐานทุกสถานะรวม cancelled; เอกสารที่ link กับ Expense เดียวกันไม่เป็นคู่ซ้ำ.
+ผลอ่านจำกัด 100 candidates, 200 items ต่อใบ และ 2,000 candidate items รวม;
+ถ้าเกินขอบเขตให้หยุดยืนยัน ไม่ถือว่าปลอดรายการซ้ำ. คำตอบไม่เผยข้อมูลใบอื่น/ผู้ส่งอื่น.
+
+ข้อจำกัด: การถ่ายใบเดิมใหม่โดยเลขหาย, ผู้ขายคลาดเคลื่อน หรือเลขต่างหลายอักขระยังไม่
+รับประกันตรวจพบ; legacy Unicode/ช่องว่างภายในที่ไม่ตรงรูปแบบอาจตรวจได้เฉพาะหน้าต่าง
+วันและยอดเดียวกัน. ใบจริงคนละใบที่เลขเรียงติดกันและรายละเอียดตรงกันอาจถูกพักได้.
+เจ้าของต้องเทียบต้นฉบับทั้งสองใบและอนุมัติการแก้เฉพาะรายการผ่านงานข้อมูลที่มี audit;
+ไม่มีปุ่มข้าม guard, ไม่ให้ยกเลิกหลักฐานเดิมเพื่อหลบ guard และไม่ replay งานเพื่อแก้ hold.
+
+การยืนยันใช้ D1 transaction เดียวสำหรับสถานะ, document, audit และ sync outbox
+พร้อม CAS ข้อมูลที่ผู้ใช้ตรวจแล้ว; enqueue/LINE ล้มเหลวไม่ยืนยันธุรกรรมซ้ำ.
+ใช้ Workers best-practices สำหรับ transaction boundary และตรวจด้วย real SQLite
+fixtures (ไม่ใช่ Production): `node --test tests/expense-{wallet-source,receipt-identity,receipt-guards,confirm-integration,postback}.test.mjs`
+หลัง `npm run build:test`. มี migration `0019_expense_linked_receipt_identity.sql`
+สำหรับยกเว้น scoped linked evidence จาก legacy invoice index เท่านั้น; ไม่เปลี่ยน
+หลักฐานหรือ backfill identity เก่า. ต้องอนุมัติ remote migration/release แยก และลง
+schema ก่อน runtime ใหม่นี้. ขั้นตอนตรวจและข้อจำกัด rollback อยู่ใน docs/03.
+
 Undo เปลี่ยนเป็น `CANCELLED`
 
 audit trail ต้องคงอยู่
+
+Expense Undo จอง version ใหม่ให้มากกว่า `expense_events.version` และ version ของ sync job เดิมทุกตัวใน D1 transaction เดียวกับสถานะ, document status, audit และ sync outbox. จึงไม่ชนงาน v2 ที่เคยใช้ปรับข้อมูลและเสร็จแล้ว; ไม่ลบหรือ replay งานเดิม. หาก Worker หยุดหลัง commit หรือ enqueue ล้มเหลว Cron กู้เฉพาะ outbox ใหม่ได้โดยไม่ Undo ซ้ำ. การแก้ row mapping เดิมเป็นงานข้อมูลที่ต้องตรวจและอนุมัติแยก ไม่ทำโดย runtime patch นี้.
 
 ### Expense Document Foundation V1.2
 
@@ -519,6 +569,7 @@ Receipt, Tax Invoice, Online Order และ Delivery Order ใช้ structured
 
 - ยอดรายวันคือ `final paid` หลังส่วนลด/voucher/subsidy ไม่ใช่ราคาก่อนลด
 - Online order ใช้วันที่จ่ายเงินจริงเท่านั้น; ถ้าไม่เห็นวันที่หรือบัตร ให้ยืนยันก่อน จึงห้ามเดา card wallet
+- Paid Online Order ที่อ่านยอดไม่ครบหรือขัดกันจะอ่านยอดซ้ำได้หนึ่งครั้งภายใน daily budget โดยไม่หักส่วนลดซ้ำจากยอดรวมที่พิมพ์ไว้; ข้อมูลที่ยังขัดกันคงรอตรวจและไม่สร้างยอด. เจ้าของที่ยืนยันตัวตนพิมพ์ `รายการค้าง` ในแชตส่วนตัวเพื่อเติมเฉพาะยอด/สถานะ/วันชำระที่ขาด แล้วทำต่อกับเอกสารเดิม โดยไม่ upgrade อัตโนมัติเมื่อส่งรูปซ้ำ; ดู [Owner Online Order review](docs/23_OWNER_ONLINE_ORDER_REVIEW_TH.md)
 - Delivery Order เดี่ยวเป็น supporting evidence และไม่สร้างยอดจ่าย
 - ภาพ marketplace หลาย seller เก็บเป็น seller case แยกกัน ไม่รวมเป็น Expense เดียว
 - ข้อมูลเอกสารจากภาพทุกชนิดต้อง review/confirm ก่อน `CONFIRMED`; text Quick Save เดิมยังทำงานตามเดิม
@@ -921,6 +972,7 @@ npx wrangler secret put <NAME>
 
 - `GET /admin/status`
 - `GET /admin/readiness`
+- `GET /admin/operations/summary` — recent failures, scheduled-step freshness, corrected latency และรายการค้างแบบ aggregate; ดู [reliability review](docs/24_SYSTEM_RELIABILITY_REVIEW_TH.md)
 - `POST /admin/bootstrap-sheets`
 - `POST /admin/retry-sync`
 - `POST /admin/reconcile-sheets`
@@ -1353,3 +1405,8 @@ Production source at last verification:
 ```
 
 ระบบ Production ปัจจุบันถูกออกแบบให้ **ธุรกรรมร้านไม่ผูกกับ notification delivery**, **D1 ไม่ผูกกับ availability ของ Google Sheets**, และ **Employee LINE flow ไม่ผูกกับ Push quota รายเดือน** ซึ่งเป็นหลักสำคัญเพื่อให้ร้านใช้งานจริงได้ต่อเนื่องด้วยต้นทุนต่ำและสามารถกู้คืนได้โดยไม่สร้างข้อมูลซ้ำ
+
+
+## Branch lifecycle
+
+กติกาสำหรับแชท งาน และ branch: [Branch lifecycle](docs/BRANCH_LIFECYCLE_TH.md). ทะเบียนสถานะอยู่ที่ [branch-lifecycle.json](docs/branch-lifecycle.json). เริ่มแบบ report-only เพื่อให้งานที่เปิดอยู่ทยอยเข้าระบบ โดย snapshot ไม่ใช่คำอนุมัติลบ branch.

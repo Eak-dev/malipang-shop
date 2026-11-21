@@ -1,0 +1,69 @@
+name: Issue248 notice readiness read-only diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact current main SHA containing the reviewed diagnostic
+        required: true
+        type: string
+      phase:
+        description: PRE (paused or unavailable, indeterminate) or POST (readiness check)
+        required: true
+        type: choice
+        options: [PRE, POST]
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  check:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+      CHECK_PHASE: ${{ inputs.phase }}
+      SOURCE_SHA: 8dbd630e43d61b59c0ca0e19d2399e3d50084bd5
+      G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+      G5_RUN_ID: '42802512915'
+      G5_RUN_ATTEMPT: '1'
+      PRIOR_WORKER_VERSION: 1ac8cdf0-3b4c-414b-a77e-5e1ecddbd597
+      EXPECTED_WORKER_VERSION: e26b593e-7fa5-4492-a62f-5a0c68f3533f
+      COMPLETED_BEFORE: '3296'
+      OPEN_FAILED_BEFORE: '32'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify source and exact main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_MAIN_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_MAIN_SHA"
+          git cat-file -e "$SOURCE_SHA^{commit}"
+          git merge-base --is-ancestor "$SOURCE_SHA" HEAD
+          git diff --quiet "$SOURCE_SHA" HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-stage-guard.mjs scripts/pr247-readonly-snapshot.sh
+      - run: npm ci
+      - name: Check G6a guard and sanitized readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          bash scripts/pr247-readonly-snapshot.sh A_POST "$RUNNER_TEMP/g6b-readonly.json" >/dev/null
+          bash scripts/issue248-notice-readiness-check.sh "$CHECK_PHASE"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_MAIN_SHA"
+          echo 'Diagnostic only; no Claim or Sheets write, no G6b approval or CAS authorization.' >> "$GITHUB_STEP_SUMMARY"

@@ -81,9 +81,12 @@ Do not escalate routine engineering choices to the owner.
 Always read:
 
 1. `AGENTS.md`
-2. `README.md`
-3. `docs/07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md`
-4. Documentation directly relevant to the affected subsystem
+2. `docs/PROJECT_CONTEXT_TH.md`
+3. `README.md`
+4. `docs/07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md`
+5. Documentation directly relevant to the affected subsystem
+
+For every new task or chat, read `docs/PROJECT_CONTEXT_TH.md` immediately after this file, before implementation or repository changes. For every new feature, update that file in the same change with a concise description and links to its authoritative documentation or issue. When an existing feature, architecture, configuration, or operational behavior materially changes or is removed, review and update the relevant entry in the same change. State explicitly when a task has no project-context impact; do not fabricate changes or production status. Production state requires current provider evidence, timestamps, and explicit UNKNOWNs where unverified. This is a mandatory contributor/agent workflow, not an autonomous background updater.
 
 Read the following only when the task can affect them:
 
@@ -374,6 +377,15 @@ If local changes or divergent history prevent a safe fast-forward:
 - Keep commits focused and reversible.
 - Do not rewrite existing history.
 - Start from a GitHub issue using the repository issue forms whenever possible.
+
+## Branch lifecycle and work coordination
+
+- Read `docs/BRANCH_LIFECYCLE_TH.md` and `docs/branch-lifecycle.json` before repository work. Report the Issue, coordination chat, work branch, target branch, authority and current lifecycle status.
+- New work: one Issue, one primary work branch and one PR. Register the branch with an exact observed SHA. Additional branches need a recorded dependency, reason and integration plan. This policy does not introduce Gitflow or replace the Canonical Main Gate.
+- Existing work begins in `NEEDS_AUDIT` or a documented `MIGRATION_PENDING` work item. An open PR may be recorded as `ACTIVE` but does not prove a current writer. Do not switch another chat's checkout, overwrite dirty work, close its PR or consolidate code without coordinating the writer handoff.
+- `main` is `PROTECTED`. `INTEGRATED` does not mean deletable. Only SHA-bound `DELETE_READY` records with complete evidence are deletion candidates; recheck all evidence against live source/target refs, worktrees, PR dependencies and external references immediately before an explicitly approved deletion. A changed SHA invalidates readiness. Never delete from a snapshot alone.
+- Keep local and remote records distinct. Verify a recoverable backup of the source commit and separately preserve any uncommitted/untracked work. A missing/prunable worktree is UNKNOWN, not clean. Never infer Production state from merge or lifecycle status.
+- The lifecycle workflow is advisory during rollout. It neither grants deletion authority nor blocks existing PRs. Enabling required checks, changing release controls or deleting branches are separate actions.
 
 ## Dependency policy
 

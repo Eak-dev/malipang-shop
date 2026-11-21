@@ -1,0 +1,44 @@
+name: Issue 296 isolated Google grid probe
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main SHA
+        type: string
+        required: true
+      expected_worker_version_sha256:
+        description: SHA-256 of the currently deployed 100-percent Worker version ID
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: 22, cache: npm}
+      - name: Install and test probe guards
+        run: |
+          npm ci --ignore-scripts
+          node --test tests/prod-grid-probe.test.mjs tests/issue296-grid-probe-worker.test.mjs tests/issue296-grid-probe-failures.test.mjs
+      - name: Assert latest remote main
+        run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: Upload one isolated read-only version and inspect it
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          ISSUE296_TEST_TARGET_JSON: ${{ secrets.ISSUE296_TEST_TARGET_JSON }}
+        run: node scripts/prod-grid-probe.mjs

@@ -1,46 +1,24 @@
-import test from 'node:test';
+import test,{after} from 'node:test';
 import assert from 'node:assert/strict';
 import {handleExpensePostback,handleExpenseText} from '../dist/expense/service.js';
 import {expensePaymentOptions} from '../dist/expense/document.js';
+import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {createRequire} from 'node:module';
+const line=createRequire(import.meta.url)('../dist/line/event-response.js');
 
 function harness(status='WAITING_CONFIRM',overrides={}){
   const {document,...rowOverrides}=overrides;
-  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status,...rowOverrides};
-  const state={row,batches:[],queue:[],pending:null,document:document||null};
-  const DB={
-    prepare(sql){
-      return{
-        sql,args:[],
-        bind(...args){this.args=args;return this;},
-        async first(){
-          if(sql.includes('expense_pending_edits'))return state.pending;
-          if(sql.includes('FROM expense_documents'))return state.document;
-          return sql.includes('SELECT * FROM expense_events')?{...state.row}:null;
-        },
-        async run(){
-          if(sql.includes("status='CANCELLED'")&&sql.includes("status='WAITING_CONFIRM'")){if(state.row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};state.row.status='CANCELLED';}
-          else if(sql.includes("status='CANCELLED'")&&sql.includes("status='CONFIRMED'")){if(state.row.status!=='CONFIRMED')return{meta:{changes:0}};state.row.status='CANCELLED';}
-          else if(sql.includes("status='CONFIRMED'")){if(state.row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};state.row.status='CONFIRMED';}
-          else if(sql.includes('payment_key=?,source_wallet=?')){state.row.payment_key=this.args[0];state.row.source_wallet=this.args[1];}
-          else if(sql.includes('category=?'))state.row.category=this.args[0];
-          else if(sql.includes('transaction_date=?'))state.row.transaction_date=this.args[0];
-          else if(sql.includes('description=?'))state.row.description=this.args[0];
-          else if(sql.includes('INSERT INTO expense_pending_edits'))state.pending={expense_id:this.args[1],field:'description',expires_at:this.args[3]};
-          else if(sql.includes('DELETE FROM expense_pending_edits'))state.pending=null;
-          else if(sql.includes('UPDATE expense_documents SET normalized_json=')&&state.document)state.document.normalized_json=this.args[0];
-          return{meta:{changes:1}};
-        }
-      };
-    },
-    async batch(statements){
-      state.batches.push(statements);
-      for(const statement of statements){
-        if(statement.sql.includes('DELETE FROM expense_pending_edits'))state.pending=null;
-      }
-      return[];
-    }
+  const h=expenseSqlite();after(()=>h.close());
+  const row={expense_id:'exp_1',message_id:'msg_1',line_user_id:'U_TEST',description:'ค่าไฟ',amount_satang:12000,payment_key:'transfer',source_wallet:'SHOP_BANK',category:'utilities',transaction_date:'2026-07-22',status,trace_id:'fixture_trace',created_at:'2026-01-01T00:00:00.000Z',...rowOverrides};
+  const insert=(table,value)=>h.sqlite.prepare(`INSERT INTO ${table}(${Object.keys(value).join(',')}) VALUES(${Object.keys(value).map(()=>'?').join(',')})`).run(...Object.values(value));
+  insert('expense_events',row);
+  if(document)insert('expense_documents',{document_id:'doc_1',message_id:'doc_msg',line_user_id:'U_TEST',document_type:'RECEIPT',expense_id:'exp_1',status,created_at:row.created_at,...document});
+  const state={batches:h.DB.batches,queue:h.queue,
+    get row(){return{...h.sqlite.prepare("SELECT * FROM expense_events WHERE expense_id='exp_1'").get()};},
+    get document(){return h.sqlite.prepare("SELECT * FROM expense_documents WHERE expense_id='exp_1'").get()??null;},
+    get pending(){return h.sqlite.prepare("SELECT * FROM expense_pending_edits WHERE line_user_id='U_TEST'").get()??null;}
   };
-  const env={DB,JOB_QUEUE:{async sendBatch(messages){state.queue.push(...messages);}},SHEETS_SYNC_ENABLED:'true',RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false'};
+  const env=h.env;
   const actor={canSubmitExpense:true};
   const event=(data,params)=>({source:{type:'user',userId:'U_TEST'},postback:{data,params}});
   return{state,env,actor,event};
@@ -49,6 +27,67 @@ function harness(status='WAITING_CONFIRM',overrides={}){
 test('payment selection updates the draft and matching wallet',async()=>{
   const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=firstchoice'),h.actor);
   assert.equal(h.state.row.payment_key,'firstchoice');assert.equal(h.state.row.source_wallet,'CARD_FIRST_CHOICE');assert.equal(h.state.queue.length,0);
+});
+
+test('explicit cash payment from shop bank persists both fields without claiming a transfer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM','another unresolved field must still block confirmation');
+  assert.equal(h.state.row.amount_satang,12000);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('legacy cash payment postback without a source still selects the cash drawer',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_payment&id=exp_1&payment=cash'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'CASH_DRAWER');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('invalid transfer from cash drawer is rejected by both payment actions without financial effects',async()=>{
+  for(const action of ['expense_set_payment','expense_resolve_payment']){
+    const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'}),before={...h.state.row},prepared=[];
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);
+    h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(`a=${action}&id=exp_1&payment=transfer&source=CASH_DRAWER`),h.actor);
+    assert.deepEqual(h.state.row,before,action);
+    assert.equal(prepared.some(sql=>/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)),false,action);
+    assert.equal(h.state.batches.length,0,action);
+    assert.equal(h.state.queue.length,0,action);
+  }
+});
+
+test('source selection retains cash when the user chooses shop bank',async()=>{
+  const h=harness('WAITING_CONFIRM',{payment_key:'cash',source_wallet:'UNCONFIRMED',category:'not-a-category'});
+  await handleExpensePostback(h.env,h.event('a=expense_set_source&id=exp_1&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.source_wallet,'SHOP_BANK');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+});
+
+test('bank slip payment and source stay locked against cash-source postbacks',async()=>{
+  for(const data of [
+    'a=expense_set_payment&id=exp_1&payment=cash&source=SHOP_BANK',
+    'a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER',
+    'a=expense_set_source&id=exp_1&source=CASH_DRAWER'
+  ]){
+    const document={document_id:'doc_locked',document_type:'BANK_SLIP',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+    const h=harness('WAITING_CONFIRM',{document}),before={...h.state.row},prepared=[];
+    const beforeDocument=h.state.document;
+    const originalPrepare=h.env.DB.prepare.bind(h.env.DB);
+    h.env.DB.prepare=sql=>{prepared.push(sql);return originalPrepare(sql);};
+    await handleExpensePostback(h.env,h.event(data),h.actor);
+    assert.deepEqual(h.state.row,before);
+    assert.deepEqual(h.state.document,beforeDocument);
+    assert.equal(prepared.some(sql=>/^\s*(INSERT|UPDATE|DELETE)\b/i.test(sql)),false);
+    assert.equal(h.state.batches.length,0);
+    assert.equal(h.state.queue.length,0);
+  }
 });
 
 test('date picker updates the draft date',async()=>{
@@ -61,10 +100,8 @@ test('confirmation persists and enqueues Google Sheets before LINE output',async
   assert.equal(h.state.row.status,'CONFIRMED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,1);
 });
 
-test('undo is audit-safe and enqueues a second Sheets version',async()=>{
-  const h=harness('CONFIRMED');await handleExpensePostback(h.env,h.event('a=expense_undo&id=exp_1'),h.actor);
-  assert.equal(h.state.row.status,'CANCELLED');assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityVersion,2);
-});
+// Undo's transactional audit/outbox contract is exercised against real SQLite
+// in expense-undo-integration.test.mjs, not this permissive statement mock.
 
 test('Save cannot finalize a draft with an unconfirmed payment',async()=>{
   const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'});
@@ -108,6 +145,166 @@ test('a selected payment returns to review without finalizing when another requi
   assert.equal(h.state.row.source_wallet,'SHOP_BANK');
   assert.equal(h.state.row.status,'WAITING_CONFIRM');
   assert.equal(h.state.queue.length,0);
+});
+
+test('payment confirmation works when a valid pair is already stored but review is pending',async()=>{
+  const document={review_note:'Payment source must be selected',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document});
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.status,'CONFIRMED');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+  assert.equal(h.state.queue.length,1);
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.queue.length,1);
+});
+
+test('payment chooser does not overwrite a concurrent change',async()=>{
+  const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document});
+  const batch=h.env.DB.batch.bind(h.env.DB);let changeOnce=true;
+  h.env.DB.batch=async statements=>{
+    if(changeOnce){changeOnce=false;h.env.DB.sqlite.prepare("UPDATE expense_events SET payment_key='cash',source_wallet='CASH_DRAWER' WHERE expense_id='exp_1'").run();}
+    return batch(statements);
+  };
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.equal(h.state.row.payment_key,'cash');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,[]);
+  assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,0);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('payment chooser preserves a concurrent document review change',async()=>{
+  const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document}),batch=h.env.DB.batch.bind(h.env.DB);let changeOnce=true;
+  h.env.DB.batch=async statements=>{
+    if(changeOnce){changeOnce=false;h.env.DB.sqlite.prepare("UPDATE expense_documents SET normalized_json=? WHERE expense_id='exp_1'").run(JSON.stringify({marker:'concurrent',expenseReview:{requiredFields:['payment','category'],confirmedFields:[]}}));}
+    return batch(statements);
+  };
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=cash&source=CASH_DRAWER'),h.actor);
+  assert.equal(h.state.row.payment_key,'transfer');
+  assert.equal(JSON.parse(h.state.document.normalized_json).marker,'concurrent');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.env.DB.sqlite.prepare('SELECT count(*) n FROM expense_audit_log').get().n,0);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('payment selection without a document rolls back event and audit on failure',async()=>{
+  for(const failAt of [0,1]){
+    const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED'}),before=h.state.row;
+    h.env.DB.failAt=failAt;
+    await assert.rejects(handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor),/fixture batch failure/);
+    assert.deepEqual(h.state.row,before);
+    assert.equal(h.env.DB.sqlite.prepare('SELECT count(*) n FROM expense_audit_log').get().n,0);
+    assert.equal(h.state.queue.length,0);
+  }
+});
+
+test('payment selection rolls back each failed batch step and retries once',async()=>{
+  for(const data of ['a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK','a=expense_set_payment&id=exp_1&payment=transfer&source=SHOP_BANK','a=expense_set_source&id=exp_1&source=SHOP_BANK']){
+    for(const failAt of [0,1,2]){
+      const document={review_note:'Payment source must be selected',needs_review:1,normalized_json:JSON.stringify({evidence:'retained',expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+      const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+      const beforeRow=h.state.row,beforeDocument=h.state.document,event=h.event(data);
+      h.env.DB.failAt=failAt;
+      await assert.rejects(handleExpensePostback(h.env,event,h.actor),/fixture batch failure/);
+      assert.deepEqual(h.state.row,beforeRow);assert.deepEqual(h.state.document,beforeDocument);
+      assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) n FROM expense_audit_log").get().n,0);
+      assert.equal(h.state.queue.length,0);
+      h.env.DB.failAt=null;
+      await handleExpensePostback(h.env,event,h.actor);
+      await handleExpensePostback(h.env,event,h.actor);
+      assert.equal(h.state.row.status,'CONFIRMED');assert.equal(h.state.queue.length,1);
+      const audits=h.env.DB.sqlite.prepare("SELECT before_json,after_json FROM expense_audit_log WHERE action='EDIT'").all();
+      assert.equal(audits.length,1);
+      assert.deepEqual(JSON.parse(audits[0].before_json),{paymentKey:'unconfirmed',sourceWallet:'UNCONFIRMED'});
+      assert.deepEqual(JSON.parse(audits[0].after_json),{paymentKey:'transfer',sourceWallet:'SHOP_BANK'});
+      assert.equal(JSON.parse(h.state.document.normalized_json).evidence,'retained');
+    }
+  }
+});
+
+test('payment selection preserves an unreadable document and does not finalize',async()=>{
+  const document={needs_review:1,normalized_json:'{invalid'};
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document}),before=h.state.document;
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.deepEqual(h.state.document,before);assert.equal(h.state.row.payment_key,'unconfirmed');
+  assert.equal(h.state.queue.length,0);
+  assert.equal(h.env.DB.sqlite.prepare('SELECT count(*) n FROM expense_audit_log').get().n,0);
+});
+
+test('payment selection explains document conflicts instead of repeatedly requesting payment',async()=>{
+  const messages=[],original=line.respondTextToLineEvent;
+  line.respondTextToLineEvent=async(_env,_event,message)=>{messages.push(message);};
+  try{
+    for(const conflict of ['status','multiple']){
+      const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+      const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+      if(conflict==='status')h.env.DB.sqlite.prepare("UPDATE expense_documents SET status='WAITING_REVIEW' WHERE expense_id='exp_1'").run();
+      else h.env.DB.sqlite.prepare("INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,expense_id,status,created_at,normalized_json) VALUES('doc_2','doc_msg_2','U_TEST','RECEIPT','exp_1','WAITING_CONFIRM','2026-01-02','{}')").run();
+      await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+      assert.match(messages.at(-1),/เจ้าของตรวจสถานะเอกสาร/);
+      assert.equal(h.state.row.payment_key,'unconfirmed');assert.equal(h.state.queue.length,0);
+      assert.equal(h.env.DB.sqlite.prepare('SELECT count(*) n FROM expense_audit_log').get().n,0);
+    }
+  }finally{line.respondTextToLineEvent=original;}
+});
+
+test('payment selection redelivery after a lost batch acknowledgement creates one audit',async()=>{
+  const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+  const event=h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK');
+  h.env.DB.failAfterCommit=true;
+  await assert.rejects(handleExpensePostback(h.env,event,h.actor),/fixture crash after commit/);
+  h.env.DB.failAfterCommit=false;
+  await handleExpensePostback(h.env,event,h.actor);
+  assert.equal(h.state.row.payment_key,'transfer');
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+  assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,1);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('simultaneous payment selections from the same snapshot create one audit',async()=>{
+  const document={needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment','category'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+  const batch=h.env.DB.batch.bind(h.env.DB);let arrivals=0,release;
+  const both=new Promise(resolve=>{release=resolve;});
+  h.env.DB.batch=async statements=>{if(++arrivals<=2){if(arrivals===2)release();await both;}return batch(statements);};
+  const event=h.event('a=expense_set_payment&id=exp_1&payment=transfer&source=SHOP_BANK');
+  await Promise.all([handleExpensePostback(h.env,event,h.actor),handleExpensePostback(h.env,event,h.actor)]);
+  assert.equal(h.state.row.payment_key,'transfer');assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) n FROM expense_audit_log WHERE action='EDIT'").get().n,1);
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+  assert.equal(h.state.queue.length,0);
+});
+
+test('legacy document without normalized JSON gains payment review state',async()=>{
+  const document={needs_review:1,review_note:'Payment source must be selected',normalized_json:null};
+  const h=harness('WAITING_CONFIRM',{payment_key:'unconfirmed',source_wallet:'UNCONFIRMED',document});
+  await handleExpensePostback(h.env,h.event('a=expense_resolve_payment&id=exp_1&payment=transfer&source=SHOP_BANK'),h.actor);
+  assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+  assert.equal(h.state.row.status,'CONFIRMED');assert.equal(h.state.queue.length,1);
+});
+
+test('each payment option resolves pending review and preserves other outstanding fields',async()=>{
+  const messages=[],original=line.respondFlexToLineEvent;
+  line.respondFlexToLineEvent=async(_env,_event,message)=>{messages.push(message);};
+  try{
+    for(const option of expensePaymentOptions){
+      const document={review_note:'Payment source must be selected; Category needs confirmation',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['payment','category'],confirmedFields:[]}})};
+      const h=harness('WAITING_CONFIRM',{document});
+      await handleExpensePostback(h.env,h.event(`a=expense_set_payment&id=exp_1&payment=${option.paymentKey}&source=${option.sourceWallet}`),h.actor);
+      assert.equal(h.state.row.payment_key,option.paymentKey);
+      assert.equal(h.state.row.source_wallet,option.sourceWallet);
+      assert.equal(h.state.row.status,'WAITING_CONFIRM');
+      assert.deepEqual(JSON.parse(h.state.document.normalized_json).expenseReview.confirmedFields,['payment']);
+      const output=JSON.stringify(messages.at(-1));
+      assert.doesNotMatch(output,/Payment source must be selected|วิธีชำระเงิน/);
+      assert.match(output,/หมวดหมู่/);
+      assert.equal(h.state.queue.length,0);
+    }
+  }finally{line.respondFlexToLineEvent=original;}
 });
 
 test('Cancel from the payment chooser leaves no finalized Expense',async()=>{

@@ -147,7 +147,12 @@ async function expandMonthCapacity(env:Env,block:MonthBlock,layout:DailyLayout):
     return true;
   }finally{await env.DB.prepare(`DELETE FROM daily_sheet_capacity_locks WHERE sheet_name=? AND month=?`).bind(env.SHEET_EXPENSE_DAILY,block.month).run();}
 }
-export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{return normalize(paymentKey)==="cash"||normalize(sourceWallet)==="cashdrawer"?"ทอน/หน้าร้าน":"บัญชีร้าน";}
+export function legacySourceWallet(paymentKey:string,sourceWallet:string):string{
+  // Funding source is independent of payment method: cash can come from the
+  // shop bank rather than the till. Preserve the legacy fallback otherwise.
+  if(normalize(sourceWallet)==="shopbank")return"บัญชีร้าน";
+  return normalize(paymentKey)==="cash"||normalize(sourceWallet)==="cashdrawer"?"ทอน/หน้าร้าน":"บัญชีร้าน";
+}
 export function dailyInputRanges(sheet:string,row:number):string[]{return[sheetRange(sheet,`B${row}:D${row}`),sheetRange(sheet,`F${row}:H${row}`),sheetRange(sheet,`K${row}:Q${row}`),sheetRange(sheet,`V${row}:W${row}`)];}
 
 async function reserveDailyEntryRows(env:Env,record:DailyExpenseRecord,entries:DailyExpenseEntry[]):Promise<{payment:ReturnType<typeof resolvePayment>;rows:Map<string,number>}>{

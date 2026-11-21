@@ -28,7 +28,9 @@ export function parseExpenseText(text:string,now=new Date()):ParsedExpenseText|n
 }
 export function autoCategory(desc:string):string{
   const s=desc.toLowerCase(),has=(keywords:string[])=>keywords.some(keyword=>s.includes(keyword)),hasWord=(keywords:string[])=>keywords.some(keyword=>new RegExp(`(?:^|[^a-z0-9])${keyword.replace(/[.*+?^${}()|[\]\\]/g,"\\$&")}(?:$|[^a-z0-9])`,"i").test(s));
-  if(has(["น้ำมัน","ค่าน้ำมัน","ขนส่ง","ส่งของ","ค่าจอดรถ","grab","lineman","fuel","gasoline","delivery","transport","shipping","parking"]))return"transport";
+  // Cooking oil is stock, not vehicle fuel, even when its Thai name contains น้ำมัน.
+  if(has(["น้ำมันพืช","น้ำมันคาโนลา","น้ำมันคาโนล่า","น้ำมันถั่วเหลือง","น้ำมันปาล์ม","cooking oil","vegetable oil","canola oil","soybean oil","palm oil"]))return"ingredients";
+  if(has(["น้ำมัน","ค่าน้ำมัน","ขนส่ง","ส่งของ","ค่าจัดส่ง","ค่าส่ง","ค่าจอดรถ","ที่จอดรถ","ค่ารถ","ค่าเดินทาง","คนขับรถ","ค่าคนขับ","แท็กซี่","ทางด่วน","grab","lineman","fuel","gasoline","delivery","transport","shipping","parking"])||hasWord(["driver","drivers","courier","taxi","freight","petrol","diesel","logistics"]))return"transport";
   if(has(["ค่าไฟ","ค่าน้ำ","อินเทอร์เน็ต","internet","wifi","wi-fi","โทรศัพท์","phone","electric","electricity","water bill"])||hasWord(["water"]))return"utilities";
   if(has(["กล่อง","ถุง","ซีล","สติ๊กเกอร์","สติกเกอร์","เทป","แพ็ค","ถุงมือ","ซองกันชื้น","packaging","box","boxes","bag","bags","sticker","seal","tape","pack","glove","gloves"]))return"packaging";
   if(has(["แก๊ส","lpg","alumax"])||hasWord(["gas"]))return"gas";

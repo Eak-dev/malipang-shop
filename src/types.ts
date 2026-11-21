@@ -5,6 +5,8 @@ export type MissingPunchType = "NONE" | "MISSING_IN" | "MISSING_OUT" | "BOTH";
 export type SheetEntityType = "ATTENDANCE_EVENT" | "DAILY_PAYROLL" | "WEEKLY_PAYROLL" | "WAGE_HISTORY" | "SHIFT_SCHEDULE" | "OT_REQUEST" | "EXPENSE" | "PERSONAL_USE" | "SYSTEM_LOG";
 
 export interface Env {
+  /** Supplied by the Workers runtime, never trusted from an HTTP client. */
+  CF_VERSION_METADATA?: { id: string; tag?: string; timestamp?: string };
   DB: D1Database;
   AI: { run(model: string, input: unknown): Promise<unknown> };
   EVIDENCE: R2Bucket;
@@ -16,6 +18,60 @@ export interface Env {
   ATTENDANCE_ENABLED: string;
   EXPENSE_ENABLED: string;
   SHEETS_SYNC_ENABLED: string;
+  /** Default off: do not reconstruct expense outbox work after source removal. */
+  EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED?: string;
+  STABLE_PHASE1_ENABLED?: string;
+  /** Default off. Each restores the pre-candidate behaviour when unset. */
+  EXPENSE_SAVED_SYNC_NOTE_ENABLED?: string;
+  EXPENSE_FORCE_RECONCILE_HOLD_ENABLED?: string;
+  STABLE_REDRIVE_HOLD_ENABLED?: string;
+  WORKBOOK_BATCH_FAIRNESS_ENABLED?: string;
+  SYNC_ALERT_DURABLE_ENABLED?: string;
+  /** ISO-8601 UTC instant; incidents opened earlier are never sent. Required with SYNC_ALERT_DURABLE_ENABLED. */
+  SYNC_ALERT_DURABLE_SINCE?: string;
+  /** Days to keep closed, handled incidents (7-3650, default 30). */
+  SYNC_ALERT_INCIDENT_RETENTION_DAYS?: string;
+  /** Default off: true restores automatic cancellation of a confirmed expense whose sheet write
+   * definitely failed before dispatch. Unset holds the job for review instead (#296). */
+  UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED?: string;
+  STABLE_SCOPED_REVIEW_ENABLED?: string;
+  /** Default off: enables the read-only admin expense provider diagnostic route. */
+  EXPENSE_PROVIDER_DIAGNOSTIC_ENABLED?: string;
+  /** Experimental opt-in; requires the carrier template and migration 0026. */
+  CONTINUOUS_PUBLICATION_ENABLED?: string;
+  CONTINUOUS_EXPIRED_REVOKE_PHASE_ENABLED?: string;
+  CONTINUOUS_CANCEL_FINANCIAL_FINGERPRINT_ENABLED?: string;
+  CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED?: string;
+  CONTINUOUS_REVOKE_REVIEW_RUNNER_ENABLED?: string;
+  CONTINUOUS_PROVIDER_CANARY_ENABLED?: string;
+  /** Default off: exact synthetic preflight incident recovery only. */
+  CANARY_UNWRITTEN_RECOVERY_ENABLED?: string;
+  CONTINUOUS_UNDO_SERIALIZATION_ENABLED?: string;
+  CONTINUOUS_PUBLICATION_SHEET?: string;
+  CONTINUOUS_PUBLICATION_SHEET_ID?: string;
+  CONTINUOUS_PUBLICATION_ROWS?: string;
+  CONTINUOUS_DAILY_ENABLED?: string;
+  /** Temporary, default-off one-item monthly report operator. */
+  MONTHLY_REPORT_OPERATOR_ENABLED?: string;
+  CONTINUOUS_DAILY_SHEET?: string;
+  CONTINUOUS_DAILY_SHEET_ID?: string;
+  CONTINUOUS_RAW_SHEET?: string;
+  CONTINUOUS_RAW_SHEET_ID?: string;
+  CONTINUOUS_DETAIL_SHEET?: string;
+  CONTINUOUS_DETAIL_SHEET_ID?: string;
+  /** Default off; requires migration 0024. Captures verified expense-row preimages. */
+  STABLE_CANCELLATION_PREIMAGE_ENABLED?: string;
+  /** Optional, default-off durable one-workbook-operation recovery canary. */
+  STABLE_RECOVERY_GATE_ENABLED?: string;
+  /** Unwired, default-off positive-only reviewed expense notice closure. */
+  CONTINUOUS_REVIEW_CLOSE_ENABLED?: string;
+  CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED?: string;
+  CONTINUOUS_NOTICE_DISPATCH_ENABLED?: string;
+  CONTINUOUS_NOTICE_DEPLOYMENT_ID?: string;
+  NOTICE_QUEUE?: Queue<{dispatchId:string}|{probeId:string}|{revokeReviewDispatchId:string}>;
+  /** Opt-in D1-serialized pacing for Google Sheets projection operations. */
+  STABLE_SHEETS_PACING_ENABLED?: string;
+  STABLE_SHEETS_READ_BUDGET_PER_MINUTE?: string;
   R2_EVIDENCE_ENABLED: string;
   EVIDENCE_RETENTION_ENABLED: string;
   EVIDENCE_RETENTION_DAYS: string;
@@ -84,7 +140,8 @@ export type LineNotificationPurpose =
   | "ATTENDANCE_SMOKE"
   | "EMPLOYEE_RESPONSE"
   | "EXPENSE_RESPONSE"
-  | "OWNER_RESPONSE";
+  | "OWNER_RESPONSE"
+  | "SYNC_FAILURE";
 export interface LineNotificationJob {
   kind: "LINE_NOTIFICATION";
   to: string;
@@ -93,7 +150,9 @@ export interface LineNotificationJob {
   retryKey: string;
   traceId: string;
 }
-export type QueueJob = InboundJob | SheetsSyncJob | LineNotificationJob;
+/** A wake-up hint only; durable REVIEW/DLQ records remain the source. */
+export interface SyncAlertSweepJob { kind: "SYNC_ALERT_SWEEP"; traceId: string }
+export type QueueJob = InboundJob | SheetsSyncJob | LineNotificationJob | SyncAlertSweepJob;
 
 export interface Employee {
   employeeId: string;
@@ -168,6 +227,23 @@ export interface VisionResult {
   provider: string;
   raw: unknown;
   document?: ExpenseDocument | null;
+  /** Private allowlisted payment diagnostics; never the raw provider response. */
+  purchaseEvidenceAttempts?: PurchaseVisionAttempt[];
+}
+
+export interface PurchaseVisionAttempt{
+  model:string;
+  promptVersion:string;
+  rawFinalPaidAmountBaht:number|null;
+  rawOrderTotalBaht:number|null;
+  rawOrderTotalLabel:string;
+  rawPaymentStatus:string;
+  rawPaymentDate:string;
+  rawPaymentDateLabel:string;
+  rawPaymentDatePurpose:string;
+  normalizedAmountBaht:number|null;
+  normalizedPaymentDate:string;
+  reasonCodes:string[];
 }
 
 export interface ExpenseDocumentItem {
@@ -194,7 +270,9 @@ export interface PurchaseDocument {
   paymentDate: string;
   /** Extraction evidence used by deterministic purchase-date normalization. */
   paymentDateFormat?: "YMD" | "DMY" | "UNKNOWN";
-  paymentDatePurpose?: "PAYMENT" | "EXPECTED_DELIVERY" | "UNKNOWN";
+  paymentDatePurpose?: "PAYMENT" | "ORDER_PLACED" | "EXPECTED_DELIVERY" | "UNKNOWN";
+  /** Printed date label; absent only on older extracted snapshots. */
+  paymentDateLabel?: string;
   paymentTime: string;
   currency: string;
   subtotalBaht: number | null;

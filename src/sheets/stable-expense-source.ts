@@ -1,0 +1,75 @@
+import type {Env,SheetsSyncJob} from '../types';
+import {reviewedJobState,reviewedClaimState,type NormalNoticeAuthority} from './normal-notice-authority';
+import {newStableSourcePredicate,stableSourceIntegrity} from './stable-source-cutover';
+
+type Row=Record<string,unknown>;
+export interface StableExpenseSource {expense:Row;links:Row[];documents:Row[];items:Row[];revision:number;fingerprint:string;digest:string;}
+
+/** One transactional snapshot, including all documents and item rows which
+ * can affect the expense's projections. It is not Sheets write authority. */
+export async function readStableExpenseSource(env:Env,job:SheetsSyncJob,lease:string,claim:string):Promise<StableExpenseSource|null>{
+ return readSource(env,job,claim,{kind:'leased',lease});
+}
+
+/** Read only the exact reviewed daily operation. This does not admit a job,
+ * change a claim or authorize a provider request. */
+export async function readReviewedDailyExpenseSource(env:Env,job:SheetsSyncJob,claim:string,authority:NormalNoticeAuthority='REVIEW'):Promise<StableExpenseSource|null>{
+ return readSource(env,job,claim,{kind:'review',authority});
+}
+/** Read-only source for the one observed no-epoch DAILY incident. This does
+ * not admit an operation, resolve a failed job or authorize a Sheets write. */
+export async function readObservedDailyIncidentSource(env:Env,job:SheetsSyncJob,claim:string,sourceDigest:string,marker:string):Promise<StableExpenseSource|null>{
+ if(!/^[0-9a-f]{64}$/.test(sourceDigest)||!/^INSERT_[0-9a-f]{32}$/.test(marker))return null;
+ const result=await readSource(env,job,claim,{kind:'observed-incident',sourceDigest,marker});return result?.digest===sourceDigest?result:null;
+}
+
+/** Read only the exact reviewed helper-ledger confirmation; it grants no
+ * provider-write authority and cannot select a different expense. */
+export async function readReviewedLedgerExpenseSource(env:Env,job:SheetsSyncJob,claim:string,projection:'EXPENSE_RAW'|'DETAIL',entity:string,authority:NormalNoticeAuthority='REVIEW'):Promise<StableExpenseSource|null>{
+ if(projection==='EXPENSE_RAW'?entity!==job.entityKey:!entity.startsWith(`${job.entityKey}|item_`)||entity.length>270)return null;
+ return readSource(env,job,claim,{kind:'ledger-review',projection,entity,authority});
+}
+
+/** Exact source for an immutable FINAL handoff; does not authorize a write. */
+export async function readFinalHandoffExpenseSource(env:Env,job:SheetsSyncJob,claim:string):Promise<StableExpenseSource|null>{
+ return readSource(env,job,claim,{kind:'final-handoff'});
+}
+
+/** Confirmed source for one exact, verified PUBLISH handoff. Read only. */
+export async function readPublicationHandoffExpenseSource(env:Env,job:SheetsSyncJob,claim:string,transitionId:string):Promise<StableExpenseSource|null>{
+ if(!transitionId)return null;
+ return readSource(env,job,claim,{kind:'publication-handoff',transitionId});
+}
+
+async function readSource(env:Env,job:SheetsSyncJob,claim:string,mode:{kind:'leased';lease:string}|{kind:'review';authority:NormalNoticeAuthority}|{kind:'ledger-review';projection:'EXPENSE_RAW'|'DETAIL';entity:string;authority:NormalNoticeAuthority}|{kind:'final-handoff'}|{kind:'publication-handoff';transitionId:string}|{kind:'observed-incident';sourceDigest:string;marker:string}):Promise<StableExpenseSource|null>{
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
+ if(job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(job.entityKey)||!Number.isSafeInteger(job.entityVersion)||job.entityVersion<1||!book||!claim||mode.kind==='leased'&&!mode.lease)return null;
+ const authority=mode.kind==='leased'
+  ?`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='PROCESSING' AND j.lease_token=? AND j.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now')) AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD')`
+  :mode.kind==='observed-incident'
+  ?`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND j.status='REVIEW' AND j.last_error='STABLE_SYNC_REVIEW' AND j.lease_token IS NULL AND j.lease_until IS NULL) AND EXISTS(SELECT 1 FROM stable_workbook_claims c JOIN stable_projection_writes p ON p.spreadsheet_id=c.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.expense_id AND p.projection='DAILY' AND p.source_version=e.version AND p.operation_token=c.operation_token AND p.state='IN_FLIGHT' JOIN continuous_daily_write_evidence w ON w.spreadsheet_id=p.spreadsheet_id AND w.entity_id=p.entity_id AND w.source_version=p.source_version AND w.source_digest=p.source_digest AND w.operation_token=p.operation_token AND w.sheet_id=p.sheet_id AND w.sheet_name=p.sheet_name JOIN atomic_daily_marker_reservations m ON m.spreadsheet_id=w.spreadsheet_id AND m.sheet_id=w.sheet_id AND m.entity_id=w.entity_id AND m.source_version=w.source_version AND m.operation_token=w.operation_token AND m.marker=w.marker WHERE w.source_digest=? AND w.marker=? AND c.spreadsheet_id=? AND c.operation_token=? AND c.state='REVIEW' AND c.phase='OPERATION' AND c.review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED' AND (SELECT count(*) FROM stable_workbook_claims)=1) AND NOT EXISTS(SELECT 1 FROM sync_jobs WHERE status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM staff_config_sync_outbox WHERE status='PROCESSING') AND NOT EXISTS(SELECT 1 FROM stable_recovery_epochs WHERE state IN ('ARMED','REVIEW')) AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes x WHERE x.spreadsheet_id=? AND x.entity_type='EXPENSE' AND (x.entity_id=e.expense_id OR substr(x.entity_id,1,length(e.expense_id)+1)=e.expense_id||'|'))`
+  :mode.kind==='publication-handoff'
+  ?`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND ${reviewedJobState('j','HANDOFF')}) AND EXISTS(SELECT 1 FROM stable_workbook_claims c JOIN stable_recovery_epochs epoch ON epoch.spreadsheet_id=c.spreadsheet_id JOIN stable_recovery_operations op ON op.epoch_id=epoch.epoch_id AND op.operation_token=c.operation_token JOIN continuous_publication_intents i ON i.spreadsheet_id=c.spreadsheet_id AND i.claim_token=c.operation_token JOIN continuous_publication_markers m ON m.transition_id=i.transition_id AND m.spreadsheet_id=i.spreadsheet_id AND m.entity_id=i.entity_id AND m.version=i.source_version AND m.marker=i.after_value JOIN continuous_normal_notice_handoffs h ON h.spreadsheet_id=i.spreadsheet_id AND h.operation_token=i.claim_token AND h.projection='PUBLICATION' AND h.journal_entity=i.transition_id AND h.operation_kind='CONFIRM' AND h.expense_id=i.entity_id AND h.source_version=i.source_version WHERE i.transition_id=? AND c.spreadsheet_id=? AND c.operation_token=? AND ${reviewedClaimState('c','HANDOFF')} AND epoch.state='ARMED' AND epoch.target_type='EXPENSE' AND epoch.target_key=e.expense_id AND epoch.target_version=e.version AND op.state='ADMITTED' AND i.entity_id=e.expense_id AND i.source_version=e.version AND i.kind='PUBLISH' AND i.state='VERIFIED' AND m.state='PUBLISHED')`
+  :mode.kind==='final-handoff'
+  ?`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND ${reviewedJobState('j','HANDOFF')}) AND EXISTS(SELECT 1 FROM stable_workbook_claims c JOIN continuous_normal_notice_handoffs h ON h.spreadsheet_id=c.spreadsheet_id AND h.operation_token=c.operation_token JOIN continuous_final_notice_evidence z ON z.operation_token=h.operation_token AND z.spreadsheet_id=h.spreadsheet_id WHERE c.spreadsheet_id=? AND c.operation_token=? AND ${reviewedClaimState('c','HANDOFF')} AND h.projection='FINAL' AND h.operation_kind='CONFIRM' AND h.expense_id=e.expense_id AND h.source_version=e.version AND z.expense_id=h.expense_id AND z.source_version=h.source_version AND z.operation_kind=h.operation_kind)`
+  :mode.kind==='ledger-review'
+  ?`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND ${reviewedJobState('j',mode.authority)}) AND EXISTS(SELECT 1 FROM stable_workbook_claims c JOIN stable_recovery_epochs epoch ON epoch.spreadsheet_id=c.spreadsheet_id JOIN stable_recovery_operations op ON op.epoch_id=epoch.epoch_id AND op.operation_token=c.operation_token JOIN stable_projection_writes p ON p.spreadsheet_id=c.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=? AND p.projection=? AND p.source_version=e.version AND p.operation_token=c.operation_token JOIN continuous_ledger_write_evidence proof ON proof.spreadsheet_id=p.spreadsheet_id AND proof.entity_id=p.entity_id AND proof.projection=p.projection AND proof.operation_kind='CONFIRM' AND proof.source_version=p.source_version AND proof.operation_token=p.operation_token WHERE c.spreadsheet_id=? AND c.operation_token=? AND ${reviewedClaimState('c',mode.authority)} AND epoch.state IN ('ARMED','REVIEW') AND epoch.target_type='EXPENSE' AND epoch.target_key=e.expense_id AND epoch.target_version=e.version AND op.state='ADMITTED' AND p.state IN ('IN_FLIGHT','VERIFIED'))`
+  :`EXISTS(SELECT 1 FROM sync_jobs j WHERE j.entity_type='EXPENSE' AND j.entity_key=e.expense_id AND j.entity_version=e.version AND ${reviewedJobState('j',mode.authority)}) AND EXISTS(SELECT 1 FROM stable_workbook_claims c JOIN stable_recovery_epochs epoch ON epoch.spreadsheet_id=c.spreadsheet_id JOIN stable_recovery_operations op ON op.epoch_id=epoch.epoch_id AND op.operation_token=c.operation_token JOIN stable_projection_writes p ON p.spreadsheet_id=c.spreadsheet_id AND p.entity_type='EXPENSE' AND p.entity_id=e.expense_id AND p.projection='DAILY' AND p.source_version=e.version AND p.operation_token=c.operation_token JOIN continuous_daily_write_evidence proof ON proof.spreadsheet_id=p.spreadsheet_id AND proof.entity_id=p.entity_id AND proof.source_version=p.source_version AND proof.operation_token=p.operation_token WHERE c.spreadsheet_id=? AND c.operation_token=? AND ${reviewedClaimState('c',mode.authority)} AND epoch.state IN ('ARMED','REVIEW') AND epoch.target_type='EXPENSE' AND epoch.target_key=e.expense_id AND epoch.target_version=e.version AND op.state='ADMITTED' AND p.state IN ('IN_FLIGHT','VERIFIED'))`;
+ const args=mode.kind==='leased'?[job.entityKey,job.entityVersion,job.entityKey,mode.lease,book,claim]:mode.kind==='observed-incident'?[job.entityKey,job.entityVersion,job.entityKey,mode.sourceDigest,mode.marker,book,claim,book]:mode.kind==='ledger-review'?[job.entityKey,job.entityVersion,job.entityKey,mode.entity,mode.projection,book,claim]:mode.kind==='publication-handoff'?[job.entityKey,job.entityVersion,job.entityKey,mode.transitionId,book,claim]:[job.entityKey,job.entityVersion,job.entityKey,book,claim];
+ const statements=[
+  db.prepare(`SELECT e.*,r.revision AS __stable_revision FROM expense_events e CROSS JOIN stable_source_revision r WHERE r.singleton=1 AND ${stableSourceIntegrity} AND e.expense_id=? AND e.version=? AND e.status='CONFIRMED' AND ${newStableSourcePredicate('EXPENSE')} AND ${authority}`).bind(...args),
+  db.prepare('SELECT * FROM expense_document_links WHERE expense_id=? ORDER BY link_id').bind(job.entityKey),
+  db.prepare('SELECT * FROM expense_documents WHERE expense_id=? OR document_id IN (SELECT document_id FROM expense_document_links WHERE expense_id=?) ORDER BY document_id').bind(job.entityKey,job.entityKey),
+  db.prepare('SELECT * FROM expense_document_items WHERE expense_id=? ORDER BY created_at,item_id').bind(job.entityKey)
+ ];
+ try{
+  const result=await db.batch(statements);if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||result.length!==statements.length||result.some(r=>r.success!==true||!Array.isArray(r.results))||result[0]!.results!.length!==1)return null;
+  const {__stable_revision:revision,...expense}=result[0]!.results![0] as Row,links=result[1]!.results as Row[],documents=result[2]!.results as Row[],items=result[3]!.results as Row[];
+  if(!Number.isSafeInteger(revision)||Number(revision)<0||links.length>500||documents.length>500||items.length>500)return null;
+  const primary=links.filter(x=>x.relation_type==='PRIMARY_PURCHASE_DOCUMENT');if(primary.length>1||primary.some(x=>!documents.some(d=>d.document_id===x.document_id)))return null;
+  if(!primary.length&&documents.filter(d=>d.expense_id===job.entityKey).length>1)return null;
+  const fingerprint=JSON.stringify({expense,links,documents,items});if(new TextEncoder().encode(fingerprint).byteLength>256000)return null;
+  const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),v=>v.toString(16).padStart(2,'0')).join('');
+  return {expense,links,documents,items,revision:Number(revision),fingerprint,digest};
+ }catch{return null;}
+}

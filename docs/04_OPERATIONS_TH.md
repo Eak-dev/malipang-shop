@@ -8,6 +8,22 @@
 4. ตรวจ `openFailedJobs` และ sync ที่ FAILED
 5. ตรวจ `V52_DAILY_PAYROLL` แถว REVIEW ก่อนจ่ายเงิน
 
+## งานตามรอบและ latency diagnostics
+
+- `GET /admin/operations/summary` เป็น read-only หลัง admin auth เดิม แยก failed events 24 ชั่วโมงล่าสุดออกจาก failures เก่า แสดง side-effect outboxes, cron freshness, V2 latency และ held Online Orders โดยไม่คืน payload/ตัวตนหรือส่งข้อความ
+- `ok=true` หมายถึงอ่าน diagnostics ได้ ให้ตรวจ `status` อีกชั้น: ATTENTION ต้องตรวจสาเหตุ, UNKNOWN ยังไม่มี telemetry ครบ, OK ผ่านเงื่อนไขด้าน operations ที่ระบุ ไม่แทน dependency readiness หรือการกระทบยอด
+- หลัง deploy ก่อน cron ใหม่รอบแรก scheduled steps อาจ UNKNOWN; หากเกิน 15 นาทีให้ตรวจ invocation/cron metrics ใช้ last outcome รายขั้น ไม่ใช้เพียงผลขั้นก่อนหน้า Wage refresh กับ payroll finalize ยังพึ่งกัน แต่ failure ของกลุ่มนี้จะไม่ข้ามการกู้ชีท/ข้อความอิสระ
+- `expense_image_queue_wait_ms` เก่าเคยนับรวม download/Vision ใช้เฉพาะ label `INGRESS_TO_START_V2` เมื่อตรวจคิว ส่วน `expense_image_total_ms` คือ processing และ `expense_image_end_to_end_ms` คือเวลาตั้งแต่รับ webhook ถึงจบ อย่าบวก classification/extraction ซ้ำเพราะวัดงาน Vision เดียวกัน
+- ผล audit retention ที่มี error แสดง FAILED รายขั้นแต่ยังเป็น best effort ตามเดิม ไม่มี retention policy/delete เปลี่ยน ดู [ผลวิเคราะห์/ข้อจำกัด/UAT/rollback](24_SYSTEM_RELIABILITY_REVIEW_TH.md)
+
+## Runtime audit โดยไม่เปิดเผย secret
+
+- ใช้ workflow `runtime-audit.yml` บน protected `main` พร้อม confirmation `AUDIT-RUNTIME-READONLY`; workflow ใช้ secret เดิมของ environment `production` โดยไม่ต้องนำค่า token ออกมาให้ผู้ตรวจ
+- Artifact เก็บเฉพาะ allowlisted booleans, HTTP status, runtime mode, aggregate job counts และ Worker version ID/เวลา; ไม่เก็บ OA identity, email, spreadsheet ID, raw error หรือ response ดิบ
+- Schema ที่ไม่ตรง, redirect, timeout หรือ endpoint ไม่ผ่านต้อง fail closed; ไม่ถือว่าการมี artifact เท่ากับ PASS
+- เป็น GET-only diagnostic ไม่แก้ business records, Sheets หรือ replay queue แต่ probe อาจบันทึก operational metrics ใน D1
+- Audit นี้ไม่ทดแทนการตรวจ active Worker/traffic/source, backup/restore, queue/DLQ, stale jobs และการเปรียบเทียบ failed jobs ก่อน/หลัง release
+
 ## Sheets ไม่อัปเดต
 
 ข้อมูล D1 ยังเป็นข้อมูลจริง แก้สาเหตุก่อน (เช่น สิทธิ์ Service Account หรือ quota) แล้วเรียก:
@@ -16,7 +32,20 @@
 curl -X POST 'https://<worker>/admin/retry-sync' -H 'Authorization: Bearer <ADMIN_TOKEN>'
 ```
 
-คำสั่งนี้เป็น **manual recovery** และสามารถ retry งาน Sheets ที่เข้า DLQ แล้วได้หนึ่งรอบ; Cron ปกติจะไม่หยิบงาน DLQ เดิมกลับมาวนหรือส่งแจ้งเตือนซ้ำทุก 5 นาที. ถ้ายังล้ม ให้ตรวจ `failed_jobs.error` ก่อนเรียกซ้ำ.
+คำสั่งนี้เป็น **manual recovery** สำหรับงาน Sheets ที่ยังค้าง แต่ **ค่าเริ่มต้นจะไม่รวม Terminal DLQ** เพื่อหลีกเลี่ยงการ re-drive งานที่ต้องตรวจยอดก่อน (การเปลี่ยน Default นี้ได้รับอนุมัติจาก Owner สำหรับ PR #247 ใน DEV_OWNED) ส่วน Cron ปกติยังไม่หยิบงาน Terminal DLQ กลับมาส่งอัตโนมัติ
+
+หากจำเป็นต้องกู้ **Terminal DLQ** หลังตรวจ `sync_jobs`, `failed_jobs`, D1 business status, journal และ stable ID ใน Sheets ว่าไม่ซ้ำแล้ว ให้ใช้การเรียกแบบ **explicit opt-in** ที่รักษาความสามารถเดิมไว้:
+
+```bash
+curl -X POST 'https://<worker>/admin/retry-sync' \
+  -H 'Authorization: Bearer <ADMIN_TOKEN>' \
+  -H 'Content-Type: application/json' \
+  -d '{"includeTerminalDlq":true}'
+```
+
+**คำเตือน:** `includeTerminalDlq:true` อนุญาตให้พิจารณา re-drive Terminal DLQ ที่เข้าเงื่อนไขทั้งหมดของ Recovery Scheduler ไม่ใช่การเลือกเฉพาะหนึ่ง Expense ID หรือการพิสูจน์ว่าทุกรายการปลอดภัย ควรใช้เฉพาะเมื่อ Owner อนุมัติการกู้ Production แยก โดยตรวจหลักฐานและยืนยันผลหลังทำเสมอ ห้ามใช้เพียงเพราะระบบรายงานไม่ตรง หากยังล้มให้ตรวจ `failed_jobs.error` ก่อนเรียกซ้ำ
+
+หากมี `REVIEW` workbook claim หรือ Recovery Gate ที่ยังเปิดอยู่ Endpoint จะยังไม่ส่งงานออกตาม Safety Gate ของระบบ.
 
 หาก D1 มีข้อมูลแต่แถวใน Sheets หายหรือ Sync Job เดิมขึ้น COMPLETED ให้สั่ง Backfill ช่วงวันที่:
 
@@ -30,6 +59,10 @@ curl -X POST 'https://<worker>/admin/reconcile-sheets' \
 คำสั่งนี้ใช้ D1 เป็นข้อมูลจริงและเขียนแท็บ `V52_*` ใหม่แบบ idempotent รวมทั้ง backfill ค่าใช้จ่ายที่ยืนยันแล้วลง `รายวัน` โดยไม่แตะสูตร
 
 ## Expense document review และ recovery
+
+- เจ้าของพิมพ์ `รายการค้าง` ใน LINE ส่วนตัวเพื่อดู Online Order ที่ค้าง แยกเหตุผลยอด/วันชำระ/สถานะ/ตัวตนคำสั่งซื้อ/อาจซ้ำ พร้อมอายุรายการค้าง ไม่ส่งรูปซ้ำเพื่อหวังให้ระบบยกระดับเอง
+- `GET /admin/expenses/review-summary` ใช้ admin authorization เดิมและคืนเฉพาะจำนวนรวม จำนวนที่เติมข้อมูลได้/ต้องตรวจแยก อายุค้างสูงสุด และจำนวนต่อ reason code รวมสถิติการอ่านซ้ำ/สถานะ AI ต่างกัน ไม่คืนข้อมูลเจ้าของ เลขเอกสาร หรือ R2 key เหตุผลหนึ่งรายการอาจมีหลายข้อ จึงห้ามรวม reason counts เป็นจำนวนเอกสาร
+- เมื่อจำนวนค้างหรืออายุสูงขึ้น ให้ดู reason ที่เพิ่มก่อน: `AMOUNT_*` ตรวจยอดหลังส่วนลด, `PAYMENT_*` ให้เจ้าของยืนยันจากการชำระจริง, `ORDER_*`/`MULTIPLE_SELLERS`/`EVIDENCE_INCOMPLETE` ตรวจเอกสารแยก, `POSSIBLE_DUPLICATE` เทียบ Expense เดิม ห้ามข้ามการป้องกันซ้ำ; ดู [runbook และ rollout](23_OWNER_ONLINE_ORDER_REVIEW_TH.md)
 
 - Receipt/Tax Invoice/Online Order ที่เป็น `WAITING_CONFIRM` แสดงเฉพาะ field ที่ยังค้างจริงบน Flex (payment, รายการ, หมวดหมู่, วันที่) และ Worker เป็นผู้บังคับ validation ก่อนบันทึกเสมอ
 - หาก `รายการ` ค้าง ผู้ใช้กดรับข้อความเดิมหรือกดพิมพ์แก้ได้; `expense_pending_edits` เก็บ pending edit ต่อ LINE account เพียงหนึ่งรายการ อายุ 15 นาที และข้อความถัดไปอัปเดตได้เฉพาะ draft ที่ยัง `WAITING_CONFIRM` เท่านั้น

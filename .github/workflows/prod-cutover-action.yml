@@ -1,0 +1,80 @@
+name: "MaliPang #296 staged cutover operator (manual, one action)"
+on:
+  workflow_dispatch:
+    inputs:
+      cutover_action:
+        description: One operator action; never retry on an unknown outcome
+        required: true
+        type: choice
+        options: [PRECHECK, START_REVIEW, RECONCILE_VIEWS, VIEWS, DAILY_J, REPORTS, ACTIVATE, RELEASE]
+      expected_sha:
+        description: Exact reviewed 40-character main HEAD
+        required: true
+        type: string
+      expected_worker_version_sha256:
+        description: SHA-256 of current 100-percent Worker version ID, not the raw ID
+        required: true
+        type: string
+      confirmation:
+        description: OWNER APPROVES ACTION sha7 (exact)
+        required: true
+        type: string
+      external_writers_fenced:
+        description: Owner confirms no external or manual writers to Owner Master
+        required: false
+        type: boolean
+        default: false
+      provider_outcome_reviewed:
+        description: Owner confirms old provider write outcome independently reviewed
+        required: false
+        type: boolean
+        default: false
+      owner_supervising:
+        description: Owner actively supervising full stage, can handle incident
+        required: false
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  operator:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - name: Checkout exact reviewed commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Run cutover guard regression tests
+        run: node --test tests/prod-cutover-action.test.mjs
+      - name: Assert latest remote main has not moved
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: One action — NEVER auto-retry
+        env:
+          GITHUB_REF: ${{ github.ref }}
+          GITHUB_SHA: ${{ github.sha }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+          CUTOVER_ACTION: ${{ inputs.cutover_action }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXTERNAL_WRITERS_FENCED: ${{ inputs.external_writers_fenced }}
+          PROVIDER_OUTCOME_REVIEWED: ${{ inputs.provider_outcome_reviewed }}
+          OWNER_SUPERVISING: ${{ inputs.owner_supervising }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_CUTOVER_RECEIPTS: ${{ secrets.MALIPANG_CUTOVER_RECEIPTS }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        run: node scripts/prod-cutover-action.mjs

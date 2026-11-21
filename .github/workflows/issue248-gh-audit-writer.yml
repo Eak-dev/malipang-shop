@@ -1,0 +1,40 @@
+name: Issue 248 scoped G6b private audit writer
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha: {description: 'Exact reviewed main SHA', required: true, type: string}
+      audit_id: {description: 'G6b random audit ID', required: true, type: string}
+      record_base64: {description: 'Canonical validated audit record, base64 encoded', required: true, type: string}
+permissions: {contents: read}
+concurrency: {group: malipang-release-control, cancel-in-progress: false}
+jobs:
+  audit-write:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: main, fetch-depth: 0}
+      - uses: actions/setup-node@v4
+        with: {node-version: 22}
+      - name: Pin reviewed source
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          git merge-base --is-ancestor c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD
+          git diff --quiet c4b4ab96e2f2cb08a8633c003294375a0f458095 HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-stage-guard.mjs scripts/pr247-readonly-snapshot.sh
+      - name: Write one scoped audit object and verify
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: |
+          set -euo pipefail
+          node scripts/issue248-gh-audit.mjs
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"

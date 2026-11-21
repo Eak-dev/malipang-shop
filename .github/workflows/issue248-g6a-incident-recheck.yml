@@ -1,0 +1,53 @@
+name: Issue248 G6a incident read-only recheck
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Exact current main SHA containing this reviewed recheck
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  recheck:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_MAIN_SHA: ${{ inputs.expected_main_sha }}
+      PINNED_G6A_SOURCE_SHA: 1e2c1cc44218ec36487382e41e24a4e697aa56dc
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - name: Verify pinned G6a source and exact current main
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_MAIN_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$GITHUB_SHA" = "$EXPECTED_MAIN_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_MAIN_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_MAIN_SHA"
+          git cat-file -e "$PINNED_G6A_SOURCE_SHA^{commit}"
+          git merge-base --is-ancestor "$PINNED_G6A_SOURCE_SHA" HEAD
+          git diff --quiet "$PINNED_G6A_SOURCE_SHA" HEAD -- src migrations wrangler.jsonc package.json package-lock.json tsconfig.json scripts/pr247-stage-guard.mjs scripts/pr247-readonly-snapshot.sh
+      - run: npm ci
+      - name: Recheck actual G6a state twice without mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/issue248-g6a-incident-recheck.sh
+          echo 'Incident read-only revalidation passed; the original G6a workflow remains failed.' >> "$GITHUB_STEP_SUMMARY"

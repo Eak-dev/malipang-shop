@@ -30,9 +30,11 @@ jobs:
     steps:
       - name: Safety gate
         shell: bash
+        env:
+          AUDIT_CONFIRMATION: ${{ inputs.confirmation }}
         run: |
           set -euo pipefail
-          if [[ "${{ inputs.confirmation }}" != "AUDIT-RUNTIME-READONLY" ]]; then
+          if [[ "$AUDIT_CONFIRMATION" != "AUDIT-RUNTIME-READONLY" ]]; then
             echo "Confirmation text does not match AUDIT-RUNTIME-READONLY" >&2
             exit 1
           fi
@@ -107,40 +109,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          npx wrangler versions list --json > runtime-audit/worker-versions.json
+          umask 077
+          if ! npx wrangler versions list --json > "$RUNNER_TEMP/worker-versions.raw.json" 2> "$RUNNER_TEMP/worker-versions.raw.stderr"; then
+            echo "Worker version inspection failed; raw diagnostics are not published." >&2
+            exit 1
+          fi
+          node scripts/sanitize-runtime-audit.mjs versions "$RUNNER_TEMP/worker-versions.raw.json" runtime-audit/worker-versions.json
 
-      - name: Probe deployed health
+      - name: Probe deployed endpoints with allowlisted evidence
         if: steps.bindings.outputs.worker_url_ready == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          base_url="${MALIPANG_WORKER_URL%/}"
-          curl --silent --show-error \
-            --output runtime-audit/health.json \
-            --write-out '%{http_code}' \
-            "$base_url/health" > runtime-audit/health-http.txt
-
-      - name: Probe deployed readiness and status
-        if: steps.bindings.outputs.admin_ready == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          base_url="${MALIPANG_WORKER_URL%/}"
-
-          curl --silent --show-error \
-            --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
-            --output "$RUNNER_TEMP/readiness.raw.json" \
-            --write-out '%{http_code}' \
-            "$base_url/admin/readiness" > runtime-audit/readiness-http.txt
-
-          curl --silent --show-error \
-            --header "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" \
-            --output runtime-audit/status.json \
-            --write-out '%{http_code}' \
-            "$base_url/admin/status" > runtime-audit/status-http.txt
-
-          jq 'if .checks?.sheets?.detail?.metadata?.spreadsheetId then .checks.sheets.detail.metadata.spreadsheetId="REDACTED" else . end' \
-            "$RUNNER_TEMP/readiness.raw.json" > runtime-audit/readiness.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import {sanitizeRuntimeAudit} from './scripts/sanitize-runtime-audit.mjs';
+          try {
+            const base=new URL(process.env.MALIPANG_WORKER_URL);
+            if(base.origin!=='https://malipang-backend-v5-2.eakkachai-dev.workers.dev'||base.username||base.password||base.search||base.hash||base.pathname!=='/')throw new Error();
+            const probes=[['health','/health']];
+            if(process.env.MALIPANG_ADMIN_TOKEN)probes.push(['readiness','/admin/readiness'],['status','/admin/status']);
+            for(const [kind,path] of probes){
+              const response=await fetch(new URL(path,base),{
+                method:'GET',redirect:'error',signal:AbortSignal.timeout(45000),
+                headers:kind==='health'?{}:{Authorization:`Bearer ${process.env.MALIPANG_ADMIN_TOKEN}`}
+              });
+              fs.writeFileSync(`runtime-audit/${kind}-http.txt`,String(response.status),{mode:0o600});
+              const safe=sanitizeRuntimeAudit(kind,await response.json());
+              fs.writeFileSync(`runtime-audit/${kind}.json`,JSON.stringify(safe,null,2),{mode:0o600});
+              if(response.status!==200||safe.ok!==true)throw new Error();
+            }
+          } catch {
+            console.error('Runtime probe failed or returned an unexpected schema; raw response/error is not published.');
+            process.exitCode=1;
+          }
+          NODE
 
       - name: Validate and summarize evidence
         shell: bash
@@ -186,7 +189,9 @@ jobs:
             echo "- Inbound PROCESSING: \`$inbound_processing\`"
             echo "- Sync PENDING/PROCESSING: \`$sync_pending\`"
             echo "- Binding availability: captured as booleans only in artifact"
-            echo "- Mutation performed: \`NO\`"
+            echo "- Business records, Sheets and queue replay: \`NO WRITES\`"
+            echo "- Diagnostic GETs may record operational metrics in D1"
+            echo "- Worker version list is metadata only, not proof of active traffic/source"
           } >> "$GITHUB_STEP_SUMMARY"
 
           if [[ "${{ steps.bindings.outputs.full_ready }}" != "true" ]]; then
@@ -201,6 +206,7 @@ jobs:
           [[ "$readiness_http" == "200" ]]
           [[ "$status_http" == "200" ]]
           [[ "$health_mode" == "$status_mode" ]]
+          [[ "$health_mode" == "production" ]]
 
       - name: Upload redacted runtime evidence
         if: always()

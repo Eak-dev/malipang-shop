@@ -9,8 +9,10 @@ export const expenseCategories=new Set(["ingredients","fillings","packaging","ga
  * the stored fields remain independently auditable.
  */
 export const expensePaymentOptions=[
-  {paymentKey:"cash",sourceWallet:"CASH_DRAWER",label:"💵 Cash",sourceLabel:"💵 Cash drawer"},
+  {paymentKey:"cash",sourceWallet:"CASH_DRAWER",label:"💵 Drawer cash",sourceLabel:"💵 Cash drawer"},
   {paymentKey:"transfer",sourceWallet:"SHOP_BANK",label:"🏦 Transfer / QR",sourceLabel:"🏦 Shop bank"},
+  // Keep the default cash and shop-bank options first for legacy inference.
+  {paymentKey:"cash",sourceWallet:"SHOP_BANK",label:"💵 Shop-bank cash",sourceLabel:"🏦 Shop bank"},
   {paymentKey:"kbank",sourceWallet:"CARD_KBANK",label:"💳 KBank",sourceLabel:"💳 KBank"},
   {paymentKey:"firstchoice",sourceWallet:"CARD_FIRST_CHOICE",label:"💳 First Choice",sourceLabel:"💳 First Choice"},
   {paymentKey:"aeon",sourceWallet:"CARD_AEON",label:"💳 AEON",sourceLabel:"💳 AEON"},
@@ -51,16 +53,45 @@ export function toSatang(value:number|null):number|null{
   return Number.isSafeInteger(result)?result:null;
 }
 
-function inferredPayment(source:string):{paymentKey:string;sourceWallet:string}|null{
-  const option=paymentOptionForWallet(source.trim().toUpperCase());
+export function acceptedPaymentDateLabel(value:string):boolean{
+  const label=value.trim().toLowerCase().replace(/[\s:：._/\-]+/g,"");
+  return /^(?:เวลาที่ชำระเงิน|เวลาชำระเงิน|วันที่ชำระเงิน|วันที่ชำระ|วันชำระเงิน|วันที่จ่ายเงิน|วันและเวลาชำระเงิน|วันที่และเวลาชำระเงิน|ชำระเงินเมื่อ|payment(?:date|time|datetime)|paid(?:on|at|date|time)|timepaid)$/.test(label);
+}
+
+export function acceptedOrderTotalLabel(value:unknown):string{
+  const label=String(value??"").trim().replace(/[:：]\s*$/,"").replace(/\s+/g," ");
+  return new Set(["รวมคำสั่งซื้อ","ยอดรวมคำสั่งซื้อ","ยอดชำระ","total order","order total","paid total"]).has(label.toLocaleLowerCase("en-US"))?label:"";
+}
+
+export function onlineOrderPaymentStatusReason(status:PurchaseDocument["paymentStatus"]):string{
+  if(status==="UNKNOWN")return"Payment status is unverified";
+  if(status==="PENDING")return"Payment is pending";
+  if(status==="UNPAID")return"Order is unpaid";
+  return"";
+}
+
+function invalidOnlineOrderPaymentEvidence(document:PurchaseDocument):boolean{
+  return document.documentType==="ONLINE_ORDER"&&(
+    Boolean(document.paymentStatus&&document.paymentStatus!=="PAID")||
+    Boolean(document.paymentDatePurpose&&document.paymentDatePurpose!=="PAYMENT")||
+    (document.paymentDateLabel!==undefined&&!acceptedPaymentDateLabel(document.paymentDateLabel))
+  );
+}
+
+function inferredPayment(source:string,paymentMethod:string):{paymentKey:string;sourceWallet:string}|null{
+  const wallet=source.trim().toUpperCase();
+  // An explicit cash payment is not a transfer just because its funding came
+  // from the shop bank. Missing/other method evidence keeps existing defaults.
+  const option=wallet==="SHOP_BANK"&&/^(cash|เงินสด)$/i.test(paymentMethod.trim())
+    ?paymentOptionForPair("cash",wallet):paymentOptionForWallet(wallet);
   return option?{paymentKey:option.paymentKey,sourceWallet:option.sourceWallet}:null;
 }
 
 export function purchaseExpenseDraft(document:PurchaseDocument):PurchaseExpenseDraft|null{
   const amountSatang=toSatang(document.finalPaidAmountBaht);
   const date=document.documentType==="ONLINE_ORDER"?document.paymentDate:(document.paymentDate||document.documentDate);
-  if(document.documentType==="DELIVERY_ORDER"||amountSatang==null||amountSatang<=0||!isIsoDate(date))return null;
-  const payment=inferredPayment(document.sourceWalletCandidate);
+  if(document.documentType==="DELIVERY_ORDER"||invalidOnlineOrderPaymentEvidence(document)||amountSatang==null||amountSatang<=0||!isIsoDate(date))return null;
+  const payment=inferredPayment(document.sourceWalletCandidate,document.paymentMethod);
   const needsPaymentConfirmation=!payment;
   const category=expenseCategories.has(document.suggestedCategory)?document.suggestedCategory:"general";
   const vendor=document.vendor.trim()||document.legalVendorName.trim();
@@ -76,9 +107,38 @@ export function purchaseDraftMissingReasons(document:PurchaseDocument):string[]{
   const reasons:string[]=[];
   const amountSatang=toSatang(document.finalPaidAmountBaht);
   const date=document.documentType==="ONLINE_ORDER"?document.paymentDate:(document.paymentDate||document.documentDate);
-  if(amountSatang==null||amountSatang<=0)reasons.push("Missing final paid amount");
-  if(!isIsoDate(date))reasons.push("Missing or invalid payment date");
+  const online=document.documentType==="ONLINE_ORDER",statusReason=online?onlineOrderPaymentStatusReason(document.paymentStatus):"";
+  if(statusReason)reasons.push(statusReason);
+  const knownOrderTotal=online&&(toSatang(document.orderTotalBaht??null)??0)>0&&Boolean(document.orderTotalLabel?.trim());
+  if((amountSatang==null||amountSatang<=0)&&!(statusReason&&knownOrderTotal)){
+    const conflict=online?document.reviewReasons.find(reason=>reason.startsWith("Amount evidence conflicts:")):undefined;
+    reasons.push(conflict||"Missing final paid amount");
+  }
+  if(!isIsoDate(date)||(online&&(
+    Boolean(document.paymentDatePurpose&&document.paymentDatePurpose!=="PAYMENT")||
+    (document.paymentDateLabel!==undefined&&!acceptedPaymentDateLabel(document.paymentDateLabel))
+  )))reasons.push("Missing or invalid payment date");
   return reasons;
+}
+
+export function onlineOrderEvidenceReviewText(document:PurchaseDocument):string{
+  const total=toSatang(document.orderTotalBaht??null),reasons=purchaseDraftMissingReasons(document);
+  const thaiReasons=reasons.map(reason=>{
+    if(reason==="Payment status is unverified")return"ยังยืนยันการชำระเงินสำเร็จไม่ได้";
+    if(reason==="Payment is pending")return"การชำระเงินยังอยู่ระหว่างดำเนินการ";
+    if(reason==="Order is unpaid")return"คำสั่งซื้อระบุว่ายังไม่ได้ชำระเงิน";
+    if(reason==="Missing or invalid payment date")return"ยังไม่พบวันที่ชำระเงินจริงที่ชัดเจน";
+    if(reason.startsWith("Amount evidence conflicts:"))return"ยอดชำระและยอดรวมคำสั่งซื้อขัดกัน";
+    return"ยังอ่านยอดชำระจริงที่มีป้ายกำกับไม่ได้";
+  });
+  return[
+    "รับภาพคำสั่งซื้อแล้ว ✅",
+    ...(total!=null&&total>0?[`ยอดรวมคำสั่งซื้อที่อ่านได้: ${(total/100).toFixed(2)} บาท`]:[]),
+    "ยังไม่บันทึกเป็นค่าใช้จ่าย",
+    `ต้องตรวจสอบ: ${thaiReasons.join(" • ")}`,
+    "กรุณาให้เจ้าของตรวจภาพที่เห็นยอด สถานะชำระสำเร็จ และวันที่ชำระเงินครบถ้วน เพื่อดำเนินการต่อกับรายการเดิม",
+    "เวลาที่สั่งซื้อและชื่อวิธีชำระเงินอย่างเดียวใช้ยืนยันวันชำระไม่ได้"
+  ].join("\n");
 }
 
 export function documentItemStatements(documentId:string,expenseId:string|null,document:PurchaseDocument,now:string,randomId:(prefix:string)=>string){

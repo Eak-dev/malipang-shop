@@ -3,22 +3,24 @@ import assert from 'node:assert/strict';
 import {parsePersonalUseText} from '../dist/personal-use/text-parser.js';
 import {handlePersonalUsePostback,handlePersonalUseText} from '../dist/personal-use/service.js';
 import {buildPersonalUseRawSheetValues} from '../dist/sheets/sync.js';
+import {legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites} from '../dist/sheets/owner-month-close.js';
 
 const owner={employeeId:'OWN001',role:'OWNER',scope:'ORGANIZATION',branchId:'B001',employeeStatus:'ACTIVE',roleStatus:'ACTIVE',employee:{canSubmitExpense:true}};
 function harness(){
-  const state={items:new Map(),queue:[],audits:[]};
+  const state={items:new Map(),queue:[],audits:[],batches:[]};
   const DB={prepare(sql){return{sql,args:[],bind(...args){this.args=args;return this;},async first(){
     if(sql.includes('WHERE personal_use_id='))return state.items.get(this.args[0])||null;
     if(sql.includes('WHERE message_id='))return [...state.items.values()].find(row=>row.message_id===this.args[0]&&row.line_user_id===this.args[1])||null;
     return null;
   },async run(){
     if(sql.includes('INSERT INTO owner_personal_transactions')){const [id,messageId,lineUserId,type,description,amount,sourceWallet,date,trace,submitted,branch,created,updated]=this.args;if([...state.items.values()].some(row=>row.message_id===messageId))return{meta:{changes:0}};state.items.set(id,{personal_use_id:id,message_id:messageId,line_user_id:lineUserId,transaction_type:type,description,amount_satang:amount,source_wallet:sourceWallet,transaction_date:date,status:'WAITING_CONFIRM',trace_id:trace,submitted_by_employee_id:submitted,branch_id:branch,created_at:created,updated_at:updated,version:1});return{meta:{changes:1}};}
-    if(sql.includes("SET status='CONFIRMED'")){const row=state.items.get(this.args[3]);if(!row||row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};row.status='CONFIRMED';return{meta:{changes:1}};}
-    if(sql.includes("SET status='CANCELLED'")&&sql.includes("status='WAITING_CONFIRM'")){const row=state.items.get(this.args[1]);if(!row||row.status!=='WAITING_CONFIRM')return{meta:{changes:0}};row.status='CANCELLED';return{meta:{changes:1}};}
-    if(sql.includes("SET status='CANCELLED'")&&sql.includes("status='CONFIRMED'")){const row=state.items.get(this.args[1]);if(!row||row.status!=='CONFIRMED')return{meta:{changes:0}};row.status='CANCELLED';row.version+=1;return{meta:{changes:1}};}
+    if(sql.includes('UPDATE owner_personal_transactions')&&sql.includes('reviewed_by_employee_id')){const [to,_actor,_approved,_updated,nextVersion,id,_lineUserId,from,expectedVersion,auditId]=this.args,row=state.items.get(id);if(!row||row.status!==from||row.version!==expectedVersion||!state.audits.some(args=>args[0]===auditId))return{meta:{changes:0}};row.status=to;row.version=nextVersion;return{meta:{changes:1}};}
+    if(sql.includes('UPDATE owner_personal_transactions')){const [to,_updated,nextVersion,id,_lineUserId,from,expectedVersion,auditId]=this.args,row=state.items.get(id);if(!row||row.status!==from||row.version!==expectedVersion||!state.audits.some(args=>args[0]===auditId))return{meta:{changes:0}};row.status=to;row.version=nextVersion;return{meta:{changes:1}};}
+    if(sql.includes('owner_personal_transaction_audit')&&sql.includes("'CREATE_DRAFT'")){if(!state.items.has(this.args.at(-1)))return{meta:{changes:0}};state.audits.push(this.args);return{meta:{changes:1}};}
+    if(sql.includes('owner_personal_transaction_audit')&&sql.includes('SELECT')){const [_auditId,_actor,_action,_before,_after,_now,id,lineUserId,from,expectedVersion]=this.args,row=state.items.get(id);if(!row||row.line_user_id!==lineUserId||row.status!==from||row.version!==expectedVersion)return{meta:{changes:0}};state.audits.push(this.args);return{meta:{changes:1}};}
     if(sql.includes('owner_personal_transaction_audit'))state.audits.push(this.args);
     return{meta:{changes:1}};
-  }};},async batch(statements){for(const statement of statements)await statement.run();return[];}};
+  }};},async batch(statements){state.batches.push(statements.map(statement=>statement.sql));const results=[];for(const statement of statements)results.push(await statement.run());return results;}};
   const env={DB,JOB_QUEUE:{async sendBatch(items){state.queue.push(...items);}},SHEETS_SYNC_ENABLED:'true',RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'false'};
   const text=(messageId,text)=>({source:{type:'user',userId:'U_OWNER'},message:{id:messageId,type:'text',text}});
   const postback=data=>({source:{type:'user',userId:'U_OWNER'},postback:{data}});
@@ -37,14 +39,15 @@ test('owner confirmation writes a separate personal-use ledger and enqueues only
   const h=harness(),outcome=await handlePersonalUseText(h.env,h.text('msg_personal_1','ส่วนตัว | 40,000 | KBank ร้าน | จ่ายบัตรเครดิต'),'trace_personal',owner);
   assert.equal(outcome,'WAITING_CONFIRM');
   assert.equal(h.state.items.size,1);assert.equal(h.state.queue.length,0);
+  assert.equal(h.state.batches[0].length,2);assert.match(h.state.batches[0][1],/CREATE_DRAFT/);
   const id=[...h.state.items.keys()][0];
   await handlePersonalUsePostback(h.env,h.postback(`a=personal_use_confirm&id=${id}`),owner);
   assert.equal(h.state.items.get(id).status,'CONFIRMED');
   assert.equal(h.state.queue.length,1);assert.equal(h.state.queue[0].body.entityType,'PERSONAL_USE');
-  assert.equal(h.state.queue[0].body.entityVersion,1);
+  assert.equal(h.state.queue[0].body.entityVersion,2);
 });
 
-test('repeated confirmation is idempotent and owner undo creates the version-2 sheet update',async()=>{
+test('repeated confirmation is idempotent and owner undo creates the next-version sheet update',async()=>{
   const h=harness();
   await handlePersonalUseText(h.env,h.text('msg_personal_undo','ส่วนตัว | 750 | KBank ร้าน | ใช้ส่วนตัว'),'trace_undo',owner);
   const id=[...h.state.items.keys()][0],confirm=h.postback(`a=personal_use_confirm&id=${id}`);
@@ -53,9 +56,16 @@ test('repeated confirmation is idempotent and owner undo creates the version-2 s
   assert.equal(h.state.queue.length,1);
   await handlePersonalUsePostback(h.env,h.postback(`a=personal_use_undo&id=${id}`),owner);
   assert.equal(h.state.items.get(id).status,'CANCELLED');
-  assert.equal(h.state.items.get(id).version,2);
+  assert.equal(h.state.items.get(id).version,3);
   assert.equal(h.state.queue.length,2);
-  assert.equal(h.state.queue[1].body.entityVersion,2);
+  assert.equal(h.state.queue[1].body.entityVersion,3);
+});
+
+test('repeated LINE message keeps one draft and one create audit',async()=>{
+  const h=harness(),message=h.text('msg_personal_duplicate','ส่วนตัว | 750 | KBank ร้าน | ใช้ส่วนตัว');
+  await handlePersonalUseText(h.env,message,'trace_first',owner);
+  await handlePersonalUseText(h.env,message,'trace_retry',owner);
+  assert.equal(h.state.items.size,1);assert.equal(h.state.audits.length,1);
 });
 
 test('return money uses the opposite transaction type and does not touch expense mapping',async()=>{
@@ -67,4 +77,28 @@ test('return money uses the opposite transaction type and does not touch expense
 test('non-owner cannot create a personal-use ledger entry',async()=>{
   const h=harness(),employee={...owner,role:'EMPLOYEE'};const outcome=await handlePersonalUseText(h.env,h.text('msg_not_owner','ส่วนตัว | 100 | KBank ร้าน | test'),'trace_no',employee);
   assert.equal(outcome,'REJECTED');assert.equal(h.state.items.size,0);
+});
+
+test('owner month close formulas are confirmed-only, idempotent and conflict-safe',()=>{
+  const cells=ownerMonthClosePersonalUseCells('V52_PERSONAL_USE_RAW'),blank=cells.map(()=>[]),writes=planOwnerMonthClosePersonalUseWrites(blank,cells);
+  assert.deepEqual(writes,cells);
+  assert.equal(planOwnerMonthClosePersonalUseWrites(cells.map(cell=>[cell.value]),cells).length,0);
+  for(const cell of cells.filter(cell=>cell.range.startsWith('L')&&cell.value.includes('V52_PERSONAL_USE_RAW'))){
+    assert.match(cell.value,/"CONFIRMED"/);assert.doesNotMatch(cell.value,/V52_EXPENSE_RAW/);
+  }
+  const conflict=cells.map(cell=>[cell.value]);conflict[1]=['=MANUAL_FORMULA()'];
+  assert.throws(()=>planOwnerMonthClosePersonalUseWrites(conflict,cells),/LAYOUT_CONFLICT:L6/);
+});
+
+test('owner month close coerces raw dates, honors configured sheet names and has no row cutoff',()=>{
+  const cells=ownerMonthClosePersonalUseCells("Owner's Personal Raw"),formulas=cells.filter(cell=>cell.value.includes('FILTER(')).map(cell=>cell.value);
+  assert.equal(formulas.length,4);
+  for(const formula of formulas){
+    assert.match(formula,/ARRAYFORMULA\(IFERROR\(IF\(ISNUMBER\(/);
+    assert.match(formula,/DATEVALUE\('Owner''s Personal Raw'!\$C\$2:\$C\)/);
+    assert.match(formula,/'Owner''s Personal Raw'!\$E\$2:\$E/);
+    assert.doesNotMatch(formula,/\$1000/);
+  }
+  const legacy=legacyOwnerMonthClosePersonalUseCells(),upgrade=planOwnerMonthClosePersonalUseWrites(legacy.map(cell=>[cell.value]),cells,legacy);
+  assert.deepEqual(upgrade.map(cell=>cell.range),['L6','L7','L15','L16']);
 });

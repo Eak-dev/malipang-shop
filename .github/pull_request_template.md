@@ -133,3 +133,16 @@ Risk level:
 - Rollback trigger
 - Monitoring window
 - Owner approval
+
+## Branch lifecycle
+
+- Issue / feature:
+- Coordination chat:
+- Primary work branch / target branch:
+- Registry record (`scope`, `source`, `branch`, observed SHA):
+- Status: ACTIVE / NEEDS_AUDIT / PENDING_INTEGRATION / INTEGRATED / DELETE_READY / DELETED / PROTECTED
+- Additional branch dependencies / integration plan:
+- Worktree / uncommitted-work status:
+- Source-to-target integration, checks and backup evidence (required before DELETE_READY):
+
+Lifecycle reporting is advisory during rollout. A recorded DELETE_READY status requires live SHA/evidence revalidation and explicit deletion approval. Merge is not Production deployment.

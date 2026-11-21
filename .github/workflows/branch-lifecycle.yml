@@ -1,0 +1,19 @@
+name: Branch lifecycle report
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Validate snapshot and report lifecycle (advisory)
+        run: node scripts/branch-lifecycle.mjs --event "$GITHUB_EVENT_PATH" --report "$GITHUB_STEP_SUMMARY"

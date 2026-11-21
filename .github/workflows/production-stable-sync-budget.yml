@@ -1,0 +1,96 @@
+name: Production stable sync budget repair
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact merged main SHA
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+      MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+      EXPECTED_SHA: ${{ inputs.expected_sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Verify exact release and required checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SHA"
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$EXPECTED_SHA"
+          test -n "$CLOUDFLARE_ACCOUNT_ID" && test -n "$CLOUDFLARE_API_TOKEN" && test -n "$MALIPANG_ADMIN_TOKEN" && test -n "$MALIPANG_WORKER_URL"
+          test "$(node -e 'const c=JSON.parse(require("fs").readFileSync("wrangler.jsonc","utf8"));process.stdout.write(c.vars.STABLE_PHASE1_ENABLED)')" = true
+          npm run check > "$RUNNER_TEMP/check.log" 2>&1 || { tail -100 "$RUNNER_TEMP/check.log"; exit 1; }
+          npx wrangler deploy --dry-run
+      - name: Back up D1 privately and verify restore
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          sql="$RUNNER_TEMP/pre-sync-repair.sql"
+          gz="$RUNNER_TEMP/pre-sync-repair.sql.gz"
+          verify="$RUNNER_TEMP/pre-sync-repair-download.sql.gz"
+          key="d1/stable-sync-budget/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.sql.gz"
+          npx wrangler d1 export malipang-v5-2 --remote --output="$sql"
+          gzip -c "$sql" > "$gz"
+          npx wrangler r2 object put "malipang-private-backups/$key" --file="$gz" --remote
+          npx wrangler r2 object get "malipang-private-backups/$key" --file="$verify" --remote
+          gzip -t "$verify"
+          test "$(sha256sum "$gz" | cut -d ' ' -f1)" = "$(sha256sum "$verify" | cut -d ' ' -f1)"
+          db="$RUNNER_TEMP/verify.sqlite"
+          gzip -dc "$verify" | sqlite3 -cmd 'PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;' "$db" > /dev/null
+          test "$(sqlite3 "$db" 'PRAGMA integrity_check')" = ok
+          test "$(sqlite3 "$db" 'SELECT count(*) FROM pragma_foreign_key_check')" = 0
+      - name: Pause delivery and drain writers
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues pause-delivery malipang-jobs
+          echo 'Delivery remains paused if a later step fails.'
+          sleep 30
+          sql="SELECT (SELECT count(*) FROM sync_jobs WHERE status='PROCESSING')+(SELECT count(*) FROM staff_config_sync_outbox WHERE status='PROCESSING') n,(SELECT count(*) FROM stable_workbook_claims WHERE state='REVIEW') review,(SELECT count(*) FROM stable_sync_cutover WHERE singleton=1 AND state='ACTIVE') active"
+          for i in $(seq 1 24); do
+            npx wrangler d1 execute malipang-v5-2 --remote --json --command "$sql" > "$RUNNER_TEMP/drain.json"
+            if jq -e '.[0].success == true and .[0].results[0].n == 0 and .[0].results[0].review == 1 and .[0].results[0].active == 1' "$RUNNER_TEMP/drain.json" >/dev/null; then exit 0; fi
+            sleep 10
+          done
+          echo 'Could not prove the expected drained review state.' >&2
+          exit 1
+      - name: Deploy and verify notice readiness
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler versions list --json > "$RUNNER_TEMP/worker-before.json"
+          npx wrangler deploy
+          npx wrangler versions list --json > "$RUNNER_TEMP/worker-after.json"
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          curl -fsS -H "Authorization: Bearer $MALIPANG_ADMIN_TOKEN" "$MALIPANG_WORKER_URL/admin/stable-sync/notice-readiness" | jq -e '.ok == true' >/dev/null
+          echo "Deployed exact source $EXPECTED_SHA; review claim intentionally retained."
+      - name: Resume delivery with claim retained
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx wrangler queues resume-delivery malipang-jobs
+          curl -fsS "$MALIPANG_WORKER_URL/health" | jq -e '.ok == true' >/dev/null
+          echo 'Reconcile the exact verified incident before releasing its review claim.'

@@ -11,5 +11,10 @@ test('continuous daily on keeps auto-cancel off and needs the step 4d targets',(
   assert.equal(vars.STABLE_CANCELLATION_PREIMAGE_ENABLED,'true');
   for(const k of ['CONTINUOUS_CUTOVER_OPERATOR_ENABLED','CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED','CONTINUOUS_VIEWS_INCIDENT_RECOVERY_ENABLED'])assert.equal(vars[k],'false',`${k} must be disabled after RELEASE`);
   if(vars.CONTINUOUS_CANARY_OPERATOR_ENABLED==='true')assert.equal(vars.STABLE_RECOVERY_GATE_ENABLED,'true','canary must keep the recovery gate enabled');
+  if(vars.CANARY_UNWRITTEN_RECOVERY_ENABLED==='true'){
+    assert.equal(vars.STABLE_RECOVERY_GATE_ENABLED,'true');assert.equal(vars.CONTINUOUS_CANARY_OPERATOR_ENABLED,'true');
+    assert.ok(vars.CONTINUOUS_PUBLICATION_ENABLED===undefined||vars.CONTINUOUS_PUBLICATION_ENABLED==='false');
+    assert.ok(vars.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED===undefined||vars.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='false');
+  }
   for(const k of ['CONTINUOUS_DAILY_SHEET','CONTINUOUS_DAILY_SHEET_ID','CONTINUOUS_RAW_SHEET','CONTINUOUS_RAW_SHEET_ID','CONTINUOUS_DETAIL_SHEET','CONTINUOUS_DETAIL_SHEET_ID'])assert.ok(vars[k],k);
 });

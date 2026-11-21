@@ -9,16 +9,30 @@ import {planStableExpenseProjections} from './stable-expense-projection-plan';
 import {readStableExpenseSource,type StableExpenseSource} from './stable-expense-source';
 import {newStableSourcePredicate,stableSourceIntegrity} from './stable-source-cutover';
 import {stableWorkbookClaimOwned} from './stable-workbook-claim';
+import {stableExpensePreimageStatement} from './stable-expense-preimage';
 
 /** Thrown before an intent or provider mutation, so a caller can safely
  * release the workbook while retaining the individual job for review. */
 export class StableDailyCapacityError extends Error{constructor(){super('STABLE_DAILY_CAPACITY');this.name='StableDailyCapacityError';}}
+/** The reason is a static planner code, never a cell value or provider message. */
+const PREFLIGHT_REVIEW_REASONS=['INCOMPLETE_SNAPSHOT','DUPLICATE_OR_INVALID_ID','MONTH_BLOCK_NOT_UNIQUE','FINANCIAL_ROW_OUTSIDE_MONTH','SUBTOTAL_FORMULA_UNVERIFIED','MONTH_OPENING_UNVERIFIED','BLANK_ROW_BALANCE_UNVERIFIED','FINANCIAL_ROW_DATE_UNVERIFIED','FINANCIAL_ROW_VALUE_UNVERIFIED','MULTIPLE_OUTFLOW_CHANNELS','ROW_HELPER_FORMULA_UNVERIFIED','ROW_ACCOUNTING_UNVERIFIED','SUBTOTAL_VALUE_UNVERIFIED','INVALID_EXPENSE_ID','PREVIOUS_BALANCE_UNVERIFIED','INVALID_POSTING_MONTH','DUPLICATE_STABLE_ID','IDENTITY_OUTSIDE_POSTING_MONTH','MISSING_TRUSTED_PREIMAGE','IDENTITY_PREIMAGE_MISMATCH','INPUT_CONTAINS_FORMULA','MULTIPLE_OR_INVALID_AMOUNT_CELLS','LEGACY_OR_MISSING_ID_UNVERIFIED','APPEND_ROW_NOT_EMPTY','APPEND_HELPER_FORMULA_UNVERIFIED'] as const;
+/** Every claim review_reason a daily preflight can produce: the legacy code
+ * (flag off, as on main) and each specific code (STABLE_SCOPED_REVIEW_ENABLED). */
+export const STABLE_DAILY_REVIEW_REASONS:readonly string[]=['STABLE_DAILY_REVIEW','STABLE_DAILY_UNCLASSIFIED',...PREFLIGHT_REVIEW_REASONS.map(r=>`STABLE_DAILY_${r}`)];
+export class StableDailyPreflightReviewError extends Error{
+ readonly reason:string;
+ constructor(reason:string){
+  const allowed=new Set<string>(PREFLIGHT_REVIEW_REASONS);
+  const safeReason=allowed.has(reason)?reason:'UNCLASSIFIED';
+  super(`STABLE_DAILY_${safeReason}`);this.name='StableDailyPreflightReviewError';this.reason=safeReason;
+ }
+}
 /** Candidate only: caller must hold the workbook claim and pause old writers
  * and manual edits. Full months and unverified history always stop. */
 export async function writeNewDailyUnderClaim(env:Env,job:SheetsSyncJob,lease:string,claim:string,source:StableExpenseSource):Promise<void>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,sheet=env.SHEET_EXPENSE_DAILY,planned=planStableExpenseProjections(source),record=planned.record;
  const others=()=>[env.SHEET_EXPENSE_RAW,env.SHEET_PURCHASE_DETAILS||'รายละเอียดการซื้อ',env.SHEET_PERSONAL_USE_RAW||'V52_PERSONAL_USE_RAW',env.SHEET_ATTENDANCE_RAW,env.SHEET_DAILY_PAYROLL,env.SHEET_WEEKLY_PAYROLL,env.SHEET_WAGE_HISTORY,env.SHEET_SHIFT_SCHEDULE,env.SHEET_OT_REQUESTS,env.SHEET_SYSTEM_LOG].filter(Boolean);
- const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,...others(),env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.EXTERNAL_API_TIMEOUT_MS,env.STABLE_PHASE1_ENABLED]),initialScope=scope(),stable=()=>env.DB===db&&scope()===initialScope;
+ const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,...others(),env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.EXTERNAL_API_TIMEOUT_MS,env.STABLE_PHASE1_ENABLED,env.STABLE_CANCELLATION_PREIMAGE_ENABLED]),initialScope=scope(),stable=()=>env.DB===db&&scope()===initialScope;
  if(job.kind!=='SHEETS_SYNC'||job.entityType!=='EXPENSE'||record.expenseId!==job.entityKey||Number(source.expense.version)!==job.entityVersion||!book||!sheet||!lease||!claim||others().includes(sheet))throw Error('STABLE_DAILY_INVALID');
  const date=/^(\d{4})-(\d{2})-(\d{2})$/.exec(record.transactionDate);if(!date)throw Error('STABLE_DAILY_DATE');
  const year=Number(date[1]),month=Number(date[2]),day=Number(date[3]),actualDate=new Date(Date.UTC(year,month-1,day));if(actualDate.getUTCFullYear()!==year||actualDate.getUTCMonth()+1!==month||actualDate.getUTCDate()!==day)throw Error('STABLE_DAILY_DATE');
@@ -35,7 +49,8 @@ export async function writeNewDailyUnderClaim(env:Env,job:SheetsSyncJob,lease:st
   const previous=journal&&found.length?Array.from({length:25},(_,i)=>s.formula[found[0]!-1]?.[i]??null):undefined;
   const p=inspectDailyAppendSnapshot({formula:s.formula,effective:s.effective,rowCount:grid.rowCount,expenseId:job.entityKey,year:payment.postingYear,month:payment.postingMonth,...previous?{expectedPrevious:previous}:{}});
   if(p.status==='CAPACITY_REQUIRED')throw new StableDailyCapacityError();
-  if(p.status==='REVIEW')throw Error('STABLE_DAILY_REVIEW');
+  // Flag off keeps main's single code, so the workbook-wide review reason is unchanged.
+  if(p.status==='REVIEW')throw env.STABLE_SCOPED_REVIEW_ENABLED==='true'?new StableDailyPreflightReviewError(p.reason):Error('STABLE_DAILY_REVIEW');
   if(journal&&p.status!=='FOUND'||!journal&&p.status!=='APPEND')throw Error('STABLE_DAILY_IDENTITY_REVIEW');
   const values:StableDailyValues={month:payment.postingMonth,day:payment.postingDay,description:record.description.trim(),amountColumn:payment.amountColumn,amountBaht:record.amountBaht,category:record.category,sourceWallet:legacySourceWallet(record.paymentKey,record.sourceWallet)};
   return{payment,block,key,plan:p,values};};
@@ -53,6 +68,10 @@ export async function writeNewDailyUnderClaim(env:Env,job:SheetsSyncJob,lease:st
  if(amountColumn===undefined||Number(data[1])!==choice.values.month||Number(data[2])!==choice.values.day||data[3]!==choice.values.description||data[amountColumn]!==choice.values.amountBaht||data[21]!==choice.values.category||data[22]!==choice.values.sourceWallet||!verifyDailyRecoveryAccounting(after.formula,after.effective,row,choice.values.month,choice.payment.postingYear,choice.values.day))throw Error('STABLE_DAILY_ACCOUNTING_UNVERIFIED');
  const previous=Array.from({length:25},(_,i)=>data[i]??null),checked=inspectDailyAppendSnapshot({formula:after.formula,effective:after.effective,rowCount:grid.rowCount,expenseId:job.entityKey,year:choice.payment.postingYear,month:choice.values.month,expectedPrevious:previous});if(checked.status!=='FOUND'||checked.observedRow!==row)throw Error('STABLE_DAILY_READBACK');
  if(choice.plan.status==='APPEND'){
-  const done=await db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,grid.sheetId,sheet,job.entityVersion,source.digest,claim,...args).run();if(done.success!==true||Number(done.meta?.changes)!==1)throw Error('STABLE_DAILY_VERIFICATION_UNCERTAIN');
+  const verified=db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guard}`).bind(book,job.entityKey,grid.sheetId,sheet,job.entityVersion,source.digest,claim,...args);
+  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId:grid.sheetId,sheetName:sheet,version:job.entityVersion,sourceDigest:source.digest,row:after.fullFormula[row-1]??[],width:grid.columnCount});
+  if(!stable())throw Error('STABLE_DAILY_SOURCE_CHANGED');
+  const results=preimage?await db.batch([verified,preimage]):[await verified.run()];
+  if(results.length!==(preimage?2:1)||results.some(result=>result.success!==true||Number(result.meta?.changes)!==1))throw Error('STABLE_DAILY_VERIFICATION_UNCERTAIN');
  }
 }

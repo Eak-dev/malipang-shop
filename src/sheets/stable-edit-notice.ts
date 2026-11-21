@@ -1,6 +1,9 @@
 import type {Env} from '../types';
+import type {ReviewRequestBudget} from './review-request-budget';
+import type {GoogleOAuthLease} from './google-auth';
 import {getGoogleAccessToken} from './google-auth';
-import {batchWriteValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError} from './client';
+import {batchWriteValues,batchWriteContinuousNoticeValues,parseRetryAfterSeconds,retryIdempotentRead,SheetsHttpError,SheetsReadNetworkError} from './client';
+import {readSheetsBody} from './bounded-response';
 import {fetchWithTimeout} from '../shared/async';
 import {numberEnv} from '../shared/env';
 
@@ -16,10 +19,13 @@ function overlaps(a:Range,r:Record<string,unknown>):boolean{
  if(!integer(sr)||!integer(sc)||!integer(er)||!integer(ec)||sr>=er||sc>=ec)throw Error('STABLE_NOTICE_STRUCTURE');
  return a.row>=sr&&a.row<er&&a.column>=sc&&a.column<ec;
 }
-async function get(env:Env,path:string):Promise<unknown>{
- const token=await getGoogleAccessToken(env),res=await retryIdempotentRead(()=>fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`}},numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000),'Stable notice read'),env.STABLE_SHEETS_PACING_ENABLED!=='true');
+async function get(env:Env,path:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<unknown>{
+ const token=await getGoogleAccessToken(env,budget,oauthLease),timeout=numberEnv(env.EXTERNAL_API_TIMEOUT_MS,15000);let deadline=0,res:Response;
+ try{res=await retryIdempotentRead(()=>{oauthLease?.tokenFor(env);budget?.consumeRead();deadline=Date.now()+timeout;return fetchWithTimeout(`https://sheets.googleapis.com/v4/spreadsheets/${encodeURIComponent(env.GOOGLE_SPREADSHEET_ID)}${path}`,{headers:{authorization:`Bearer ${token}`},...(budget?{redirect:'manual' as RequestRedirect}:{})},timeout,'Stable notice read');},env.STABLE_SHEETS_PACING_ENABLED!=='true',true);}
+ catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
  // Keep the HTTP status for diagnostics; the message stays a stable code.
- if(!res.ok)throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));return res.json();
+ if(!res.ok){try{await Promise.race([res.body?.cancel().catch(()=>{}),new Promise<void>(resolve=>setTimeout(resolve,0))]);}catch{}throw new SheetsHttpError(res.status,'STABLE_NOTICE_READ',parseRetryAfterSeconds(res.headers.get('Retry-After')));}
+ try{return JSON.parse(new TextDecoder().decode(await readSheetsBody(res,deadline-Date.now(),'Stable notice read'))) as unknown;}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
 }
 type Structure={spreadsheetId?:unknown;namedRanges?:Array<{namedRangeId?:unknown;name?:unknown;range?:Record<string,unknown>}>;sheets?:Array<{properties?:{sheetId?:unknown;title?:unknown;gridProperties?:{rowCount?:unknown;columnCount?:unknown;frozenRowCount?:unknown}};merges?:Array<Record<string,unknown>>;protectedRanges?:Array<{range?:Record<string,unknown>;unprotectedRanges?:unknown}>;data?:Array<{startRow?:unknown;startColumn?:unknown;rowData?:Array<{values?:Array<Record<string,unknown>>}>}>}>};
 const structureFields='spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges)';
@@ -32,17 +38,18 @@ function parseStructure(env:Env,x:Structure):[Range,Range]{
  for(const a of ranges){for(const r of sheet.merges||[])if(r.sheetId!==undefined&&r.sheetId!==p.sheetId||overlaps(a,r))throw Error('STABLE_NOTICE_STRUCTURE');for(const pRange of sheet.protectedRanges||[])if(!pRange.range||pRange.unprotectedRanges!==undefined||pRange.range.sheetId!==undefined&&pRange.range.sheetId!==p.sheetId||overlaps(a,pRange.range))throw Error('STABLE_NOTICE_STRUCTURE');}
  return ranges;
 }
-async function structure(env:Env):Promise<[Range,Range]>{
+async function structure(env:Env,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<[Range,Range]>{
  const query=new URLSearchParams({fields:structureFields});
- return parseStructure(env,await get(env,`?${query}`) as Structure);
+ return parseStructure(env,await get(env,`?${query}`,budget,oauthLease) as Structure);
 }
-async function snapshot(env:Env):Promise<Snapshot>{
- const ranges=await structure(env),query=new URLSearchParams({fields:'spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges,data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,note,dataValidation,textFormatRuns,chipRuns))))'});for(const name of names)query.append('ranges',name);
- const x=await get(env,`?${query}`) as Structure;
+async function snapshot(env:Env,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<Snapshot>{
+ const ranges=await structure(env,budget,oauthLease),query=new URLSearchParams({fields:'spreadsheetId,namedRanges(namedRangeId,name,range),sheets(properties(sheetId,title,gridProperties(rowCount,columnCount,frozenRowCount)),merges,protectedRanges,data(startRow,startColumn,rowData(values(userEnteredValue,userEnteredFormat,note,dataValidation,textFormatRuns,chipRuns))))'});for(const name of names)query.append('ranges',name);
+ const x=await get(env,`?${query}`,budget,oauthLease) as Structure;
  const sheets=(x.sheets||[]).filter(s=>s.properties?.sheetId===ranges[0].sheetId&&s.properties.title===env.SHEET_EXPENSE_DAILY);if(x.spreadsheetId!==env.GOOGLE_SPREADSHEET_ID||sheets.length!==1||!Array.isArray(sheets[0]!.data))throw Error('STABLE_NOTICE_READ');
  const cells=ranges.map(range=>{const found=sheets[0]!.data!.filter(d=>(d.startRow??0)===range.row&&(d.startColumn??0)===range.column);if(found.length!==1||found[0]!.rowData&&found[0]!.rowData!.length>1||found[0]!.rowData?.[0]?.values&&found[0]!.rowData![0]!.values!.length>1)throw Error('STABLE_NOTICE_READ');const c=found[0]!.rowData?.[0]?.values?.[0]??{};return{value:c.userEnteredValue??null,note:c.note??null,validation:c.dataValidation??null,format:c.userEnteredFormat??null,textRuns:c.textFormatRuns??null,chips:c.chipRuns??null};}) as [Cell,Cell];
  if(encode(ranges)!==encode(parseStructure(env,x))||cells.some(c=>c.note!==null||c.validation!==null||c.textRuns!==null&&encode(c.textRuns)!=='[]'||c.chips!==null&&encode(c.chips)!=='[]'))throw Error('STABLE_NOTICE_CHANGED');return{ranges,cells};
 }
+const syncingReady=(value:string|null):boolean=>typeof value==='string'&&/^พร้อมแก้ไข • กำลังซิงก์(?: • มีรายการรอตรวจ)? • รหัส [a-f0-9]{32}$/u.test(value);
 function text(cell:Cell):string|null{if(cell.value===null)return null;const value=cell.value as {stringValue?:unknown};if(typeof value!=='object'||Array.isArray(value)||Object.keys(value).length!==1||typeof value.stringValue!=='string')throw Error('STABLE_NOTICE_CELL');return value.stringValue;}
 function stamp():string{const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Bangkok',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date()),value=(type:string)=>parts.find(p=>p.type===type)?.value;return `${value('year')}-${value('month')}-${value('day')} ${value('hour')}:${value('minute')}:${value('second')}`;}
 const unchanged=(a:Snapshot,b:Snapshot)=>encode(a.ranges)===encode(b.ranges)&&a.cells.every((c,i)=>encode(c.format)===encode(b.cells[i]!.format)&&c.note===b.cells[i]!.note&&c.validation===b.cells[i]!.validation&&encode(c.textRuns)===encode(b.cells[i]!.textRuns)&&encode(c.chips)===encode(b.cells[i]!.chips));
@@ -50,12 +57,12 @@ const identity=(x:Snapshot)=>encode([x.ranges[0].sheetId,x.ranges[0].namedRangeI
 async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;notice_identity:string|null}|null>{return env.DB.prepare("SELECT notice_stamp,notice_identity FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD'").bind(env.GOOGLE_SPREADSHEET_ID,token).first<{notice_stamp:string|null;notice_identity:string|null}>();}
 
 /** Read-only provider readiness; never grants permission to write. */
-export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ');}catch{return false;}}
-export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch{return false;}}
+export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ'||status==='พร้อมแก้ไข • กำลังซิงก์'||status==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(status));}catch{return false;}}
+export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease,strict=false):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch(error){if(strict)throw error;return false;}}
 /** Sanitized read-only G6b evidence. Never returns sheet values or identifiers. */
-export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string):Promise<string|null>{
+export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string,budget?:ReviewRequestBudget,strict=false):Promise<string|null>{
  try{
-  const db=env.DB,initial=scope(env),x=await snapshot(env);
+  const db=env.DB,initial=scope(env),x=await snapshot(env,budget);
   // The G6b operator writes the existing รายวัน B1:C1 explicitly.  A named
   // range may move while retaining its ID; do not attest a different location.
   if(env.DB!==db||scope(env)!==initial||identity(x)!==identityValue||x.ranges[0].sheetId!==1815870717||x.ranges[0].row!==0||x.ranges[0].column!==1||x.ranges[1].sheetId!==1815870717||x.ranges[1].row!==0||x.ranges[1].column!==2||text(x.cells[0])!==expectedStatus||text(x.cells[1])!==expectedTime)return null;
@@ -63,22 +70,25 @@ export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
   if(env.DB!==db||scope(env)!==initial)return null;
   return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
- }catch{return null;}
+ }catch(error){if(strict)throw error;return null;}
 }
-export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{}):Promise<void>{
+export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false,budget?:ReviewRequestBudget):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so
  // a single read both proves the ready state and guards the write.
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,seen:{before?:Snapshot}={},time=stamp();
- await batchWriteValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ')||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();});
- const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!=='พักแก้ไฟล์'||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
+ if(budget&&(!boundedMutation||budget.remaining<9||!budget.reservePost(5)))throw Error('STABLE_NOTICE_BUDGET');
+ if(budget&&!budget.reserveMutation()){budget.releasePost();throw Error('STABLE_NOTICE_BUDGET');}
+ const beforeDispatch=async()=>{const latest=await snapshot(env,budget),prior=text(latest.cells[0]),priorTime=text(latest.cells[1]);if(!stable()||!await claim(env,token)||!stable()||!(prior===null||prior==='พร้อมแก้ไข'||prior==='พร้อมแก้ไข • มีรายการรอตรวจ'||prior==='พร้อมแก้ไข • กำลังซิงก์'||prior==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(prior))||prior===null&&priorTime!==null)throw Error('STABLE_NOTICE_PREIMAGE');seen.before=latest;await onMutationAuthorized();};
+ try{if(boundedMutation)await batchWriteContinuousNoticeValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],beforeDispatch,budget);else await batchWriteValues(env,[{range:names[0],values:[['พักแก้ไฟล์']]},{range:names[1],values:[[time]]}],beforeDispatch);}finally{budget?.releaseMutation();budget?.releasePost();}
+ const before=seen.before,after=await snapshot(env,budget);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!=='พักแก้ไฟล์'||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
  const saved=await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp=?,notice_identity=?,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL AND notice_identity IS NULL").bind(time,identity(after),env.GOOGLE_SPREADSHEET_ID,token).run();if(saved.success!==true||Number(saved.meta?.changes)!==1)throw Error('STABLE_NOTICE_UNCERTAIN');
  await wait(15000);
- if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after))||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
+ if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after),budget)||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
 }
-export async function endStableNotice(env:Env,token:string):Promise<void>{
+export async function endStableNotice(env:Env,token:string,boundedMutation=false):Promise<void>{
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,current=await claim(env,token);if(!current?.notice_stamp||!current.notice_identity||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  const reviews=await db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>();if(!reviews||!Number.isSafeInteger(reviews.n)||reviews.n<0||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  // As in beginStableNotice, the paused pre-image is read inside the fence.
- const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await batchWriteValues(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');seen.before=latest;});
+ const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');seen.before=latest;});
  const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!==ready||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
 }

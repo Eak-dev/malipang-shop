@@ -1,0 +1,92 @@
+name: Production release (preflight / review_fingerprint / migrate / deploy / rollback_worker)
+
+# Manual only. Runs from main, behind the `production` environment approval.
+# One operation per run (#299, runbook docs/SYNC_RELEASE_RUNBOOK_TH.md):
+#   preflight        no D1 or Worker write: reads the ledger, Worker status and
+#                    settings, runs a dry-run deploy and writes/reads one probe
+#                    object in private R2. Run it before migrate.
+#   review_fingerprint  read-only: prints only the SHA-256 for
+#                    CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT when exactly one
+#                    claim exists and START_REVIEW would accept it.
+#   migrate          apply pending D1 migrations; the confirmation must name
+#                    the live ledger head and the last file in this commit.
+#   deploy           deploy this commit's Worker and wrangler.jsonc; refuses
+#                    while migrations are pending, and the confirmation must
+#                    list exactly the vars that change against the live Worker.
+#                    The replaced version is stored in private R2 first.
+#   rollback_worker  return to the version a given deploy run replaced, only
+#                    while the live version is still the one that run deployed.
+# Every run needs the owner's approval for that step in the Production Change
+# issue. Actions prints each step's env block, so inputs carry no secrets. The
+# repository is public: the script prints fixed status lines, migration file
+# names, var names and SHA-256 hashes only, never wrangler output or ids.
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: preflight, review_fingerprint, migrate, deploy or rollback_worker
+        type: choice
+        options: [preflight, review_fingerprint, migrate, deploy, rollback_worker]
+        required: true
+      expected_sha:
+        description: Exact 40-character main commit SHA being run
+        type: string
+        required: true
+      confirmation:
+        description: "PREFLIGHT <sha7> | FINGERPRINT <sha7> | MIGRATE <sha7> FROM <head> TO <last> | DEPLOY <sha7> CHANGES <names or NONE> | ROLLBACK <sha7> BEFORE RUN <deploy run id>"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+# Shared with the earlier release workflows so two release runs never overlap.
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+    steps:
+      - name: Verify inputs before any checkout or credential use
+        shell: bash
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          OPERATION: ${{ inputs.operation }}
+        run: |
+          set -euo pipefail
+          [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected_sha must be 40 lowercase hex'; exit 1; }
+          [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'expected_sha does not match the main commit being run'; exit 1; }
+          s="${EXPECTED_SHA:0:7}"
+          case "$OPERATION" in
+            preflight) [[ "$CONFIRMATION" =~ ^PREFLIGHT\ $s$ ]] ;;
+            review_fingerprint) [[ "$CONFIRMATION" =~ ^FINGERPRINT\ $s$ ]] ;;
+            migrate) [[ "$CONFIRMATION" =~ ^MIGRATE\ $s\ FROM\ [0-9]{4}\ TO\ [0-9]{4}$ ]] ;;
+            deploy) [[ "$CONFIRMATION" =~ ^DEPLOY\ $s\ CHANGES\ (NONE|[A-Z][A-Z0-9_]*(,[A-Z][A-Z0-9_]*)*)$ ]] ;;
+            rollback_worker) [[ "$CONFIRMATION" =~ ^ROLLBACK\ $s\ BEFORE\ RUN\ [1-9][0-9]*$ ]] ;;
+            *) false ;;
+          esac || { echo 'confirmation text does not match the operation format'; exit 1; }
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with: {node-version: 22, cache: npm}
+      - name: Install dependencies without lifecycle scripts
+        shell: bash
+        run: npm ci --ignore-scripts
+      - name: Release operation
+        # bash runs with -eo pipefail, so a failing script fails the step despite tee.
+        shell: bash
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          RELEASE_OPERATION: ${{ inputs.operation }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+        run: node scripts/prod-release.mjs | tee -a "$GITHUB_STEP_SUMMARY"

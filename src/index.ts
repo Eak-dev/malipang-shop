@@ -1,10 +1,12 @@
+import {ReviewRequestBudget} from './sheets/review-request-budget';
+import {InvocationBindingBudget} from './sheets/invocation-binding-budget';
 import { AttendanceCoordinator } from "./durable/attendance-coordinator";
 import { handleAdmin } from "./admin/handler";
 import { createFailedJob,InboundBusyError,resolveFailedJobs } from "./db/repositories";
 import { runScheduledMaintenance } from "./operations/maintenance";
 import { processInbound } from "./router/process-event";
 import { missingRuntimeConfig } from "./shared/env";
-import { ensureSheetSyncOutbox,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
+import { deletedExpenseOutboxAbsent,ensureSheetSyncOutbox,sheetSyncOutboxStatement,SHEET_SYNC_BUSY_RETRY_SECONDS,syncJob } from "./sheets/sync";
 import {dispatchStablePhase1,isStableWorkbookBusy,isStableWorkbookReview} from './sheets/stable-phase1-dispatch';
 import {withStableWorkbookClaim,STABLE_NOTICE_READ_DEFERRED} from './sheets/stable-workbook-claim';
 import {stableRecoveryGateBlocked,STABLE_RECOVERY_BLOCKED,recoveryGateConfigured,recoveryGateValid,activeStableRecoveryTarget,isRecoveryTarget,reserveArmedTargetRedelivery} from './sheets/stable-recovery-admission';
@@ -12,6 +14,7 @@ import {stablePacingConfigured,stablePacingValid,persistedStableBusyDelay,STABLE
 import { processStaffConfigSyncJob,type StaffConfigSyncJob } from "./sheets/staff-config";
 import { pushOwnerAlert } from "./line/api";
 import { processLineNotificationMessage } from "./line/attendance-notification";
+import { sweepSyncFailureAlerts,wakeSyncFailureAlerts,syncFailureAlertSchemaReady,syncAlertDurableEnabled } from "./line/sync-failure-alerts";
 import { queueRetryDelaySeconds } from "./shared/retry";
 import type { Env,QueueJob,SheetsSyncJob } from "./types";
 import { handleLineWebhook } from "./webhook/handler";
@@ -38,30 +41,103 @@ export default{
     return new Response("Not found",{status:404});
   },
   async queue(batch:MessageBatch<QueueJob>,env:Env,ctx:ExecutionContext):Promise<void>{
+    // Experimental accounting only for one expense message in this exact
+    // invocation. Mixed batches retain their prior behavior and cannot use
+    // this evidence to enable PUBLISH. The hard PUBLISH gate remains closed.
+    const single=batch.queue==='malipang-jobs'&&batch.messages.length===1?batch.messages[0]?.body:undefined;
+    let bindingBudget=env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&single?.kind==='SHEETS_SYNC'&&single.entityType==='EXPENSE'?new InvocationBindingBudget({d1:850,queue:8}):undefined;
+    if(bindingBudget){const scope=bindingBudget.invocationScope();env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};}
     if(batch.queue==="malipang-jobs-dlq"){
-      for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+      if(!syncAlertDurableEnabled(env)){
+        // Flag off: the pre-candidate DLQ handling, unchanged.
+        for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}try{await createFailedJob(env,"malipang-jobs",job.traceId,job,"DEAD_LETTER_MAX_RETRIES");}catch(error){console.error("dlq-log",error);message.retry();continue;}const description=job.kind==="LINE_EVENT"?"LINE_EVENT":job.kind==="LINE_NOTIFICATION"?`LINE_NOTIFICATION ${job.purpose}`:job.kind==="STAFF_CONFIG_SYNC"?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}message.ack();}
+        return;
+      }
+      for(const message of batch.messages){const job=message.body as QueueJob|StaffConfigSyncJob;
+        if(job.kind==='SYNC_ALERT_SWEEP'){message.ack();continue;}
+        try{if(await createFailedJob(env,"malipang-jobs",job.traceId,job,job.kind==='LINE_NOTIFICATION'&&job.purpose==='SYNC_FAILURE'?"LINE_NOTIFICATION_ENQUEUE_FAILED":"DEAD_LETTER_MAX_RETRIES")==='ABSENT'){message.ack();continue;}}catch(error){console.error("dlq-log",error);message.retry();continue;}
+        if(job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC'){
+          // Before migration 0025 (or when its schema cannot be verified),
+          // retain the pre-existing DLQ owner alert rather than silently
+          // discarding the only alert. Once ready, use the durable incident.
+          let ready=false;try{ready=await syncFailureAlertSchemaReady(env);}catch{/* fall back to legacy alert */}
+          if(ready)await wakeSyncFailureAlerts(env);
+          else {
+            const description=job.kind==='STAFF_CONFIG_SYNC'?`STAFF_CONFIG ${job.employeeId}`:`${job.entityType} ${job.entityKey}`;
+            try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error('dlq-alert',error);}
+          }
+        }
+        else if(job.kind==='LINE_NOTIFICATION'&&job.purpose==='SYNC_FAILURE'){/* cron re-enqueues the durable alert */}
+        else {const description=job.kind==="LINE_EVENT"?"LINE_EVENT":`LINE_NOTIFICATION ${job.purpose}`;try{await pushOwnerAlert(env,`🚨 MaliPang DLQ\nงาน: ${description}\nTrace: ${job.traceId}\nตรวจ /admin/status และ failed_jobs`,job.traceId);}catch(error){console.error("dlq-alert",error);}}
+        message.ack();}
       return;
     }
     // When opted into recovery pacing, one batch may process at most ONE
     // workbook writer. LINE work is prioritized; never drop an unprocessed
     // LINE event to make room for Sheets. Park excess writes in their durable
     // outbox and let controlled cron re-deliver them.
-    const paceBatch=stablePacingConfigured(env)||recoveryGateConfigured(env);
+    // A burst of wake-up hints is coalesced to one scan per invocation. In a
+    // mixed batch park workbook jobs even on installations without pacing, so
+    // the scan cannot consume the workbook writer's subrequest budget.
+    const chosenSweep=batch.messages.find(m=>(m.body as QueueJob).kind==='SYNC_ALERT_SWEEP');
+    const paceBatch=stablePacingConfigured(env)||recoveryGateConfigured(env)||!!chosenSweep;
     if(recoveryGateConfigured(env)&&!recoveryGateValid(env))console.error('stable-recovery-gate-invalid-config');
     if(stablePacingConfigured(env)&&!stablePacingValid(env))console.error('stable-sheets-pacing-invalid-config');
-    const includesLine=batch.messages.some(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='LINE_EVENT'||j.kind==='LINE_NOTIFICATION';});
+    const includesLine=batch.messages.some(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='LINE_EVENT'||j.kind==='LINE_NOTIFICATION'||j.kind==='SYNC_ALERT_SWEEP';});
     const canaryTarget=recoveryGateConfigured(env)?await activeStableRecoveryTarget(env):null;
-    const chosenSheet=paceBatch&&!includesLine?batch.messages.find(m=>{
-      const j=m.body as WorkbookQueueJob;
-      return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));
-    }):null;
-    await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message);
+    let chosenSheet:Message<QueueJob>|null=null;
+    if(paceBatch&&!includesLine){
+      const eligible=batch.messages.filter(m=>{const j=m.body as WorkbookQueueJob;return isWorkbookQueueJob(j)&&(!recoveryGateConfigured(env)||isRecoveryTarget(j,canaryTarget));});
+      const expense=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='SHEETS_SYNC'&&j.entityType==='EXPENSE';});
+      const other=eligible.find(m=>{const j=m.body as WorkbookQueueJob;return j.kind==='STAFF_CONFIG_SYNC'||j.kind==='SHEETS_SYNC'&&j.entityType!=='EXPENSE';});
+      if(env.WORKBOOK_BATCH_FAIRNESS_ENABLED==='true'&&!recoveryGateConfigured(env)&&expense&&other){
+       // A shared D1 CAS prevents either stream from monopolizing sustained
+       // mixed batches. If unavailable, park both; never spend the writer budget.
+       try{const turn=await env.DB.prepare("INSERT INTO workbook_batch_fairness(singleton,expense_turn) VALUES(1,1) ON CONFLICT(singleton) DO UPDATE SET expense_turn=1-expense_turn RETURNING expense_turn").first<{expense_turn:number}>();if(turn?.expense_turn===1)chosenSheet=expense;else if(turn?.expense_turn===0)chosenSheet=other;}catch{/* park both until fairness state is available */}
+      }else chosenSheet=eligible[0]??null;
+    }
+    // Persist parked workbook hints together. Each Sheets insert is
+    // idempotent; staff-config retains its existing exact-outbox check. A
+    // failed or unknown batch retries only those original queue messages.
+    const parked=paceBatch?batch.messages.filter(m=>m!==chosenSheet&&isWorkbookQueueJob(m.body as WorkbookQueueJob)):[];
+    const parkedReady=new Map<Message<QueueJob>,boolean>();let parkedBatchFailed=false;
+    if(parked.length){
+      const db=env.DB,now=new Date().toISOString();
+      try{
+       const statements=parked.map(m=>{const j=m.body as WorkbookQueueJob;if(j.kind==='SHEETS_SYNC')return sheetSyncOutboxStatement(env,j,now);if(j.kind==='STAFF_CONFIG_SYNC')return db.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(j.employeeId,j.version);throw Error('PARKED_WORKBOOK_BATCH_INVALID');});
+       const results=await db.batch(statements);
+       if(env.DB!==db||results.length!==parked.length||results.some((r,i)=>r.success===false||((parked[i]!.body as WorkbookQueueJob).kind==='SHEETS_SYNC'&&(!Number.isSafeInteger(r.meta?.changes)||Number(r.meta.changes)<0||Number(r.meta.changes)>1))))throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+       for(let i=0;i<parked.length;i++){
+        const m=parked[i]!,j=m.body as WorkbookQueueJob,r=results[i]!;
+        const ok=j.kind==='SHEETS_SYNC'||Array.isArray(r.results)&&r.results.length===1&&(r.results[0] as {present?:number}).present===1;
+        parkedReady.set(m,ok);
+       }
+      }catch{parkedBatchFailed=true;for(const m of parked)parkedReady.set(m,false);}
+    }
+    // A paced workbook-only batch also has one writer. Account conservatively
+    // for the three possible pre-wrap D1 calls (recovery target, fairness CAS,
+    // parked batch). All other messages are already persisted; their only
+    // remaining action here is ack/retry. Never grant this evidence to a LINE
+    // batch, invalid pacing, a failed park, unknown job, or an HR writer.
+    const selected=chosenSheet?.body as WorkbookQueueJob|undefined;
+    if(!bindingBudget&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'&&batch.queue==='malipang-jobs'&&stablePacingValid(env)&&!includesLine&&!parkedBatchFailed&&selected?.kind==='SHEETS_SYNC'&&selected.entityType==='EXPENSE'&&batch.messages.every(m=>isWorkbookQueueJob(m.body as WorkbookQueueJob))&&parked.every(m=>parkedReady.get(m)===true)){
+      bindingBudget=new InvocationBindingBudget({d1:850,queue:8});for(let i=0;i<3;i++)bindingBudget.consume('d1');const scope=bindingBudget.invocationScope();
+      env={...env,DB:bindingBudget.wrapD1(env.DB,scope),JOB_QUEUE:bindingBudget.wrapQueue(env.JOB_QUEUE,scope),...(env.NOTICE_QUEUE?{NOTICE_QUEUE:bindingBudget.wrapQueue(env.NOTICE_QUEUE,scope)}:{})};
+    }
+    try{await Promise.all(batch.messages.map(async message=>{const job=message.body as QueueJob|StaffConfigSyncJob,attempt=queueMessageAttempt(message),invocationBudget=job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'&&env.CONTINUOUS_PUBLICATION_ENABLED==='true'?new ReviewRequestBudget(48,'invocation',bindingBudget):undefined;
+      // If parked outbox persistence failed, do not spend an expense writer's
+      // budget alongside individual HR fallback checks in this invocation.
+      if(parkedBatchFailed&&message===chosenSheet&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
+       try{await ensureSheetSyncOutbox(env,job);if(isRecoveryTarget(job,canaryTarget)&&await reserveArmedTargetRedelivery(env,job,90))await env.JOB_QUEUE.send(job,{delaySeconds:90});message.ack();}catch{message.retry({delaySeconds:90});}return;
+      }
       if(paceBatch&&isWorkbookQueueJob(job)&&message!==chosenSheet){
         try{
-          if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
-          else if(job.kind==='STAFF_CONFIG_SYNC'){
-            const persisted=await env.DB.prepare("SELECT 1 present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();
-            if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');
+          if(parkedReady.get(message)!==true){
+            // Preserve independent HR/staff behavior if a shared batch fails;
+            // expense hints retry without touching their provider operation.
+            if(!parkedBatchFailed||job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE')throw Error('PARKED_WORKBOOK_BATCH_UNCERTAIN');
+            if(job.kind==='SHEETS_SYNC')await ensureSheetSyncOutbox(env,job);
+            else {const persisted=await env.DB.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>();if(!persisted)throw Error('STAFF_CONFIG_OUTBOX_UNVERIFIED');}
           }
           // A canary that shares a batch with LINE must not be ACK-parked
           // forever while the broad recovery cron is disabled. Re-send only
@@ -76,21 +152,25 @@ export default{
           message.ack();
         }catch{message.retry({delaySeconds:90});}
         return;
-      }if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC"){if(env.STABLE_PHASE1_ENABLED==='true'){
+      }if(job.kind==="LINE_NOTIFICATION"){await processLineNotificationMessage(env,batch.queue,message,attempt);return;}
+      if(job.kind==='SYNC_ALERT_SWEEP'){if(message!==chosenSweep){message.ack();return;}try{await sweepSyncFailureAlerts(env);message.ack();}catch{message.retry({delaySeconds:90});}return;}
+      try{if(job.kind==="LINE_EVENT")await processInbound(job,env,ctx);else if(job.kind==="STAFF_CONFIG_SYNC"){if(env.STABLE_PHASE1_ENABLED==='true'){
    if(await stableRecoveryGateBlocked(env,job)){
     const persisted=await env.DB.prepare("SELECT 1 AS present FROM staff_config_sync_outbox WHERE employee_id=? AND version=?").bind(job.employeeId,job.version).first<{present:number}>().catch(()=>null);
     if(!persisted){message.retry({delaySeconds:90});return;}
     message.ack();return;
    }
    await withStableWorkbookClaim(env,()=>processStaffConfigSyncJob(env,job),job);
-  }else await processStaffConfigSyncJob(env,job);}else{const outcome=env.STABLE_PHASE1_ENABLED==='true'?await dispatchStablePhase1(env,job,attempt):await syncJob(env,job,attempt);if(outcome==="BUSY"||outcome==='CONTINUE'){
+  }else await processStaffConfigSyncJob(env,job);}else{const outcome=env.STABLE_PHASE1_ENABLED==='true'?await dispatchStablePhase1(env,job,attempt,invocationBudget):await syncJob(env,job,attempt);if(outcome==="BUSY"||outcome==='CONTINUE'){
  const delay=outcome==='CONTINUE'?90:await operationalBusyDelay(env,job);
- await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'||outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE].includes(error.message)){
+ invocationBudget?.consumeQueue();await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(outcome==='REVIEW'||outcome==='DEFERRED'){await wakeSyncFailureAlerts(env,invocationBudget);message.ack();return;}if(outcome==='BLOCKED'){message.ack();return;}}await resolveFailedJobs(env,batch.queue,job.traceId,job);message.ack();}catch(error){if(error instanceof Error&&error.message==='CONTINUOUS_NOTICE_ACTIVATION_BLOCKED'&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){
+  try{if(await deletedExpenseOutboxAbsent(env,job)){message.ack();return;}await ensureSheetSyncOutbox(env,job);const held=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',last_error='CONTINUOUS_NOTICE_ACTIVATION_BLOCKED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=? AND status='PENDING' AND EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_alert_incidents') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND tbl_name='sync_jobs' AND name IN ('sync_alert_job_insert','sync_alert_job_update','sync_alert_job_complete','sync_alert_job_delete'))=4").bind(job.entityKey,job.entityVersion).run();if(held.success!==true||!Number.isSafeInteger(held.meta?.changes))throw Error('NOTICE_ACTIVATION_HOLD_UNCERTAIN');if(held.meta.changes===1)await wakeSyncFailureAlerts(env,invocationBudget);else {const state=await env.DB.prepare("SELECT status FROM sync_jobs WHERE entity_type='EXPENSE' AND entity_key=? AND entity_version=?").bind(job.entityKey,job.entityVersion).first<{status:string}>();if(!state||state.status==='PENDING')throw Error('NOTICE_ACTIVATION_HOLD_UNCERTAIN');}message.ack();}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});}return;
+ }if(error instanceof Error&&[STABLE_RECOVERY_BLOCKED,STABLE_SHEETS_PACING_UNAVAILABLE,'CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED'].includes(error.message)){
   if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}
   message.ack();return;
  }if(isStableWorkbookBusy(error)||(error instanceof Error&&[STABLE_SHEETS_PACING_BLOCKED,STABLE_NOTICE_READ_DEFERRED].includes(error.message))){
  const delay=await operationalBusyDelay(env,job);
- if(job.kind==='STAFF_CONFIG_SYNC')await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).send(job,{delaySeconds:delay});else await env.JOB_QUEUE.send(job,{delaySeconds:delay});message.ack();return;}if(isStableWorkbookReview(error)){/* Both outboxes keep the job; scheduled recovery re-sends it after review. */if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}message.ack();return;}if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}console.error("queue",batch.queue,error);try{await createFailedJob(env,batch.queue,job.traceId,job,error);}catch(logError){console.error("failed-job-log",logError);}const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));
+ if(job.kind==='STAFF_CONFIG_SYNC')await (env.JOB_QUEUE as unknown as Queue<StaffConfigSyncJob>).send(job,{delaySeconds:delay});else {invocationBudget?.consumeQueue();await env.JOB_QUEUE.send(job,{delaySeconds:delay});}message.ack();return;}if(isStableWorkbookReview(error)){/* An existing review is already durable; avoid a wake-up for every blocked duplicate. */if(job.kind==='SHEETS_SYNC'){try{await ensureSheetSyncOutbox(env,job);}catch{message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}message.ack();return;}if(error instanceof InboundBusyError){message.retry({delaySeconds:300});return;}try{if(await createFailedJob(env,batch.queue,job.traceId,job,error)==='ABSENT'){message.ack();return;}}catch(logError){console.error("failed-job-log",logError);if(env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.kind==='SHEETS_SYNC'&&job.entityType==='EXPENSE'){message.retry({delaySeconds:SHEET_SYNC_BUSY_RETRY_SECONDS});return;}}console.error("queue",batch.queue,error);if(job.kind==='SHEETS_SYNC'||job.kind==='STAFF_CONFIG_SYNC')await wakeSyncFailureAlerts(env,invocationBudget);const delaySeconds=queueRetryDelaySeconds(error,attempt);message.retry(delaySeconds?{delaySeconds}:undefined);}}));}finally{bindingBudget?.releaseRecovery();}
   },
   async scheduled(_controller:ScheduledController,env:Env,ctx:ExecutionContext):Promise<void>{
     ctx.waitUntil(runScheduledMaintenance(env));

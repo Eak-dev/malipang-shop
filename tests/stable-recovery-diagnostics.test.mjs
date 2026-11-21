@@ -1,3 +1,4 @@
+process.env.MALIPANG_TEST_CANDIDATE_FLAGS='1'; // candidate behaviour flags on for this file
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
@@ -42,6 +43,55 @@ test('P0-c diagnostic reports invalid config without revealing ID or throwing',a
  }finally{h.close();}
 });
 
+test('stable status provides an allowlisted review breakdown without changing legacy groups or leaking error text',async()=>{
+ const h=expenseSqlite();try{
+  Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',STABLE_PHASE1_ENABLED:'true'});
+  const rows=[
+   ['secret-1','STABLE_DAILY_MONTH_OPENING_UNVERIFIED'],
+   ['secret-2','STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED'],
+   ['secret-3','STABLE_CANCELLED_SOURCE_REVIEW'],
+   ['secret-4','STABLE_SUPERSEDED_SOURCE_REVIEW'],
+   ['secret-5','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED'],
+   ['secret-6','STABLE_DAILY_CAPACITY'],
+   ['secret-7','private provider message with sensitive details'],
+   ['secret-8','CONTINUOUS_CANCEL_PREDECESSOR_REVIEW'],
+  ];
+  const insert=h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,last_error) VALUES(?,'EXPENSE',?,1,'secret-trace','REVIEW','now',?)");
+  for(const [id,reason] of rows)insert.run(id,id,reason);
+  const req=new Request('https://example.test/admin/stable-sync/status',{headers:{authorization:'Bearer '+h.env.ADMIN_TOKEN}});
+  const response=await handleAdmin(req,h.env,{});assert.equal(response.status,200);
+  const body=await response.json();
+  const counts=x=>Object.fromEntries(x.map(row=>[row.reason,Number(row.n)]));
+  assert.deepEqual(counts(body.reviews),{CAPACITY:1,OTHER:7});
+  assert.deepEqual(counts(body.reviewDetails),{CANCELLED_OR_SUPERSEDED:4,DAILY_MONTH_OPENING:1,DAILY_ROW_FORMULA:1,OTHER:2});
+  const serialized=JSON.stringify(body);
+  for(const value of ['secret-1','secret-2','secret-3','secret-4','secret-5','secret-6','secret-7','secret-8','secret-trace','private provider message',h.env.ADMIN_TOKEN])assert.equal(serialized.includes(value),false);
+ }finally{h.close();}
+});
+
+test('unavailable optional review breakdown preserves existing admin status and is explicitly unknown',async()=>{
+ for(const failure of ['throw','unsuccessful']){
+  const h=expenseSqlite();try{
+   Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',STABLE_PHASE1_ENABLED:'true'});
+   h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,last_error) VALUES('private-job','EXPENSE','private-id',1,'private-trace','REVIEW','now','STABLE_DAILY_CAPACITY')").run();
+   const prepare=h.DB.prepare.bind(h.DB);
+   h.DB.prepare=sql=>{
+    if(sql.includes("THEN 'DAILY_MONTH_OPENING'")){
+     if(failure==='throw')throw Error('private database error');
+     return {all:async()=>({success:false,results:[]})};
+    }
+    return prepare(sql);
+   };
+   const req=new Request('https://example.test/admin/stable-sync/status',{headers:{authorization:'Bearer '+h.env.ADMIN_TOKEN}});
+   const response=await handleAdmin(req,h.env,{});assert.equal(response.status,200,failure);
+   const body=await response.json();assert.equal(body.ok,true);assert.equal(body.reviewDetails,null);
+   assert.deepEqual(body.reviews.map(row=>({reason:row.reason,n:Number(row.n)})),[{reason:'CAPACITY',n:1}]);
+   assert.equal(body.syncBacklog.some(row=>row.entityType==='EXPENSE'&&row.status==='REVIEW'&&row.count===1),true);
+   for(const value of ['private database error','private-job','private-id','private-trace',h.env.ADMIN_TOKEN])assert.equal(JSON.stringify(body).includes(value),false);
+  }finally{h.close();}
+ }
+});
+
 test('admin retry-sync explicitly identifies blocked REVIEW, CANARY and invalid pacing',async()=>{
  const h=expenseSqlite();try{
   Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',STABLE_PHASE1_ENABLED:'true'});
@@ -57,7 +107,7 @@ test('admin retry-sync explicitly identifies blocked REVIEW, CANARY and invalid 
 });
 
 
-test('NH-3: default-on existing stable sync excludes Terminal DLQ, explicit boolean true retains old admin redrive',async()=>{
+test('NH-3: stable admin rejects terminal override and legacy mode retains the explicit enqueue',async()=>{
  const h=expenseSqlite();try{
   Object.assign(h.env,{ADMIN_TOKEN:'k'.repeat(40),GOOGLE_SPREADSHEET_ID:'book',
     STABLE_PHASE1_ENABLED:'true',SHEETS_SYNC_ENABLED:'true'});
@@ -82,6 +132,13 @@ test('NH-3: default-on existing stable sync excludes Terminal DLQ, explicit bool
   assert.equal(h.queue.length,0);
   assert.equal((await call({includeTerminalDlq:true},'invalid-token')).status,401);
   assert.equal(h.queue.length,0);
+  assert.deepEqual(await call({includeTerminalDlq:true}),{status:409,body:{ok:false,error:'TERMINAL_RECONCILIATION_REQUIRED'}});
+  assert.equal(h.queue.length,0);
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_key='synthetic-dlq'").get().status,'FAILED');
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE entity_key='synthetic-done'").get().status,'COMPLETED');
+  // Existing explicit enqueue remains available with stable mode off. A
+  // separate terminal claim fence still prevents actual provider replay.
+  h.env.STABLE_PHASE1_ENABLED='false';
   const result=await call({includeTerminalDlq:true});
   assert.deepEqual(result,{status:200,body:{ok:true,enqueued:1}});
   assert.equal(h.queue.length,1);

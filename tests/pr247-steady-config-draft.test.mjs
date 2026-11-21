@@ -6,8 +6,12 @@ const cfg=JSON.parse(fs.readFileSync(new URL("../wrangler.jsonc",import.meta.url
 const g6a=fs.readFileSync(new URL("../.github/workflows/production-pr247-g6a-gate-on.yml",import.meta.url),"utf8");
 const doc=fs.readFileSync(new URL("../docs/ISSUE248_STEADY_PR_B_PREP_TH.md",import.meta.url),"utf8");
 
-test("PR-B local candidate is gate literal false with pacing true",()=>{
+// #296 restores the steady gate-off configuration only after its Canary and
+// the two temporary operators have passed their separate release gates.
+test("steady gate-off configuration keeps pacing on and temporary operators off",()=>{
  assert.equal(cfg.vars.STABLE_RECOVERY_GATE_ENABLED,"false");
+ assert.equal(cfg.vars.CONTINUOUS_CANARY_OPERATOR_ENABLED,"false");
+ assert.equal(cfg.vars.CANARY_UNWRITTEN_RECOVERY_ENABLED,"false");
  assert.equal(cfg.vars.STABLE_SHEETS_PACING_ENABLED,"true");
  assert.equal(Object.hasOwn(cfg.vars,"STABLE_SHEETS_READ_BUDGET_PER_MINUTE"),false);
 });

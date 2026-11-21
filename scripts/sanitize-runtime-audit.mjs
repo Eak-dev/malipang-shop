@@ -5,7 +5,7 @@ const REJECTED = 'Runtime audit evidence rejected.';
 const MODES = ['production', 'shadow'];
 const PROBES = ['d1', 'line', 'lineReplyCapability', 'linePushCapacity', 'sheets', 'r2', 'attendanceConfig'];
 const INBOUND_STATUSES = ['PROCESSING', 'COMPLETED', 'FAILED', 'STALE', 'IGNORED', 'REJECTED', 'REVIEW'];
-const SYNC_STATUSES = ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED'];
+const SYNC_STATUSES = ['PENDING', 'PROCESSING', 'COMPLETED', 'FAILED', 'REVIEW'];
 const PUSH_CAPACITIES = ['UNLIMITED', 'AVAILABLE', 'EXHAUSTED', 'UNKNOWN'];
 
 function reject() { throw new Error(REJECTED); }

@@ -43,3 +43,7 @@ Cloudflare D1 รายงาน `meta.changes=2` เมื่อคำสั่
 ### RAW Undo ตอบ timeout หลังเขียนแล้ว
 
 Canary v2 ผ่านการยกเลิก DAILY แล้วค้างที่ `EXPENSE_RAW` ด้วย `TIMEOUT`; carrier ใน Google เป็น CANCELLED พร้อม marker เฉพาะหนึ่งรายการ และ before/payload digest ของทั้งกริดตรง evidence. อาการนี้เกิดซ้ำกับทั้งยืนยันและ Undo; ข้อความ timeout ใน log ถูกลดรายละเอียด จึงยังระบุไม่ได้แน่ชัดว่า Google Sheets GET หรือ OAuth ขั้นใดหมดเวลา. ห้ามอ้างว่าแก้สาเหตุ timeout แล้ว. Operator ใหม่รับเฉพาะ Canary v2, claim TIMEOUT, v1 COMPLETED, DAILY Undo VERIFIED และ RAW Undo evidence ตามตำแหน่งที่สังเกต; ใช้ positive ledger verifier และ notice-close เดิมโดยไม่ส่งคำขอยกเลิกซ้ำ. ซ้อมบนสำเนา Production ที่ restore และ snapshot จริง; provider notice/report health ในการซ้อมจำลอง. ผลไม่แน่ชัดคง REVIEW และตรวจ D1/Google ห้าม retry POST. ก่อนเปิดใช้งานจริงต้องประเมิน timeout ที่เกิดซ้ำและหลักฐานความเชื่อถือได้เพิ่มเติม.
+
+### ระยะรออ่าน RAW หลังผู้ให้บริการตอบรับ
+
+Canary v1 และ v2 มี marker ที่จองไว้ปรากฏจริงเพียงครั้งเดียว แต่ journal ยัง IN_FLIGHT และ fault เป็น `TIMEOUT` แทน `SHEETS_MUTATION_OUTCOME_UNKNOWN`; ตามลำดับโค้ดและหลักฐานนี้ชี้ว่าการอ่านหลัง POST หมดเวลา ขณะที่ log ไม่บอก GET ที่แน่ชัด. จึงเพิ่ม deadline เป็นอย่างน้อย 45 วินาทีเฉพาะ Google Sheets GET ที่ใช้ตรวจ postimage RAW หลังได้รับคำตอบ POST ยืนยันสำเร็จ; preflight, DETAIL, publication, OAuth และ POST ยังคง deadline เดิม. ไม่มี retry POST หรือเปลี่ยน guard/digest. หากอ่านยังไม่ผ่านยังคง REVIEW; ผลทดสอบในเครื่องพิสูจน์ขอบเขต deadline ไม่ได้ยืนยันว่า Google จะตอบทันในทุกครั้ง.

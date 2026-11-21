@@ -186,3 +186,12 @@ test('continuous notice POST with a stalled error body retains unknown mutation 
   await assert.rejects(client.batchWriteContinuousNoticeValues({GOOGLE_SPREADSHEET_ID:'book',EXTERNAL_API_TIMEOUT_MS:'20'},[{range:'A1',values:[['x']]}]),error=>error instanceof client.SheetsMutationOutcomeUnknownError);assert.equal(sent,1);
  }finally{auth.getGoogleAccessToken=token;globalThis.fetch=fetcher;}
 });
+
+test('extended post-write read policy changes only the GET timeout',async()=>{
+ const auth=require('../dist/sheets/google-auth.js'),asyncTools=require('../dist/shared/async.js'),oldToken=auth.getGoogleAccessToken,oldFetch=asyncTools.fetchWithTimeout,seen=[];
+ try{auth.getGoogleAccessToken=async()=> 'synthetic';asyncTools.fetchWithTimeout=async(_url,init,timeout)=>{seen.push({method:init.method,timeout});return new Response(JSON.stringify(init.method==='POST'?{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]}:{spreadsheetId:'book',sheets:[]}),{status:200,headers:{'content-type':'application/json'}})};
+  const env={GOOGLE_SPREADSHEET_ID:'book',EXTERNAL_API_TIMEOUT_MS:'15000',STABLE_SHEETS_PACING_ENABLED:'true'};
+  await client.getSpreadsheetSheetProperties(env,client.continuousSheetsReadPolicy);await client.getSpreadsheetSheetProperties(env,{kind:'continuous-expense',postWriteRead:true});await client.batchUpdateSpreadsheetWithReply(env,[{findReplace:{}}]);
+  assert.deepEqual(seen.map(x=>x.timeout),[15000,45000,15000]);
+ }finally{auth.getGoogleAccessToken=oldToken;asyncTools.fetchWithTimeout=oldFetch;}
+});

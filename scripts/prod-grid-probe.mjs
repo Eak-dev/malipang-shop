@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-export const REVIEWED_BUNDLE_SHA256='5b31b8af96b5f7df976af17a035037a8a2226b8242ab76f48be7c58f5280824e';
+export const REVIEWED_BUNDLE_SHA256='7b826977cc1edab9f639ff3153ab615fe9dce91c4255eb7f449f5ff13792e8f3';
 const fail=x=>{throw Error(x)},hex=(x,n)=>new RegExp(`^[a-f0-9]{${n}}$`).test(x),sha=x=>createHash('sha256').update(x).digest('hex');
 export function targetConfig(text,now=Date.now()){
  let x;try{x=JSON.parse(text)}catch{fail('PROBE_TARGET_INVALID')}
@@ -25,7 +25,7 @@ export async function runProbe(e,{fetchImpl=fetch,runner=spawnSync,clock=()=>Dat
  try{
   writeFileSync(cfg,JSON.stringify(config),{mode:0o600});const initial=inspectVersions(await api(settingsPath+'/versions?per_page=50&page=1'),await api(settingsPath+'/deployments?per_page=2'),e.EXPECTED_WORKER_VERSION_SHA256),settings=await api(settingsPath+'/settings'),detail=await api(settingsPath+'/versions/'+initial),secretNames=inspectSecrets(settings,detail,vars),subdomain=await api('/workers/subdomain');
   if(subdomain?.success!==true||!/^[a-z0-9-]+$/.test(subdomain.result?.subdomain||''))fail('PROBE_SUBDOMAIN_UNVERIFIED');
-  let x=cli(['--dry-run','--config',cfg,'--outdir',join(dir,'out')]);if(x.error||x.status!==0)fail('PROBE_BUILD_FAILED');const bytes=readFileSync(compiled),codeHash=sha(bytes);if(codeHash!==expectedBundleHash)fail('PROBE_BUNDLE_MISMATCH');writeFileSync(bundle,bytes,{mode:0o600});
+  let x=cli(['--dry-run','--minify','--config',cfg,'--outdir',join(dir,'out')]);if(x.error||x.status!==0)fail('PROBE_BUILD_FAILED');const bytes=readFileSync(compiled),codeHash=sha(bytes);if(codeHash!==expectedBundleHash)fail('PROBE_BUNDLE_MISMATCH');writeFileSync(bundle,bytes,{mode:0o600});
   x=cli(['--dry-run','--no-bundle','--script',bundle,'--config',cfg,'--outfile',multipart]);if(x.error||x.status!==0||await verifyMultipart(readFileSync(multipart),config,bytes)!==codeHash)fail('PROBE_BUILD_FAILED');
   if(clock()+5*60*1000>=Number(vars.PROBE_EXPIRES_AT)||sha(readFileSync(bundle))!==codeHash||inspectVersions(await api(settingsPath+'/versions?per_page=50&page=1'),await api(settingsPath+'/deployments?per_page=2'),e.EXPECTED_WORKER_VERSION_SHA256)!==initial||JSON.stringify(inspectSecrets(await api(settingsPath+'/settings'),await api(settingsPath+'/versions/'+initial),vars))!==JSON.stringify(secretNames))fail('PROBE_PREFLIGHT_CHANGED');
   // Send the exact verified Wrangler multipart once. Wrangler's upload command

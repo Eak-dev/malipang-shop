@@ -110,6 +110,20 @@ test('provider preflight respects a bounded request budget',async()=>{
   const short=new ReviewRequestBudget(16);assert.equal(await inspectCanaryUnwrittenProvider(h.env,undefined,short),null);
  }finally{m.restore();h.close()}
 });
+test('probe exposes only a safe stage and classified report error',async()=>{
+ const h=await fixture(),m=await mockProvider(h);try{
+  const diagnostic={stage:'START',reason:'UNKNOWN'};
+  health.readContinuousReportHealth=async()=>{throw Error('REPORT_HEALTH_FORMULA')};
+  assert.equal(await inspectCanaryUnwrittenProvider(h.env,undefined,undefined,diagnostic),null);
+  assert.deepEqual(diagnostic,{stage:'REPORT_HEALTH',reason:'REPORT_HEALTH_FORMULA'});
+  health.readContinuousReportHealth=async()=>{throw Error('private provider data')};
+  assert.equal(await inspectCanaryUnwrittenProvider(h.env,undefined,undefined,diagnostic),null);
+  assert.deepEqual(diagnostic,{stage:'REPORT_HEALTH',reason:'UNVERIFIED'});
+  health.readContinuousReportHealth=async()=>{throw new client.SheetsHttpError(403,'private provider data')};
+  assert.equal(await inspectCanaryUnwrittenProvider(h.env,undefined,undefined,diagnostic),null);
+  assert.deepEqual(diagnostic,{stage:'REPORT_HEALTH',reason:'SHEETS_HTTP_403'});
+ }finally{m.restore();h.close()}
+});
 
 for(const [label,mutate] of [
  ['target present',(h,m)=>put(m.state.s,'effective',1,2,1,h.c.expense_id)],

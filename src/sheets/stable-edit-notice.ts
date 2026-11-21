@@ -60,7 +60,7 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ'||status==='พร้อมแก้ไข • กำลังซิงก์'||status==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(status));}catch{return false;}}
 export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease,strict=false):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch(error){if(strict)throw error;return false;}}
 /** Sanitized read-only G6b evidence. Never returns sheet values or identifiers. */
-export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string,budget?:ReviewRequestBudget):Promise<string|null>{
+export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string,budget?:ReviewRequestBudget,strict=false):Promise<string|null>{
  try{
   const db=env.DB,initial=scope(env),x=await snapshot(env,budget);
   // The G6b operator writes the existing รายวัน B1:C1 explicitly.  A named
@@ -70,7 +70,7 @@ export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
   if(env.DB!==db||scope(env)!==initial)return null;
   return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
- }catch{return null;}
+ }catch(error){if(strict)throw error;return null;}
 }
 export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false,budget?:ReviewRequestBudget):Promise<void>{
  // The pre-image is read inside the dispatch fence, after authentication, so

@@ -1,7 +1,10 @@
 import type {Env} from '../types';
 import {assertContinuousDailyActivated} from '../sheets/continuous-daily-route';
-import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSpreadsheetSheetProperties,type ContinuousSheetsReadPolicy} from '../sheets/client';
+import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSpreadsheetSheetProperties,SheetsHttpError,SheetsReadNetworkError,type ContinuousSheetsReadPolicy} from '../sheets/client';
 import type {ReviewRequestBudget} from '../sheets/review-request-budget';
+import {ReviewRequestBudgetError} from '../sheets/review-request-budget';
+import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from '../sheets/google-auth';
+import {OperationTimeoutError} from '../shared/async';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
 import {readContinuousReportHealth} from '../sheets/continuous-report-health';
 import {decodeAtomicDailyPayload,ATOMIC_DAILY_PREFIX} from '../sheets/atomic-daily-template';
@@ -12,6 +15,7 @@ import {canaryUnwrittenScope} from './canary-unwritten-scope';
 type EvidenceEnv=Env & {CONTINUOUS_CANARY_OPERATOR_ENABLED?:string};
 type Grid={sheetId:number;rowCount:number;columnCount:number};
 type Snapshot={grids:Grid[];formula:unknown[][][];effective:unknown[][][]};
+export type CanaryProofDiagnostic={stage:string;reason:string};
 const quote=(s:string)=>`'${s.replace(/'/g,"''")}'`;
 const column=(n:number)=>{let out='';while(n>0){n--;out=String.fromCharCode(65+n%26)+out;n=Math.floor(n/26);}return out;};
 const empty=(v:unknown)=>v===null||v===undefined||v==='';
@@ -51,12 +55,15 @@ export function canaryAbsentFromSnapshots(s:Snapshot,expenseId:string,itemId:str
 /** Read-only incident evidence, deliberately not an admin endpoint or a
  * recovery command. A match does not prove old requests are settled and does
  * not authorize release, retry, status changes or any Google mutation. */
-export async function inspectCanaryUnwrittenProvider(env:EvidenceEnv,notice?:{status:string;stamp:string},budget?:ReviewRequestBudget):Promise<{fingerprint:string;styleDigest:string}|null>{
+export async function inspectCanaryUnwrittenProvider(env:EvidenceEnv,notice?:{status:string;stamp:string},budget?:ReviewRequestBudget,diagnostic?:CanaryProofDiagnostic):Promise<{fingerprint:string;styleDigest:string}|null>{
  const db=env.DB,scope=()=>canaryUnwrittenScope(env);
  const policy:ContinuousSheetsReadPolicy={kind:'continuous-expense',...(budget?{budget}:{})};
  const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
+ const mark=(stage:string)=>{if(diagnostic){diagnostic.stage=stage;diagnostic.reason='CHECK_FAILED'}};
  try{
+  mark('D1_EVIDENCE');
   const first=await readCanaryUnwrittenEvidence(env);if(!first||!stable())return null;
+  mark('ACTIVATION');
   const target=await assertContinuousDailyActivated(env),names=[env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_DETAIL_SHEET],ids=[env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET_ID];
   if(!target||names.some(x=>!x)||ids.some(x=>!x)||new Set(names).size!==3||new Set(ids).size!==3||target.sheet!==names[0]||String(target.sheetId)!==ids[0]||!stable())return null;
   const namesExact=names as string[];
@@ -72,7 +79,8 @@ export async function inspectCanaryUnwrittenProvider(env:EvidenceEnv,notice?:{st
   };
   const expectedStatus=notice?.status??'พักแก้ไฟล์',expectedStamp=notice?.stamp??first.notice_stamp;
   if(!['พักแก้ไฟล์','พร้อมแก้ไข','พร้อมแก้ไข • มีรายการรอตรวจ'].includes(expectedStatus)||!expectedStamp)return null;
-  const beforeStyle=await stableNoticeStyleFingerprint(env,first.notice_identity,expectedStatus,expectedStamp,budget);
+  mark('NOTICE_INITIAL');
+  const beforeStyle=await stableNoticeStyleFingerprint(env,first.notice_identity,expectedStatus,expectedStamp,budget,!!diagnostic);
   if(!beforeStyle||!stable())return null;
   // Hash each large snapshot separately so two full formula grids do not
   // remain reachable at once in the Worker's bounded memory.
@@ -81,12 +89,26 @@ export async function inspectCanaryUnwrittenProvider(env:EvidenceEnv,notice?:{st
    const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(snapshot)));
    return Array.from(new Uint8Array(bytes),x=>x.toString(16).padStart(2,'0')).join('');
   };
-  const before=await snapshotDigest();
-  if(!before||await readContinuousReportHealth(env,{expenseId:first.expense_id,absent:true,absentFromViews:true},undefined,policy)!=='OK'||!stable())return null;
-  const after=await snapshotDigest(),second=await readCanaryUnwrittenEvidence(env),afterStyle=await stableNoticeStyleFingerprint(env,first.notice_identity,expectedStatus,expectedStamp,budget);
+  mark('SNAPSHOT_INITIAL');const before=await snapshotDigest();if(!before)return null;
+  mark('REPORT_HEALTH');if(await readContinuousReportHealth(env,{expenseId:first.expense_id,absent:true,absentFromViews:true},undefined,policy)!=='OK'||!stable())return null;
+  mark('SNAPSHOT_FINAL');const after=await snapshotDigest(),second=await readCanaryUnwrittenEvidence(env);
+  mark('NOTICE_FINAL');const afterStyle=await stableNoticeStyleFingerprint(env,first.notice_identity,expectedStatus,expectedStamp,budget,!!diagnostic);
+  mark('CONSISTENCY');
   if(!after||!second||beforeStyle!==afterStyle||JSON.stringify(first)!==JSON.stringify(second)||before!==after||!stable())return null;
   const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify([first,before,beforeStyle])));
   if(!stable())return null;
+  if(diagnostic){diagnostic.stage='COMPLETE';diagnostic.reason='OK'}
   return {fingerprint:Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join(''),styleDigest:beforeStyle};
- }catch{return null;}
+ }catch(error){
+  if(diagnostic){
+   const message=error instanceof Error?error.message:'';
+   diagnostic.reason=error instanceof SheetsHttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599?`SHEETS_HTTP_${error.status}`:
+    error instanceof GoogleOAuthHttpError&&Number.isInteger(error.status)&&error.status>=400&&error.status<=599?`GOOGLE_OAUTH_HTTP_${error.status}`:
+    error instanceof GoogleOAuthPreflightError?error.code:error instanceof SheetsReadNetworkError?'SHEETS_READ_NETWORK':
+    error instanceof ReviewRequestBudgetError?'REQUEST_BUDGET':error instanceof OperationTimeoutError?'TIMEOUT':
+    /^REPORT_HEALTH_(MANIFEST|TARGET|READ|FORMULA|SCOPE|CAPACITY|UNVERIFIED)$/.test(message)?message:
+    message==='SHEETS_RESPONSE_TOO_LARGE'?'SHEETS_RESPONSE_TOO_LARGE':'UNVERIFIED';
+  }
+  return null;
+ }
 }

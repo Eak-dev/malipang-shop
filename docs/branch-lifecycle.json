@@ -7424,6 +7424,32 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T14:26:12.284Z",
       "reason": "Supporting Issue 296 read-only isolated Google grid rehearsal, dependent on monthly pilot PR #335 and protected Production release controls. Retain through review, CI, rehearsal and subsequent cleanup. This snapshots the code commit before registry update and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-token-readonly-diagnostic-20261121",
+      "source_sha": "8710bd29192d0173fe2f952582dcd19877e91cee",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:38:26.149Z",
+      "reason": "Supporting Issue 296 GET-only Cloudflare token diagnostic after an unknown isolated-probe upload; depends on protected release workflow and does not authorize replay or resolve the unknown outcome. Retain through review, CI, diagnosis and cleanup. Snapshot precedes registry update."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-token-readonly-diagnostic-20261121",
+      "source_sha": "8710bd29192d0173fe2f952582dcd19877e91cee",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:38:26.150Z",
+      "reason": "Supporting Issue 296 GET-only Cloudflare token diagnostic after an unknown isolated-probe upload; depends on protected release workflow and does not authorize replay or resolve the unknown outcome. Retain through review, CI, diagnosis and cleanup. Snapshot precedes registry update."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

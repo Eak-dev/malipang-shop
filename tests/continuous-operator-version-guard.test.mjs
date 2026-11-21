@@ -16,14 +16,14 @@ function fixture(){
  const request=(path,{expected=version,auth=`Bearer ${token}`,action='START'}={})=>new Request(`https://worker.invalid/admin/stable-sync/${path}`,{method:'POST',headers:{...(expected===null?{}:{'x-malipang-expected-worker-version':expected}),authorization:auth,'content-type':'application/json'},body:JSON.stringify({action})});
  return{env,request,get calls(){return calls},close(){cutover.operateContinuousCutover=old.cutover;canary.operateContinuousCanary=old.canary;recovery.stepCanaryUnwrittenRecovery=old.recovery}};
 }
-for(const path of ['continuous-cutover','continuous-canary','canary-unwritten-recovery']){
+for(const path of ['continuous-cutover','continuous-canary','canary-unwritten-recovery','scoped-hold-incident']){
  test(`${path} checks auth before version and refuses absent or mismatched pins before operation`,async()=>{const h=fixture();try{
   assert.equal((await handleAdmin(h.request(path,{auth:'Bearer wrong'}),h.env,{})).status,401);
   for(const expected of [null,'invalid',other]){const response=await handleAdmin(h.request(path,{expected}),h.env,{});assert.equal(response.status,409);assert.deepEqual(await response.json(),{ok:false,error:'WORKER_VERSION_MISMATCH',servedVersion:version});}
   h.env.CF_VERSION_METADATA=undefined;let response=await handleAdmin(h.request(path),h.env,{});assert.equal(response.status,503);assert.deepEqual(await response.json(),{ok:false,error:'WORKER_VERSION_UNAVAILABLE',servedVersion:null});
   h.env.CF_VERSION_METADATA={id:'invalid'};response=await handleAdmin(h.request(path),h.env,{});assert.equal(response.status,503);assert.equal(h.calls,0);
  }finally{h.close()}});
- if(path!=='canary-unwritten-recovery')test(`${path} returns the runtime version on success and failure`,async()=>{const h=fixture();try{
+ if(path!=='canary-unwritten-recovery'&&path!=='scoped-hold-incident')test(`${path} returns the runtime version on success and failure`,async()=>{const h=fixture();try{
   let response=await handleAdmin(h.request(path),h.env,{});assert.equal(response.status,200);assert.deepEqual(await response.json(),{ok:true,action:'START',servedVersion:version});
   response=await handleAdmin(h.request(path,{action:'FAIL'}),h.env,{});assert.equal(response.status,400);assert.deepEqual(await response.json(),{ok:false,error:'TEST_FAILURE',servedVersion:version});assert.equal(h.calls,2);
  }finally{h.close()}});

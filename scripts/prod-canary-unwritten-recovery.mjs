@@ -2,7 +2,7 @@ import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {pathToFileURL} from 'node:url';
 
-const phases={TIME:{before:null,after:'TIME_ACKED'},STATUS:{before:'TIME_ACKED',after:'STATUS_ACKED'},COMMIT:{before:'STATUS_ACKED',after:'COMPLETE'}};
+const phases={PROBE:{before:null,after:null},TIME:{before:null,after:'TIME_ACKED'},STATUS:{before:'TIME_ACKED',after:'STATUS_ACKED'},COMMIT:{before:'STATUS_ACKED',after:'COMPLETE'}};
 const fail=code=>{throw Error(code)};
 export function validateInputs(e){
  const sha=e.EXPECTED_SHA||'',phase=e.RECOVERY_PHASE||'';
@@ -48,7 +48,7 @@ async function main(){
  console.log('INCIDENT_PRECHECK: PASS');
  let response;try{response=await fetch(base+'/admin/stable-sync/canary-unwritten-recovery',{method:'POST',headers:{Authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'Content-Type':'application/json','x-malipang-expected-worker-version':workerVersion},body:JSON.stringify({action:phase}),redirect:'error',signal:AbortSignal.timeout(240000)});}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
  let result;try{result=await response.json()}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
- const outcome=phase==='COMMIT'?'RESUMED':'IN_PROGRESS';
+ const outcome=phase==='PROBE'?'READY':phase==='COMMIT'?'RESUMED':'IN_PROGRESS';
  if(!response.ok||result?.ok!==true||result.action!==phase||result.outcome!==outcome||result.servedVersion!==workerVersion)fail('INCIDENT_OUTCOME_UNVERIFIED_NO_RETRY');
  try{verifyPhase(phase,await query('SELECT state FROM canary_unwritten_recovery'),true)}catch{fail('INCIDENT_POSTSTATE_UNVERIFIED_NO_RETRY')}
  console.log(`INCIDENT_${phase}: PASS; WORKER_MATCH; D1_READBACK_PASS`);

@@ -15,7 +15,7 @@
 
 1. ผ่าน preflight และ backup; apply migration `0063` และ deploy commit ที่ตรวจแล้วตาม workflow release ทีละขั้น อ่าน ledger, configuration และ Worker version กลับทุกขั้น อย่า rollback ไป Worker ก่อน ACTIVATE
 2. ใช้ workflow `prod-canary-unwritten-recovery.yml` แบบ manual และ protected เท่านั้น ระบุ SHA ของ main, hash ของ Worker version ที่รับ 100%, คำยืนยันและการยืนยันว่าผู้เขียนภายนอกถูกกั้น ตามเงื่อนไขของ workflow
-3. เรียก `TIME` หนึ่งครั้ง และตรวจว่า audit เป็น `TIME_ACKED` แล้วจึงเรียก `STATUS` หนึ่งครั้ง ตรวจว่าเป็น `STATUS_ACKED` ตัวดำเนินการตรวจสูตรรายงานและ snapshot ของชีตซ้ำ ตรวจรูปแบบและ named ranges ของข้อความพักไฟล์ และบันทึก intent ก่อนส่งคำสั่งแต่ละครั้ง
+3. เรียก `PROBE` เพื่ออ่านและตรวจ provider จริงโดยไม่เขียน หากผ่านจึงเรียก `TIME` หนึ่งครั้ง และตรวจว่า audit เป็น `TIME_ACKED` แล้วจึงเรียก `STATUS` หนึ่งครั้ง ตรวจว่าเป็น `STATUS_ACKED` ตัวดำเนินการตรวจสูตรรายงานและ snapshot ของชีตซ้ำ ตรวจรูปแบบและ named ranges ของข้อความพักไฟล์ และบันทึก intent ก่อนส่งคำสั่งแต่ละครั้ง
 4. เรียก `COMMIT` หนึ่งครั้งเมื่อสองขั้นก่อนหน้าได้รับผลตอบกลับบวกและตรวจข้อมูลตรงกันเท่านั้น การปรับ admission, งาน Canary และ claim เกิดใน D1 transaction เดียวกัน เก็บ epoch เดิมและประวัติ failure ไว้
 5. หากคำตอบไม่ครบ ไม่ตรง หรือ connection หาย ให้หยุดและคง fence ห้าม re-run workflow หรือส่งคำสั่งเดิมซ้ำ การพบ `TIME_IN_FLIGHT` หรือ `STATUS_IN_FLIGHT` หมายถึงต้องวิเคราะห์ incident ใหม่ ไม่ใช่สิทธิ์ให้ retry
 6. เมื่อ commit ผ่าน ตรวจ D1 และชีตแล้วดำเนิน Canary confirm, duplicate และ Undo ต่อจน `VERIFIED` ก่อนปิด flag ชั่วคราว ปล่อย recovery gate และตรวจ backlog ตาม runbook หลัก

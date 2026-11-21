@@ -9,6 +9,7 @@ test('requires pinned main, exact incident approval, Worker hash and owner attes
  for(const [field,value] of Object.entries({GITHUB_SHA:'b'.repeat(40),GITHUB_REF:'refs/heads/other',GITHUB_RUN_ATTEMPT:'2',CONFIRMATION:'',EXPECTED_WORKER_VERSION_SHA256:'x',EXTERNAL_WRITERS_FENCED:'false',OWNER_SUPERVISING:'false',MALIPANG_WORKER_URL:'https://example.workers.dev/path',RECOVERY_PHASE:'STEP'}))assert.throws(()=>validateInputs({...valid,[field]:value}),field);
 });
 test('phase preimage and readback are exact and cannot advance another phase',()=>{
+ assert.doesNotThrow(()=>verifyPhase('PROBE',[]));assert.doesNotThrow(()=>verifyPhase('PROBE',[],true));assert.throws(()=>verifyPhase('PROBE',[{state:'TIME_ACKED'}]));
  for(const [phase,before,after] of [['TIME',null,'TIME_ACKED'],['STATUS','TIME_ACKED','STATUS_ACKED'],['COMMIT','STATUS_ACKED','COMPLETE']]){
   assert.doesNotThrow(()=>verifyPhase(phase,before?[{state:before}]:[]));assert.doesNotThrow(()=>verifyPhase(phase,[{state:after}],true));
   assert.throws(()=>verifyPhase(phase,[{state:'TIME_IN_FLIGHT'}]));assert.throws(()=>verifyPhase(phase,[{state:'STATUS_IN_FLIGHT'}],true));

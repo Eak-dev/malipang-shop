@@ -247,6 +247,15 @@ test('one-shot dispatcher verifies two acknowledgements before committing',async
   assert.deepEqual(recoveryState(x.h),{recovery:'COMPLETE',claim:null,job:'PENDING',admission:'VERIFIED',epoch:'ARMED'});
  }finally{x.close()}
 });
+test('PROBE reads evidence without a database or provider mutation',async()=>{
+ const x=await dispatchFixture();try{
+  const before=x.h.sqlite.prepare('SELECT total_changes() n').get().n;
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE'),'READY');
+  assert.equal(x.provider.writes,0);assert.equal(x.h.sqlite.prepare('SELECT total_changes() n').get().n,before);
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'TIME'),'IN_PROGRESS');
+  assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'PROBE'),'HELD');assert.equal(x.provider.writes,1);
+ }finally{x.close()}
+});
 test('each dispatcher call is pinned to its explicitly selected phase',async()=>{
  const x=await dispatchFixture();try{
   assert.equal(await stepCanaryUnwrittenRecovery(x.h.env,'STATUS'),'HELD');

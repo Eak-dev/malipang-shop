@@ -243,3 +243,40 @@ INSERT INTO stable_projection_writes VALUES('book','EXPENSE','e0','DAILY',1,'dai
     assert.notEqual(broken.status,0);assert.deepEqual(readdirSync(rt),[],'all files removed after a failure');
   }finally{rmSync(dir,{recursive:true,force:true});}
 });
+
+test('post-activation rehearsal handles released claim and proves the legacy target is fenced',{skip:!hasSqlite&&'sqlite3 not installed'},()=>{
+ const dir=mkdtempSync(join(tmpdir(),'ops-active-')),bin=join(dir,'bin'),rt=join(dir,'rt'),seed=join(dir,'seed.sqlite');
+ try{
+  execFileSync('mkdir',['-p',bin,rt]);
+  execFileSync('sqlite3',[seed,'CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT UNIQUE,applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP NOT NULL);']);
+  const migrations=readdirSync(new URL('../migrations/',import.meta.url)).filter(f=>/^\d{4}_.*\.sql$/.test(f)).sort();
+  for(const f of migrations){execFileSync('sqlite3',[seed],{input:readFileSync(new URL(`../migrations/${f}`,import.meta.url))});execFileSync('sqlite3',[seed,`INSERT INTO d1_migrations(name) VALUES('${f}')`]);}
+  execFileSync('sqlite3',[seed,`PRAGMA foreign_keys=ON;
+INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('e1','m1','u','synthetic',100,'transfer','SHOP_BANK','c','2026-11-15','CONFIRMED','2026-11-15',1);
+INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at) VALUES('d1','dm1','u','RECEIPT','CONFIRMED','2026-11-15');
+INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('j1','EXPENSE','e1',1,'t','PENDING','now');
+INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,created_at,updated_at) VALUES('f1','malipang-jobs','t','EXPENSE:e1:1','{}','X','OPEN','now','now');
+INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','claim','HELD','now','now');
+INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) VALUES('book','EXPENSE','old','DAILY',1,'old',1,'${'a'.repeat(64)}','claim','VERIFIED','now');
+INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book','VIEWS','claim','${'a'.repeat(64)}','[{}]',1,'IN_FLIGHT','now','now');
+UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage='VIEWS';
+INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book','DAILY_J','claim','${'a'.repeat(64)}','[{}]',1,'IN_FLIGHT','now','now');
+UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage='DAILY_J';
+INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book','REPORTS','claim','${'a'.repeat(64)}','[{}]',1,'IN_FLIGHT','now','now');
+UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage='REPORTS';
+INSERT INTO continuous_daily_cutovers(spreadsheet_id,legacy_sheet_id,legacy_sheet_name,continuous_sheet_id,continuous_sheet_name,raw_sheet_id,raw_sheet_name,detail_sheet_id,detail_sheet_name,claim_token,source_revision,state,prepared_at) SELECT 'book',1,'old',2,'new',3,'raw',4,'detail','claim',revision,'PREPARED','now' FROM stable_source_revision WHERE singleton=1;
+INSERT INTO continuous_daily_pre_cutover_expenses(spreadsheet_id,expense_id) SELECT 'book',expense_id FROM expense_events WHERE status<>'CANCELLED';
+UPDATE continuous_daily_cutovers SET state='ACTIVE',activated_at='now' WHERE spreadsheet_id='book';
+DELETE FROM stable_workbook_claims WHERE spreadsheet_id='book';`]);
+  writeFileSync(join(bin,'npx'),`#!/bin/bash\nfor a in "$@"; do case $a in --output=*) sqlite3 '${seed}' .dump > "\${a#--output=}";; esac; done\n`);
+  if(spawnSync('sha256sum',['--version']).status!==0)writeFileSync(join(bin,'sha256sum'),'#!/bin/bash\nshasum -a 256 "$@"\n');
+  for(const f of ['npx','sha256sum'])if(existsSync(join(bin,f)))chmodSync(join(bin,f),0o755);
+  const run=()=>spawnSync('bash',[new URL('../scripts/prod-ops-backup-rehearsal.sh',import.meta.url).pathname],{encoding:'utf8',env:{...process.env,PATH:`${bin}:${process.env.PATH}`,RUNNER_TEMP:rt,CLOUDFLARE_ACCOUNT_ID:'synthetic',CLOUDFLARE_API_TOKEN:'synthetic',GITHUB_RUN_ID:'1',GITHUB_RUN_ATTEMPT:'1',GITHUB_SHA:'0'.repeat(40)}});
+  const pass=run();assert.equal(pass.status,0,pass.stdout+pass.stderr);
+  assert.match(pass.stdout,/post_activation_state: PASS/);assert.match(pass.stdout,/smoke_claim_touch: PASS/);assert.match(pass.stdout,/smoke_projection_insert: PASS/);assert.match(pass.stdout,/smoke_legacy_fence: PASS/);assert.match(pass.stdout,/smoke_all: PASS/);
+  assert.equal(digitsOutsideAllowed(pass.stdout),null,pass.stdout);
+  assert.equal(execFileSync('sqlite3',[seed,"SELECT (SELECT count(*) FROM stable_workbook_claims), (SELECT count(*) FROM stable_projection_writes), (SELECT count(*) FROM continuous_daily_cutovers WHERE state='ACTIVE');"],{encoding:'utf8'}).trim(),'0|1|1');
+  execFileSync('sqlite3',[seed,'DROP TRIGGER continuous_expense_projection_target_fence']);
+  const missingFence=run();assert.notEqual(missingFence.status,0);assert.match(missingFence.stdout,/smoke_legacy_fence: FAIL/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

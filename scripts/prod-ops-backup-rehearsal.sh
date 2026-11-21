@@ -37,8 +37,10 @@ else
 fi
 gzip -dc "$dl" | sqlite3 -cmd "PRAGMA journal_mode=MEMORY; PRAGMA synchronous=OFF;" "$db" >/dev/null 2>&1 || { echo "- restore: FAIL"; exit 1; }
 echo "- restore: PASS"
-echo "- integrity_before: $(pf "$( [ "$(q 'PRAGMA integrity_check' | head -1)" = ok ] && echo 1 )")"
-echo "- foreign_keys_before: $(pf "$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 )")"
+integrity_before="$( [ "$(q 'PRAGMA integrity_check')" = ok ] && echo 1 || true )"
+echo "- integrity_before: $(pf "$integrity_before")"; test "$integrity_before" = 1
+foreign_keys_before="$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 || true )"
+echo "- foreign_keys_before: $(pf "$foreign_keys_before")"; test "$foreign_keys_before" = 1
 echo "- ledger_head: $(q 'SELECT name FROM d1_migrations ORDER BY id DESC LIMIT 1' | grep -E '^[0-9]{4}_[a-z0-9_]+\.sql$' || echo UNKNOWN)"
 tables="$(q "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '_cf_%' ORDER BY name")"
 counts(){ for t in $tables; do echo "$t=$(q "SELECT count(*) FROM \"$t\"")"; done; }
@@ -56,9 +58,17 @@ counts > "$T/counts-after.txt"
 # tables in the same order. Rows must not change; d1_migrations gains ledger rows.
 unchanged="$( [ "$(grep -v '^d1_migrations=' "$T/counts-before.txt")" = "$(grep -v '^d1_migrations=' "$T/counts-after.txt")" ] && echo 1 || true )"
 echo "- preexisting_rows_unchanged: $(pf "$unchanged")"
-echo "- integrity_after: $(pf "$( [ "$(q 'PRAGMA integrity_check' | head -1)" = ok ] && echo 1 )")"
-echo "- foreign_keys_after: $(pf "$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 )")"
-echo "- no_activation_rows: $(pf "$( [ "$(q "SELECT (SELECT count(*) FROM continuous_daily_cutovers)+(SELECT count(*) FROM continuous_undo_serialization_activation)+(SELECT count(*) FROM continuous_cancel_financial_activation)")" = 0 ] && echo 1 )")"
+test "$unchanged" = 1
+integrity_after="$( [ "$(q 'PRAGMA integrity_check')" = ok ] && echo 1 || true )"
+echo "- integrity_after: $(pf "$integrity_after")"; test "$integrity_after" = 1
+foreign_keys_after="$( [ "$(q 'SELECT count(*) FROM pragma_foreign_key_check')" = 0 ] && echo 1 || true )"
+echo "- foreign_keys_after: $(pf "$foreign_keys_after")"; test "$foreign_keys_after" = 1
+activation_shape="$(q "SELECT CASE WHEN (SELECT count(*) FROM continuous_daily_cutovers)=0 AND (SELECT count(*) FROM continuous_undo_serialization_activation)=0 AND (SELECT count(*) FROM continuous_cancel_financial_activation)=0 THEN 'PRE' WHEN (SELECT count(*) FROM continuous_daily_cutovers)=1 AND (SELECT count(*) FROM continuous_daily_cutovers WHERE state='ACTIVE')=1 AND (SELECT count(*) FROM continuous_undo_serialization_activation)=0 AND (SELECT count(*) FROM continuous_cancel_financial_activation)=0 THEN 'POST' ELSE 'OTHER' END")"
+case "$activation_shape" in
+ PRE) echo '- no_activation_rows: PASS';;
+ POST) echo '- post_activation_state: PASS';;
+ *) echo '- activation_state: FAIL'; exit 1;;
+esac
 # Second application of each pending file on a throwaway copy: informational.
 cp "$db" "$T/retry.sqlite"; nonidem=""
 for name in $applied_names; do
@@ -78,7 +88,29 @@ for s in FAILED REVIEW COMPLETED; do smoke "sync_job_to_$s" "UPDATE sync_jobs SE
 # cloned row cannot collide with an existing failure.
 smoke failed_job_insert "$(clone failed_jobs "id='smoke-failed',trace_id='smoke-trace',job_key='SMOKE:smoke:1',status='OPEN',error='DEAD_LETTER_MAX_RETRIES'" "")"
 smoke failed_job_resolve "UPDATE failed_jobs SET status='RESOLVED' WHERE id=(SELECT id FROM failed_jobs WHERE status='OPEN' LIMIT 1); SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('x','\$') END;"
-smoke claim_touch "UPDATE stable_workbook_claims SET updated_at=updated_at; SELECT CASE WHEN changes()>=1 THEN 1 ELSE json_extract('x','\$') END;"
-smoke projection_insert "$(clone stable_projection_writes "entity_id='smoke-exp'" "WHERE entity_type='EXPENSE'")"
+active_cutovers="$(q "SELECT count(*) FROM continuous_daily_cutovers WHERE state='ACTIVE'")"
+if [ "$active_cutovers" = 0 ]; then
+  smoke claim_touch "UPDATE stable_workbook_claims SET updated_at=updated_at; SELECT CASE WHEN changes()>=1 THEN 1 ELSE json_extract('x','\$') END;"
+  smoke projection_insert "$(clone stable_projection_writes "entity_id='smoke-exp'" "WHERE entity_type='EXPENSE'")"
+elif [ "$active_cutovers" = 1 ]; then
+  # All writes below are on the restored copy inside a rolled-back transaction.
+  # A released workbook normally has no claim to update. Exercise a new
+  # synthetic claim rather than altering the active workbook's claim state.
+  smoke claim_touch "INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('smoke-book-only','smoke-token-only','HELD','now','now'); UPDATE stable_workbook_claims SET updated_at='later' WHERE spreadsheet_id='smoke-book-only' AND operation_token='smoke-token-only'; SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('x','\$') END;"
+  # The old template may be a historical legacy projection. After activation
+  # create a synthetic intent against the actual continuous target instead.
+  smoke projection_insert "INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) SELECT spreadsheet_id,'EXPENSE','smoke-exp-only','DAILY',continuous_sheet_id,continuous_sheet_name,1,lower(hex(zeroblob(32))),'smoke-token-only','IN_FLIGHT','now' FROM continuous_daily_cutovers WHERE state='ACTIVE'; SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('x','\$') END;"
+  # Confirm the live schema's fence rejects the corresponding legacy target.
+  # Verify the exact error: any other failure is not evidence of this fence.
+  if sqlite3 -bail "$db" "PRAGMA foreign_keys=ON;" "BEGIN;" "INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) SELECT spreadsheet_id,'EXPENSE','smoke-exp-legacy-only','DAILY',legacy_sheet_id,legacy_sheet_name,1,lower(hex(zeroblob(32))),'smoke-token-only','IN_FLIGHT','now' FROM continuous_daily_cutovers WHERE state='ACTIVE';" "ROLLBACK;" >/dev/null 2>"$T/err.txt"; then
+    echo '- smoke_legacy_fence: FAIL'; smoke_failed=1
+  elif grep -Fq 'continuous expense projection target rejected' "$T/err.txt"; then
+    echo '- smoke_legacy_fence: PASS'
+  else
+    echo '- smoke_legacy_fence: FAIL'; smoke_failed=1
+  fi
+else
+  echo '- smoke_activation_scope: FAIL'; smoke_failed=1
+fi
 echo "- smoke_all: $(pf "$( [ "$smoke_failed" = 0 ] && echo 1 )")"
 test "$smoke_failed" = 0

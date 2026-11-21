@@ -43,6 +43,8 @@
 
 ขั้น 6 เตรียม workflow Canary แบบ manual ทีละ action ผ่าน production environment พร้อม SHA/version guard และ D1 readback; ผลที่ไม่แน่ชัดต้องหยุดตรวจ ไม่ retry อัตโนมัติ. Workflow เป็นช่องทางปฏิบัติการ ไม่ใช่หลักฐานว่า deploy หรือ Canary ผ่านแล้ว.
 
+Backup rehearsal รองรับสำเนาหลัง cutover ACTIVE และปล่อย claim โดยทดสอบ synthetic claim และการเขียน projection บนสำเนาที่ restore เท่านั้น พร้อมพิสูจน์ว่า trigger ปฏิเสธเป้าหมายแท็บเดิม; สถานะ activation อื่นที่ไม่รองรับต้องหยุด ไม่ใช่หลักฐานว่า Production พร้อมใช้งาน.
+
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 
 1. ตรวจ branch, HEAD, uncommitted work และผู้ที่กำลังเขียน worktree ก่อนแก้ไข จากนั้นทำตาม Canonical Main Gate และ task authority ใน AGENTS.md

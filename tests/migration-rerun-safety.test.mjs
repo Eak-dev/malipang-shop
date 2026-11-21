@@ -11,7 +11,8 @@ const dir=new URL('../migrations/',import.meta.url);
 const names=readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
 const INCIDENT_MIGRATION='0062_views_incident_recovery.sql';
 const CANARY_INCIDENT_MIGRATION='0063_canary_unwritten_recovery.sql';
-const baselineNames=names.filter(n=>n!==INCIDENT_MIGRATION&&n!==CANARY_INCIDENT_MIGRATION);
+const NOTICE_PREFIX_MIGRATION='0064_notice_status_prefix.sql';
+const baselineNames=names.filter(n=>![INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION].includes(n));
 const read=n=>readFileSync(new URL(n,dir),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
 // the other migration files byte for byte, and the schema all files produced.
@@ -70,14 +71,13 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
   assert.throws(()=>forwardFixSql(n,sql,{}),/COLUMNS_MISSING/);
 });
 
-test('issue296 incident recovery is a single new append-only migration with preserved trigger names',()=>{
- assert.equal(names[names.length-2],INCIDENT_MIGRATION);
- assert.equal(names[names.length-1],CANARY_INCIDENT_MIGRATION);
+test('issue296 incident migrations are append-only and preserve trigger names on rerun',()=>{
+ assert.deepEqual(names.slice(-3),[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION]);
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM continuous_views_incident_recovery").get().n,0);
- const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));assert.deepEqual(schema(db),before);
+ const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));assert.deepEqual(schema(db),before);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='canary_unwritten_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM canary_unwritten_recovery").get().n,0);
 });

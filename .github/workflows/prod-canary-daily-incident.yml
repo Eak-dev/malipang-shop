@@ -1,0 +1,67 @@
+name: "MaliPang #296 positive daily incident (manual, one phase)"
+on:
+  workflow_dispatch:
+    inputs:
+      recovery_phase:
+        description: One exact incident phase; never retry an uncertain outcome
+        required: true
+        type: choice
+        options: [VERIFY, TIME, TIME_READBACK, PROBE_STATUS, STATUS, COMMIT]
+      expected_sha:
+        description: Exact reviewed main SHA
+        required: true
+        type: string
+      expected_worker_version_sha256:
+        description: SHA-256 of current 100-percent Worker version ID
+        required: true
+        type: string
+      confirmation:
+        description: OWNER APPROVES DAILY PHASE sha7 (exact)
+        required: true
+        type: string
+      external_writers_fenced:
+        description: Owner confirms external and manual writers are fenced
+        type: boolean
+        default: false
+      owner_supervising:
+        description: Owner is supervising and available for an incident
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  operator:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22
+      - name: Run incident workflow guard tests
+        run: node --test tests/prod-canary-daily-incident.test.mjs
+      - name: Assert latest remote main has not moved
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: One phase — NEVER auto-retry
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+          RECOVERY_PHASE: ${{ inputs.recovery_phase }}
+          CONFIRMATION: ${{ inputs.confirmation }}
+          EXTERNAL_WRITERS_FENCED: ${{ inputs.external_writers_fenced }}
+          OWNER_SUPERVISING: ${{ inputs.owner_supervising }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        run: node scripts/prod-canary-daily-incident.mjs

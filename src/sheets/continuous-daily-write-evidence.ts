@@ -35,6 +35,7 @@ export async function matchesCommittedDailyInsert(after:DailyWriteSnapshot,c:Dai
  if(!coords(c)||!parsed?.operationMarker||!!parsed.publicationVersion!==!!publication||!/^([0-9a-f]{64})$/.test(beforeDigest)||!/^([0-9a-f]{64})$/.test(payloadDigest)||!shape(after,c.rowCount+1,c.columnCount)||await dailyPayloadDigest(payload)!==payloadDigest)return false;
  let formula:Record<number,string>;try{formula=appendDailyRowFormulas(publication);}catch{return false;}
  const index=c.row-1,af=after.formula,ae=after.effective,shiftedColumns=publication?26:25;
+ const blankLast=Array.from({length:shiftedColumns},(_,col)=>blank(af[c.rowCount]?.[col])&&blank(ae[c.rowCount]?.[col])).every(Boolean);
  if(af[index]?.[24]!==payload||ae[index]?.[24]!==payload)return false;
  if(publication&&(ae[index]?.[25]!=='STAGED'||!blank(ae[index]?.[23])))return false;
  let matches=0;for(const row of af)if(decodeAtomicDailyPayload(row[24])?.operationMarker===parsed.operationMarker)matches++;
@@ -49,6 +50,7 @@ export async function matchesCommittedDailyInsert(after:DailyWriteSnapshot,c:Dai
   for(let col=0;col<c.columnCount;col++){
    if(col>=shiftedColumns||r<index){fr.push(af[r]?.[col]??null);er.push(ae[r]?.[col]??null);continue;}
    const shifted=af[r+1]?.[col],shiftedEffective=ae[r+1]?.[col];
+   if(blankLast&&r===c.rowCount-1){fr.push(null);er.push(null);continue;}
    if(helpers.has(col)){
     const upgraded=col===9&&shifted===formula[9],expected=upgraded?formula[9]:continuousDailyHelperFormulas(r+2)[col];
     if(shifted!==expected||!blank(shiftedEffective))return false;

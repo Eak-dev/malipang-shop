@@ -150,15 +150,15 @@ test('Cloudflare D1 executes notice STATUS and COMMIT for a verified review',asy
   const script=`const status=${JSON.stringify(status)},ack=${JSON.stringify(take(ack))},commit=${JSON.stringify(commit)};
    export default {async fetch(_r,e){try{const batch=async xs=>e.DB.batch(xs.map(x=>e.DB.prepare(x.sql).bind(...x.args)));
    await batch(status);const afterStatus=await e.DB.prepare('SELECT state FROM continuous_review_notice_close').first();
-   await e.DB.prepare(ack.sql).bind(...ack.args).run();await batch(commit);
+   await e.DB.prepare(ack.sql).bind(...ack.args).run();const commitResult=await batch(commit);
    const notice=await e.DB.prepare('SELECT state FROM continuous_review_notice_close').first();
    const job=await e.DB.prepare('SELECT status FROM sync_jobs').first();
    const claim=await e.DB.prepare('SELECT count(*) AS n FROM stable_workbook_claims').first();
    const admission=await e.DB.prepare('SELECT state FROM stable_recovery_operations').first();
-   return Response.json({afterStatus,notice,job,claim,admission});}catch(err){return new Response(String(err),{status:500})}}}`;
+   return Response.json({afterStatus,notice,job,claim,admission,changes:commitResult.map(x=>x.meta.changes)});}catch(err){return new Response(String(err),{status:500})}}}`;
   mf=new Miniflare({...common,script});const response=await mf.dispatchFetch('http://local/');
   const body=await response.text();assert.equal(response.status,200,body);
-  assert.deepEqual(JSON.parse(body),{afterStatus:{state:'STATUS_IN_FLIGHT'},notice:{state:'COMPLETE'},job:{status:'PENDING'},claim:{n:0},admission:{state:'VERIFIED'}});
+  assert.deepEqual(JSON.parse(body),{afterStatus:{state:'STATUS_IN_FLIGHT'},notice:{state:'COMPLETE'},job:{status:'PENDING'},claim:{n:0},admission:{state:'VERIFIED'},changes:[1,1,2,1,0]});
  }finally{if(mf)await mf.dispose();h.close();rmSync(dir,{recursive:true,force:true});}
 });
 
@@ -171,4 +171,14 @@ test('literal prefix comparisons retain GLOB semantics including null and arbitr
    }
   }
  }finally{h.close();}
+});
+
+
+test('review close accepts the D1 claim release and its alert trigger, but rejects other counts',async()=>{
+ for(const [claimChanges,expected] of [[2,'RESUMED'],[0,'REVIEW_CLOSE_COMMIT_UNCERTAIN'],[3,'REVIEW_CLOSE_COMMIT_UNCERTAIN']]){
+  const h=fixture();try{const real=h.DB.batch;h.DB.batch=async function(statements){const results=await real.call(this,statements);if(statements.some(x=>x.sql.includes('DELETE FROM stable_workbook_claims AS c')))results[2]={...results[2],meta:{...results[2].meta,changes:claimChanges}};return results;};
+   if(expected==='RESUMED')assert.equal(await h.run(),expected);else await assert.rejects(h.run(),new RegExp(expected));
+   assert.equal(h.sqlite.prepare('SELECT state FROM continuous_review_notice_close').get().state,'COMPLETE');
+  }finally{h.close();}
+ }
 });

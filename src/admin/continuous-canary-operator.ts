@@ -1,4 +1,4 @@
-import {continuousSheetsReadPolicy} from '../sheets/client';
+import {continuousSheetsReadPolicy,type ContinuousSheetsReadPolicy} from '../sheets/client';
 import type {Env} from '../types';
 import {confirmExpenseAtomically} from '../expense/confirm';
 import {undoConfirmedExpense} from '../expense/undo';
@@ -214,18 +214,23 @@ async function reconcileUndo(env:CanaryEnv,r:Canary):Promise<void>{
   AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes w WHERE w.spreadsheet_id=c.spreadsheet_id AND w.entity_type='EXPENSE' AND (w.entity_id=c.expense_id OR substr(w.entity_id,1,length(c.expense_id)+1)=c.expense_id||'|'))`).bind(book,r.expense_id,r.duplicate_epoch_id,description,amount,payment,wallet,category).run();
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.CONTINUOUS_CANARY_OPERATOR_ENABLED!=='true'||env.STABLE_RECOVERY_GATE_ENABLED!=='true'||result.success!==true||Number(result.meta?.changes)!==1)throw Error('CANARY_UNDO_RECONCILE_UNVERIFIED');
 }
-async function provider(env:CanaryEnv,r:Canary,version:1|2):Promise<void>{
+async function provider(env:CanaryEnv,r:Canary,version:1|2,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy):Promise<void>{
  const names=[env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_DETAIL_SHEET];if(names.some(n=>!n)||new Set(names).size!==3)throw Error('CANARY_PROVIDER_SCOPE');
- const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n!,continuousSheetsReadPolicy)));if(grids.some(g=>g.rowCount>5000)||grids[0]!.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||grids[1]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[2]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('CANARY_PROVIDER_SCOPE');
+ const grids=await Promise.all(names.map(n=>getSheetGridInfo(env,n!,policy)));if(grids.some(g=>g.rowCount>5000)||grids[0]!.sheetId!==Number(env.CONTINUOUS_DAILY_SHEET_ID)||grids[1]!.sheetId!==Number(env.CONTINUOUS_RAW_SHEET_ID)||grids[2]!.sheetId!==Number(env.CONTINUOUS_DETAIL_SHEET_ID))throw Error('CANARY_PROVIDER_SCOPE');
  const ranges=names.map((n,i)=>`${q(n!)}!A1:${i===0?'Y':'Z'}${grids[i]!.rowCount}`);
- const [f,e]=await Promise.all([batchGetSheetFormulaValues(env,ranges,continuousSheetsReadPolicy),batchGetSheetEffectiveSerialValues(env,ranges,continuousSheetsReadPolicy)]);if(f.length!==3||e.length!==3)throw Error('CANARY_PROVIDER_READ');
+ const [f,e]=await Promise.all([batchGetSheetFormulaValues(env,ranges,policy),batchGetSheetEffectiveSerialValues(env,ranges,policy)]);if(f.length!==3||e.length!==3)throw Error('CANARY_PROVIDER_READ');
  const daily=f[0]!.flatMap((row,i)=>{const payload=decodeAtomicDailyPayload(row[24]);return payload?.expenseId===r.expense_id?[{payload,row:e[0]![i]??[]}]:[];});
  const raw=f[1]!.flatMap(row=>{const p=decodeLedgerCarrier(row[25]);return p?.expenseId===r.expense_id?[p]:[];});
  const detail=f[2]!.flatMap(row=>{const p=decodeLedgerCarrier(row[25]);return p?.expenseId===r.expense_id&&p.itemId===r.item_id?[p]:[];});
  if(raw.length!==1||detail.length!==1||raw[0]!.status!==(version===1?'CONFIRMED':'CANCELLED')||detail[0]!.status!==(version===1?'CONFIRMED':'CANCELLED'))throw Error('CANARY_PROVIDER_IDENTITY');
  if(version===1){const y=Number(r.transaction_date.slice(0,4)),m=Number(r.transaction_date.slice(5,7)),d=Number(r.transaction_date.slice(8,10)),serial=(Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000;if(daily.length!==1||daily[0]!.payload.description!==description||daily[0]!.payload.amountSatang!==amount||daily[0]!.row[20]!==serial||daily[0]!.row[8]!==1||daily[0]!.row[21]!==category||daily[0]!.row[23]!==`MALIPANG_EXPENSE:${r.expense_id}`)throw Error('CANARY_DAILY_UNVERIFIED');
-  if(await readContinuousReportHealth(env,{expenseId:r.expense_id,transactionDate:r.transaction_date,amountSatang:amount,wallet,category,itemIds:[r.item_id]})!=='OK')throw Error('CANARY_REPORT_UNVERIFIED');
- }else{if(daily.length!==0)throw Error('CANARY_DAILY_UNVERIFIED');if(await readContinuousReportHealth(env,{expenseId:r.expense_id,absent:true})!=='OK')throw Error('CANARY_REPORT_UNVERIFIED');}
+  if(await readContinuousReportHealth(env,{expenseId:r.expense_id,transactionDate:r.transaction_date,amountSatang:amount,wallet,category,itemIds:[r.item_id]},undefined,policy)!=='OK')throw Error('CANARY_REPORT_UNVERIFIED');
+ }else{if(daily.length!==0)throw Error('CANARY_DAILY_UNVERIFIED');if(await readContinuousReportHealth(env,{expenseId:r.expense_id,absent:true},undefined,policy)!=='OK')throw Error('CANARY_REPORT_UNVERIFIED');}
+}
+/** Read-only provider verification for the exact completed synthetic v1. */
+export async function verifyCompletedCanaryProvider(env:CanaryEnv,expectedExpense:string,policy:ContinuousSheetsReadPolicy):Promise<boolean>{
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
+ try{await ready(env);const r=await row(env);if(!r||r.expense_id!==expectedExpense||r.state!=='ARMED_CONFIRM')return false;await provider(env,r,1,policy);return env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.CONTINUOUS_CANARY_OPERATOR_ENABLED==='true'&&env.STABLE_RECOVERY_GATE_ENABLED==='true';}catch{return false;}
 }
 export async function operateContinuousCanary(env:CanaryEnv,action:unknown):Promise<{ok:true;action:Action}>{
  if(action==='ABORT'){await abortContinuousCanary(env);return{ok:true,action:'ABORT'};}

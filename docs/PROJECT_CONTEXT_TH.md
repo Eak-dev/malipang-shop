@@ -51,6 +51,8 @@ Backup rehearsal รองรับสำเนาหลัง cutover ACTIVE �
 
 ขั้นถัดไปของ #296 เตรียมปิด Canary operator และ incident recovery operator หลัง Canary ผ่าน โดยคง recovery gate จนตรวจจบและอนุมัติขั้นปล่อยคิว; การเปลี่ยน config ใน repository ไม่ใช่หลักฐานว่า Canary ผ่านหรือ Production เปลี่ยนแล้ว.
 
+ขั้นปล่อยคิวของ #296 เตรียมปิด recovery gate หลัง Canary และขั้นปิด operator ผ่าน พร้อมคง pacing และ continuous daily; งาน Undo ที่ยังไม่เคยส่งและมีรายการเดิมอยู่ REVIEW โดยไม่มี journal หรือ row index จะถูกพัก REVIEW ก่อนถือ workbook เพื่อไม่ให้ล็อกงานอื่น และยังต้องตรวจผลรายการเดิมแยกตาม [runbook](SYNC_RELEASE_RUNBOOK_TH.md). ต้องตรวจ claim, epoch, journal, failed jobs และผลกระทบ HR/payroll สดก่อน deploy; config ใน repository ไม่ใช่หลักฐานว่าร้านกลับมาใช้งานแล้ว.
+
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 
 1. ตรวจ branch, HEAD, uncommitted work และผู้ที่กำลังเขียน worktree ก่อนแก้ไข จากนั้นทำตาม Canonical Main Gate และ task authority ใน AGENTS.md

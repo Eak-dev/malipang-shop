@@ -187,7 +187,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const reviewDetails=await (async()=>{try{const result=await env.DB.prepare(`SELECT CASE
         WHEN last_error='STABLE_DAILY_MONTH_OPENING_UNVERIFIED' THEN 'DAILY_MONTH_OPENING'
         WHEN last_error='STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED' THEN 'DAILY_ROW_FORMULA'
-        WHEN last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED') THEN 'CANCELLED_OR_SUPERSEDED'
+        WHEN last_error IN ('STABLE_CANCELLED_SOURCE_REVIEW','STABLE_SUPERSEDED_SOURCE_REVIEW','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED','CONTINUOUS_CANCEL_PREDECESSOR_REVIEW') THEN 'CANCELLED_OR_SUPERSEDED'
         ELSE 'OTHER' END AS reason,COUNT(*) AS n FROM sync_jobs WHERE status='REVIEW' GROUP BY reason`).all();
         return result.success!==false&&Array.isArray(result.results)?result.results:null;
       }catch{return null;}})();

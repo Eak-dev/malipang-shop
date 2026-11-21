@@ -28,3 +28,19 @@ test('each installed report formula must match its verified manifest and sheet i
   const duplicate=[entries[0],entries[0],entries[2]];manifest=JSON.stringify(duplicate);digest=sha(manifest);await assert.rejects(()=>verifyInstalledReportFormulas(env,sheets),/REPORT_HEALTH_TARGET/);
  }finally{client.batchGetSheetFormulaValues=old;}
 });
+test('installed report digest accepts only known provider quote normalization',async()=>{
+ const old=client.batchGetSheetFormulaValues,sha=x=>createHash('sha256').update(x).digest('hex');
+ const sheets=[{sheetId:1,title:'97_EXPENSE_CLEAN',rowCount:4500,columnCount:8}];
+ const expected="=IFERROR(SUM('V52_EXPENSE_RAW_ALL'!A1,'V52_EXPENSE_RAW'!B1),0)";
+ const entries=[{sheetId:1,sheetName:'97_EXPENSE_CLEAN',row:2,column:1,after:sha(expected)}];
+ const manifest=JSON.stringify(entries),env={GOOGLE_SPREADSHEET_ID:'book',DB:{prepare(){return{bind(){return this},async first(){return{manifest_json:manifest,manifest_digest:sha(manifest),cell_count:1}}}}}};
+ let value='=IFERROR(SUM(V52_EXPENSE_RAW_ALL!A1,V52_EXPENSE_RAW!B1),0)';
+ client.batchGetSheetFormulaValues=async()=>[[[value]]];
+ try{
+  assert.deepEqual(await verifyInstalledReportFormulas(env,sheets),sheets);
+  value='=IFERROR(SUM(V52_EXPENSE_RAW_ALL!A2,V52_EXPENSE_RAW!B1),0)';
+  await assert.rejects(()=>verifyInstalledReportFormulas(env,sheets),/REPORT_HEALTH_FORMULA/);
+  value='=IFERROR(SUM(OTHER!A1,V52_EXPENSE_RAW!B1),0)';
+  await assert.rejects(()=>verifyInstalledReportFormulas(env,sheets),/REPORT_HEALTH_FORMULA/);
+ }finally{client.batchGetSheetFormulaValues=old;}
+});

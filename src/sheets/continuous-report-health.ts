@@ -4,6 +4,7 @@ import {batchGetSheetEffectiveSerialValues,batchGetSheetFormulaValues,getSpreads
 import {columnName} from './daily-expense';
 import {combinedLedgerSpillFormulas} from '../../scripts/combined-ledger-report-formulas.mjs';
 import {publicationSnapshotRange,type PublicationBatchSnapshot} from './publication-batch-snapshot';
+import {knownProviderFormulaEquivalent,knownProviderFormulaVariants} from './provider-formula-variants';
 
 const rawView='V52_EXPENSE_RAW_ALL',detailView='V52_PURCHASE_DETAIL_ALL',clean='97_EXPENSE_CLEAN';
 const expectedHeaders=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];
@@ -41,7 +42,12 @@ export async function verifyInstalledReportFormulas(env:Env,allSheets:SheetPrope
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||values.length!==grouped.length)throw Error('REPORT_HEALTH_READ');
  for(let i=0;i<grouped.length;i++){
   const g=grouped[i]!,rows=values[i];if(!Array.isArray(rows)||rows.length>g.maxRow-g.minRow+1||rows.some(r=>!Array.isArray(r)||r.length>g.maxColumn-g.minColumn+1))throw Error('REPORT_HEALTH_READ');
-  for(const e of g.entries){const value=rows[e.row-g.minRow]?.[e.column-g.minColumn];if(typeof value!=='string'||!value.startsWith('=')||await sha256(value)!==e.after)throw Error('REPORT_HEALTH_FORMULA');}
+  for(const e of g.entries){
+   const value=rows[e.row-g.minRow]?.[e.column-g.minColumn];
+   if(typeof value!=='string'||!value.startsWith('='))throw Error('REPORT_HEALTH_FORMULA');
+   let matched=false;for(const candidate of knownProviderFormulaVariants(value)){if(await sha256(candidate)===e.after){matched=true;break;}}
+   if(!matched)throw Error('REPORT_HEALTH_FORMULA');
+  }
  }
  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book)throw Error('REPORT_HEALTH_READ');return grouped.map(g=>g.sheet);
 }
@@ -92,7 +98,7 @@ export async function readContinuousReportHealth(env:Env,expected?:ReportExpecta
  if(publication&&(!publication.dailySheet||publication.dailySheet!==env.CONTINUOUS_DAILY_SHEET))throw Error('REPORT_HEALTH_SCOPE');
  const expectedFormula=combinedLedgerSpillFormulas({rawNew:raw,detailNew:detail,rawCombined:rawView,detailCombined:detailView,rawOldRows:grids[0]!.rowCount,rawNewRows:grids[1]!.rowCount,detailOldRows:grids[2]!.rowCount,detailNewRows:grids[3]!.rowCount,...publication?{publishedDaily:publication.dailySheet}:{}});
  const formulas=snapshot?[publicationSnapshotRange(snapshot,grids[4]!.sheetId,1,1,1,1,'FORMULA'),publicationSnapshotRange(snapshot,grids[5]!.sheetId,1,1,1,1,'FORMULA')]:await batchGetSheetFormulaValues(env,[`'${rawView}'!A1`,`'${detailView}'!A1`],policy);
- if(formulas.length!==2||formulas[0]?.[0]?.[0]!==expectedFormula.raw||formulas[1]?.[0]?.[0]!==expectedFormula.detail)throw Error('REPORT_HEALTH_FORMULA');
+ if(formulas.length!==2||!knownProviderFormulaEquivalent(formulas[0]?.[0]?.[0],expectedFormula.raw)||!knownProviderFormulaEquivalent(formulas[1]?.[0]?.[0],expectedFormula.detail))throw Error('REPORT_HEALTH_FORMULA');
  const reportSheets=await verifyInstalledReportFormulas(env,allSheets,policy,snapshot);
  const values=snapshot?[publicationSnapshotRange(snapshot,grids[6]!.sheetId,1,4500,1,8,'EFFECTIVE'),publicationSnapshotRange(snapshot,grids[4]!.sheetId,1,grids[4]!.rowCount,1,1,'EFFECTIVE'),publicationSnapshotRange(snapshot,grids[5]!.sheetId,1,grids[5]!.rowCount,1,2,'EFFECTIVE')]:await batchGetSheetEffectiveSerialValues(env,[`'${clean}'!A1:H4500`,`'${rawView}'!A1:A${grids[4]!.rowCount}`,`'${detailView}'!A1:B${grids[5]!.rowCount}`],policy);
  const allAgain=snapshot?snapshot.metadata:await getSpreadsheetSheetProperties(env,policy),again=select(allAgain),reportsAgain=reportSheets.map(s=>allAgain.find(x=>x.sheetId===s.sheetId&&x.title===s.title));

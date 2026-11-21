@@ -49,7 +49,7 @@ Backup rehearsal รองรับสำเนาหลัง cutover ACTIVE �
 
 การกู้ Canary สังเคราะห์ที่ติดก่อนเขียนรายวันมี operator เฉพาะรายการ พร้อมหลักฐานก่อนส่งและการตรวจผลแบบไม่ retry อัตโนมัติ; ขอบเขต เงื่อนไขและลำดับอยู่ใน [runbook incident](ISSUE296_UNWRITTEN_CANARY_RECOVERY_TH.md). การมีโค้ดหรือ config ใน main ไม่ใช่หลักฐานว่าได้รับอนุมัติหรือดำเนินการใน Production แล้ว.
 
-ขั้นถัดไปของ #296 เตรียมปิด Canary operator หลัง Canary ผ่าน โดยคง recovery gate จนตรวจจบและอนุมัติขั้นปล่อยคิว; การเปลี่ยน config ใน repository ไม่ใช่หลักฐานว่า Canary ผ่านหรือ Production เปลี่ยนแล้ว.
+ขั้นถัดไปของ #296 เตรียมปิด Canary operator และ incident recovery operator หลัง Canary ผ่าน โดยคง recovery gate จนตรวจจบและอนุมัติขั้นปล่อยคิว; การเปลี่ยน config ใน repository ไม่ใช่หลักฐานว่า Canary ผ่านหรือ Production เปลี่ยนแล้ว.
 
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 

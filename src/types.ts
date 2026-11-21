@@ -44,6 +44,8 @@ export interface Env {
   CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED?: string;
   CONTINUOUS_REVOKE_REVIEW_RUNNER_ENABLED?: string;
   CONTINUOUS_PROVIDER_CANARY_ENABLED?: string;
+  /** Default off: exact synthetic preflight incident recovery only. */
+  CANARY_UNWRITTEN_RECOVERY_ENABLED?: string;
   CONTINUOUS_UNDO_SERIALIZATION_ENABLED?: string;
   CONTINUOUS_PUBLICATION_SHEET?: string;
   CONTINUOUS_PUBLICATION_SHEET_ID?: string;

@@ -30,6 +30,14 @@ test('an unattempted Undo behind an unresolved confirmation is held without clai
 test('duplicate deliveries keep the same review fence and never invoke a provider writer',async()=>{
  const h=fixture();try{const r=await Promise.all([h.run(),h.run()]);assert.deepEqual(r,['REVIEW','REVIEW']);assert.equal(h.called,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0)}finally{h.close()}
 });
+test('D1 trigger changes included in the hold count still leave the workbook unclaimed',async()=>{
+ const h=fixture(),prepare=h.DB.prepare;try{
+  h.DB.prepare=function(sql){const s=prepare.call(this,sql);if(sql.includes("CONTINUOUS_CANCEL_PREDECESSOR_REVIEW")){const run=s.run;s.run=async function(){const r=await run.call(this);return r.meta?.changes===1?{...r,meta:{...r.meta,changes:2}}:r}}return s};
+  assert.equal(await h.run(),'REVIEW');assert.equal(h.called,0);
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='undo'").get().status,'REVIEW');
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
+ }finally{h.close()}
+});
 for(const [label,mutate] of [
  ['original still pending',h=>h.sqlite.exec("UPDATE sync_jobs SET status='PENDING' WHERE job_id='first'")],
  ['Undo already attempted',h=>h.sqlite.exec("UPDATE sync_jobs SET attempt_count=1 WHERE job_id='undo'")],

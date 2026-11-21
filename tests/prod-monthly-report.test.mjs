@@ -40,9 +40,12 @@ test('held PREVIEW logs only allowlisted diagnostics and never dispatches a writ
  const cases=[
   [{stage:'GRID',cause:'HTTP',httpStatus:403},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=HTTP HTTP_STATUS=403'],
   [{stage:'GRID',cause:'BODY_TOO_LARGE'},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=BODY_TOO_LARGE'],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'GRID_FULL_INITIAL',detail:'INVALID_FIELD',field:'commentAnchors'},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=HTTP HTTP_STATUS=400 OPERATION=GRID_FULL_INITIAL DETAIL=INVALID_FIELD FIELD=commentAnchors'],
   [{stage:'NOTICE',cause:'CHECK_FAILED'},'MONTHLY_PREVIEW_HELD_STAGE=NOTICE CAUSE=CHECK_FAILED'],
   [{stage:'GRID',cause:'HTTP',httpStatus:403,body:'private data'},null],
   [{stage:'private data',cause:'EXCEPTION'},null],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'private data',detail:'UNKNOWN'},null],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'GRID_FULL_INITIAL',detail:'INVALID_FIELD',field:'privateData'},null],
   [{stage:'GRID',cause:'HTTP',httpStatus:999},null]
  ];
  for(const [diagnostic,expected] of cases){

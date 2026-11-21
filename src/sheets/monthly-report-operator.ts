@@ -1,5 +1,5 @@
 import type {Env} from '../types';
-import {batchUpdateSpreadsheetWithReply,getSheetGridInfo,readMonthlyReportGrid,SheetsHttpError,SheetsReadNetworkError} from './client';
+import {batchUpdateSpreadsheetWithReply,getSheetGridInfo,readMonthlyReportGrid,SheetsHttpError,SheetsReadNetworkError,MonthlyGridReadError,type MonthlyGridReadOperation} from './client';
 import {ReviewRequestBudget,ReviewRequestBudgetError} from './review-request-budget';
 import {stableNoticePaused} from './stable-edit-notice';
 import {bangkokMonth,planMonthlyD1Preview,type MonthlyExpenseRow} from './monthly-d1-preview';
@@ -15,11 +15,23 @@ import {OperationTimeoutError} from '../shared/async';
 type OperatorEnv=Env&{MONTHLY_REPORT_OPERATOR_ENABLED?:string};
 type Run={run_id:string;sheet_id:number;period:string;base_rows:number;base_columns:number;base_digest:string;incident_fingerprint:string;worker_hash:string;state:string};
 type PreviewStage='CONFIG'|'INCIDENT'|'JOURNAL'|'UNRESOLVED'|'OAUTH'|'SHEET_METADATA'|'GRID'|'BASELINE'|'FORMAT'|'NOTICE'|'INCIDENT_OVERLAY'|'SOURCE'|'UNASSIGNED_DATE'|'PLAN';
-type Diagnostic={stage:PreviewStage;cause:'CHECK_FAILED'|'HTTP'|'NETWORK'|'TIMEOUT'|'BUDGET'|'BODY_TOO_LARGE'|'EXCEPTION';httpStatus?:number};
+const safeGridFields=['spreadsheetId','properties','namedRanges','developerMetadata','dataSources','dataSourceSchedules','sheets','merges','protectedRanges','conditionalFormats','filterViews','basicFilter','bandedRanges','charts','slicers','tables','rowGroups','columnGroups','commentAnchors','data','startRow','startColumn','rowMetadata','columnMetadata','rowData','values','userEnteredValue','effectiveValue','formattedValue','note','userEnteredFormat','effectiveFormat','hyperlink','textFormatRuns','dataValidation','pivotTable','dataSourceTable','dataSourceFormula','chipRuns'] as const;
+type Diagnostic={stage:PreviewStage;cause:'CHECK_FAILED'|'HTTP'|'NETWORK'|'TIMEOUT'|'BUDGET'|'BODY_TOO_LARGE'|'EXCEPTION';httpStatus?:number;operation?:MonthlyGridReadOperation;detail?:'INVALID_FIELD'|'INVALID_RANGE'|'INVALID_ARGUMENT'|'UNKNOWN';field?:typeof safeGridFields[number]};
 type Result={status:'READY'|'DONE'|'HELD'|'UNCERTAIN';ready?:number;held?:number;candidate?:string;unresolved?:number;verified?:number;markerMatches?:number;stale?:number;unassignedDate?:number;heldReasons?:Record<string,number>;heldItems?:Array<{expenseId:string|null;reason:string}>;diagnostic?:Diagnostic};
 /** Do not serialize error messages, provider bodies, IDs or source values. */
 function previewDiagnostic(stage:PreviewStage,error?:unknown):Diagnostic{
- if(error instanceof SheetsHttpError||error instanceof GoogleOAuthHttpError){const status=error.status;return {stage,cause:'HTTP',...Number.isInteger(status)&&status>=400&&status<=599?{httpStatus:status}:{}};}
+ if(error instanceof MonthlyGridReadError)return {...previewDiagnostic(stage,error.original),operation:error.operation};
+ if(error instanceof SheetsHttpError||error instanceof GoogleOAuthHttpError){
+  const status=error.status,result:Diagnostic={stage,cause:'HTTP',...Number.isInteger(status)&&status>=400&&status<=599?{httpStatus:status}:{}};
+  if(stage==='GRID'&&error instanceof SheetsHttpError&&status===400){
+   const message=error.message,match=/Invalid field selection\s+([A-Za-z][A-Za-z0-9_]*)/i.exec(message),suffix=match?message.slice(match.index+match[0].length):'';
+   if(/Invalid field selection/i.test(message)){result.detail='INVALID_FIELD';const field=!/^(?:\/|\.[A-Za-z_])/.test(suffix)?safeGridFields.find(x=>x===match?.[1]):undefined;if(field)result.field=field;}
+   else if(/unable to parse range|exceeds grid limits/i.test(message))result.detail='INVALID_RANGE';
+   else if(/invalid (?:value|argument|field mask)/i.test(message))result.detail='INVALID_ARGUMENT';
+   else result.detail='UNKNOWN';
+  }
+  return result;
+ }
  if(error instanceof SheetsReadNetworkError||error instanceof GoogleOAuthPreflightError&&error.code==='GOOGLE_OAUTH_NETWORK')return {stage,cause:'NETWORK'};
  if(error instanceof OperationTimeoutError)return {stage,cause:'TIMEOUT'};
  if(error instanceof ReviewRequestBudgetError)return {stage,cause:'BUDGET'};
@@ -83,7 +95,7 @@ export async function operateMonthlyReport(env:OperatorEnv,action:'PREVIEW'|'APP
   }
   stage='OAUTH';const budget=new ReviewRequestBudget(48,'invocation'),oauthLease=await createGoogleOAuthLease(env,budget,60000),policy={kind:'continuous-expense' as const,budget,oauthLease};
   stage='SHEET_METADATA';const info=await getSheetGridInfo(env,incident.row.sheet_name,policy),baseRows=run?.base_rows??info.rowCount;
-  stage='GRID';const grid=await readMonthlyReportGrid(env,incident.row.sheet_id,baseRows,policy);
+  stage='GRID';const grid=await readMonthlyReportGrid(env,incident.row.sheet_id,baseRows,policy,action==='PREVIEW');
   stage='BASELINE';const digest=run?.base_digest??await reportBaselineDigest(grid),base=run?await reconstructReportBaseline(grid,baseRows,digest):grid,receipts=run?await receiptRows(env,run.run_id):[];
   if(!base||!receipts||base.columns!==(run?.base_columns??base.columns))return held();
   stage='FORMAT';if(!matchingFormats(grid))return held();

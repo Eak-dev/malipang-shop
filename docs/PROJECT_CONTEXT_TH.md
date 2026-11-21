@@ -55,7 +55,7 @@ Backup rehearsal รองรับสำเนาหลัง cutover ACTIVE �
 
 การพักเฉพาะรายการที่ยังไม่เขียนใช้แถวที่ `UPDATE ... RETURNING` ส่งกลับเป็นหลักฐาน แทนจำนวนการเปลี่ยนแปลงรวม trigger ของ D1; การแก้จุดนับไม่ปล่อย workbook claim ที่ค้างอยู่และไม่พิสูจน์ผลการกู้ incident ใน Production.
 
-มีขั้นกู้ incident แบบจำกัดเฉพาะ claim และงานที่ตรึงด้วย hash โดยคง recovery gate ระหว่างกู้ ตรวจรายงานและ notice ก่อนเขียนทีละเซลล์ และคงงานค่าใช้จ่ายทั้งสองเวอร์ชันไว้; รายละเอียดใน [incident runbook](ISSUE296_SCOPED_HOLD_INCIDENT_TH.md). โค้ดหรือ config ใน main ไม่ใช่หลักฐานว่า Production กู้สำเร็จ.
+หลังขั้นกู้ incident แบบจำกัดเฉพาะ claim และงานที่ตรึงด้วย hash แผน cleanup นำ operator ชั่วคราวออกและปิด recovery gate โดยคงตารางหลักฐานที่ลบไม่ได้; รายละเอียดใน [incident runbook](ISSUE296_SCOPED_HOLD_INCIDENT_TH.md). โค้ดหรือ config ใน main ไม่ใช่หลักฐานว่า Production กู้สำเร็จหรือคิวกลับมาทำงาน.
 
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 

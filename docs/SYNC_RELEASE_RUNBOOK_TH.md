@@ -155,6 +155,12 @@ Cutover operator (`POST /admin/stable-sync/continuous-cutover`, `src/admin/conti
 - **`ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการ** ใน body `{"action":"ACTIVATE","expenseIds":[...]}` — ชื่อช่องใน HTTP คือ `expenseIds` (`src/admin/handler.ts`, `continuous-cutover-operator.ts`; ภายในคือ `mustBeCancelledOrAbsentExpenseIds`) ตัวตรวจบังคับเพียงว่าแต่ละรหัสต้องเป็น "ยกเลิก" หรือไม่มีอยู่ใน D1 จึงยืนยันตัวตนไม่ได้ ใช้สองรายการที่เจ้าของสั่งลบตาม #296 ข้อ 6 จากหลักฐานส่วนตัว ห้ามลงใน Issue
 - **Canary operator** (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
 
+### ช่องทาง Canary ขั้น 6
+
+หลัง merge workflow และ deploy SHA ที่ผ่าน review แล้ว ใช้ `prod-canary-action.yml` จาก `main` ผ่าน GitHub `production` environment เท่านั้น: หนึ่ง run ต่อหนึ่ง action, ยืนยัน `OWNER APPROVES <ACTION> <sha7>`, SHA เต็ม, hash ของ Worker version ที่ทำงาน 100%, การ fence ผู้เขียนภายนอก และเจ้าของเฝ้าดูจริงทุกครั้ง. Workflow ตรวจ main, Worker, สถานะ cutover และ Canary ใน D1 ก่อน/หลัง; ไม่แสดง token หรือ ID และไม่ retry อัตโนมัติ. การตรวจนี้ไม่แทน backup/preflight, การตรวจชีตและรายงาน หรือ approval ตามขั้นตอน release.
+
+ลำดับปกติ `PREPARE` → `CONFIRM` → `ARM_CONFIRM` → รอ queue และตรวจ D1/ชีต/รายงาน → `ARM_DUPLICATE` → รอ queue → `VERIFY_DUPLICATE` → `UNDO` → `ARM_UNDO` → รอ queue → `VERIFY`. ถ้าคำตอบหรือ readback ไม่แน่ชัดให้หยุด ห้ามสั่งซ้ำ; ตรวจหลักฐานก่อนใช้ `RECONCILE_CONFIRM` หรือ `RECONCILE_UNDO` เฉพาะเมื่อเงื่อนไขโค้ดรองรับ. Workflow ไม่เปิด `ABORT` เป็นทางลัด; การจัดการ incident ต้องใช้แผนที่ตรวจและอนุมัติแยก. การรอ queue หรือ provider ยังไม่เสร็จไม่ใช่เหตุให้ retry action.
+
 ## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)
 
 **คำตัดสินของเจ้าของ (2026-11-18):** ให้ cutover operator สร้างแท็บในขั้น `VIEWS` ที่เจ้าของอนุมัติ (แทนคำตัดสินเดิมที่ให้เจ้าของสร้างเอง ซึ่งทำไม่ได้เพราะตัวตรวจล้มถ้ามีแท็บอยู่ก่อน และคอลัมน์ Z ต้องเป็น marker ที่สร้างในคำขอเดียวกัน) เจ้าของเลือกชื่อแท็บและ sheet ID 4 ค่าล่วงหน้า

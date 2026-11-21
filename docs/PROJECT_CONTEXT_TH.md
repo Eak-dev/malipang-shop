@@ -41,6 +41,8 @@
 
 แผนขั้น 6 ของ [#296](https://github.com/Eak-dev/malipang-shop/issues/296) ให้ปิด Cutover Operator, Prewrite Review และ VIEWS Incident Recovery หลัง RELEASE ก่อนเปิด Continuous Daily และ Canary โดยคง Recovery Gate ระหว่างทดสอบ; สถานะ Production ต้องตรวจสดจากผู้ให้บริการและหลักฐาน release ในแต่ละรอบ ดู [runbook](SYNC_RELEASE_RUNBOOK_TH.md).
 
+ขั้น 6 เตรียม workflow Canary แบบ manual ทีละ action ผ่าน production environment พร้อม SHA/version guard และ D1 readback; ผลที่ไม่แน่ชัดต้องหยุดตรวจ ไม่ retry อัตโนมัติ. Workflow เป็นช่องทางปฏิบัติการ ไม่ใช่หลักฐานว่า deploy หรือ Canary ผ่านแล้ว.
+
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 
 1. ตรวจ branch, HEAD, uncommitted work และผู้ที่กำลังเขียน worktree ก่อนแก้ไข จากนั้นทำตาม Canonical Main Gate และ task authority ใน AGENTS.md

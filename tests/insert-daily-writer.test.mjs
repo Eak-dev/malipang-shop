@@ -334,6 +334,14 @@ test('positive daily recovery verifies only exact projection and preserves REVIE
  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_projection_preimages WHERE projection='DAILY'").get().n,1);assert.equal(h.writes(),1);
  h.formula()[4][24]='tampered';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
  }finally{h.close();}});
+test('an explicitly scoped extra trailing row must be entirely blank before positive recovery',async()=>{const h=await reviewedLostDaily();try{
+ h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
+ h.formula().at(-1)[28]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
+ h.formula().at(-1)[28]=null;h.effective().at(-1)[1]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
+ h.effective().at(-1)[1]=null;assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),true);
+ assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ }finally{h.close();}});
 test('daily positive recovery forwards one request policy through all nested read paths',async()=>{const h=await reviewedLostDaily();try{
  const budget={},policy={kind:'continuous-expense',budget},seen=new Set();
  for(const [name,index] of [['getSheetGridInfo',2],['getSpreadsheetSheetProperties',1],['getSheetCellNumberFormats',4],['batchGetSheetFormulaValues',2],['batchGetSheetEffectiveSerialValues',2]]){

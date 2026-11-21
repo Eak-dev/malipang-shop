@@ -13,7 +13,8 @@ const INCIDENT_MIGRATION='0062_views_incident_recovery.sql';
 const CANARY_INCIDENT_MIGRATION='0063_canary_unwritten_recovery.sql';
 const NOTICE_PREFIX_MIGRATION='0064_notice_status_prefix.sql';
 const COMPLETED_CANARY_MIGRATION='0065_canary_completed_recovery.sql';
-const baselineNames=names.filter(n=>![INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION].includes(n));
+const SCOPED_HOLD_MIGRATION='0066_scoped_hold_incident.sql';
+const baselineNames=names.filter(n=>![INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION].includes(n));
 const read=n=>readFileSync(new URL(n,dir),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
 // the other migration files byte for byte, and the schema all files produced.
@@ -73,12 +74,13 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
 });
 
 test('issue296 incident migrations are append-only and preserve trigger names on rerun',()=>{
- assert.deepEqual(names.slice(-4),[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION]);
+ assert.deepEqual(names.slice(-5),[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION]);
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM continuous_views_incident_recovery").get().n,0);
- const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));db.exec(read(COMPLETED_CANARY_MIGRATION));assert.deepEqual(schema(db),before);
+ const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));db.exec(read(COMPLETED_CANARY_MIGRATION));db.exec(read(SCOPED_HOLD_MIGRATION));assert.deepEqual(schema(db),before);
+ assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='scoped_hold_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='canary_unwritten_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM canary_unwritten_recovery").get().n,0);
 });

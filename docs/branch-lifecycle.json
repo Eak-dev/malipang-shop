@@ -5376,6 +5376,1728 @@
       "observed_at": "2026-11-18T05:08:39.499009+00:00",
       "status": "ACTIVE",
       "reason": "#299 delivery branch (migrate/deploy/rollback_worker workflow for the #296 release); single assigned writer. Snapshot SHA precedes its own registration commit and is an observation, not a live ref."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-balance-evidence-sql-20261121",
+      "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        317
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/317 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-balance-evidence-sql-20261121",
+      "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        317
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/317 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "3226012bad35f6bb81ec16c2e3d5225ec8ee896b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-canary-unwritten-recovery-20261121",
+      "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        311
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/311 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-canary-unwritten-recovery-20261121",
+      "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        311
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/311 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "431f23c6fba51dc756ce45144ff7e3e607122d16",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-completed-canary-close-20261121",
+      "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        325
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/325 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-completed-canary-close-20261121",
+      "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        325
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/325 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "3f6a21c1308de39fbeb0b5fade7e93286de0afa3",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-d1-claim-count-20261121",
+      "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        323
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/323 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-d1-claim-count-20261121",
+      "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        323
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/323 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "0e3afeef4dd3d88e7449b275b92ef20590cd960b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-d1-glob-limit-20261121",
+      "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        321
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/321 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-d1-glob-limit-20261121",
+      "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        321
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/321 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "e5b85fb65483f1e4a8b1f3434f2125f4babcd3c9",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-daily-grid-growth-fix-20261121",
+      "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        318
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/318 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-daily-grid-growth-fix-20261121",
+      "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        318
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/318 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "006e3cb7c09e1a66b9bc90b3583bf2093fed8640",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-gate-release-20261121",
+      "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        313
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/313 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-gate-release-20261121",
+      "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        313
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/313 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "139de4deceaa38e5edc77cdf25603111e98cf4fb",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-positive-canary-recovery-20261121",
+      "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        319
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/319 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-positive-canary-recovery-20261121",
+      "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        319
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/319 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "542d420c3e07f99efad0a634e62ae2ea0b1b9fc5",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-positive-status-probe-20261121",
+      "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        320
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/320 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-positive-status-probe-20261121",
+      "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        320
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/320 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "1c709d1aa4b6c4bb62cf2aae72d37bf9062ce57f",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-probe-diagnostics-20261121",
+      "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        314
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/314 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-probe-diagnostics-20261121",
+      "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        314
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/314 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "917d731962893881a2e83e4a4cb769160f2f1524",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-raw-canary-recovery-20261121",
+      "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        322
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/322 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-raw-canary-recovery-20261121",
+      "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        322
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/322 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "0231140f2079e48d81be32e386cb2c90c3031716",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-raw-readback-timeout-20261121",
+      "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        327
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/327 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-raw-readback-timeout-20261121",
+      "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        327
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/327 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "a5c028144823f7a4ae0e30c488c9595f9cf5b7c6",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-raw-undo-recovery-20261121",
+      "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        326
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/326 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-raw-undo-recovery-20261121",
+      "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        326
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/326 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "cc48a51006768622a4c1680c4572cf3fccb4a28e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-recovery-context-20261121",
+      "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        312
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/312 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-recovery-context-20261121",
+      "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        312
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/312 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "7fdc5e13c95d3f84a810cbb39ea697e4fc125f2d",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-report-health-incident-20261121",
+      "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        310
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/310 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-report-health-incident-20261121",
+      "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        310
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/310 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "8495435a14bbb6e7b591701da568cf694f0c5f4e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-scoped-hold-cleanup-20261121",
+      "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        330
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/330 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-scoped-hold-cleanup-20261121",
+      "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        330
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/330 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "8b57f0605f3022212360682f37aa78c52a4fb70b",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-scoped-hold-count-20261121",
+      "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        328
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/328 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-scoped-hold-count-20261121",
+      "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        328
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/328 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "90f7fd64903e0a04c24432fa31f46e1818642876",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-scoped-hold-incident-20261121",
+      "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        329
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/329 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-scoped-hold-incident-20261121",
+      "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        329
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/329 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "9ea04c025743270e86917f2b1ff4c8d546e0a7cb",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-stage7-20261121",
+      "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        309
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/309 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-stage7-20261121",
+      "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        309
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/309 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "d1fc80e52616edd15b4d127813964cf6ae826910",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-status-readonly-diagnostic-20261121",
+      "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        316
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/316 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-status-readonly-diagnostic-20261121",
+      "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        316
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/316 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "41a9c1cc7d412473a0d28c8272c10f5feac7861f",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-worker-redirect-fix-20261121",
+      "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        315
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/315 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-worker-redirect-fix-20261121",
+      "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        315
+      ],
+      "status": "DELETE_READY",
+      "observed_at": "2026-11-21T10:05:46.561299+00:00",
+      "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
+      "protected": false,
+      "active_writer": false,
+      "uncommitted_work": false,
+      "readiness": {
+        "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+        "target_branch": "main",
+        "target_sha": "9cd8214308b29f22a449066497aa66855d4ca232",
+        "checked_by": "codex-issue296-cleanup",
+        "checked_at": "2026-11-21T10:05:46.561299+00:00",
+        "integration_verified": true,
+        "integration_evidence": "https://github.com/Eak-dev/malipang-shop/pull/315 ; merge ancestor and stable squash patch match",
+        "target_pushed": true,
+        "checks_passed": true,
+        "checks_evidence": "https://github.com/Eak-dev/malipang-shop/actions/runs/44890819131 (CI on exact target SHA)",
+        "worktrees_clear": true,
+        "worktree_evidence": "Worktrees inventoried; affected local worktrees detached at exact SHA; existing node_modules links preserved; no tracked changes",
+        "dependencies_clear": true,
+        "dependency_evidence": "Open PR head/base inventory returned no Issue 296 branch; historical dependencies integrated; cleanup of temporary operator was merged",
+        "external_refs_reviewed": true,
+        "external_refs_evidence": "No branch-name references in .github, scripts or docs; no non-completed GitHub runs for these branches at audit time",
+        "backup": {
+          "source_sha": "236df2307abc16c0403fd9c74b2032837db9078e",
+          "verified": true,
+          "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
+        }
+      }
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -133,8 +133,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/canary-unwritten-recovery'&&env.CANARY_UNWRITTEN_RECOVERY_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as unknown;
       const action=body&&typeof body==='object'&&!Array.isArray(body)&&Object.keys(body).length===1?(body as {action?:unknown}).action:null;
-      if(action!=='PROBE'&&action!=='TIME'&&action!=='STATUS'&&action!=='COMMIT')return Response.json({ok:false,error:'CANARY_UNWRITTEN_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
-      const diagnostic=action==='PROBE'?{stage:'OPERATOR_STATE',reason:'CHECK_FAILED'}:undefined;
+      if(action!=='PROBE'&&action!=='PROBE_TIME'&&action!=='TIME'&&action!=='STATUS'&&action!=='COMMIT')return Response.json({ok:false,error:'CANARY_UNWRITTEN_ACTION_INVALID',servedVersion:served},{status:400,headers:{'cache-control':'no-store'}});
+      const diagnostic=action==='PROBE'||action==='PROBE_TIME'?{stage:'OPERATOR_STATE',reason:'CHECK_FAILED'}:undefined;
       const outcome=await stepCanaryUnwrittenRecovery(env,action,diagnostic),ok=['READY','IN_PROGRESS','RESUMED','ALREADY_COMMITTED'].includes(outcome);
       return Response.json({ok,action,outcome,...(diagnostic?{diagnostic}:{}),servedVersion:served},{status:ok?200:409,headers:{'cache-control':'no-store'}});
     }

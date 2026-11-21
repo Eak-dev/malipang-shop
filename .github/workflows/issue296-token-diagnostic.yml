@@ -1,0 +1,36 @@
+name: Issue 296 read-only Cloudflare token diagnostic
+on:
+  workflow_dispatch:
+    inputs:
+      expected_sha:
+        description: Exact current main SHA
+        type: string
+        required: true
+permissions:
+  contents: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  diagnostic:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: production
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.expected_sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: 22}
+      - name: Test GET-only diagnostics
+        run: node --test tests/issue296-token-diagnostic.test.mjs
+      - name: Assert latest remote main
+        run: test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: Check token status and available metadata
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        run: node scripts/issue296-token-diagnostic.mjs

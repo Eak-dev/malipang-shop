@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
 
 const require=createRequire(import.meta.url);
@@ -52,6 +54,12 @@ test('two notice cells close in separate guarded phases before exact D1 resume',
  assert.equal(h.sqlite.prepare("SELECT state FROM continuous_review_notice_close").get().state,'COMPLETE');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
  assert.equal(h.sqlite.prepare('SELECT status FROM sync_jobs').get().status,'PENDING');assert.equal(h.sqlite.prepare('SELECT state FROM stable_recovery_operations').get().state,'VERIFIED');assert.equal(h.sqlite.prepare('SELECT state FROM stable_recovery_epochs').get().state,'ARMED');
  assert.equal(await h.run(),'ALREADY_COMPLETED');assert.equal(h.get().writes,2);
+ }finally{h.close();}});
+test('reviewed daily notice-close statements compile at the D1 expression limit',async()=>{const h=fixture(),sql=[],prepare=h.DB.prepare;try{
+ h.DB.prepare=function(statement){sql.push(statement);return prepare.call(this,statement)};
+ assert.equal(await h.run(),'RESUMED');assert.ok(sql.some(x=>x.includes('UPDATE stable_recovery_operations')));
+ const check=spawnSync('python3',[fileURLToPath(new URL('./helpers/sqlite-expression-limit.py',import.meta.url))],{input:JSON.stringify(sql),encoding:'utf8'});
+ assert.equal(check.status,0,check.stderr||check.error?.message);
  }finally{h.close();}});
 for(const mode of ['time-not-applied','status-not-applied'])test(`${mode} never replays the uncertain notice write`,async()=>{const h=fixture();try{
  h.setMode(mode);assert.equal(await h.run(),'HELD');const before=h.get().writes;assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');assert.equal(h.get().status,'พักแก้ไฟล์');
@@ -113,3 +121,54 @@ test('review close continues unchanged before the revoke-review migration is ins
  h.sqlite.exec('DROP TRIGGER continuous_review_close_insert');h.sqlite.exec(original.slice(start,end));const oldStatus=readFileSync(new URL('../migrations/0044_continuous_notice_status_attempt.sql',import.meta.url),'utf8'),a=oldStatus.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_insert'),b=oldStatus.indexOf('CREATE TRIGGER IF NOT EXISTS continuous_notice_status_attempt_no_update',a);h.sqlite.exec('DROP TRIGGER continuous_notice_status_attempt_insert');h.sqlite.exec(oldStatus.slice(a,b));h.sqlite.exec('DROP TABLE continuous_revoke_review_close_activation');
  assert.equal(await h.run(),'RESUMED');assert.equal(h.get().writes,2);
  }finally{h.close();}});
+
+test('Cloudflare D1 executes notice STATUS and COMMIT for a verified review',async()=>{
+ const {mkdtempSync,copyFileSync,readdirSync,rmSync}=await import('node:fs');
+ const {tmpdir}=await import('node:os');
+ const {join}=await import('node:path');
+ const {Miniflare}=await import('miniflare');
+ const dir=mkdtempSync(join(tmpdir(),'notice-d1-'));
+ const h=fixture();let mf;
+ try{
+  assert.equal(await h.runOnce(),'IN_PROGRESS');
+  assert.equal(await h.runOnce(),'IN_PROGRESS');
+  h.sqlite.exec(`VACUUM INTO '${join(dir,'fixture.sqlite').replaceAll("'","''")}'`);
+  assert.equal(await h.runOnce(),'IN_PROGRESS');
+  assert.equal(await h.runOnce(),'RESUMED');
+  const take=s=>({sql:s.sql,args:s.args});
+  const status=h.DB.batches.find(b=>b.some(s=>s.sql.includes('INSERT INTO continuous_notice_status_attempts'))).map(take);
+  const ack=h.DB.runs.find(s=>s.sql.includes("SET state='STATUS_ACKED'"));
+  const commit=h.DB.batches.find(b=>b.some(s=>s.sql.includes("UPDATE stable_recovery_operations SET state='VERIFIED'"))).map(take);
+  assert.ok(ack);
+  const common={modules:true,compatibilityDate:'2026-07-20',d1Databases:{DB:'incident-test'},d1Persist:dir};
+  mf=new Miniflare({...common,script:'export default {async fetch(_r,e){await e.DB.prepare("SELECT 1").first();return new Response("ok")}}'});
+  assert.equal((await mf.dispatchFetch('http://local/')).status,200);await mf.dispose();mf=null;
+  const dbdir=join(dir,'miniflare-D1DatabaseObject');
+  const file=readdirSync(dbdir).find(x=>x.endsWith('.sqlite'));assert.ok(file);
+  for(const suffix of ['-wal','-shm'])rmSync(join(dbdir,file+suffix),{force:true});
+  copyFileSync(join(dir,'fixture.sqlite'),join(dbdir,file));
+  const script=`const status=${JSON.stringify(status)},ack=${JSON.stringify(take(ack))},commit=${JSON.stringify(commit)};
+   export default {async fetch(_r,e){try{const batch=async xs=>e.DB.batch(xs.map(x=>e.DB.prepare(x.sql).bind(...x.args)));
+   await batch(status);const afterStatus=await e.DB.prepare('SELECT state FROM continuous_review_notice_close').first();
+   await e.DB.prepare(ack.sql).bind(...ack.args).run();await batch(commit);
+   const notice=await e.DB.prepare('SELECT state FROM continuous_review_notice_close').first();
+   const job=await e.DB.prepare('SELECT status FROM sync_jobs').first();
+   const claim=await e.DB.prepare('SELECT count(*) AS n FROM stable_workbook_claims').first();
+   const admission=await e.DB.prepare('SELECT state FROM stable_recovery_operations').first();
+   return Response.json({afterStatus,notice,job,claim,admission});}catch(err){return new Response(String(err),{status:500})}}}`;
+  mf=new Miniflare({...common,script});const response=await mf.dispatchFetch('http://local/');
+  const body=await response.text();assert.equal(response.status,200,body);
+  assert.deepEqual(JSON.parse(body),{afterStatus:{state:'STATUS_IN_FLIGHT'},notice:{state:'COMPLETE'},job:{status:'PENDING'},claim:{n:0},admission:{state:'VERIFIED'}});
+ }finally{if(mf)await mf.dispose();h.close();rmSync(dir,{recursive:true,force:true});}
+});
+
+test('literal prefix comparisons retain GLOB semantics including null and arbitrary suffixes',()=>{
+ const h=expenseSqlite();try{
+  for(const prefix of ['พร้อมแก้ไข • กำลังซิงก์ • รหัส ','พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ • รหัส ']){
+   const compare=h.sqlite.prepare('SELECT ? GLOB ? AS old, substr(?,1,length(?))=? AS replacement');
+   for(const value of [null,'',prefix,prefix+'a'.repeat(32),prefix+'💚',prefix.slice(0,-1),prefix.replace('พร้อม','ไม่พร้อม')]){
+    const result=compare.get(value,prefix+'*',value,prefix,prefix);assert.equal(result.old,result.replacement);
+   }
+  }
+ }finally{h.close();}
+});

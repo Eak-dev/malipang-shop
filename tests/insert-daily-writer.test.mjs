@@ -49,7 +49,7 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
  for(const rows of [f,e])Object.assign(rows[3],{26:2026,27:11,28:1000});
  const legacy={grid:{sheetId:1,rowCount:10,columnCount:25},formula:[],effective:[],coverage:{status:'VERIFIED',legacyDebitSatang:0,openingSatang:100000,checkedRows:0,year:2026,month:11}};
  route.continuousDailyTarget=()=>({sheet:'draft',sheetId:2});claimApi.stableWorkbookClaimOwned=async()=>true;coverage.readLegacyDailyCoverage=async()=>legacy;
- client.getSheetGridInfo=async(_env,name)=>name==='raw_new'?{sheetId:3,rowCount:rawF.length,columnCount:26}:name==='detail_new'?{sheetId:4,rowCount:detailF.length,columnCount:26}:{sheetId:2,rowCount:f.length,columnCount:29};
+ client.getSheetGridInfo=async(_env,name)=>{if(mode==='metadata-error'&&writes&&name==='draft')throw Error('synthetic metadata timeout');return name==='raw_new'?{sheetId:3,rowCount:rawF.length,columnCount:26}:name==='detail_new'?{sheetId:4,rowCount:detailF.length,columnCount:26}:{sheetId:mode==='identity-drift'&&writes?99:2,rowCount:f.length,columnCount:29};};
  client.getSpreadsheetSheetProperties=async()=>[{sheetId:10,title:'V52_EXPENSE_RAW',rowCount:1000,columnCount:26},{sheetId:3,title:'raw_new',rowCount:rawF.length,columnCount:26},{sheetId:11,title:'รายละเอียดการซื้อ',rowCount:1000,columnCount:20},{sheetId:4,title:'detail_new',rowCount:detailF.length,columnCount:26},{sheetId:5,title:'V52_EXPENSE_RAW_ALL',rowCount:9999,columnCount:18},{sheetId:6,title:'V52_PURCHASE_DETAIL_ALL',rowCount:9999,columnCount:20},{sheetId:7,title:'97_EXPENSE_CLEAN',rowCount:4500,columnCount:8}];
  client.getSheetCellNumberFormats=async()=>[...Array.from({length:15},()=>({type:'NUMBER',pattern:'#,##0.00'})),null,{type:'DATE',pattern:mode==='bad-format'?'yyyy':'dd/MM/yyyy'}];
  client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(range=>range.includes("'รายวัน'!X")?[]:range.includes("'97_EXPENSE_CLEAN'!A2:A2")?[[reportFormula]]:range.includes("'V52_EXPENSE_RAW_ALL'!")?[[reportFormulas.raw]]:range.includes("'V52_PURCHASE_DETAIL_ALL'!")?[[reportFormulas.detail]]:range.includes("'raw_new'!")?rawF.map(r=>r.slice()):range.includes("'detail_new'!")?detailF.map(r=>r.slice()):f.map(r=>r.slice()));
@@ -67,12 +67,15 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   const offset=requests[0].appendDimension?1:0,index=requests[offset].insertRange.range.startRowIndex,values=requests[offset+1].updateCells.rows[0].values;
   assert.equal(index,4);assert.equal(requests[offset].insertRange.range.endColumnIndex,25);writes++;
   const oldF=f.map(r=>r.slice()),oldE=e.map(r=>r.slice());f.push(Array(29).fill(null));e.push(Array(29).fill(null));
+  // Provider can grow once for appendDimension and once for insertRange.
+  if(offset&&mode!=='one-growth'){f.push(Array(29).fill(null));e.push(Array(29).fill(null));}
+  if(offset&&mode==='three-growth'){f.push(Array(29).fill(null));e.push(Array(29).fill(null));}
   for(let i=index;i<oldF.length;i++)for(let c=0;c<25;c++){f[i+1][c]=oldF[i][c];e[i+1][c]=oldE[i][c];}
   for(let i=index+1;i<f.length;i++)if(oldF[i-1]?.[8])Object.assign(f[i],continuousDailyHelperFormulas(i+1));
   for(let c=0;c<25;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   const payload=decodeAtomicDailyPayload(f[index][24]);assert.ok(payload);
   Object.assign(e[index],{0:2026,1:11,2:15,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
-  if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';return{replies:requests.map(()=>({}))};
+  if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';if(mode==='tail-tamper')f.at(-1)[28]='=1';if(mode==='tail-effective')e.at(-1)[27]=1;return{replies:requests.map(()=>({}))};
  };
  return {...h,job,source,legacy,claim,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,'draft',2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
 }
@@ -85,8 +88,40 @@ test('inserts safely when the final row is entirely blank',async()=>{const h=awa
  h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);
  await h.run();assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
  const evidence=h.sqlite.prepare('SELECT * FROM continuous_daily_write_evidence').get(),coords={sheetId:evidence.sheet_id,row:evidence.target_row,rowCount:evidence.before_rows,columnCount:evidence.before_columns};
- assert.equal(await matchesCommittedDailyInsert({formula:h.formula(),effective:h.effective()},coords,h.formula()[coords.row-1][24],evidence.before_digest,evidence.payload_digest),true);
+ assert.equal(await matchesCommittedDailyInsert({formula:h.formula().slice(0,-1),effective:h.effective().slice(0,-1)},coords,h.formula()[coords.row-1][24],evidence.before_digest,evidence.payload_digest),true);
  }finally{h.close();}});
+test('blank tail readback accepts one-row provider growth',async()=>{const h=await fixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode('one-growth');await h.run();
+ assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ }finally{h.close();}});
+test('blank tail readback rejects a nonblank formula or effective value in any extra column',async()=>{for(const mode of ['tail-tamper','tail-effective']){const h=await fixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode(mode);
+ await assert.rejects(h.run(),/INSERT_DAILY_READBACK_UNCERTAIN/);assert.equal(h.writes(),1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ }finally{h.close();}}});
+test('blank tail readback rejects changed identity or unexpected grid growth',async()=>{for(const mode of ['identity-drift','three-growth']){const h=await fixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode(mode);
+ await assert.rejects(h.run(),/INSERT_DAILY_SNAPSHOT_UNVERIFIED/);assert.equal(h.writes(),1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ }finally{h.close();}}});
+test('lost ACK with blank tail retains intent and does not write again',async()=>{const h=await fixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode('timeout');
+ await assert.rejects(h.run(),/synthetic lost response/);assert.equal(h.writes(),1);
+ await assert.rejects(h.run());assert.equal(h.writes(),1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ }finally{h.close();}});
+test('metadata GET failure after ACK retains intent and never repeats the write',async()=>{const h=await fixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode('metadata-error');
+ await assert.rejects(h.run(),/synthetic metadata timeout/);assert.equal(h.writes(),1);
+ await assert.rejects(h.run());assert.equal(h.writes(),1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');
+ }finally{h.close();}});
+test('blank tail respects the 5000-row limit before reservation',async()=>{for(const count of [4998,4999]){const h=await fixture();try{
+ while(h.formula().length<count){const row=h.formula().length+1,f=Array(29).fill(null);Object.assign(f,continuousDailyHelperFormulas(row));h.formula().push(f);h.effective().push(Array(29).fill(null));}
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);
+ if(count===4998){await h.run();assert.equal(h.formula().length,5000);assert.equal(h.writes(),1);}
+ else {await assert.rejects(h.run(),/INSERT_DAILY_CAPACITY/);assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes").get().n,0);}
+ }finally{h.close();}}});
 
 async function publicationFixture(mode='ok',includeItem=false){
  const h=await fixture(false,true,'claim-token-stage',includeItem);
@@ -100,8 +135,9 @@ async function publicationFixture(mode='ok',includeItem=false){
  h.sqlite.prepare("INSERT INTO continuous_publication_markers(spreadsheet_id,entity_id,sheet_id,sheet_name,row_number,version,state,marker,transition_id,created_at,updated_at) VALUES('book','exp_test',50,'pub',2,1,'STAGED',?,'stage-operation','now','now')").run(value);
  const grid=client.getSheetGridInfo,formula=client.batchGetSheetFormulaValues,effective=client.batchGetSheetEffectiveSerialValues,metadata=client.getSpreadsheetSheetProperties,formats=client.getSheetCellNumberFormats;
  const view=combinedLedgerSpillFormulas({rawNew:'raw_new',detailNew:'detail_new',rawCombined:'V52_EXPENSE_RAW_ALL',detailCombined:'V52_PURCHASE_DETAIL_ALL',rawOldRows:1000,rawNewRows:6,detailOldRows:1000,detailNewRows:6,publishedDaily:'draft'});
- let pubColumn=[['Publication_Marker'],[value],[pub.publicationEmptyMarker(3,'e'.repeat(32))]],writes=0,reads=0;
- client.getSheetGridInfo=async(env,name,policy)=>name==='pub'?{sheetId:50,rowCount:3,columnCount:1}:grid(env,name,policy);
+ let pubColumn=[['Publication_Marker'],[value],[pub.publicationEmptyMarker(3,'e'.repeat(32))]],writes=0,reads=0,instrumentGrid=false;
+ // Worst case for a post-write metadata GET includes an OAuth refresh.
+ client.getSheetGridInfo=async(env,name,policy)=>{if(instrumentGrid){policy?.budget?.consumeRead();policy?.budget?.consumeRead();}return name==='pub'?{sheetId:50,rowCount:3,columnCount:1}:grid(env,name,policy);};
  client.getSpreadsheetSheetProperties=async(env,policy)=>{policy?.budget?.consumeRead();return[...await metadata(env,policy),{sheetId:1,title:'รายวัน',rowCount:10,columnCount:25},{sheetId:2,title:'draft',rowCount:h.formula().length,columnCount:29},{sheetId:50,title:'pub',rowCount:3,columnCount:1}];};
  client.getSheetCellNumberFormats=async(env,name,id,row,policy)=>{policy?.budget?.consumeRead();return formats(env,name,id,row,policy);};
  client.batchGetSheetFormulaValues=async(env,ranges,policy)=>{policy?.budget?.consumeRead();return Promise.all(ranges.map(async r=>{
@@ -124,23 +160,37 @@ async function publicationFixture(mode='ok',includeItem=false){
   if(mode==='budget-before')while(budget.remaining>6)budget.consumeRead();
   await before();ticket?.consume();writes++;
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,lf=change.range.sheetId===4?h.detailFormula():h.rawFormula(),le=change.range.sheetId===4?h.detailEffective():h.rawEffective();assert.equal(lf[i][25],change.find);lf[i][25]=le[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{le[i][c]=v});if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
-  const index=requests[0].insertRange.range.startRowIndex,values=requests[1].updateCells.rows[0].values,f=h.formula(),e=h.effective();assert.equal(requests[0].insertRange.range.endColumnIndex,26);
+  const offset=requests[0].appendDimension?1:0,index=requests[offset].insertRange.range.startRowIndex,values=requests[offset+1].updateCells.rows[0].values,f=h.formula(),e=h.effective();assert.equal(requests[offset].insertRange.range.endColumnIndex,26);
   const oldF=structuredClone(f),oldE=structuredClone(e);f.push(Array(29).fill(null));e.push(Array(29).fill(null));
+  if(offset){f.push(Array(29).fill(null));e.push(Array(29).fill(null));}
   for(let i=index;i<oldF.length;i++)for(let c=0;c<26;c++){f[i+1][c]=oldF[i][c];e[i+1][c]=oldE[i][c];}
-  for(let i=index+1;i<f.length;i++)Object.assign(f[i],continuousDailyHelperFormulas(i+1));
+  for(let i=index+1;i<f.length;i++)if(oldF[i-1]?.[8])Object.assign(f[i],continuousDailyHelperFormulas(i+1));
   for(let c=0;c<26;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   e[index][24]=f[index][24];e[index][25]='STAGED';
-  if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:[{},{}]};
+  if(mode==='lost-ack')throw Error('synthetic lost ACK');if(mode==='changed-after')pubColumn[1][0]='changed';return{replies:requests.map(()=>({}))};
   }finally{ticket?.release();}
  };
  const {ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js');let lastBudget;
- return{...h,target,pub,reads:()=>reads,publicationWrites:()=>writes,lastBudget:()=>lastBudget,setPublicationMode(value){mode=value;},setPublicationValue(value){pubColumn[1][0]=value;},async runPublication(limit=40){lastBudget=typeof limit==='number'?new ReviewRequestBudget(limit):limit;return insertDailyExpenseUnderClaim(h.env,h.job,'lease-token',h.claim,h.source,'draft',2,target,lastBudget);}};
+ return{...h,target,pub,reads:()=>reads,publicationWrites:()=>writes,lastBudget:()=>lastBudget,instrumentGrid(){instrumentGrid=true;},setPublicationMode(value){mode=value;},setPublicationValue(value){pubColumn[1][0]=value;},async runPublication(limit=40){lastBudget=typeof limit==='number'?new ReviewRequestBudget(limit):limit;return insertDailyExpenseUnderClaim(h.env,h.job,'lease-token',h.claim,h.source,'draft',2,target,lastBudget);}};
 }
 test('opt-in staged insert proves provider marker, keeps public columns empty and verifies preimage',async()=>{const h=await publicationFixture();try{
  await h.runPublication();assert.equal(h.publicationWrites(),1);assert.ok(h.reads()>=3);assert.equal(h.lastBudget().used,25);assert.equal(h.lastBudget().reserved,false);assert.equal(h.lastBudget().postReserved,0);
  assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
  assert.equal(h.effective()[4][23],null);assert.equal(h.effective()[4][25],'STAGED');assert.equal(decodeAtomicDailyPayload(h.formula()[4][24]).publicationVersion,1);
  assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_expense_projection_preimages WHERE projection='DAILY'").get().n,1);
+}finally{h.close();}});
+test('staged insert checks both extra blank tail and reserved read budget',async()=>{const h=await publicationFixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);
+ h.instrumentGrid();
+ const {ReviewRequestBudget}=require('../dist/sheets/review-request-budget.js');
+ await h.runPublication(new ReviewRequestBudget(48,'invocation'));assert.equal(h.publicationWrites(),1);
+ assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ assert.equal(h.lastBudget().used,27);assert.equal(h.lastBudget().postReserved,0);
+}finally{h.close();}});
+test('staged blank tail without enough read budget stops before intent',async()=>{const h=await publicationFixture();try{
+ h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);
+ await assert.rejects(h.runPublication(),/INSERT_DAILY_PUBLICATION_BUDGET/);assert.equal(h.publicationWrites(),0);
+ assert.equal(h.sqlite.prepare("SELECT count(*) n FROM stable_projection_writes WHERE projection='DAILY'").get().n,0);
 }finally{h.close();}});
 test('grouped staged insert stops before intent when postimage budget cannot be reserved',async()=>{const h=await publicationFixture();try{
  await assert.rejects(h.runPublication(35),/INSERT_DAILY_PUBLICATION_BUDGET/);assert.equal(h.publicationWrites(),0);assert.equal(h.lastBudget().reserved,false);assert.equal(h.lastBudget().postReserved,0);

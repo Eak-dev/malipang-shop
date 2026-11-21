@@ -23,7 +23,7 @@ import {paymentOptionForPair} from '../expense/document';
 import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {pendingDailyCancellations,verifyDailyCarrierEvidence} from './daily-carrier-auth';
 import {readContinuousReportHealth} from './continuous-report-health';
-import {dailyPayloadDigest,dailySnapshotDigest} from './continuous-daily-write-evidence';
+import {dailyPayloadDigest,dailySnapshotDigest,matchesCommittedDailyInsert} from './continuous-daily-write-evidence';
 import {capturePublicationBatchSnapshot,publicationSnapshotRange,type PublicationBatchSnapshot,type PublicationSnapshotSpec} from './publication-batch-snapshot';
 import {planPublicationSnapshot} from './publication-snapshot-plan';
 import {ReviewRequestBudget} from './review-request-budget';
@@ -209,6 +209,9 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  // Prove the whole shifted tail has only known blank template formulas.
  const upgradedJ=appendDailyRowFormulas(publication)[9],shiftedColumns=publication?26:25;
  const blankTail=Array.from({length:shiftedColumns},(_,c)=>blank(before.formula[grid.rowCount-1]?.[c])&&blank(before.effective[grid.rowCount-1]?.[c])).every(Boolean);
+ // Padding can result in two new rows. Reject before intent if that would
+ // exceed the supported maximum even when the provider grows the grid twice.
+ if(blankTail&&grid.rowCount>4998)throw new InsertDailyDefiniteFailure('CAPACITY');
  for(let i=row-1;i<grid.rowCount;i++)for(let c=0;c<shiftedColumns;c++){
   const f=before.formula[i]?.[c],e=before.effective[i]?.[c];
   if(blankTail&&i===grid.rowCount-1)continue;
@@ -227,7 +230,7 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  if(publication){
   heldMutation=budget!.reserveMutation();
   if(!heldMutation)throw Error('INSERT_DAILY_PUBLICATION_BUDGET');
-  if(budget!.remaining<30||!budget!.reservePost(14)){budget!.releaseMutation();heldMutation=false;throw Error('INSERT_DAILY_PUBLICATION_BUDGET');}
+  if(budget!.remaining<(blankTail?32:30)||!budget!.reservePost(blankTail?16:14)){budget!.releaseMutation();heldMutation=false;throw Error('INSERT_DAILY_PUBLICATION_BUDGET');}
   heldPost=true;
  }
  try{
@@ -241,13 +244,17 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  const reply=await batchUpdateSpreadsheetWithReply(env,insertContinuousDailyRowRequests(sheetId,row,grid.rowCount,payload,publication,blankTail),async()=>{
   if(!await sourceMatches())throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
   const current=await capture(grid),captured=current.batch;
-  if(publication&&JSON.stringify(captured)!==JSON.stringify(beforeBatch)||!await publicationMatches(captured)||JSON.stringify(current.daily)!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,captured))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,captured?{snapshot:captured,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env,reportExpected,reportPublication,policy,captured)!=='OK'||!await sourceMatches()||publication&&budget!.postReserved!==14)throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
+  if(publication&&JSON.stringify(captured)!==JSON.stringify(beforeBatch)||!await publicationMatches(captured)||JSON.stringify(current.daily)!==JSON.stringify(before)||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,captured))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,captured?{snapshot:captured,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||await readContinuousReportHealth(env,reportExpected,reportPublication,policy,captured)!=='OK'||!await sourceMatches()||publication&&budget!.postReserved!==(blankTail?16:14))throw Error('INSERT_DAILY_PRE_DISPATCH_CHANGED');
  },publication?budget:undefined);
  if(heldPost){budget!.releasePost();heldPost=false;}
  const replies=reply&&typeof reply==='object'?(reply as {replies?:unknown[]}).replies:undefined;if(!Array.isArray(replies)||replies.length!==(blankTail?3:2)||replies.some(r=>!r||typeof r!=='object'))throw Error('INSERT_DAILY_OUTCOME_UNKNOWN');
- const afterGrid={...grid,rowCount:grid.rowCount+1},afterCapture=await capture(afterGrid),after=afterCapture.daily,afterBatch=afterCapture.batch;
+ const afterGrid=blankTail?await getSheetGridInfo(env,sheet,policy):{...grid,rowCount:grid.rowCount+1};
+ if(!stable()||afterGrid.sheetId!==grid.sheetId||afterGrid.columnCount!==grid.columnCount||afterGrid.rowCount>5000||![grid.rowCount+1,grid.rowCount+2].includes(afterGrid.rowCount))throw Error('INSERT_DAILY_SNAPSHOT_UNVERIFIED');
+ const afterCapture=await capture(afterGrid),after=afterCapture.daily,afterBatch=afterCapture.batch,extra=afterGrid.rowCount===grid.rowCount+2;
+ if(extra&&[after.formula[grid.rowCount+1],after.effective[grid.rowCount+1]].some(r=>r!==undefined&&(!Array.isArray(r)||r.length>grid.columnCount||r.some(v=>!blank(v)))))throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
+ const insertAfter=extra?{formula:after.formula.slice(0,grid.rowCount+1),effective:after.effective.slice(0,grid.rowCount+1)}:after;
  if(!await verifyInsertedNumberFormats(env,sheet,sheetId,row,policy))throw Error('INSERT_DAILY_FORMAT_UNVERIFIED');
- if(!verifyInsertedDailyTransform(before,after,grid.rowCount,grid.columnCount,row,publication)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||(publication?!blank(after.effective[row-1]?.[23]):after.effective[row-1]?.[23]!==key)||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage,publicationBefore)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||!await publicationMatches(afterBatch)||publication&&await readContinuousReportHealth(env,reportExpected,reportPublication,policy,afterBatch)!=='OK'||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,afterBatch))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,afterBatch?{snapshot:afterBatch,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
+ if(!verifyInsertedDailyTransform(before,insertAfter,grid.rowCount,grid.columnCount,row,publication)||!await matchesCommittedDailyInsert(insertAfter,evidenceCoords,payload,beforeDigest,payloadDigest,publication)||after.formula[row-1]?.[24]!==payload||after.effective[row-1]?.[24]!==payload||(publication?!blank(after.effective[row-1]?.[23]):after.effective[row-1]?.[23]!==key)||!verifyMixedDailyAccounting(after,afterGrid.rowCount,grid.columnCount,payment.postingYear,payment.postingMonth,legacy.coverage,publicationBefore)||!await verifyDailyCarrierEvidence(env,sheet,sheetId,grid.columnCount,after.formula,{entityId:job.entityKey,operationToken:claim,payload})||!await publicationMatches(afterBatch)||publication&&await readContinuousReportHealth(env,reportExpected,reportPublication,policy,afterBatch)!=='OK'||JSON.stringify(await readLegacyDailyCoverage(env,payment.postingYear,payment.postingMonth,sheet,policy,afterBatch))!==JSON.stringify(legacy)||JSON.stringify(await readVerifiedLegacyDailyIds(env,legacyIdRange,legacy.grid.rowCount,job.entityKey,policy,afterBatch?{snapshot:afterBatch,sheetId:legacy.grid.sheetId}:undefined))!==JSON.stringify(legacyIds)||!await sourceMatches())throw Error('INSERT_DAILY_READBACK_UNCERTAIN');
  const verified=db.prepare(`UPDATE stable_projection_writes SET state='VERIFIED',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=? AND source_version=? AND source_digest=? AND operation_token=? AND state='IN_FLIGHT' AND ${guarded}`).bind(book,job.entityKey,sheetId,sheet,job.entityVersion,source.digest,claim,...args);
  const preimage=await stableExpensePreimageStatement(env,{book,entity:job.entityKey,projection:'DAILY',sheetId,sheetName:sheet,version:job.entityVersion,sourceDigest:source.digest,row:after.formula[row-1]??[],width:grid.columnCount});if(!preimage||!stable())throw Error('INSERT_DAILY_PREIMAGE_UNVERIFIED');
  if(normalNoticeHandoffEnabled(env)){await finishVerifiedNormalStage(env,[verified,preimage],{job,claim,entity:job.entityKey,projection:'DAILY',kind:'CONFIRM'},lease,source.revision);return;}

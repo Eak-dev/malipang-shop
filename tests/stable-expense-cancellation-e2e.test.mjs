@@ -55,3 +55,11 @@ test('admitted pre-cutover expense cancels DAILY, RAW and every DETAIL before fi
 test('pre-cutover admission with wrong prior source digest cannot dispatch Undo',async()=>{const h=fixture(false,true,true);try{
  await assert.rejects(h.run(),/CANCEL_JOB_SOURCE/);assert.equal(h.writes(),0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_expense_cancellation_writes').get().n,0);
  }finally{h.close()}});
+
+test('cancel completion accepts only the direct job and optional alert trigger counts',async()=>{
+ for(const n of [2,0,3]){const h=fixture();try{
+  for(let i=0;i<3;i++){assert.equal(await h.run(),'CONTINUE');h.resume();}
+  const prepare=h.DB.prepare;h.DB.prepare=function(sql){const s=prepare.call(this,sql),run=s.run;if(sql.includes("UPDATE sync_jobs SET status='COMPLETED'"))s.run=async function(){const result=await run.call(this);return {...result,meta:{...result.meta,changes:n}}};return s;};
+  if(n===2)assert.equal(await h.run(),'COMPLETED');else await assert.rejects(h.run(),/CANCEL_JOB_FINAL_UNCERTAIN/);
+ }finally{h.close();}}
+});

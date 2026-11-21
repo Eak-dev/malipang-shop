@@ -155,10 +155,11 @@ test('Cloudflare D1 executes notice STATUS and COMMIT for a verified review',asy
    const job=await e.DB.prepare('SELECT status FROM sync_jobs').first();
    const claim=await e.DB.prepare('SELECT count(*) AS n FROM stable_workbook_claims').first();
    const admission=await e.DB.prepare('SELECT state FROM stable_recovery_operations').first();
-   return Response.json({afterStatus,notice,job,claim,admission,changes:commitResult.map(x=>x.meta.changes)});}catch(err){return new Response(String(err),{status:500})}}}`;
+   const completion=await e.DB.prepare("UPDATE sync_jobs SET status='COMPLETED' WHERE job_id='job' AND status='PENDING'").run();
+   return Response.json({afterStatus,notice,job,claim,admission,changes:commitResult.map(x=>x.meta.changes),completionChanges:completion.meta.changes});}catch(err){return new Response(String(err),{status:500})}}}`;
   mf=new Miniflare({...common,script});const response=await mf.dispatchFetch('http://local/');
   const body=await response.text();assert.equal(response.status,200,body);
-  assert.deepEqual(JSON.parse(body),{afterStatus:{state:'STATUS_IN_FLIGHT'},notice:{state:'COMPLETE'},job:{status:'PENDING'},claim:{n:0},admission:{state:'VERIFIED'},changes:[1,1,2,1,0]});
+  assert.deepEqual(JSON.parse(body),{afterStatus:{state:'STATUS_IN_FLIGHT'},notice:{state:'COMPLETE'},job:{status:'PENDING'},claim:{n:0},admission:{state:'VERIFIED'},changes:[1,1,2,1,0],completionChanges:2});
  }finally{if(mf)await mf.dispose();h.close();rmSync(dir,{recursive:true,force:true});}
 });
 

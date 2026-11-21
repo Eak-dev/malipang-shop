@@ -5388,7 +5388,7 @@
       "pull_requests": [
         317
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5416,6 +5416,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5429,7 +5434,7 @@
       "pull_requests": [
         317
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5457,6 +5462,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5470,7 +5480,7 @@
       "pull_requests": [
         311
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5498,6 +5508,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5511,7 +5526,7 @@
       "pull_requests": [
         311
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5539,6 +5554,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5552,7 +5572,7 @@
       "pull_requests": [
         325
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5580,6 +5600,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5593,7 +5618,7 @@
       "pull_requests": [
         325
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5621,6 +5646,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5634,7 +5664,7 @@
       "pull_requests": [
         323
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5662,6 +5692,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5675,7 +5710,7 @@
       "pull_requests": [
         323
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5703,6 +5738,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5716,7 +5756,7 @@
       "pull_requests": [
         321
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5744,6 +5784,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5757,7 +5802,7 @@
       "pull_requests": [
         321
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5785,6 +5830,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5798,7 +5848,7 @@
       "pull_requests": [
         318
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5826,6 +5876,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5839,7 +5894,7 @@
       "pull_requests": [
         318
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5867,6 +5922,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5880,7 +5940,7 @@
       "pull_requests": [
         313
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5908,6 +5968,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -5921,7 +5986,7 @@
       "pull_requests": [
         313
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5949,6 +6014,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -5962,7 +6032,7 @@
       "pull_requests": [
         319
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -5990,6 +6060,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6003,7 +6078,7 @@
       "pull_requests": [
         319
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6031,6 +6106,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6044,7 +6124,7 @@
       "pull_requests": [
         320
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6072,6 +6152,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6085,7 +6170,7 @@
       "pull_requests": [
         320
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6113,6 +6198,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6126,7 +6216,7 @@
       "pull_requests": [
         314
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6154,6 +6244,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6167,7 +6262,7 @@
       "pull_requests": [
         314
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6195,6 +6290,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6208,7 +6308,7 @@
       "pull_requests": [
         322
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6236,6 +6336,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6249,7 +6354,7 @@
       "pull_requests": [
         322
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6277,6 +6382,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6290,7 +6400,7 @@
       "pull_requests": [
         327
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6318,6 +6428,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6331,7 +6446,7 @@
       "pull_requests": [
         327
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6359,6 +6474,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6372,7 +6492,7 @@
       "pull_requests": [
         326
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6400,6 +6520,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6413,7 +6538,7 @@
       "pull_requests": [
         326
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6441,6 +6566,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6454,7 +6584,7 @@
       "pull_requests": [
         312
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6482,6 +6612,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6495,7 +6630,7 @@
       "pull_requests": [
         312
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6523,6 +6658,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6536,7 +6676,7 @@
       "pull_requests": [
         310
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6564,6 +6704,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6577,7 +6722,7 @@
       "pull_requests": [
         310
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6605,6 +6750,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6618,7 +6768,7 @@
       "pull_requests": [
         330
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6646,6 +6796,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6659,7 +6814,7 @@
       "pull_requests": [
         330
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6687,6 +6842,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6700,7 +6860,7 @@
       "pull_requests": [
         328
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6728,6 +6888,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6741,7 +6906,7 @@
       "pull_requests": [
         328
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6769,6 +6934,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6782,7 +6952,7 @@
       "pull_requests": [
         329
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6810,6 +6980,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6823,7 +6998,7 @@
       "pull_requests": [
         329
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6851,6 +7026,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6864,7 +7044,7 @@
       "pull_requests": [
         309
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6892,6 +7072,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6905,7 +7090,7 @@
       "pull_requests": [
         309
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6933,6 +7118,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -6946,7 +7136,7 @@
       "pull_requests": [
         316
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -6974,6 +7164,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -6987,7 +7182,7 @@
       "pull_requests": [
         316
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -7015,6 +7210,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     },
     {
@@ -7028,7 +7228,7 @@
       "pull_requests": [
         315
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -7056,6 +7256,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic local update-ref transaction with expected SHA; show-ref independently confirmed ref absent; detached worktree data preserved."
       }
     },
     {
@@ -7069,7 +7274,7 @@
       "pull_requests": [
         315
       ],
-      "status": "DELETE_READY",
+      "status": "DELETED",
       "observed_at": "2026-11-21T10:05:46.561299+00:00",
       "reason": "Owner requested cleanup; integrated branch, preserved private recovery bundle, live recheck required before deletion.",
       "protected": false,
@@ -7097,6 +7302,11 @@
           "verified": true,
           "reference": "private:issue296-branch-recovery-20261121.bundle; restored all 22 refs and ran git fsck"
         }
+      },
+      "deletion": {
+        "verified_at": "2026-11-21T10:10:19.872618+00:00",
+        "absence_verified": true,
+        "evidence": "Atomic Git push with an expected-SHA lease for each deletion; ls-remote independently confirmed ref absent."
       }
     }
   ],

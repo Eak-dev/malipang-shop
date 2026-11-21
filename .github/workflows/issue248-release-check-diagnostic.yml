@@ -1,0 +1,102 @@
+name: Issue248 release local-check diagnostic (no production)
+# Reproduces the release workflow's local checks on an exact pinned SHA on Ubuntu: typecheck, test build,
+# then the full test suite twice (A: plain CI environment; B: the release job's environment names set to
+# SYNTHETIC values of the same format). No production environment, no secrets, no provider access, no
+# artifact upload. Two checkouts: subject/ = the pinned source under test (it does not contain the
+# diagnostic tool), tool/ = this diagnostic commit (only its summary script is run, never its tests).
+# Every part records its own exit code; the verdict step fails the job if any part failed, so a green
+# job means every recorded part exited 0, and the summary lists each part separately.
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/issue248-release-check-diagnostic.yml', 'scripts/issue248-tap-safe-summary.mjs']
+permissions: {contents: read}
+concurrency: {group: issue248-release-check-diagnostic, cancel-in-progress: false}
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Job-level env may only use contexts GitHub allows there (no runner.*); paths are derived in the first step.
+    env:
+      DIAG_SHA: 1fead409ea36a2afa9e127ba719e36ed32e575da
+    steps:
+      - name: Checkout pinned source under test
+        uses: actions/checkout@v4
+        with: {ref: '1fead409ea36a2afa9e127ba719e36ed32e575da', path: subject, fetch-depth: 1, persist-credentials: false}
+      - name: Checkout diagnostic tool (this commit)
+        uses: actions/checkout@v4
+        with: {path: tool, fetch-depth: 1, persist-credentials: false}
+      - name: Exact SHA, tool present, runner facts (no secrets)
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git -C subject rev-parse HEAD)" = "$DIAG_SHA"
+          TOOL="$GITHUB_WORKSPACE/tool/scripts/issue248-tap-safe-summary.mjs"; PARTS="$RUNNER_TEMP/parts.env"
+          test -f "$TOOL"
+          : > "$PARTS"
+          { echo "TOOL=$TOOL"; echo "PARTS=$PARTS"; } >> "$GITHUB_ENV"
+          { echo "SUBJECT_SHA=$DIAG_SHA"; echo "TOOL_SHA=$(git -C tool rev-parse HEAD)"; echo "RUNNER_CPUS=$(nproc)"; echo "MEM_KB=$(awk '/MemTotal/{print $2}' /proc/meminfo)"; echo "JQ=$(jq --version)"; } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/setup-node@v4
+        with: {node-version: 22, cache: npm, cache-dependency-path: subject/package-lock.json}
+      - name: Install, typecheck and test build (exit of each recorded)
+        working-directory: subject
+        shell: bash
+        run: |
+          set -uo pipefail
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
+          echo "NODE=$(node --version)" >> "$GITHUB_STEP_SUMMARY"
+          rec NPM_CI npm ci > "$RUNNER_TEMP/npm-ci.log" 2>&1
+          rec TYPECHECK npm run typecheck > "$RUNNER_TEMP/typecheck.log" 2>&1
+          rec BUILD_TEST npm run build:test > "$RUNNER_TEMP/build.log" 2>&1
+      - name: Tests A - plain CI environment
+        if: always()
+        working-directory: subject
+        shell: bash
+        run: |
+          set -uo pipefail
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
+          rec TESTS_A node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/a.tap" 2>&1
+          rec SUMMARY_A node "$TOOL" A "$RUNNER_TEMP/a.tap" >> "$GITHUB_STEP_SUMMARY"
+      - name: Tests B - release job environment names with synthetic values
+        if: always()
+        working-directory: subject
+        shell: bash
+        env:
+          EXPECTED_SHA: 1fead409ea36a2afa9e127ba719e36ed32e575da
+          G7_RECEIPT_KEY: release-control/pr247/g7/synthetic-receipt.json
+          G7_RECEIPT_SHA256: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CONFIRMATION: OWNER APPROVED ISSUE248 NONFINANCIAL GUARD RELEASE
+          EXPIRED_TERMINAL_EXCEPTION: OWNER ACCEPTS EXPIRED TERMINAL WRITER RACE
+          ATTENDANCE_REVIEW_EXCEPTION: OWNER ACCEPTS KNOWN ATTENDANCE REVIEW
+          MP248_G7_CANARY_DIGEST_EXCEPTION: OWNER ACCEPTS G7 SOURCE REVISION ADVANCED HISTORICAL INTEGRITY UNKNOWN
+          BEFORE_WORKER_VERSION: 11111111-1111-4111-8111-111111111111
+          G5_SHA: 0d1dda77f3a0e5cfaec1872cb588b59dddfe5bdf
+          G5_RUN_ID: '42802512915'
+          G5_RUN_ATTEMPT: '1'
+          PRIOR_WORKER_VERSION: a9cc50ba-f2f0-4cbe-a261-ff3bb65fc86c
+          REVIEWED_RUNTIME_SHA: 2680c515b39a082038fdde707c236e4216290039
+          EXPECTED_WORKER_ORIGIN: https://malipang-backend-v5-2.eakkachai-dev.workers.dev
+          BASE_SHA: 34475766a6af0fa15608069d464a554239a17b53
+        run: |
+          set -uo pipefail
+          # GitHub runs bash with -e and pipefail: record each command's exit without letting errexit skip the rest.
+          rec(){ local part="$1" rc=0; shift; "$@" || rc=$?; echo "${part}_EXIT=$rc" >> "$PARTS"; }
+          rec TESTS_B node --test --test-reporter=tap tests/*.test.mjs > "$RUNNER_TEMP/b.tap" 2>&1
+          rec SUMMARY_B node "$TOOL" B "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"
+          # Titles failing only with the release environment (the likely inheritance cases).
+          rec SUMMARY_DIFF node "$TOOL" DIFF "$RUNNER_TEMP/a.tap" "$RUNNER_TEMP/b.tap" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verdict per part (fails the job if any part did not exit 0 or was not recorded)
+        if: always()
+        shell: bash
+        run: |
+          set -uo pipefail
+          # Under -e and pipefail a lookup that finds nothing must not end the step: a missing part is NOT_RUN.
+          bad=0; echo '### Exit code per part' >> "$GITHUB_STEP_SUMMARY"
+          for p in NPM_CI TYPECHECK BUILD_TEST TESTS_A SUMMARY_A TESTS_B SUMMARY_B SUMMARY_DIFF; do
+            v="$(grep -E "^${p}_EXIT=[0-9]+$" "${PARTS:-/dev/null}" 2>/dev/null | tail -1 | cut -d= -f2 || true)"
+            echo "- ${p}: ${v:-NOT_RUN}" >> "$GITHUB_STEP_SUMMARY"
+            [ "${v:-}" = 0 ] || bad=1
+          done
+          exit $bad

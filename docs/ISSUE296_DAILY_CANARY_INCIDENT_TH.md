@@ -35,3 +35,7 @@ Cloudflare D1 รายงาน `meta.changes=2` เมื่อคำสั่
 ### ผลปิดงานรวม trigger แจ้งเตือน
 
 เมื่อ Canary ที่เคยอยู่ REVIEW ผ่านการตรวจทุก projection แล้วเปลี่ยนงานเป็น COMPLETED, D1 นับการปิด alert ของงานรวมกับ update งานเป็นสองการเปลี่ยนแปลง ทำให้ `STABLE_EXPENSE_COMPLETION_UNCERTAIN` หลังงาน commit แล้ว. หลักฐาน Production คือ job COMPLETED, DAILY/RAW/DETAIL VERIFIED และ alert ปิดใน timestamp เดียวกับงาน; claim ยังคง REVIEW และ epoch ARMED. ห้ามรัน confirmation ซ้ำหรือปลด claim ด้วย SQL ทั่วไป. ตัวตรวจ completion ของยืนยันและ Undo รองรับจำนวนรวม 1 หรือ 2 ภายใต้ unique job key และ guard เดิม; จำนวนอื่นยังหยุด. การกู้ claim ต้องมีหลักฐาน provider และขั้น notice ที่ออกแบบเฉพาะเหตุนี้แยกต่างหาก.
+
+### กู้ล็อกหลังงานสังเคราะห์ COMPLETED
+
+เพิ่ม migration `0065` และ operator เฉพาะเหตุ `STABLE_EXPENSE_COMPLETION_UNCERTAIN` ของ Canary v1: ตรวจ job COMPLETED, alert ปิดพร้อมเวลา job, projection ทั้งสาม VERIFIED พร้อม preimage/marker, epoch/admission, source revision, ล็อกเดิมและรายงานจริง ก่อนเปลี่ยน notice. Workflow ใช้ PROBE → TIME → PROBE_STATUS → STATUS → COMMIT แยกครั้ง พร้อม intent ก่อนแต่ละ provider POST และบันทึก ACK เฉพาะผลตอบรับแน่ชัด; คำตอบไม่แน่ชัดต้องคง REVIEW และห้ามส่ง POST ซ้ำ. COMMIT ตรวจซ้ำแล้วปิด admission/epoch และปล่อย claim เฉพาะรายการใน transaction เดียว โดยไม่เปลี่ยนธุรกรรมหรือ journal. ซ้อมบนสำเนา Production และ Miniflare D1 รวม integrity/FK; ผล provider ในการซ้อมจำลอง จึงต้องตรวจ PROBE จริงก่อนใช้งาน. สำรองส่วนตัวและซ้อม migration ใหม่ก่อน Production; หากไม่ผ่านคง gate และใช้ forward-fix ห้ามแก้ฐานข้อมูลย้อนหลังหรือ replay งาน.

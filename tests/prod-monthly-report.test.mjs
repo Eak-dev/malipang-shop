@@ -24,7 +24,7 @@ test('full workflow previews and appends at most once, preserving unknown outcom
    if(url.includes('/deployments?'))return Response.json({success:true,result:{deployments:[{versions:[{version_id:version,percentage:100}]}]}});
    if(url==='https://worker.invalid/admin/stable-sync/monthly-report'){
     const body=JSON.parse(options.body);assert.equal(options.redirect,'error');
-    if(body.action==='PREVIEW')return Response.json({action:'PREVIEW',servedVersion:version,status:'READY',ready:mode==='empty'?0:1,held:0,stale:0,unassignedDate:0,heldReasons:{},...(mode==='bad-preview'?{candidate:'bad'}:mode==='empty'?{}:{candidate})});
+    if(body.action==='PREVIEW')return Response.json({action:'PREVIEW',servedVersion:version,status:'READY',ready:mode==='empty'?0:1,held:1,stale:0,unassignedDate:0,heldReasons:{INCIDENT_REVIEW:1},...(mode==='bad-preview'?{candidate:'bad'}:mode==='empty'?{}:{candidate})});
     assert.deepEqual(body,{action:'APPEND_ONE',candidate});if(mode==='lost-append')throw Error('lost');return Response.json({action:'APPEND_ONE',servedVersion:version,status:'DONE'});
    }throw Error('unexpected');
   };
@@ -35,4 +35,44 @@ test('full workflow previews and appends at most once, preserving unknown outcom
 });
 test('workflow is protected and serial',()=>{
  const workflow=readFileSync(new URL('../.github/workflows/prod-monthly-report.yml',import.meta.url),'utf8');assert.match(workflow,/environment: production/);assert.match(workflow,/group: malipang-release-control/);assert.doesNotMatch(workflow,/candidate_hash/);
+});
+test('held PREVIEW logs only allowlisted diagnostics and never dispatches a write',async()=>{
+ const cases=[
+  [{stage:'GRID',cause:'HTTP',httpStatus:403},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=HTTP HTTP_STATUS=403'],
+  [{stage:'GRID',cause:'BODY_TOO_LARGE'},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=BODY_TOO_LARGE'],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'GRID_FULL_INITIAL',detail:'INVALID_FIELD',field:'commentAnchors'},'MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=HTTP HTTP_STATUS=400 OPERATION=GRID_FULL_INITIAL DETAIL=INVALID_FIELD FIELD=commentAnchors'],
+  [{stage:'NOTICE',cause:'CHECK_FAILED'},'MONTHLY_PREVIEW_HELD_STAGE=NOTICE CAUSE=CHECK_FAILED'],
+  [{stage:'GRID',cause:'HTTP',httpStatus:403,body:'private data'},null],
+  [{stage:'private data',cause:'EXCEPTION'},null],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'private data',detail:'UNKNOWN'},null],
+  [{stage:'GRID',cause:'HTTP',httpStatus:400,operation:'GRID_FULL_INITIAL',detail:'INVALID_FIELD',field:'privateData'},null],
+  [{stage:'GRID',cause:'HTTP',httpStatus:999},null]
+ ];
+ for(const [diagnostic,expected] of cases){
+  const actions=[],lines=[],saved=console.log;console.log=(...args)=>lines.push(args.join(' '));
+  try{const fetchStub=async(url,options={})=>{
+   url=String(url);if(url.includes('/deployments?'))return Response.json({success:true,result:{deployments:[{versions:[{version_id:version,percentage:100}]}]}});
+   if(url==='https://worker.invalid/admin/stable-sync/monthly-report'){const body=JSON.parse(options.body);actions.push(body.action);return Response.json({action:'PREVIEW',servedVersion:version,status:'HELD',diagnostic},{status:409});}
+   throw Error('unexpected');
+  };
+  await assert.rejects(runMonthlyReport({...env,MONTHLY_PHASE:'PREVIEW'},fetchStub),/MONTHLY_PREVIEW_UNVERIFIED/);
+  assert.deepEqual(actions,['PREVIEW']);assert.deepEqual(lines,expected?[expected]:[]);assert.doesNotMatch(lines.join(' '),/private data/);
+  }finally{console.log=saved;}
+ }
+});
+test('APPEND_ONE stops before dispatch when its fresh PREVIEW is held',async()=>{
+ const actions=[],lines=[],saved=console.log;console.log=(...args)=>lines.push(args.join(' '));
+ try{
+  const fetchStub=async(url,options={})=>{url=String(url);
+   if(url.endsWith('/runs/123'))return Response.json(run);
+   if(url.endsWith('/runs/123/jobs?per_page=100'))return Response.json({jobs:[job]});
+   if(url.endsWith('/jobs/1234/logs'))return new Response(null,{status:302,headers:{location:'https://logs.invalid/log'}});
+   if(url==='https://logs.invalid/log')return new Response(log);
+   if(url.includes('/deployments?'))return Response.json({success:true,result:{deployments:[{versions:[{version_id:version,percentage:100}]}]}});
+   if(url==='https://worker.invalid/admin/stable-sync/monthly-report'){const body=JSON.parse(options.body);actions.push(body.action);return Response.json({action:'PREVIEW',servedVersion:version,status:'HELD',diagnostic:{stage:'GRID',cause:'CHECK_FAILED'}},{status:409});}
+   throw Error('unexpected');
+  };
+  await assert.rejects(runMonthlyReport(env,fetchStub),/MONTHLY_PREVIEW_UNVERIFIED/);
+  assert.deepEqual(actions,['PREVIEW']);assert.deepEqual(lines,['MONTHLY_PREVIEW_HELD_STAGE=GRID CAUSE=CHECK_FAILED']);
+ }finally{console.log=saved;}
 });

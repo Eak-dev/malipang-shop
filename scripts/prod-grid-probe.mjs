@@ -4,7 +4,7 @@ import {tmpdir} from 'node:os';
 import {join,resolve} from 'node:path';
 import {spawnSync} from 'node:child_process';
 import {pathToFileURL} from 'node:url';
-export const REVIEWED_BUNDLE_SHA256='7b826977cc1edab9f639ff3153ab615fe9dce91c4255eb7f449f5ff13792e8f3';
+export const REVIEWED_BUNDLE_SHA256='84fc5bb6e91d9cf8f3dc5aabd19c8e18f71e16c404dfa0d50ad1006ba83d90f4';
 const fail=x=>{throw Error(x)},hex=(x,n)=>new RegExp(`^[a-f0-9]{${n}}$`).test(x),sha=x=>createHash('sha256').update(x).digest('hex');
 export function targetConfig(text,now=Date.now()){
  let x;try{x=JSON.parse(text)}catch{fail('PROBE_TARGET_INVALID')}

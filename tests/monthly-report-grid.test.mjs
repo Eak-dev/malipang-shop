@@ -26,3 +26,23 @@ test('provider reader independently crosschecks values and sheet dimensions',asy
  if(mode==='ok'){const g=await run();assert.equal(g.formula[0][0],'=literal');}else await assert.rejects(run(),/MONTHLY_GRID_/);
  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldAuth;}
  }});
+
+test('PREVIEW-only diagnostics identify the exact failed grid GET without serializing provider details',async()=>{
+ const modes=['GRID_METADATA_INITIAL','GRID_FULL_INITIAL','GRID_VALUES_FORMULA','GRID_VALUES_EFFECTIVE','GRID_FULL_REPEAT','GRID_METADATA_FINAL'];
+ for(const mode of modes){const oldFetch=globalThis.fetch,oldAuth=auth.getGoogleAccessToken;let metadataReads=0,fullReads=0;
+  try{
+   auth.getGoogleAccessToken=async()=> 'synthetic-token';
+   globalThis.fetch=async(url)=>{const u=new URL(url),fields=u.searchParams.get('fields')??'';let operation,body;
+    if(u.pathname.includes('/values:batchGet')){const formula=u.searchParams.get('valueRenderOption')==='FORMULA';operation=formula?'GRID_VALUES_FORMULA':'GRID_VALUES_EFFECTIVE';body={valueRanges:[{values:[['=literal']]}]};}
+    else if(u.searchParams.get('includeGridData')==='true'){operation=++fullReads===1?'GRID_FULL_INITIAL':'GRID_FULL_REPEAT';body=payload();}
+    else if(fields.includes('gridProperties')){operation=++metadataReads===1?'GRID_METADATA_INITIAL':'GRID_METADATA_FINAL';body={sheets:[{properties:{sheetId:7,title:'รายวันต่อเนื่อง_แบบร่าง',gridProperties:{rowCount:5,columnCount:29}}}]};}
+    else throw Error('unexpected synthetic request');
+    if(operation===mode)return Response.json({error:{message:'private provider body'}},{status:400});
+    return Response.json(body);
+   };
+   const env={DB:{},GOOGLE_SPREADSHEET_ID:'book',STABLE_SHEETS_PACING_ENABLED:'true'},run=diagnostic=>client.readMonthlyReportGrid(env,7,5,{kind:'continuous-expense'},diagnostic);
+   await assert.rejects(run(true),error=>{assert.ok(error instanceof client.MonthlyGridReadError);assert.equal(error.operation,mode);assert.ok(error.original instanceof client.SheetsHttpError);assert.equal(error.original.status,400);assert.doesNotMatch(error.message,/private/);return true;});
+   metadataReads=0;fullReads=0;await assert.rejects(run(false),error=>error instanceof client.SheetsHttpError&&error.status===400);
+  }finally{globalThis.fetch=oldFetch;auth.getGoogleAccessToken=oldAuth;}
+ }
+});

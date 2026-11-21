@@ -25,3 +25,16 @@ test('duplicate source identity and missing version are held rather than planned
  const r=planMonthlyD1Preview([item(),item(),item({expense_id:'exp_missing_version',version:null}),item({expense_id:'exp_valid'})],headers,new Date('2026-11-21T12:00:00Z'));
  assert.deepEqual(r.held.map(x=>x.reason),['SOURCE_DUPLICATE','SOURCE_DUPLICATE','SOURCE_INCOMPLETE']);assert.equal(r.ready.length,1);
 });
+
+test('only the exact incident expense and version is held',()=>{
+ const incident={expense_id:'exp_test',source_version:1};
+ const now=new Date('2026-11-21T12:00:00Z');
+ const held=planMonthlyD1Preview([item()],headers,now,incident);
+ assert.deepEqual(held.held,[{expenseId:'exp_test',reason:'INCIDENT_REVIEW'}]);
+ assert.equal(held.ready.length,0);
+ for(const row of [item({version:2}),item({expense_id:'exp_other'})]){
+  const next=planMonthlyD1Preview([row],headers,now,incident);
+  assert.equal(next.ready.length,1);
+  assert.deepEqual(next.held,[]);
+ }
+});

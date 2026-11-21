@@ -84,3 +84,5 @@ Ownerอนุมัติ audit/preserve/deleteเฉพาะremoteที่�
 Canary RAW ที่มี timeout มีทางกู้แบบ positive-only เฉพาะรายการ โดยไม่ส่งข้อมูลรายงานซ้ำและไม่เปิด review ทั่วไป ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md); การมีโค้ดไม่ยืนยันผล Production.
 
 การปิด notice ตรวจผลลบ claim โดยรองรับจำนวน D1 ที่รวม trigger ปิด alert พร้อมคง guard จำนวน claim โดยตรง; รายละเอียดอยู่ใน [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md).
+
+การจบงานค่าใช้จ่ายและ Undo รองรับจำนวน D1 ที่รวม trigger ปิด alert โดยคง unique job และ guards เดิม ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md).

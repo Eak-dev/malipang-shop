@@ -277,7 +277,9 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
    AND (SELECT count(*) FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.projection='DETAIL' AND p.entity_id IN (SELECT value FROM json_each(?)) AND p.source_version=? AND p.source_digest=? AND p.state='VERIFIED')=?
    AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND p.projection='DETAIL' AND substr(p.entity_id,1,length(?)+1)=?||'|' AND p.entity_id NOT IN (SELECT value FROM json_each(?))) ${publicationFinalGuard}`)
    .bind(job.entityKey,job.entityVersion,lease,source.revision,book,claim,job.entityKey,book,job.entityKey,job.entityVersion,source.digest,book,itemKeys,job.entityVersion,source.digest,projections.details.length,book,job.entityKey,job.entityKey,itemKeys,...(publication?[book,job.entityKey,publication.sheetId,publication.sheet,publication.row,job.entityVersion,publication.sourceDigest,book,job.entityKey]:[])).run();
-  if(completed.success!==true||Number(completed.meta?.changes)!==1)throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
+  // D1 includes the optional AFTER UPDATE that closes this job's one open alert.
+  // The entity/version unique key ensures one direct job can match.
+  if(completed.success!==true||![1,2].includes(Number(completed.meta?.changes)))throw Error('STABLE_EXPENSE_COMPLETION_UNCERTAIN');
   return 'COMPLETED';
  },job,target?async(claim,error)=>{
   // Flag off: keep the original fence before any recovery admission is written.

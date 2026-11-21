@@ -51,6 +51,8 @@ export interface Env {
   CONTINUOUS_PUBLICATION_SHEET_ID?: string;
   CONTINUOUS_PUBLICATION_ROWS?: string;
   CONTINUOUS_DAILY_ENABLED?: string;
+  /** Temporary, default-off one-item monthly report operator. */
+  MONTHLY_REPORT_OPERATOR_ENABLED?: string;
   CONTINUOUS_DAILY_SHEET?: string;
   CONTINUOUS_DAILY_SHEET_ID?: string;
   CONTINUOUS_RAW_SHEET?: string;

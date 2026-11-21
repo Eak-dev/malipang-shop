@@ -1,0 +1,39 @@
+import {createHash} from 'node:crypto';
+import {pathToFileURL} from 'node:url';
+const fail=code=>{throw Error(code)};
+export function validateInputs(e){
+ const sha=e.EXPECTED_SHA||'',phase=e.MONTHLY_PHASE||'',worker=e.EXPECTED_WORKER_VERSION_SHA256||'';
+ if(!/^[a-f0-9]{40}$/.test(sha)||sha!==e.GITHUB_SHA||e.GITHUB_REF!=='refs/heads/main'||e.GITHUB_RUN_ATTEMPT!=='1')fail('MONTHLY_SHA_GUARD');
+ if(!['PREVIEW','APPEND_ONE','INSPECT'].includes(phase)||!/^[a-f0-9]{64}$/.test(worker))fail('MONTHLY_INPUT_INVALID');
+ if(phase==='APPEND_ONE'&&(!/^[1-9][0-9]{0,19}$/.test(e.BACKUP_RUN_ID||'')||e.EXTERNAL_WRITERS_FENCED!=='true'||e.OWNER_SUPERVISING!=='true'))fail('MONTHLY_PREFLIGHT_MISSING');
+ if(!e.CLOUDFLARE_ACCOUNT_ID||!e.CLOUDFLARE_API_TOKEN||!e.MALIPANG_ADMIN_TOKEN||!e.MALIPANG_WORKER_URL||phase==='APPEND_ONE'&&!e.GITHUB_TOKEN)fail('MONTHLY_CREDENTIALS_MISSING');
+ const url=new URL(e.MALIPANG_WORKER_URL);if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash||url.pathname!=='/')fail('MONTHLY_URL_INVALID');return {phase,base:url.origin};
+}
+export function verifyBackupEvidence(run,job,log,expectedSha,now=Date.now()){
+ const at=Date.parse(run?.created_at||'');return run?.path==='.github/workflows/prod-ops-readonly.yml'&&run?.event==='workflow_dispatch'&&run?.status==='completed'&&run?.conclusion==='success'&&run?.head_sha===expectedSha&&Number.isFinite(at)&&at>Date.parse('2026-11-21T10:07:19.486Z')&&now-at>=0&&job?.status==='completed'&&job?.conclusion==='success'&&Array.isArray(job.steps)&&job.steps.some(s=>s.name==='Backup and migration rehearsal'&&s.conclusion==='success')&&typeof log==='string'&&log.length<=2_000_000&&['- export: PASS','- backup_upload: PASS','- backup_checksum: PASS','- restore: PASS','- integrity_before: PASS','- foreign_keys_before: PASS','- preexisting_rows_unchanged: PASS','- integrity_after: PASS','- foreign_keys_after: PASS','- smoke_all: PASS'].every(x=>log.includes(x));
+}
+async function boundedText(response,limit){
+ if(!response.body)fail('MONTHLY_BACKUP_UNVERIFIED');const reader=response.body.getReader(),decoder=new TextDecoder();let size=0,out='';
+ try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit)fail('MONTHLY_BACKUP_UNVERIFIED');out+=decoder.decode(part.value,{stream:true});}return out+decoder.decode();}finally{try{await reader.cancel();}catch{}reader.releaseLock();}
+}
+export async function runMonthlyReport(env,fetchImpl=fetch){
+ const fetch=fetchImpl,{phase,base}=validateInputs(env),cf=async path=>{const r=await fetch('https://api.cloudflare.com/client/v4'+path,{headers:{Authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)fail('MONTHLY_CF_HTTP');const b=await r.json();if(!b.success)fail('MONTHLY_CF_API');return b.result;};
+ if(phase==='APPEND_ONE'){
+  const api='https://api.github.com/repos/Eak-dev/malipang-shop/actions',headers={Authorization:'Bearer '+env.GITHUB_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};
+  const get=async path=>{const r=await fetch(api+path,{headers,redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)fail('MONTHLY_BACKUP_READ_FAILED');return r.json();};
+  const run=await get(`/runs/${env.BACKUP_RUN_ID}`),jobs=await get(`/runs/${env.BACKUP_RUN_ID}/jobs?per_page=100`),matches=(jobs.jobs||[]).filter(j=>j.name==='ops');if(matches.length!==1||!Number.isSafeInteger(matches[0].id))fail('MONTHLY_BACKUP_UNVERIFIED');
+  const logReply=await fetch(`${api}/jobs/${matches[0].id}/logs`,{headers,redirect:'manual',signal:AbortSignal.timeout(30000)}),location=logReply.headers.get('location');if(logReply.status!==302||!location)fail('MONTHLY_BACKUP_UNVERIFIED');const logUrl=new URL(location);if(logUrl.protocol!=='https:'||logUrl.username||logUrl.password)fail('MONTHLY_BACKUP_UNVERIFIED');
+  const logResponse=await fetch(logUrl,{redirect:'error',signal:AbortSignal.timeout(30000)});if(!logResponse.ok||Number(logResponse.headers.get('content-length')||0)>2_000_000)fail('MONTHLY_BACKUP_UNVERIFIED');const log=await boundedText(logResponse,2_000_000);if(!verifyBackupEvidence(run,matches[0],log,env.EXPECTED_SHA))fail('MONTHLY_BACKUP_UNVERIFIED');
+ }
+ const result=await cf(`/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/malipang-backend-v5-2/deployments?per_page=2`),versions=result.deployments?.[0]?.versions||[];
+ if(versions.length!==1||versions[0].percentage!==100||!/^[a-f0-9-]{36}$/.test(versions[0].version_id||''))fail('MONTHLY_WORKER_INVALID');const version=versions[0].version_id;
+ if(createHash('sha256').update(version).digest('hex')!==env.EXPECTED_WORKER_VERSION_SHA256)fail('MONTHLY_WORKER_CHANGED');
+ const request=async(action,candidate)=>{let response;try{response=await fetch(base+'/admin/stable-sync/monthly-report',{method:'POST',headers:{Authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'Content-Type':'application/json','x-malipang-expected-worker-version':version},body:JSON.stringify(candidate?{action,candidate}:{action}),redirect:'error',signal:AbortSignal.timeout(240000)});}catch{fail('MONTHLY_OUTCOME_UNKNOWN_NO_RETRY');}
+  let out;try{out=await response.json()}catch{fail('MONTHLY_OUTCOME_UNKNOWN_NO_RETRY');}
+  if(out?.action!==action||out.servedVersion!==version||!['READY','DONE','HELD','UNCERTAIN'].includes(out.status))fail('MONTHLY_OUTCOME_UNKNOWN_NO_RETRY');return {response,out};};
+ const preview=async()=>{const {response,out}=await request('PREVIEW');if(!response.ok||out.status!=='READY'||!Number.isSafeInteger(out.ready)||out.ready<0||!Number.isSafeInteger(out.held)||out.held<0||!Number.isSafeInteger(out.stale)||out.stale<0||!Number.isSafeInteger(out.unassignedDate)||out.unassignedDate<0||!out.heldReasons||typeof out.heldReasons!=='object'||Array.isArray(out.heldReasons)||Object.entries(out.heldReasons).some(([key,value])=>!['DATE_UNVERIFIED','IDENTITY_UNVERIFIED','SOURCE_INCOMPLETE','SOURCE_DUPLICATE','PAYMENT_UNVERIFIED'].includes(key)||!Number.isSafeInteger(value)||value<0)||Object.values(out.heldReasons).reduce((a,b)=>a+b,0)!==out.held||out.candidate!==undefined&&!/^[a-f0-9]{64}$/.test(out.candidate)||out.ready>0&&!out.candidate)fail('MONTHLY_PREVIEW_UNVERIFIED');return out;};
+ if(phase==='PREVIEW'){const out=await preview();console.log(`MONTHLY_READY=${out.ready} MONTHLY_HELD=${out.held} MONTHLY_STALE=${out.stale} MONTHLY_UNASSIGNED_DATE=${out.unassignedDate} MONTHLY_HELD_REASONS=${JSON.stringify(out.heldReasons)}`);return;}
+ if(phase==='APPEND_ONE'){const out=await preview();console.log(`MONTHLY_READY=${out.ready} MONTHLY_HELD=${out.held} MONTHLY_STALE=${out.stale} MONTHLY_UNASSIGNED_DATE=${out.unassignedDate} MONTHLY_HELD_REASONS=${JSON.stringify(out.heldReasons)}`);if(out.ready===0){console.log('MONTHLY_NO_READY_ITEMS');return;}const result=await request('APPEND_ONE',out.candidate);if(!result.response.ok||result.out.status!=='DONE')fail('MONTHLY_OUTCOME_UNVERIFIED_NO_RETRY');console.log('MONTHLY_ONE_RECORDED');return;}
+ const {response,out}=await request('INSPECT');if(!response.ok&&out.status!=='HELD'&&out.status!=='UNCERTAIN')fail('MONTHLY_OUTCOME_UNKNOWN_NO_RETRY');console.log(`MONTHLY_INSPECT_${out.status}${Number.isInteger(out.unresolved)?`_UNRESOLVED_${out.unresolved}`:''}${Number.isInteger(out.markerMatches)?`_MARKER_MATCHES_${out.markerMatches}`:''}`);
+}
+if(process.argv[1]&&pathToFileURL(process.argv[1]).href===import.meta.url)runMonthlyReport(process.env).catch(e=>{console.error(/^[A-Z][A-Z0-9_]+$/.test(e?.message||'')?e.message:'MONTHLY_UNKNOWN_ERROR_NO_RETRY');process.exitCode=1});

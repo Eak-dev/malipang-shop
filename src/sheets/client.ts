@@ -5,6 +5,8 @@ import { fetchWithTimeout } from "../shared/async";
 import { numberEnv } from "../shared/env";
 import { legacyOwnerMonthClosePersonalUseCells,ownerMonthClosePersonalUseCells,planOwnerMonthClosePersonalUseWrites } from "./owner-month-close";
 import {readSheetsBody} from './bounded-response';
+import {parseMonthlyReportGrid} from './monthly-report-grid';
+import {reportBaselineDigest,type ReportGrid} from './monthly-report-baseline';
 export class SheetsReadNetworkError extends Error{constructor(){super('SHEETS_READ_NETWORK');this.name='SheetsReadNetworkError';}}
 export class SheetsHttpError extends Error{
   constructor(public readonly status:number,message:string,public readonly retryAfterSeconds?:number){super(message);this.name="SheetsHttpError";}
@@ -111,6 +113,23 @@ export async function getSheetGridInfo(env:Env,title:string,readPolicy?:Continuo
   const p=found[0]?.properties,g=p?.gridProperties;
   if(found.length!==1||!Number.isSafeInteger(p?.sheetId)||Number(p?.sheetId)<0||!Number.isSafeInteger(g?.rowCount)||!Number.isSafeInteger(g?.columnCount)||Number(g?.rowCount)<1||Number(g?.columnCount)<1)throw Error('SHEET_GRID_UNVERIFIED');
   return {sheetId:Number(p?.sheetId),rowCount:Number(g?.rowCount),columnCount:Number(g?.columnCount)};
+}
+/** Read-only incident snapshot. Full-grid structure and values are compared
+ * with independent value-range reads; this does not fence another writer. */
+export async function readMonthlyReportGrid(env:Env,sheetId:number,baseRows:number,policy:ContinuousSheetsReadPolicy):Promise<ReportGrid>{
+ const title='รายวันต่อเนื่อง_แบบร่าง',db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=await getSheetGridInfo(env,title,policy);
+ if(!book||initial.sheetId!==sheetId||!Number.isSafeInteger(baseRows)||baseRows<4||baseRows>initial.rowCount||initial.rowCount>5000||initial.columnCount<29||initial.columnCount>100)throw Error('MONTHLY_GRID_DIMENSIONS');
+ const range=`'${title}'!A1:${columnName(initial.columnCount)}${initial.rowCount}`,query=new URLSearchParams({includeGridData:'true',fields:'spreadsheetId,properties,namedRanges,developerMetadata,dataSources,dataSourceSchedules,sheets(properties,merges,protectedRanges,conditionalFormats,filterViews,basicFilter,bandedRanges,charts,slicers,developerMetadata,tables,rowGroups,columnGroups,commentAnchors,data(startRow,startColumn,rowMetadata,columnMetadata,rowData(values(userEnteredValue,effectiveValue,formattedValue,note,userEnteredFormat,effectiveFormat,hyperlink,textFormatRuns,dataValidation,pivotTable,dataSourceTable,dataSourceFormula,chipRuns))))'});query.append('ranges',range);
+ const raw=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json());
+ const grid=parseMonthlyReportGrid(raw,book,sheetId,baseRows);if(grid.rows!==initial.rowCount||grid.columns!==initial.columnCount)throw Error('MONTHLY_GRID_DIMENSIONS');
+ const [formula,effective]=await Promise.all([batchGetSheetFormulaValues(env,[range],policy),batchGetSheetEffectiveSerialValues(env,[range],policy)]);
+ const same=(a:unknown,b:unknown)=>((a===undefined||a===null||a==='')&&(b===undefined||b===null||b===''))||a===b;
+ if(formula.length!==1||effective.length!==1||!Array.isArray(formula[0])||!Array.isArray(effective[0])||formula[0]!.length>grid.rows||effective[0]!.length>grid.rows||![...formula[0]!,...effective[0]!].every(row=>Array.isArray(row)&&row.length<=grid.columns))throw Error('MONTHLY_GRID_VALUES_UNVERIFIED');
+ for(let r=0;r<grid.rows;r++)for(let c=0;c<grid.columns;c++)if(!same(grid.formula[r]?.[c],formula[0]![r]?.[c])||!same(grid.effective[r]?.[c],effective[0]![r]?.[c]))throw Error('MONTHLY_GRID_VALUES_UNVERIFIED');
+ const rawAgain=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json()),again=parseMonthlyReportGrid(rawAgain,book,sheetId,baseRows);
+ if(await reportBaselineDigest(grid)!==await reportBaselineDigest(again))throw Error('MONTHLY_GRID_CHANGED');
+ const end=await getSheetGridInfo(env,title,policy);if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||JSON.stringify(end)!==JSON.stringify(initial))throw Error('MONTHLY_GRID_CHANGED');
+ return grid;
 }
 /** Read only the explicitly written number formats on a single E:U row. */
 export async function getSheetCellNumberFormats(env:Env,title:string,sheetId:number,row:number,readPolicy?:ContinuousSheetsReadPolicy):Promise<Array<{type?:string;pattern?:string}|null>>{

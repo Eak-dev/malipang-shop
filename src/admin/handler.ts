@@ -37,6 +37,7 @@ import {ReviewRequestBudget} from '../sheets/review-request-budget';
 import {SheetsHttpError,SheetsReadNetworkError,SheetsMutationOutcomeUnknownError} from '../sheets/client';
 import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from '../sheets/google-auth';
 import {OperationTimeoutError} from '../shared/async';
+import {operateMonthlyReport} from '../sheets/monthly-report-operator';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
 export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext):Promise<Response>{
@@ -44,7 +45,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
   // Prevent an old or mixed deployment from executing a cutover/canary step.
   // The authenticated caller pins the Worker version obtained independently
   // from Cloudflare; an absent/malformed metadata binding fails closed.
-  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident'].includes(url.pathname);
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report'].includes(url.pathname);
   const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
   if(guardedMutation){
@@ -131,6 +132,14 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-canary'){
       const body=await request.json().catch(()=>({})) as {action?:unknown};
       return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/monthly-report'&&env.MONTHLY_REPORT_OPERATOR_ENABLED==='true'){
+      const value=await request.json().catch(()=>null) as unknown;if(!value||typeof value!=='object'||Array.isArray(value))return Response.json({ok:false,error:'MONTHLY_REPORT_INVALID'},{status:400,headers:{'cache-control':'no-store'}});
+      const body=value as {action?:unknown;candidate?:unknown},keys=Object.keys(value),action=body.action;
+      if((action!=='PREVIEW'&&action!=='APPEND_ONE'&&action!=='INSPECT')||keys.some(k=>k!=='action'&&k!=='candidate')||(action==='APPEND_ONE'?keys.length!==2||typeof body.candidate!=='string'||!/^[0-9a-f]{64}$/.test(body.candidate):keys.length!==1))return Response.json({ok:false,error:'MONTHLY_REPORT_INVALID'},{status:400,headers:{'cache-control':'no-store'}});
+      const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(served!)),workerHash=Array.from(new Uint8Array(digest),x=>x.toString(16).padStart(2,'0')).join('');
+      const result=await operateMonthlyReport(env,action,workerHash,typeof body.candidate==='string'?body.candidate:undefined),ok=result.status==='READY'||result.status==='DONE';
+      return Response.json({ok,action,...result,servedVersion:served},{status:ok?200:409,headers:{'cache-control':'no-store'}});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/canary-unwritten-recovery'&&env.CANARY_UNWRITTEN_RECOVERY_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as unknown;

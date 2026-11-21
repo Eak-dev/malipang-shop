@@ -7364,6 +7364,36 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T12:16:42Z",
       "reason": "Supporting fix for Issue 296; integrate before releasing the exact-target incident recovery. The snapshot precedes this registry update and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-monthly-d1-report-20261121",
+      "source_sha": "d5f03b141cfc2ee67726c7a04f6f180624e5feff",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        335
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T13:52:35.049Z",
+      "reason": "Supporting Issue 296 monthly report pilot, PR #335. Retain while review, CI, rehearsal and any authorized rollout remain open; base depends on main b930101 and separate incident/production gates. This record snapshots the code commit before the registry commit and does not imply deployment or completion."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-monthly-d1-report-20261121",
+      "source_sha": "d5f03b141cfc2ee67726c7a04f6f180624e5feff",
+      "issues": [
+        296
+      ],
+      "pull_requests": [
+        335
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T13:52:35.049Z",
+      "reason": "Supporting Issue 296 monthly report pilot, PR #335. Retain while review, CI, rehearsal and any authorized rollout remain open; base depends on main b930101 and separate incident/production gates. This record snapshots the code commit before the registry commit and does not imply deployment or completion."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

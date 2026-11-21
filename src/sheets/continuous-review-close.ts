@@ -364,6 +364,10 @@ async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRe
   reviewPublication?db.prepare(`SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok`):db.prepare(`UPDATE continuous_review_notice_close SET state='COMPLETE',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id=? AND operation_token=? AND state='STATUS_ACKED' AND changes()=1 AND ${integrity}`).bind(book,token),
   db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid-json','$') END AS ok")
  ]);
- if(!stable()||outcome.length!==5||outcome.some(x=>x.success!==true)||outcome.slice(0,reviewPublication?3:4).some(x=>x.meta?.changes!==1))throw Error('REVIEW_CLOSE_COMMIT_UNCERTAIN');
+ // D1 counts changes made by AFTER DELETE triggers too. Releasing one
+ // REVIEW claim can also close its one open sync-alert incident. The next
+ // guarded statement still requires SQLite changes()=1 for the claim itself.
+ const countsValid=outcome.slice(0,reviewPublication?3:4).every((x,i)=>i===2&&!reviewPublication?(x.meta?.changes===1||x.meta?.changes===2):x.meta?.changes===1);
+ if(!stable()||outcome.length!==5||outcome.some(x=>x.success!==true)||!countsValid)throw Error('REVIEW_CLOSE_COMMIT_UNCERTAIN');
  return reviewPublication?'IN_PROGRESS':'RESUMED';
 }

@@ -82,3 +82,5 @@ Ownerอนุมัติ audit/preserve/deleteเฉพาะremoteที่�
 การตรวจ prefix ของ notice-close ใช้ `substr` แทน `GLOB` เพื่อรองรับขีดจำกัด pattern ใน Cloudflare D1 โดยคง guard เดิม; รายละเอียดการพิสูจน์และข้อควรระวังอยู่ใน [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md). สถานะ Production ต้องตรวจจากผู้ให้บริการ.
 
 Canary RAW ที่มี timeout มีทางกู้แบบ positive-only เฉพาะรายการ โดยไม่ส่งข้อมูลรายงานซ้ำและไม่เปิด review ทั่วไป ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md); การมีโค้ดไม่ยืนยันผล Production.
+
+การปิด notice ตรวจผลลบ claim โดยรองรับจำนวน D1 ที่รวม trigger ปิด alert พร้อมคง guard จำนวน claim โดยตรง; รายละเอียดอยู่ใน [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md).

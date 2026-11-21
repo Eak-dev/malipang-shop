@@ -27,3 +27,7 @@
 - EXPECTED / DATA IMPACT: ยืนยัน postimage ที่ตรงกันครบทุก guard แล้วค่อยปิด incident เฉพาะงานสังเคราะห์ โดยไม่ส่งคำขอเขียน RAW ซ้ำหรือเปลี่ยนรายการธุรกิจอื่น. สาเหตุเชิงลึกของ timeout ยังไม่ทราบ; การกู้นี้ไม่อ้างว่าแก้สาเหตุ network แล้ว.
 - IMPLEMENTATION: route Canary RAW เฉพาะรายการบังคับ source, claim `TIMEOUT`, epoch, journal, evidence, marker reservation, ตำแหน่งกริดและผล DAILY ก่อนหน้า; ใช้ positive ledger verification และ notice-close เดิมพร้อม request budget แยก VERIFY, TIME, TIME_READBACK, PROBE_STATUS, STATUS และ COMMIT. ผลที่ไม่ชัดต้องตรวจ D1/ผู้ให้บริการ ห้าม retry คำขอที่อาจส่งไปแล้ว. ฟังก์ชันทั่วไปและ dispatch อัตโนมัติยังคงปิด.
 - VALIDATION / ROLLBACK: เทสต์ scope และ negative cases; ซ้อมกับสำเนาฐานข้อมูลส่วนตัวและ snapshot RAW จริง โดยจำลองการตอบ notice และ report-health เท่านั้น. ก่อน deploy ทำ preflight และเก็บ Worker rollback ตาม workflow; กรณีไม่ผ่านคง gate และ claim แล้วตรวจหลักฐานเพื่อแก้ไปข้างหน้า ห้าม rollback ข้อมูลย้อนหลัง.
+
+### COMMIT สำเร็จแต่ workflow ไม่ได้รับผลยืนยัน
+
+Cloudflare D1 รายงาน `meta.changes=2` เมื่อคำสั่งลบ claim หนึ่งแถวทำให้ trigger ปิด alert incident หนึ่งแถวด้วย จึงเกิด `REVIEW_CLOSE_COMMIT_UNCERTAIN` หลังธุรกรรม commit แล้ว. จำลองบน Miniflare D1 ได้จำนวน `[1,1,2,1,0]` และตรวจ Production พบ notice COMPLETE, admission VERIFIED, ไม่มี claim และงาน PENDING; ห้ามส่ง COMMIT ซ้ำ. ตัวตรวจใหม่ยอมรับจำนวนรวม 1 หรือ 2 เฉพาะคำสั่งลบ claim โดย guard `changes()=1` ใน transaction ยังคงบังคับว่าลบ claim โดยตรงหนึ่งแถว และยังปฏิเสธจำนวนอื่น. ไม่เปลี่ยน policy หรือรายการธุรกิจ.

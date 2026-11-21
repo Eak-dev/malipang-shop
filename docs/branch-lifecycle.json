@@ -7450,6 +7450,32 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T14:38:26.150Z",
       "reason": "Supporting Issue 296 GET-only Cloudflare token diagnostic after an unknown isolated-probe upload; depends on protected release workflow and does not authorize replay or resolve the unknown outcome. Retain through review, CI, diagnosis and cleanup. Snapshot precedes registry update."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-monthly-report-enable-20261121",
+      "source_sha": "6741738e6aa5f552d5d30c7082296d0ca929beb4",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:52:53Z",
+      "reason": "Enable the Issue 296 monthly report route after PR 335; owner explicitly requested deployment without further tests. Registration snapshot precedes this commit; it is not Production evidence."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-monthly-report-enable-20261121",
+      "source_sha": "6741738e6aa5f552d5d30c7082296d0ca929beb4",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T14:52:53Z",
+      "reason": "Enable the Issue 296 monthly report route after PR 335; owner explicitly requested deployment without further tests. Registration snapshot precedes this commit; it is not Production evidence."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

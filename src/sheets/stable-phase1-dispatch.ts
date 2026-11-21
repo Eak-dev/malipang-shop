@@ -54,6 +54,24 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,i
   }
  }
  if(job.entityType!=='EXPENSE'&&job.entityType!=='PERSONAL_USE'){try{return await withStableWorkbookClaim(env,()=>syncJob(env,job,attempt),job);}catch(error){if(error instanceof Error&&error.message===STABLE_NONFINANCIAL_COMPLETION_UNCERTAIN)return 'REVIEW';if(error instanceof Error&&[STABLE_TERMINAL_HOLD,STABLE_NONFINANCIAL_JOB_CLOSED].includes(error.message))return 'BLOCKED';throw error;}}
+ // An unattempted Undo whose original confirmation already needs review
+ // cannot prove an unwritten predecessor. Hold this exact job before taking
+ // a workbook claim or writing the notice, so it cannot fence unrelated work.
+ // This is not proof that the original provider operation was absent; both
+ // versions remain available for separately reviewed reconciliation.
+ if(job.entityType==='EXPENSE'&&job.entityVersion===2&&dailyTarget){
+  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
+  const held=await db.prepare(`UPDATE sync_jobs AS j SET status='REVIEW',last_error='CONTINUOUS_CANCEL_PREDECESSOR_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL
+   WHERE j.entity_type='EXPENSE' AND j.entity_key=? AND j.entity_version=2 AND j.status='PENDING' AND j.attempt_count=0 AND j.lease_token IS NULL AND j.lease_until IS NULL AND (j.last_error IS NULL OR j.last_error='')
+   AND EXISTS(SELECT 1 FROM expense_events e WHERE e.expense_id=j.entity_key AND e.status='CANCELLED' AND e.version=2)
+   AND EXISTS(SELECT 1 FROM sync_jobs prior WHERE prior.entity_type='EXPENSE' AND prior.entity_key=j.entity_key AND prior.entity_version=1 AND prior.status='REVIEW')
+   AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.entity_type='EXPENSE' AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|'))
+   AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes w WHERE w.entity_type='EXPENSE' AND (w.entity_id=j.entity_key OR substr(w.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|'))
+   AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.entity_key=j.entity_key OR substr(i.entity_key,1,length(j.entity_key)+1)=j.entity_key||'|')
+   AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key='EXPENSE:'||j.entity_key||':2' AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')`).bind(job.entityKey).run();
+  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||held.success!==true||!Number.isSafeInteger(held.meta?.changes))throw Error('CANCEL_PREDECESSOR_HOLD_UNCERTAIN');
+  if(Number(held.meta.changes)===1)return 'REVIEW';
+ }
  const lease=await claimSheetSyncJob(env,job);
  if(!lease){
   // A terminal financial record blocks the atomic lease CAS; ACK this

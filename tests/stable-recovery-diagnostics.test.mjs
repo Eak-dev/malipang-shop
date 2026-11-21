@@ -54,6 +54,7 @@ test('stable status provides an allowlisted review breakdown without changing le
    ['secret-5','STABLE_EXPENSE_CANCELLED_OR_SUPERSEDED'],
    ['secret-6','STABLE_DAILY_CAPACITY'],
    ['secret-7','private provider message with sensitive details'],
+   ['secret-8','CONTINUOUS_CANCEL_PREDECESSOR_REVIEW'],
   ];
   const insert=h.sqlite.prepare("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at,last_error) VALUES(?,'EXPENSE',?,1,'secret-trace','REVIEW','now',?)");
   for(const [id,reason] of rows)insert.run(id,id,reason);
@@ -61,10 +62,10 @@ test('stable status provides an allowlisted review breakdown without changing le
   const response=await handleAdmin(req,h.env,{});assert.equal(response.status,200);
   const body=await response.json();
   const counts=x=>Object.fromEntries(x.map(row=>[row.reason,Number(row.n)]));
-  assert.deepEqual(counts(body.reviews),{CAPACITY:1,OTHER:6});
-  assert.deepEqual(counts(body.reviewDetails),{CANCELLED_OR_SUPERSEDED:3,DAILY_MONTH_OPENING:1,DAILY_ROW_FORMULA:1,OTHER:2});
+  assert.deepEqual(counts(body.reviews),{CAPACITY:1,OTHER:7});
+  assert.deepEqual(counts(body.reviewDetails),{CANCELLED_OR_SUPERSEDED:4,DAILY_MONTH_OPENING:1,DAILY_ROW_FORMULA:1,OTHER:2});
   const serialized=JSON.stringify(body);
-  for(const value of ['secret-1','secret-2','secret-3','secret-4','secret-5','secret-6','secret-7','secret-trace','private provider message',h.env.ADMIN_TOKEN])assert.equal(serialized.includes(value),false);
+  for(const value of ['secret-1','secret-2','secret-3','secret-4','secret-5','secret-6','secret-7','secret-8','secret-trace','private provider message',h.env.ADMIN_TOKEN])assert.equal(serialized.includes(value),false);
  }finally{h.close();}
 });
 

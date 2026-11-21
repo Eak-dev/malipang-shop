@@ -21,6 +21,12 @@ export type StablePhase1Outcome=SheetSyncOutcome|'REVIEW'|'BLOCKED'|'CONTINUE'|'
 export const isStableWorkbookBusy=(error:unknown):boolean=>error instanceof Error&&error.message==='STABLE_WORKBOOK_BUSY';
 export const isStableWorkbookReview=(error:unknown):boolean=>error instanceof Error&&error.message==='STABLE_WORKBOOK_REVIEW';
 
+/** Count the directly updated job, not D1 total changes including alert triggers. */
+export async function holdStableSyncJob(env:Env,job:SheetsSyncJob,lease:string,reason:string):Promise<void>{
+ const result=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=? RETURNING job_id").bind(reason,job.entityType,job.entityKey,job.entityVersion,lease).all<{job_id:string}>();
+ if(result.success!==true||!Array.isArray(result.results)||result.results.length!==1||typeof result.results[0]?.job_id!=='string'||!result.results[0].job_id)throw Error('STABLE_JOB_HOLD_UNCERTAIN');
+}
+
 /** Default-off routing. An old financial record is held, never sent through
  * its legacy numeric-row writer. Other workers share the workbook claim. */
 export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,invocationBudget?:ReviewRequestBudget):Promise<StablePhase1Outcome>{
@@ -82,7 +88,7 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,i
   if(current?.status==='COMPLETED'){await recordCanaryDuplicateDelivery(env,job);return 'IGNORED';}
   return current?.status==='REVIEW'?'REVIEW':'BUSY';
  }
- const hold=async(reason:string)=>{const r=await env.DB.prepare("UPDATE sync_jobs SET status='REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now'),next_attempt_at=NULL,lease_until=NULL,lease_token=NULL,last_error=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND status='PROCESSING' AND lease_token=?").bind(reason,job.entityType,job.entityKey,job.entityVersion,lease).run();if(r.success!==true||Number(r.meta?.changes)!==1)throw Error('STABLE_JOB_HOLD_UNCERTAIN');};
+ const hold=async(reason:string)=>holdStableSyncJob(env,job,lease,reason);
  try{
   const eligible=await env.DB.prepare(`SELECT 1 AS ok WHERE ${newStableSourcePredicate(job.entityType)}`).bind(job.entityKey).first<{ok:number}>();
   if(!eligible){await hold('STABLE_HISTORICAL_OR_SOURCE_REVIEW');return 'REVIEW';}

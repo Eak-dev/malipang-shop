@@ -178,3 +178,52 @@ test('unexpired lease is not held and expiry of an unrelated historical epoch is
  h.make('exp_new');assert.equal(await armNextContinuousExpense(h.env),true);h.sqlite.exec("UPDATE sync_jobs SET status='PROCESSING',lease_token='lease-token',lease_until='2099-01-01T00:00:00.000Z' WHERE job_id='exp_new_1'");
  assert.equal(await holdContinuousExpiredLease(h.env),0);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='exp_new_1'").get().status,'PROCESSING');
  }finally{h.close()}});
+
+test('one normal queue pilot arms the selected expense only and preserves the slot after completion',async()=>{
+ const h=fixture();
+ const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
+ const first='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',second='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+ try{
+  h.make('exp_pilot_a');h.make('exp_pilot_b');
+  const job=h.sqlite.prepare('UPDATE sync_jobs SET job_id=? WHERE entity_key=?');
+  job.run(first,'exp_pilot_a');job.run(second,'exp_pilot_b');
+  h.sqlite.exec("UPDATE expense_events SET transaction_date=date('now','+7 hours') WHERE expense_id IN ('exp_pilot_a','exp_pilot_b')");
+  Object.assign(h.env,{CONTINUOUS_DAILY_SHEET:'รายวันต่อเนื่อง_แบบร่าง',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false'});
+  assert.equal(await armNextContinuousExpense(h.env),false);
+  assert.equal(await armSingleNormalExpense(h.env,'invalid'),false);
+  assert.equal(await armSingleNormalExpense(h.env,'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),false);
+  assert.equal(await armSingleNormalExpense(h.env,second),true);
+  const r=h.sqlite.prepare('SELECT target_key,state FROM stable_recovery_epochs').get();
+  assert.deepEqual({...r},{target_key:'exp_pilot_b',state:'ARMED'});
+  assert.equal(await armSingleNormalExpense(h.env,first),false);
+  h.sqlite.exec("UPDATE stable_recovery_epochs SET state='COMPLETE'");
+  assert.equal(await armSingleNormalExpense(h.env,first),false);
+  assert.equal(await armSingleNormalExpense(h.env,second),false);
+  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM continuous_normal_recovery_admissions').get().n,1);
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id=?").get(first).status,'PENDING');
+ }finally{h.close();}
+});
+
+test('pilot respects unresolved journal, current month and gated configuration',async()=>{
+ const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
+ for(const scenario of ['unknown-projection','prior-month','broad','gate-off','not-opted-in']){
+  const h=fixture(),jobId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  try{
+   h.make('exp_selected');
+   h.sqlite.prepare("UPDATE sync_jobs SET job_id=? WHERE entity_key='exp_selected'").run(jobId);
+   h.sqlite.exec("UPDATE expense_events SET transaction_date=date('now','+7 hours') WHERE expense_id='exp_selected'");
+   Object.assign(h.env,{CONTINUOUS_DAILY_SHEET:'รายวันต่อเนื่อง_แบบร่าง',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false'});
+   if(scenario==='prior-month')h.sqlite.exec("UPDATE expense_events SET transaction_date='2020-01-03' WHERE expense_id='exp_selected'");
+   if(scenario==='gate-off')h.env.STABLE_RECOVERY_GATE_ENABLED='false';
+   if(scenario==='not-opted-in')delete h.env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED;
+   if(scenario==='broad'){
+    h.env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED='true';
+    assert.equal(await armNextContinuousExpense(h.env),false);
+    assert.equal(await holdContinuousHistoricalExpenses(h.env),0);
+   }
+   if(scenario==='unknown-projection')h.sqlite.prepare("INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) VALUES('book','EXPENSE','exp_other','DAILY',2,'draft',1,?,'prior','IN_FLIGHT','now')").run('a'.repeat(64));
+   assert.equal(await armSingleNormalExpense(h.env,jobId),false,scenario);
+   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_recovery_epochs').get().n,0);
+  }finally{h.close();}
+ }
+});

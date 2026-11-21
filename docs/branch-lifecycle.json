@@ -57,6 +57,19 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue296-normal-queue-one-pilot",
+      "branch": "codex/issue296-normal-queue-one-pilot",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:48:15.023878+00:00",
+      "reason": "Single-slot normal queue pilot; observed base before implementation. Does not release the original incident."
+    },
+    {
+      "scope": "local",
       "source": "issue296-report-skip",
       "branch": "codex/issue296-report-skip-locked-source",
       "source_sha": "2e1811e5b6094a6087c0f9643a0bfbb9daa76cc3",

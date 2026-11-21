@@ -314,3 +314,12 @@ test('R3: D1 use per expense dispatch with candidate flags off stays far below t
   console.log(`R3 measurement items=${items}: ${JSON.stringify(perDispatch)}`);
  }finally{Object.assign(notice,old);h.close();}}
 });
+
+test('completion accepts the D1 alert-closing trigger while rejecting unexpected counts',async()=>{
+ for(const n of [2,0,3]){const h=fixture();try{
+  assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'CONTINUE');h.sqlite.exec("UPDATE sync_jobs SET status='PROCESSING',lease_token='lease',lease_until='2099-01-01T00:00:00.000Z' WHERE job_id='job'");
+  assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'CONTINUE');h.sqlite.exec("UPDATE sync_jobs SET status='PROCESSING',lease_token='lease',lease_until='2099-01-01T00:00:00.000Z' WHERE job_id='job'");
+  const prepare=h.DB.prepare;h.DB.prepare=function(sql){const s=prepare.call(this,sql),run=s.run;if(sql.includes("UPDATE sync_jobs SET status='COMPLETED'"))s.run=async function(){const result=await run.call(this);return {...result,meta:{...result.meta,changes:n}}};return s;};
+  if(n===2)assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'COMPLETED');else await assert.rejects(runStableExpenseJob(h.env,h.job,'lease'),/STABLE_EXPENSE_COMPLETION_UNCERTAIN/);
+ }finally{h.close();}}
+});

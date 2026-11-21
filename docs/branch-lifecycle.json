@@ -7476,6 +7476,28 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T14:52:53Z",
       "reason": "Enable the Issue 296 monthly report route after PR 335; owner explicitly requested deployment without further tests. Registration snapshot precedes this commit; it is not Production evidence."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-preview-diagnostics-20261121",
+      "source_sha": "2f1ed10413ea58ec9d2eb547f2f7e37ae42bd9d7",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T16:00:29Z",
+      "reason": "Local supporting diagnostic commit retained during a privacy-safe handoff to the replacement branch; do not publish this branch. No Production deployment is implied."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-preview-safe-diagnostics-20261121",
+      "source_sha": "2edef502c3dab4bc4a3891b2deed06b248b9b589",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T16:01:15Z",
+      "reason": "Replacement supporting branch from synchronized main for Issue 296 PREVIEW diagnostics; integrates the independently reviewed diagnostic before any separately gated Production use. Snapshot is the branch base before this change and does not imply deployment."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

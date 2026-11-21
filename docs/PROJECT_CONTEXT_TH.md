@@ -78,3 +78,5 @@ Ownerอนุมัติ audit/preserve/deleteเฉพาะremoteที่�
 ผลรอบส่งมอบ28branch: ลบremoteเพิ่ม15รายการแบบatomic/expectedSHAและตรวจabsenceแล้วเมื่อ2026-11-14T12:30:43.988009+00:00. อีก13รายการคงไว้พร้อมowner/หลักฐานที่ขาดในรายงาน; localworktrees/ไฟล์ค้างยังอยู่ครบ ไม่เปลี่ยนProduction. Deliverybranchชั่วคราวจะปลดหลังmergeผลส่งมอบ ดูจำนวนสด/receiptล่าสุดใน#282.
 
 การตรวจ prefix ของ notice-close ใช้ `substr` แทน `GLOB` เพื่อรองรับขีดจำกัด pattern ใน Cloudflare D1 โดยคง guard เดิม; รายละเอียดการพิสูจน์และข้อควรระวังอยู่ใน [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md). สถานะ Production ต้องตรวจจากผู้ให้บริการ.
+
+Canary RAW ที่มี timeout มีทางกู้แบบ positive-only เฉพาะรายการ โดยไม่ส่งข้อมูลรายงานซ้ำและไม่เปิด review ทั่วไป ดู [incident #296](ISSUE296_DAILY_CANARY_INCIDENT_TH.md); การมีโค้ดไม่ยืนยันผล Production.

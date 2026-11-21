@@ -8,6 +8,7 @@ import {reviewedJobState,reviewedClaimState,type NormalNoticeAuthority} from './
 import {ReviewRequestBudget,ReviewRequestBudgetError} from './review-request-budget';
 import type {ContinuousSheetsReadPolicy} from './client';
 import {batchUpdateSpreadsheetWithReply} from './client';
+import {getGoogleAccessToken} from './google-auth';
 import {stableNoticeStyleFingerprint} from './stable-edit-notice';
 import {verifyReviewedDailyProjection} from './continuous-daily-positive-recovery';
 import {verifyReviewedDailyCancellation} from './continuous-daily-cancel-positive-recovery';
@@ -182,10 +183,10 @@ export async function closeReviewedContinuousExpense(env:Env,job:SheetsSyncJob,t
 /** Only the one synthetic #296 DAILY insert with a positively verified
  * extra blank tail. No IDs are accepted from callers and no generic review
  * dispatcher is enabled. One explicit phase per invocation. */
-export async function closeExactCanaryDailyIncident(env:Env & {CANARY_UNWRITTEN_RECOVERY_ENABLED?:string;CONTINUOUS_CANARY_OPERATOR_ENABLED?:string},phase:'VERIFY'|'TIME'|'TIME_READBACK'|'STATUS'|'COMMIT'):Promise<ReviewCloseOutcome>{
+export async function closeExactCanaryDailyIncident(env:Env & {CANARY_UNWRITTEN_RECOVERY_ENABLED?:string;CONTINUOUS_CANARY_OPERATOR_ENABLED?:string},phase:'VERIFY'|'TIME'|'TIME_READBACK'|'PROBE_STATUS'|'STATUS'|'COMMIT',diagnostic?:{stage:string;remaining:number}):Promise<ReviewCloseOutcome|'READY'>{
  if(env.CANARY_UNWRITTEN_RECOVERY_ENABLED!=='true'||env.CONTINUOUS_CANARY_OPERATOR_ENABLED!=='true'||env.CONTINUOUS_PUBLICATION_ENABLED==='true'||env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true')return 'DISABLED';
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;if(!book)return 'HELD';
- const expected={VERIFY:null,TIME:null,TIME_READBACK:'TIME_IN_FLIGHT',STATUS:'TIME_VERIFIED',COMMIT:'STATUS_ACKED'} as const;
+ const expected={VERIFY:null,TIME:null,TIME_READBACK:'TIME_IN_FLIGHT',PROBE_STATUS:'TIME_VERIFIED',STATUS:'TIME_VERIFIED',COMMIT:'STATUS_ACKED'} as const;
  if(!Object.hasOwn(expected,phase))return 'HELD';
  const rows=await db.prepare(`SELECT c.expense_id,c.trace_id,w.operation_token,p.state projection_state,n.state notice_state
  FROM continuous_canary_operator c JOIN expense_events src ON src.expense_id=c.expense_id AND src.status='CONFIRMED' AND src.version=1
@@ -211,6 +212,19 @@ export async function closeExactCanaryDailyIncident(env:Env & {CANARY_UNWRITTEN_
  if(!/^exp_canary_[a-f0-9]{32}$/.test(x.expense_id)||!/^trace_canary_[a-f0-9]{32}$/.test(x.trace_id)||!x.operation_token||x.notice_state!==expected[phase]||x.projection_state!==(phase==='VERIFY'?'IN_FLIGHT':'VERIFIED'))return 'HELD';
  const job:SheetsSyncJob={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:x.expense_id,entityVersion:1,traceId:x.trace_id},budget=new ReviewRequestBudget(40);
  if(phase==='VERIFY')return await verifyReviewedDailyProjection(env,job,x.operation_token,'PAUSED',{kind:'continuous-expense',budget},'REVIEW',true)?'IN_PROGRESS':'HELD';
+ if(phase==='PROBE_STATUS'){
+  const proof={stage:'AUTH'};let ticket:{release:()=>void}|undefined;
+  try{
+   const intent=await readIntent(env,book,x.operation_token),revision=await sourceRevision(env),selected=await expectedReady(env,'REVIEW');
+   if(!intent||revision===null||!selected||!budget.reserveMutation())return 'HELD';
+   await getGoogleAccessToken(env,budget);ticket=budget.claimMutation();
+   const ok=await verifyReviewedDailyProjection(env,job,x.operation_token,'PAUSED',{kind:'continuous-expense',budget},'REVIEW',true,proof);
+   if(!ok)return 'HELD';
+   proof.stage='NOTICE_STYLE';
+   if(await expectedReady(env,'REVIEW')!==selected||revision!==await sourceRevision(env)||await stableNoticeStyleFingerprint(env,intent.notice_identity,paused,intent.next_stamp,budget)!==intent.style_digest||revision!==await sourceRevision(env)||env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book)return 'HELD';
+   proof.stage='COMPLETE';return 'READY';
+  }finally{ticket?.release();budget.releaseMutation();if(diagnostic){diagnostic.stage=proof.stage;diagnostic.remaining=budget.remaining;}}
+ }
  return closePhase(env,job,x.operation_token,budget,'REVIEW',true);
 }
 async function closePhase(env:Env,job:SheetsSyncJob,token:string,budget:ReviewRequestBudget,authority:NormalNoticeAuthority,allowExtraBlankTail=false):Promise<ReviewCloseOutcome>{

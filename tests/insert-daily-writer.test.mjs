@@ -340,8 +340,9 @@ test('an explicitly scoped extra trailing row must be entirely blank before posi
  assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim),false);
  h.formula().at(-1)[28]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
  h.formula().at(-1)[28]=null;h.effective().at(-1)[1]='unexpected';assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),false);
- h.effective().at(-1)[1]=null;assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true),true);
+ h.effective().at(-1)[1]=null;const diagnostic={stage:''};assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true,diagnostic),true);
  assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
+ assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true,diagnostic),true);assert.equal(diagnostic.stage,'COMPLETE');
  }finally{h.close();}});
 test('positive daily recovery SQL compiles at the D1 expression limit',async()=>{const h=await reviewedLostDaily(),sql=[],prepare=h.DB.prepare;try{
  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));

@@ -60,7 +60,7 @@
 | 4c | ส่วนเสริม | `WORKBOOK_BATCH_FAIRNESS_ENABLED=true`, `EXPENSE_SAVED_SYNC_NOTE_ENABLED=true` | งาน HR และค่าใช้จ่ายสลับกันได้, การ์ด LINE แสดงข้อความใหม่ |
 | 4d | เป้าหมายแท็บ | `STABLE_CANCELLATION_PREIMAGE_ENABLED=true`, `CONTINUOUS_DAILY_SHEET`/`_ID`, `CONTINUOUS_RAW_SHEET`/`_ID`, `CONTINUOUS_DETAIL_SHEET`/`_ID` (ตามคำตัดสินเรื่องแท็บ) | `CONTINUOUS_DAILY_ENABLED` ยังไม่ตั้ง |
 | 5 | cutover (ทำหลังผ่าน preflight checklist) | `STABLE_RECOVERY_GATE_ENABLED=true`, `CONTINUOUS_REPORT_CUTOVER_ENABLED=true`, `CONTINUOUS_CUTOVER_OPERATOR_ENABLED=true`, `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=true`, `CONTINUOUS_CUTOVER_REVIEW_FINGERPRINT=<hash ของล็อกเดิมที่เจ้าของยืนยัน>` แล้วสั่ง operator `START_REVIEW` → `VIEWS` → `DAILY_J` → `REPORTS` → `ACTIVATE` → `RELEASE` ที่ `/admin/stable-sync/continuous-cutover` | แต่ละ action ตอบ `ok:true` และ `servedVersion` ตรงเวอร์ชันที่ deploy; หลัง `RELEASE` claim ถูกปล่อย |
-| 6 | canary รายการเดียว | `CONTINUOUS_DAILY_ENABLED=true`, `CONTINUOUS_CANARY_OPERATOR_ENABLED=true` (**`UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` ต้องไม่ตั้ง**) | อ่านกลับแถว ยอด สูตร `I/J/R/S/U` และรายงาน; ส่งซ้ำจำกัดรายการแล้วไม่เพิ่ม; Undo รายการเดียวกันแล้วอ่านกลับ |
+| 6 | canary รายการเดียว (หลัง RELEASE สำเร็จ) | `CONTINUOUS_CUTOVER_OPERATOR_ENABLED=false`, `CONTINUOUS_CUTOVER_PREWRITE_REVIEW_ENABLED=false`, `CONTINUOUS_VIEWS_INCIDENT_RECOVERY_ENABLED=false`, `CONTINUOUS_DAILY_ENABLED=true`, `CONTINUOUS_CANARY_OPERATOR_ENABLED=true` โดยคง `STABLE_RECOVERY_GATE_ENABLED=true` (**`UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED` ต้องไม่ตั้ง**) | อ่านกลับแถว ยอด สูตร `I/J/R/S/U` และรายงาน; ส่งซ้ำจำกัดรายการแล้วไม่เพิ่ม; Undo รายการเดียวกันแล้วอ่านกลับ |
 | 7 | ขยายวง | ปิด `CONTINUOUS_CANARY_OPERATOR_ENABLED` ตามขั้นตอน operator | 24 ชั่วโมงแรก: failed jobs, REVIEW, รายการซ้ำ วันละครั้ง |
 
 **คำเตือนขั้น 4b:** ถ้าตั้ง `SYNC_ALERT_DURABLE_ENABLED=true` แต่ไม่ตั้งหรือตั้ง `SYNC_ALERT_DURABLE_SINCE` ผิดรูปแบบ ระบบจะ**ทำงานแบบ main อย่างเงียบ ๆ** (แจ้งเหตุ DLQ ตรงแบบเดิม ไม่มี error) ให้ตรวจว่าค่าเป็น ISO-8601 UTC เช่น `2026-12-01T02:00:00Z` และหลัง deploy ตรวจว่ามีการ sweep เกิดขึ้น
@@ -154,6 +154,14 @@ Cutover operator (`POST /admin/stable-sync/continuous-cutover`, `src/admin/conti
 - **ปิด `CONTINUOUS_DAILY_ENABLED` หลัง activation:** ทำได้ (deploy config) แต่ไม่ใช่การกลับไปแท็บเดิม — งานซิงก์ค่าใช้จ่ายจะได้ `CONTINUOUS_DAILY_LEGACY_WRITE_BLOCKED` ถูกเก็บไว้ใน outbox (ไม่หาย) และ ACK ข้อความ ค่าใช้จ่ายจึงหยุดลงชีตจนกว่าจะเปิดกลับหรือมี forward-fix; งาน HR/payroll ไม่กระทบ ใช้เป็นการหยุดฉุกเฉินได้ ห้าม deploy config ค่าเริ่มต้นทั้งชุดทับ
 - **`ACTIVATE` ต้องระบุรหัสค่าใช้จ่าย 2 รายการ** ใน body `{"action":"ACTIVATE","expenseIds":[...]}` — ชื่อช่องใน HTTP คือ `expenseIds` (`src/admin/handler.ts`, `continuous-cutover-operator.ts`; ภายในคือ `mustBeCancelledOrAbsentExpenseIds`) ตัวตรวจบังคับเพียงว่าแต่ละรหัสต้องเป็น "ยกเลิก" หรือไม่มีอยู่ใน D1 จึงยืนยันตัวตนไม่ได้ ใช้สองรายการที่เจ้าของสั่งลบตาม #296 ข้อ 6 จากหลักฐานส่วนตัว ห้ามลงใน Issue
 - **Canary operator** (`POST /admin/stable-sync/continuous-canary`): `PREPARE`, `ARM_CONFIRM`, `CONFIRM`, `VERIFY`, `ARM_DUPLICATE`, `VERIFY_DUPLICATE`, `ARM_UNDO`, `UNDO`, `RECONCILE_CONFIRM`, `RECONCILE_UNDO` และ `ABORT` สำหรับยกเลิก canary สังเคราะห์ (`exp_canary_*`) โดยเก็บผลเขียนที่ไม่แน่ชัดไว้ให้ตรวจ
+
+### ช่องทาง Canary ขั้น 6
+
+Backup rehearsal หลัง `ACTIVATE`/`RELEASE` ต้องแสดง `post_activation_state: PASS`, `smoke_claim_touch: PASS`, `smoke_projection_insert: PASS`, `smoke_legacy_fence: PASS` และ `smoke_all: PASS` รวมทั้ง backup checksum, restore, integrity และ foreign keys ผ่าน; การทดสอบเขียนอยู่ใน transaction ที่ rollback บนสำเนาเท่านั้น. สถานะ activation ที่ไม่รองรับหรือ fence ไม่ทำงานให้หยุด.
+
+หลัง merge workflow และ deploy SHA ที่ผ่าน review แล้ว ใช้ `prod-canary-action.yml` จาก `main` ผ่าน GitHub `production` environment เท่านั้น: หนึ่ง run ต่อหนึ่ง action, ยืนยัน `OWNER APPROVES <ACTION> <sha7>`, SHA เต็ม, hash ของ Worker version ที่ทำงาน 100%, การ fence ผู้เขียนภายนอก และเจ้าของเฝ้าดูจริงทุกครั้ง. Workflow ตรวจ main, Worker, สถานะ cutover และ Canary ใน D1 ก่อน/หลัง; ไม่แสดง token หรือ ID และไม่ retry อัตโนมัติ. การตรวจนี้ไม่แทน backup/preflight, การตรวจชีตและรายงาน หรือ approval ตามขั้นตอน release.
+
+ลำดับปกติ `PREPARE` → `CONFIRM` → `ARM_CONFIRM` → รอ queue และตรวจ D1/ชีต/รายงาน → `ARM_DUPLICATE` → รอ queue → `VERIFY_DUPLICATE` → `UNDO` → `ARM_UNDO` → รอ queue → `VERIFY`. ถ้าคำตอบหรือ readback ไม่แน่ชัดให้หยุด ห้ามสั่งซ้ำ; ตรวจหลักฐานก่อนใช้ `RECONCILE_CONFIRM` หรือ `RECONCILE_UNDO` เฉพาะเมื่อเงื่อนไขโค้ดรองรับ. Workflow ไม่เปิด `ABORT` เป็นทางลัด; การจัดการ incident ต้องใช้แผนที่ตรวจและอนุมัติแยก. การรอ queue หรือ provider ยังไม่เสร็จไม่ใช่เหตุให้ retry action.
 
 ## แท็บ RAW และรายละเอียดแบบต่อเนื่อง (สเปกจากโค้ด)
 

@@ -1,7 +1,7 @@
 import type {Env} from '../types';
 import {batchUpdateSpreadsheetWithReply} from '../sheets/client';
 import {CANARY_UNWRITTEN_EVIDENCE_SQL,readCanaryUnwrittenEvidence} from './canary-unwritten-evidence';
-import {inspectCanaryUnwrittenProvider} from './canary-unwritten-provider-proof';
+import {inspectCanaryUnwrittenProvider,type CanaryProofDiagnostic} from './canary-unwritten-provider-proof';
 import {finalizeCanaryUnwrittenRecovery} from './canary-unwritten-finalize';
 import {canaryUnwrittenScope} from './canary-unwritten-scope';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
@@ -21,7 +21,7 @@ function nextStamp():string{const p=new Intl.DateTimeFormat('en-GB',{timeZone:'A
  * provider writer and obtain exact owner approval. A database flag, elapsed
  * time, this function, and an absent synthetic row do not prove that fence.
  * IN_FLIGHT and ambiguous replies are permanent holds, never auto-retried. */
-export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROBE'|'TIME'|'STATUS'|'COMMIT'):Promise<'DISABLED'|'HELD'|'READY'|'IN_PROGRESS'|'RESUMED'|'ALREADY_COMMITTED'>{
+export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROBE'|'TIME'|'STATUS'|'COMMIT',diagnostic?:CanaryProofDiagnostic):Promise<'DISABLED'|'HELD'|'READY'|'IN_PROGRESS'|'RESUMED'|'ALREADY_COMMITTED'>{
  if(env.CANARY_UNWRITTEN_RECOVERY_ENABLED!=='true')return 'DISABLED';
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
  const scope=()=>canaryUnwrittenScope(env);
@@ -31,7 +31,10 @@ export async function stepCanaryUnwrittenRecovery(env:RecoveryEnv,expected:'PROB
  try{
   const intent=await db.prepare('SELECT operation_token,epoch_id,expense_id,source_revision,paused_stamp,notice_identity,next_stamp,ready_status,provider_digest,style_digest,state FROM canary_unwritten_recovery WHERE spreadsheet_id=?').bind(book).first<Intent>();
   if(!stable())return 'HELD';
-  if(expected==='PROBE')return !intent&&await inspectCanaryUnwrittenProvider(env,undefined,budget)&&stable()?'READY':'HELD';
+  if(expected==='PROBE'){
+   if(intent){if(diagnostic){diagnostic.stage='OPERATOR_STATE';diagnostic.reason='CHECK_FAILED'}return 'HELD';}
+   return await inspectCanaryUnwrittenProvider(env,undefined,budget,diagnostic)&&stable()?'READY':'HELD';
+  }
   if(expected==='COMMIT'&&(intent?.state==='STATUS_ACKED'||intent?.state==='COMPLETE'))return finalizeCanaryUnwrittenRecovery(env);
   if(expected==='TIME'&&intent||expected==='STATUS'&&intent?.state!=='TIME_ACKED'||expected!=='TIME'&&expected!=='STATUS')return 'HELD';
   const evidence=await readCanaryUnwrittenEvidence(env);if(!evidence||!stable())return 'HELD';

@@ -27,6 +27,11 @@ export function verifyPreflight(rows){
  const r=rows[0],expected={incident:1,claims:1,epochs:1,admissions:1,processing:0,staff:0,projections:0,cancellations:0};
  if(Object.entries(expected).some(([key,value])=>typeof r[key]!=='number'||!Number.isSafeInteger(r[key])||r[key]!==value))fail('INCIDENT_PRECHECK_INVALID');
 }
+export function safeProbeDiagnostic(result){
+ const d=result?.diagnostic;
+ if(result?.ok!==false||!/^(OPERATOR_STATE|D1_EVIDENCE|ACTIVATION|NOTICE_INITIAL|SNAPSHOT_INITIAL|REPORT_HEALTH|SNAPSHOT_FINAL|NOTICE_FINAL|CONSISTENCY)$/.test(d?.stage||'')||!/^(CHECK_FAILED|UNVERIFIED|REQUEST_BUDGET|TIMEOUT|SHEETS_READ_NETWORK|SHEETS_RESPONSE_TOO_LARGE|SHEETS_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_HTTP_[45][0-9]{2}|GOOGLE_OAUTH_(CREDENTIAL_INVALID|NETWORK|RESPONSE_INVALID)|REPORT_HEALTH_(MANIFEST|TARGET|READ|FORMULA|SCOPE|CAPACITY|UNVERIFIED))$/.test(d?.reason||''))return null;
+ return `INCIDENT_PROBE_${d.stage}_${d.reason}`;
+}
 async function main(){
  const env=process.env,{phase,base}=validateInputs(env);
  const cfg=JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8')),db=cfg.d1_databases?.find(x=>x.binding==='DB');
@@ -49,6 +54,7 @@ async function main(){
  let response;try{response=await fetch(base+'/admin/stable-sync/canary-unwritten-recovery',{method:'POST',headers:{Authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'Content-Type':'application/json','x-malipang-expected-worker-version':workerVersion},body:JSON.stringify({action:phase}),redirect:'error',signal:AbortSignal.timeout(240000)});}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
  let result;try{result=await response.json()}catch{fail('INCIDENT_OUTCOME_UNKNOWN_NO_RETRY')}
  const outcome=phase==='PROBE'?'READY':phase==='COMMIT'?'RESUMED':'IN_PROGRESS';
+ if(phase==='PROBE'){const diagnostic=safeProbeDiagnostic(result);if(diagnostic)console.log(diagnostic);}
  if(!response.ok||result?.ok!==true||result.action!==phase||result.outcome!==outcome||result.servedVersion!==workerVersion)fail('INCIDENT_OUTCOME_UNVERIFIED_NO_RETRY');
  try{verifyPhase(phase,await query('SELECT state FROM canary_unwritten_recovery'),true)}catch{fail('INCIDENT_POSTSTATE_UNVERIFIED_NO_RETRY')}
  console.log(`INCIDENT_${phase}: PASS; WORKER_MATCH; D1_READBACK_PASS`);

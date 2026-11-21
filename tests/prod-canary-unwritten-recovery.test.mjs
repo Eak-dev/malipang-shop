@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
-import {validateInputs,verifyPhase,verifyPreflight} from '../scripts/prod-canary-unwritten-recovery.mjs';
+import {validateInputs,verifyPhase,verifyPreflight,safeProbeDiagnostic} from '../scripts/prod-canary-unwritten-recovery.mjs';
 
 const sha='a'.repeat(40),valid={EXPECTED_SHA:sha,GITHUB_SHA:sha,GITHUB_REF:'refs/heads/main',GITHUB_RUN_ATTEMPT:'1',RECOVERY_PHASE:'TIME',CONFIRMATION:'OWNER APPROVES INCIDENT TIME aaaaaaa',EXPECTED_WORKER_VERSION_SHA256:'c'.repeat(64),EXTERNAL_WRITERS_FENCED:'true',OWNER_SUPERVISING:'true',CLOUDFLARE_ACCOUNT_ID:'account',CLOUDFLARE_API_TOKEN:'secret',MALIPANG_ADMIN_TOKEN:'secret',MALIPANG_WORKER_URL:'https://example.workers.dev/'};
 test('requires pinned main, exact incident approval, Worker hash and owner attestations',()=>{
@@ -25,4 +25,10 @@ test('manual protected path pins phase, uses one POST and never retries uncertai
  assert.equal((script.match(/fetch\(base\+'\/admin\/stable-sync\/canary-unwritten-recovery'/g)||[]).length,1);
  assert.match(script,/INCIDENT_OUTCOME_UNKNOWN_NO_RETRY/);assert.match(script,/verifyPhase\(phase/);
  assert.match(workflow,/environment: production/);assert.match(workflow,/group: malipang-release-control/);assert.match(workflow,/Assert latest remote main has not moved/);assert.doesNotMatch(workflow,/^\s+push:/m);
+});
+test('probe diagnostics are strictly allowlisted and never print provider content',()=>{
+ assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'REPORT_HEALTH',reason:'REPORT_HEALTH_FORMULA'}}),'INCIDENT_PROBE_REPORT_HEALTH_REPORT_HEALTH_FORMULA');
+ assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'NOTICE_INITIAL',reason:'SHEETS_HTTP_403'}}),'INCIDENT_PROBE_NOTICE_INITIAL_SHEETS_HTTP_403');
+ assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'NOTICE_INITIAL',reason:'private provider detail'}}),null);
+ assert.equal(safeProbeDiagnostic({ok:false,diagnostic:{stage:'SECRET',reason:'CHECK_FAILED'}}),null);
 });

@@ -7509,6 +7509,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:10:38Z",
       "reason": "Supporting Issue 296 read-only diagnostics after PREVIEW reported a grid HTTP error; identifies the failed GET before a separately tested fix. Snapshot is the branch base before this change and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-comment-anchor-safety-20261122",
+      "source_sha": "2e1811e5b6094a6087c0f9643a0bfbb9daa76cc3",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T20:25:35Z",
+      "reason": "Supporting Issue 296 comment anchor baseline safety fix; integrate into the primary issue work after independent review and required checks. This records the branch base and does not imply Production deployment."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

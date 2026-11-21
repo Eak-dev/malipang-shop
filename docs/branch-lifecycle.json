@@ -56,6 +56,19 @@
   ],
   "branches": [
     {
+      "scope": "local",
+      "source": "issue296-report-skip",
+      "branch": "codex/issue296-report-skip-locked-source",
+      "source_sha": "2e1811e5b6094a6087c0f9643a0bfbb9daa76cc3",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T21:59:41.736639+00:00",
+      "reason": "Selection change only for the monthly report under the existing incident. Base observed before local implementation."
+    },
+    {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/fix-line-payment-review",

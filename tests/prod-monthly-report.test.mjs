@@ -24,7 +24,7 @@ test('full workflow previews and appends at most once, preserving unknown outcom
    if(url.includes('/deployments?'))return Response.json({success:true,result:{deployments:[{versions:[{version_id:version,percentage:100}]}]}});
    if(url==='https://worker.invalid/admin/stable-sync/monthly-report'){
     const body=JSON.parse(options.body);assert.equal(options.redirect,'error');
-    if(body.action==='PREVIEW')return Response.json({action:'PREVIEW',servedVersion:version,status:'READY',ready:mode==='empty'?0:1,held:0,stale:0,unassignedDate:0,heldReasons:{},...(mode==='bad-preview'?{candidate:'bad'}:mode==='empty'?{}:{candidate})});
+    if(body.action==='PREVIEW')return Response.json({action:'PREVIEW',servedVersion:version,status:'READY',ready:mode==='empty'?0:1,held:1,stale:0,unassignedDate:0,heldReasons:{INCIDENT_REVIEW:1},...(mode==='bad-preview'?{candidate:'bad'}:mode==='empty'?{}:{candidate})});
     assert.deepEqual(body,{action:'APPEND_ONE',candidate});if(mode==='lost-append')throw Error('lost');return Response.json({action:'APPEND_ONE',servedVersion:version,status:'DONE'});
    }throw Error('unexpected');
   };

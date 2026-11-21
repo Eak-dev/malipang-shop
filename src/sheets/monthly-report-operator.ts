@@ -110,7 +110,7 @@ export async function operateMonthlyReport(env:OperatorEnv,action:'PREVIEW'|'APP
   if(projected&&(projected.success!==true||!Array.isArray(projected.results)))return held();
   const done=new Set<string>();let stale=0;
   for(const x of projected?.results??[]){done.add(`${x.projected_id}:${x.source_version}`);let current=false;try{current=x.expense_id===x.projected_id&&x.version===x.source_version&&await monthlySourceDigest(x)===x.source_digest;}catch{}if(!current)stale++;}
-  stage='PLAN';const available=records.filter(x=>!done.has(`${x.expense_id}:${x.version}`)),plan=planMonthlyD1Preview(available,grid.formula.slice(0,3),new Date());
+  stage='PLAN';const available=records.filter(x=>!done.has(`${x.expense_id}:${x.version}`)),plan=planMonthlyD1Preview(available,grid.formula.slice(0,3),new Date(),incident.row);
   if(plan.period!==period)return held();if(!stable()){stage='CONFIG';return held();}
   const heldReasons:Record<string,number>={};for(const item of plan.held)heldReasons[item.reason]=(heldReasons[item.reason]??0)+1;
   const first=plan.ready[0],raw=first?available.find(x=>x.expense_id===first.expenseId&&x.version===first.sourceVersion):undefined,selected=raw&&sourceRowValid(raw)?await monthlySourceDigest(raw):undefined;

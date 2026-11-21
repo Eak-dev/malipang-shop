@@ -47,6 +47,8 @@ Backup rehearsal รองรับสำเนาหลัง cutover ACTIVE �
 
 ตัวตรวจ report health ยอมรับเฉพาะการที่ Google ตัดอัญประกาศชื่อแท็บ ASCII ที่กำหนด โดยสูตรรวมยังเทียบกับสูตรเป้าหมายและสูตรรายงานแต่ละเซลล์ยังต้องมี SHA-256 ตรง manifest ฉบับสมบูรณ์; ดู [runbook](SYNC_RELEASE_RUNBOOK_TH.md). การแก้โค้ดนี้ไม่ปล่อย workbook REVIEW หรือยืนยันว่า Production หายจาก incident.
 
+การกู้ Canary สังเคราะห์ที่ติดก่อนเขียนรายวันมี operator เฉพาะรายการ พร้อมหลักฐานก่อนส่งและการตรวจผลแบบไม่ retry อัตโนมัติ; ขอบเขต เงื่อนไขและลำดับอยู่ใน [runbook incident](ISSUE296_UNWRITTEN_CANARY_RECOVERY_TH.md). การมีโค้ดหรือ config ใน main ไม่ใช่หลักฐานว่าได้รับอนุมัติหรือดำเนินการใน Production แล้ว.
+
 ## ก่อนเริ่มและเมื่อส่งต่องาน
 
 1. ตรวจ branch, HEAD, uncommitted work และผู้ที่กำลังเขียน worktree ก่อนแก้ไข จากนั้นทำตาม Canonical Main Gate และ task authority ใน AGENTS.md

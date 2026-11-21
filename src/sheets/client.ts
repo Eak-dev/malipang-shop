@@ -40,6 +40,14 @@ type BeforeSheetsMutationDispatch=()=>void|Promise<void>;
  * pre-existing read behavior, including their own retry and body handling. */
 export type ContinuousSheetsReadPolicy={readonly kind:'continuous-expense';readonly budget?:ReviewRequestBudget;readonly oauthLease?:GoogleOAuthLease;readonly postWriteRead?:true};
 export const continuousSheetsReadPolicy:ContinuousSheetsReadPolicy=Object.freeze({kind:'continuous-expense'});
+export type MonthlyGridReadOperation='GRID_METADATA_INITIAL'|'GRID_FULL_INITIAL'|'GRID_VALUES_FORMULA'|'GRID_VALUES_EFFECTIVE'|'GRID_FULL_REPEAT'|'GRID_METADATA_FINAL';
+/** Only PREVIEW uses this wrapper. The original error is never serialized. */
+export class MonthlyGridReadError extends Error{
+ constructor(readonly operation:MonthlyGridReadOperation,readonly original:unknown){super('MONTHLY_GRID_READ_FAILED');this.name='MonthlyGridReadError';}
+}
+async function monthlyGridRead<T>(diagnostic:boolean,operation:MonthlyGridReadOperation,read:()=>Promise<T>):Promise<T>{
+ try{return await read();}catch(error){if(diagnostic)throw new MonthlyGridReadError(operation,error);throw error;}
+}
 async function readContinuousSheetsBody(response:Response,remainingMs:number,label:string):Promise<Uint8Array>{
   try{return await readSheetsBody(response,remainingMs,label);}catch(error){if(error instanceof TypeError)throw new SheetsReadNetworkError();throw error;}
 }
@@ -116,19 +124,19 @@ export async function getSheetGridInfo(env:Env,title:string,readPolicy?:Continuo
 }
 /** Read-only incident snapshot. Full-grid structure and values are compared
  * with independent value-range reads; this does not fence another writer. */
-export async function readMonthlyReportGrid(env:Env,sheetId:number,baseRows:number,policy:ContinuousSheetsReadPolicy):Promise<ReportGrid>{
- const title='รายวันต่อเนื่อง_แบบร่าง',db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=await getSheetGridInfo(env,title,policy);
+export async function readMonthlyReportGrid(env:Env,sheetId:number,baseRows:number,policy:ContinuousSheetsReadPolicy,diagnostic=false):Promise<ReportGrid>{
+ const title='รายวันต่อเนื่อง_แบบร่าง',db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=await monthlyGridRead(diagnostic,'GRID_METADATA_INITIAL',()=>getSheetGridInfo(env,title,policy));
  if(!book||initial.sheetId!==sheetId||!Number.isSafeInteger(baseRows)||baseRows<4||baseRows>initial.rowCount||initial.rowCount>5000||initial.columnCount<29||initial.columnCount>100)throw Error('MONTHLY_GRID_DIMENSIONS');
  const range=`'${title}'!A1:${columnName(initial.columnCount)}${initial.rowCount}`,query=new URLSearchParams({includeGridData:'true',fields:'spreadsheetId,properties,namedRanges,developerMetadata,dataSources,dataSourceSchedules,sheets(properties,merges,protectedRanges,conditionalFormats,filterViews,basicFilter,bandedRanges,charts,slicers,developerMetadata,tables,rowGroups,columnGroups,commentAnchors,data(startRow,startColumn,rowMetadata,columnMetadata,rowData(values(userEnteredValue,effectiveValue,formattedValue,note,userEnteredFormat,effectiveFormat,hyperlink,textFormatRuns,dataValidation,pivotTable,dataSourceTable,dataSourceFormula,chipRuns))))'});query.append('ranges',range);
- const raw=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json());
+ const raw=await monthlyGridRead(diagnostic,'GRID_FULL_INITIAL',()=>sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json()));
  const grid=parseMonthlyReportGrid(raw,book,sheetId,baseRows);if(grid.rows!==initial.rowCount||grid.columns!==initial.columnCount)throw Error('MONTHLY_GRID_DIMENSIONS');
- const [formula,effective]=await Promise.all([batchGetSheetFormulaValues(env,[range],policy),batchGetSheetEffectiveSerialValues(env,[range],policy)]);
+ const [formula,effective]=await Promise.all([monthlyGridRead(diagnostic,'GRID_VALUES_FORMULA',()=>batchGetSheetFormulaValues(env,[range],policy)),monthlyGridRead(diagnostic,'GRID_VALUES_EFFECTIVE',()=>batchGetSheetEffectiveSerialValues(env,[range],policy))]);
  const same=(a:unknown,b:unknown)=>((a===undefined||a===null||a==='')&&(b===undefined||b===null||b===''))||a===b;
  if(formula.length!==1||effective.length!==1||!Array.isArray(formula[0])||!Array.isArray(effective[0])||formula[0]!.length>grid.rows||effective[0]!.length>grid.rows||![...formula[0]!,...effective[0]!].every(row=>Array.isArray(row)&&row.length<=grid.columns))throw Error('MONTHLY_GRID_VALUES_UNVERIFIED');
  for(let r=0;r<grid.rows;r++)for(let c=0;c<grid.columns;c++)if(!same(grid.formula[r]?.[c],formula[0]![r]?.[c])||!same(grid.effective[r]?.[c],effective[0]![r]?.[c]))throw Error('MONTHLY_GRID_VALUES_UNVERIFIED');
- const rawAgain=await sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json()),again=parseMonthlyReportGrid(rawAgain,book,sheetId,baseRows);
+ const rawAgain=await monthlyGridRead(diagnostic,'GRID_FULL_REPEAT',()=>sheetsFetch(env,`?${query.toString()}`,{method:'GET'},false,undefined,false,policy).then(r=>r.json())),again=parseMonthlyReportGrid(rawAgain,book,sheetId,baseRows);
  if(await reportBaselineDigest(grid)!==await reportBaselineDigest(again))throw Error('MONTHLY_GRID_CHANGED');
- const end=await getSheetGridInfo(env,title,policy);if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||JSON.stringify(end)!==JSON.stringify(initial))throw Error('MONTHLY_GRID_CHANGED');
+ const end=await monthlyGridRead(diagnostic,'GRID_METADATA_FINAL',()=>getSheetGridInfo(env,title,policy));if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||JSON.stringify(end)!==JSON.stringify(initial))throw Error('MONTHLY_GRID_CHANGED');
  return grid;
 }
 /** Read only the explicitly written number formats on a single E:U row. */

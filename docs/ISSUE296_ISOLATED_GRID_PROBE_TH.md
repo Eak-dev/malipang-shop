@@ -9,3 +9,5 @@ Workflow `issue296-isolated-grid-probe.yml` ใช้ Worker version ชั่�
 ก่อน GET ต้องตรวจว่า version ใหม่นี้มี preview URL, bindings เป็น vars ทดสอบและ secrets เดิมเท่านั้น, ไม่มี resource binding และ live เดิมยังรับ traffic 100%. ตัว probe ตรวจ hash ของ test workbook และ production ID ที่สืบทอดจริง แล้วใช้ Google OAuth ภายใน Worker; GET สำเร็จรายงานเฉพาะสถานะ ขนาดกริดและจำนวน request. Cloudflare อาจไม่สร้าง preview สำหรับ Worker ที่ใช้ Durable Object: หากไม่มี preview หรือ Google ไม่อนุญาต ให้นำผลไปตรวจต่อ ห้ามเปิด feature หรือส่ง upload ซ้ำโดยอัตโนมัติ
 
 การอ่านสำเนาผ่าน probe ไม่ยืนยันว่า operator ที่เขียนแถวทำงานครบขั้นตอน และไม่อนุญาตเปิดคิวหรือถือว่าระบบ Production พร้อมใช้. หลังจบทดลองให้จัดการ secret ชั่วคราวและสิทธิ์ reader ของสำเนาตามขอบเขตงานเมื่อไม่ต้องใช้แล้ว; version ใหม่กลายเป็น latest uploaded แม้ traffic เดิมไม่เปลี่ยน จึงต้องตรวจ inheritance ก่อน release ถัดไป
+
+เมื่อ shared grid reader เปลี่ยน ต้อง build bundle ด้วย dependency/flags ที่ pin ไว้ เปรียบเทียบและทบทวนความต่างของ executable แยกจาก source ก่อนอัปเดต SHA ที่ workflow ตรวจ; การเปลี่ยน SHA ไม่อนุญาตให้ส่ง upload ที่ผลก่อนหน้ายังไม่ชัดซ้ำ และไม่ใช่หลักฐานว่า probe หรือ Production ผ่าน.

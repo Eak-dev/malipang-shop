@@ -53,3 +53,8 @@ test('lost provider acknowledgment retains the exact fence and never repeats the
 test('proof failure, source drift, or changed review state cannot release the claim',async()=>{const h=fixture();try{
  h.setProof(false);assert.equal(await stepCompletedCanaryRecovery(h.env,'TIME'),'HELD');assert.equal(h.writes(),0);h.setProof(true);assert.equal(await stepCompletedCanaryRecovery(h.env,'TIME'),'IN_PROGRESS');h.sqlite.exec('UPDATE stable_source_revision SET revision=4');assert.equal(await stepCompletedCanaryRecovery(h.env,'STATUS'),'HELD');assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW');
  }finally{h.close()}});
+
+test('exact completion evidence and retained notice intent cannot be bypassed',async()=>{
+ for(const mutation of ["UPDATE sync_jobs SET status='REVIEW'","UPDATE stable_workbook_claims SET review_reason='OTHER'","UPDATE sync_alert_incidents SET closed_at='other'","UPDATE stable_projection_writes SET state='IN_FLIGHT' WHERE projection='DETAIL'","DELETE FROM atomic_daily_marker_reservations WHERE sheet_id=3","UPDATE expense_events SET amount_satang=200"]){const h=fixture();try{h.sqlite.exec(mutation);assert.equal(await stepCompletedCanaryRecovery(h.env,'PROBE'),'HELD',mutation);assert.equal(h.writes(),0)}finally{h.close()}}
+ const h=fixture();try{assert.equal(await stepCompletedCanaryRecovery(h.env,'TIME'),'IN_PROGRESS');assert.throws(()=>h.sqlite.exec("UPDATE canary_completed_recovery SET state='COMPLETE'"),/transition rejected/);assert.equal(h.sqlite.prepare('SELECT state FROM stable_workbook_claims').get().state,'REVIEW')}finally{h.close()}
+});

@@ -66,6 +66,14 @@ test('a read-only daily preflight failure isolates the job and retains its speci
  assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_DAILY_MONTH_OPENING_UNVERIFIED'});
  assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0);
  }finally{h.close();}});
+test('scoped holds count returned job rows rather than D1 trigger changes',async()=>{for(const mode of ['STALE','PREFLIGHT']){
+ const h=fixture(),prepare=h.DB.prepare;let counted=false;try{
+  h.DB.prepare=function(sql){const s=prepare.call(this,sql);if(sql.includes('RETURNING 1 AS held')){const all=s.all;s.all=async function(){const r=await all.call(this);counted=true;return {...r,meta:{...r.meta,changes:r.results.length?2:0}}}}return s};
+  if(mode==='STALE')h.sqlite.exec("UPDATE expense_events SET status='CANCELLED',version=2 WHERE expense_id='exp_new'");else h.e[5][9]=null;
+  assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');assert.equal(counted,true);assert.equal(h.writes(),0);
+  assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").get().status,'REVIEW');assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);
+ }finally{h.close();}
+}});
 test('a month-specific helper formula failure is held for that job with a specific reason',async()=>{const h=fixture();try{
  h.f[6][9]='=unexpected';assert.equal(await runStableExpenseJob(h.env,h.job,'lease'),'JOB_REVIEW');
  assert.deepEqual({...h.sqlite.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id='job'").get()},{status:'REVIEW',last_error:'STABLE_DAILY_ROW_HELPER_FORMULA_UNVERIFIED'});

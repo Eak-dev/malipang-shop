@@ -68,10 +68,12 @@ async function holdUnwrittenExpenseReview(env:Env,job:SheetsSyncJob,lease:string
   AND ${stableSourceIntegrity} AND EXISTS(SELECT 1 FROM stable_workbook_claims c WHERE c.spreadsheet_id=? AND c.operation_token=? AND c.state='HELD')
   AND NOT EXISTS(SELECT 1 FROM stable_recovery_epochs r WHERE r.spreadsheet_id=? AND r.state IN ('ARMED','REVIEW'))
   AND NOT EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.job_key=sync_jobs.entity_type||':'||sync_jobs.entity_key||':'||sync_jobs.entity_version AND f.status='OPEN' AND f.error='DEAD_LETTER_MAX_RETRIES')
-  AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|')) AND ${sourceGuard}`)
-  .bind(reason,job.entityKey,job.entityVersion,lease,book,claim,book,book,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityVersion,...(mode==='PREFLIGHT'?[revision]:[])).run();
- if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||recoveryGateConfigured(env)||result.success!==true||!Number.isSafeInteger(result.meta?.changes))throw Error('STABLE_SCOPED_REVIEW_UNCERTAIN');
- return Number(result.meta.changes)===1;
+  AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.spreadsheet_id=? AND p.entity_type='EXPENSE' AND (p.entity_id=? OR substr(p.entity_id,1,length(?)+1)=?||'|')) AND ${sourceGuard} RETURNING 1 AS held`)
+  .bind(reason,job.entityKey,job.entityVersion,lease,book,claim,book,book,job.entityKey,job.entityKey,job.entityKey,job.entityKey,job.entityVersion,...(mode==='PREFLIGHT'?[revision]:[])).all<{held:number}>();
+ // D1 meta.changes includes trigger writes, so count only rows returned by
+ // the guarded UPDATE itself. A malformed response is never proof of a hold.
+ if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||recoveryGateConfigured(env)||result.success!==true||!Array.isArray(result.results)||result.results.length>1||result.results.some(row=>row.held!==1))throw Error('STABLE_SCOPED_REVIEW_UNCERTAIN');
+ return result.results.length===1;
 }
 
 /** Defer this untouched job while another, already-verified carrier waits for

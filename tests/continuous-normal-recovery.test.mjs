@@ -227,3 +227,33 @@ test('pilot respects unresolved journal, current month and gated configuration',
   }finally{h.close();}
  }
 });
+
+test('pilot watchdog parks its expired lease, linked claim and epoch, and leaves other jobs alone',async()=>{
+ const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
+ for(const mode of ['expired','unexpired','other-epoch','other-claim']){
+  const h=fixture(),s=h.sqlite;
+  try{
+   h.make('exp_pilot');h.make('exp_other');
+   const jobId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+   s.prepare("UPDATE sync_jobs SET job_id=? WHERE entity_key='exp_pilot'").run(jobId);
+   s.exec("UPDATE expense_events SET transaction_date=date('now','+7 hours') WHERE expense_id='exp_pilot'");
+   const config={CONTINUOUS_DAILY_SHEET:'รายวันต่อเนื่อง_แบบร่าง',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false'};
+   if(mode==='other-epoch')assert.equal(await armNextContinuousExpense(h.env),true);
+   Object.assign(h.env,config);
+   if(mode!=='other-epoch')assert.equal(await armSingleNormalExpense(h.env,jobId),true);
+   const epoch=s.prepare("SELECT epoch_id,target_key FROM stable_recovery_epochs WHERE state='ARMED'").get();
+   s.prepare("UPDATE sync_jobs SET status='PROCESSING',lease_token='old',lease_until=? WHERE entity_type='EXPENSE' AND entity_key IN ('exp_pilot','exp_other')").run(mode==='unexpired'?'2099-01-01T00:00:00Z':'2000-01-01T00:00:00Z');
+   s.exec("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','pilot-op','HELD','before','before')");
+   if(mode!=='other-claim')s.prepare("INSERT INTO stable_recovery_operations(operation_token,epoch_id,state,admitted_at) VALUES('pilot-op',?,'ADMITTED','before')").run(epoch.epoch_id);
+   const held=mode==='expired'||mode==='other-claim';
+   assert.equal(await holdContinuousExpiredLease(h.env),Number(held));
+   assert.equal(s.prepare("SELECT state FROM stable_recovery_epochs WHERE epoch_id=?").get(epoch.epoch_id).state,held?'REVIEW':'ARMED');
+   assert.equal(s.prepare("SELECT state FROM stable_workbook_claims WHERE operation_token='pilot-op'").get().state,mode==='expired'?'REVIEW':'HELD');
+   const job=s.prepare("SELECT status,last_error FROM sync_jobs WHERE job_id=?").get(jobId);
+   assert.equal(job.status,held?'REVIEW':'PROCESSING');
+   if(held)assert.equal(job.last_error,'CONTINUOUS_SYNC_LEASE_EXPIRED_UNCERTAIN');
+   assert.equal(s.prepare("SELECT status FROM sync_jobs WHERE entity_key='exp_other'").get().status,'PROCESSING');
+   assert.equal(await holdContinuousExpiredLease(h.env),0);
+  }finally{h.close();}
+ }
+});

@@ -7546,6 +7546,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:49:12Z",
       "reason": "Supporting Issue 296 branch from synchronized main for the original DAILY projection only. Integration target is the named queue recovery change after independent review. Worker and queue state require separate provider verification."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-expiry",
+      "source_sha": "1801b93dc6ed5d72ff3ecebdcecdda4e51c10422",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:55:31Z",
+      "reason": "Supporting exact pilot lease expiry watchdog, based on the normal recovery integration branch for independent testing and integration there. Local work only."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

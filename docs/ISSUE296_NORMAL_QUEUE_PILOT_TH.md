@@ -7,3 +7,5 @@
 ผู้ดูแลเรียก POST `/admin/stable-sync/normal-expense-pilot` ด้วย JSON ที่มีเฉพาะ `jobId` และ header `x-malipang-expected-worker-version` ผ่าน admin authentication ปกติ เปิด `CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED=true` และกำหนด `CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED=false` ค่าเริ่มต้นปิด pilot ไม่ส่ง job ID หรือข้อมูลธุรกรรมลง log สาธารณะ งานต้องตรงกับแท็บรายวันที่กำหนด เป็น CONFIRMED รุ่น 1 หลัง cutover ผ่านเงื่อนไขการรับงานเดิม และอยู่ในเดือนปัจจุบันตามกรุงเทพฯ
 
 ARMED ยืนยันเพียงการจองงานใน D1 จากนั้นคิวปกติจะส่งและอ่านกลับ หากผลเปิด epoch ไม่แน่ชัดให้ตรวจ epoch และ admission ใน D1 การเรียกซ้ำจะเปิดงานที่สองไม่ได้แม้งานแรกเสร็จแล้ว ก่อนขยายต้องตรวจ job, epoch, projection, preimage, marker และค่าจริงในแถวเทียบกับ D1 เมื่อหยุดให้คง recovery gate ปิดฟังก์ชันเปิด pilot และตรวจสถานะงานที่ได้รับสิทธิ์ไปแล้ว การปิดฟังก์ชันนี้ไม่ยกเลิก epoch ที่เปิดอยู่
+
+ถ้า lease ของงานทดสอบหมดอายุ cron จะตั้งเฉพาะงานทดสอบและ epoch เป็น REVIEW ด้วยเหตุ CONTINUOUS_SYNC_LEASE_EXPIRED_UNCERTAIN และพัก claim ที่มี operation ตรงกัน เพื่อให้ตรวจผลที่ Google อาจได้รับไปแล้วก่อนตัดสินใจกู้ต่อ

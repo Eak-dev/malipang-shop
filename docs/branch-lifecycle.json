@@ -57,6 +57,19 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue296-normal-queue-one-pilot",
+      "branch": "codex/issue296-normal-queue-one-pilot",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:48:15.023878+00:00",
+      "reason": "Single-slot normal queue pilot; observed base before implementation. Does not release the original incident."
+    },
+    {
+      "scope": "local",
       "source": "issue296-report-skip",
       "branch": "codex/issue296-report-skip-locked-source",
       "source_sha": "2e1811e5b6094a6087c0f9643a0bfbb9daa76cc3",
@@ -7522,6 +7535,50 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:10:38Z",
       "reason": "Supporting Issue 296 read-only diagnostics after PREVIEW reported a grid HTTP error; identifies the failed GET before a separately tested fix. Snapshot is the branch base before this change and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-exact-held-proof-20261122",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:49:12Z",
+      "reason": "Supporting Issue 296 branch from synchronized main for the original DAILY projection only. Integration target is the named queue recovery change after independent review. Worker and queue state require separate provider verification."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-expiry",
+      "source_sha": "1801b93dc6ed5d72ff3ecebdcecdda4e51c10422",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:55:31Z",
+      "reason": "Supporting exact pilot lease expiry watchdog, based on the normal recovery integration branch for independent testing and integration there. Local work only."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-readback-tests",
+      "source_sha": "d07a9a68e44e221815d2b057f2e96fe27d1473f6",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:59:50Z",
+      "reason": "Independent row readback regression and drift guard for the Issue 296 pilot on its integration branch. Integrate after local tests and review, without asserting Production status."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-parked-notice-release-20261122",
+      "source_sha": "353d2547e0ad3f919216fceda4500bf25fdcf668",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-22T00:06:24Z",
+      "reason": "Dependent handover after bfee974 and 766ac30, initialized from canonical 0c08c6c. Coordinate through the Issue 296 pilot chat and integrate the reviewed change into its single release candidate."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

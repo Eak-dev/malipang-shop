@@ -179,9 +179,18 @@ test('unexpired lease is not held and expiry of an unrelated historical epoch is
  assert.equal(await holdContinuousExpiredLease(h.env),0);assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id='exp_new_1'").get().status,'PROCESSING');
  }finally{h.close()}});
 
+// Exercise the shared transaction predicates with the slot, date, and source gates.
+async function tryPilotStatements(env,jobId){
+ const {normalExpenseEpochStatements}=require('../dist/sheets/continuous-normal-recovery.js');
+ const {parkedPilotEnabled}=require('../dist/sheets/parked-notice-adoption.js');
+ const version='test-version';
+ if(!parkedPilotEnabled({...env,CF_VERSION_METADATA:{id:version},UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED:'false',STABLE_CANCELLATION_PREIMAGE_ENABLED:'true'},version))return false;
+ const epoch='normal_pilot296_'+crypto.randomUUID();
+ const [r]=await env.DB.batch(normalExpenseEpochStatements(env,epoch,new Date().toISOString(),jobId));
+ return r.meta.changes===1;
+}
 test('one normal queue pilot arms the selected expense only and preserves the slot after completion',async()=>{
  const h=fixture();
- const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
  const first='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',second='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
  try{
   h.make('exp_pilot_a');h.make('exp_pilot_b');
@@ -190,22 +199,21 @@ test('one normal queue pilot arms the selected expense only and preserves the sl
   h.sqlite.exec("UPDATE expense_events SET transaction_date=date('now','+7 hours') WHERE expense_id IN ('exp_pilot_a','exp_pilot_b')");
   Object.assign(h.env,{CONTINUOUS_DAILY_SHEET:'รายวันต่อเนื่อง_แบบร่าง',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false'});
   assert.equal(await armNextContinuousExpense(h.env),false);
-  assert.equal(await armSingleNormalExpense(h.env,'invalid'),false);
-  assert.equal(await armSingleNormalExpense(h.env,'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),false);
-  assert.equal(await armSingleNormalExpense(h.env,second),true);
+  assert.equal(await tryPilotStatements(h.env,'invalid'),false);
+  assert.equal(await tryPilotStatements(h.env,'cccccccc-cccc-4ccc-8ccc-cccccccccccc'),false);
+  assert.equal(await tryPilotStatements(h.env,second),true);
   const r=h.sqlite.prepare('SELECT target_key,state FROM stable_recovery_epochs').get();
   assert.deepEqual({...r},{target_key:'exp_pilot_b',state:'ARMED'});
-  assert.equal(await armSingleNormalExpense(h.env,first),false);
+  assert.equal(await tryPilotStatements(h.env,first),false);
   h.sqlite.exec("UPDATE stable_recovery_epochs SET state='COMPLETE'");
-  assert.equal(await armSingleNormalExpense(h.env,first),false);
-  assert.equal(await armSingleNormalExpense(h.env,second),false);
+  assert.equal(await tryPilotStatements(h.env,first),false);
+  assert.equal(await tryPilotStatements(h.env,second),false);
   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM continuous_normal_recovery_admissions').get().n,1);
   assert.equal(h.sqlite.prepare("SELECT status FROM sync_jobs WHERE job_id=?").get(first).status,'PENDING');
  }finally{h.close();}
 });
 
 test('pilot respects unresolved journal, current month and gated configuration',async()=>{
- const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
  for(const scenario of ['unknown-projection','prior-month','broad','gate-off','not-opted-in']){
   const h=fixture(),jobId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   try{
@@ -222,14 +230,13 @@ test('pilot respects unresolved journal, current month and gated configuration',
     assert.equal(await holdContinuousHistoricalExpenses(h.env),0);
    }
    if(scenario==='unknown-projection')h.sqlite.prepare("INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) VALUES('book','EXPENSE','exp_other','DAILY',2,'draft',1,?,'prior','IN_FLIGHT','now')").run('a'.repeat(64));
-   assert.equal(await armSingleNormalExpense(h.env,jobId),false,scenario);
+   assert.equal(await tryPilotStatements(h.env,jobId),false,scenario);
    assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_recovery_epochs').get().n,0);
   }finally{h.close();}
  }
 });
 
 test('pilot watchdog parks its expired lease, linked claim and epoch, and leaves other jobs alone',async()=>{
- const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
  for(const mode of ['expired','unexpired','other-epoch','other-claim']){
   const h=fixture(),s=h.sqlite;
   try{
@@ -240,7 +247,7 @@ test('pilot watchdog parks its expired lease, linked claim and epoch, and leaves
    const config={CONTINUOUS_DAILY_SHEET:'รายวันต่อเนื่อง_แบบร่าง',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false'};
    if(mode==='other-epoch')assert.equal(await armNextContinuousExpense(h.env),true);
    Object.assign(h.env,config);
-   if(mode!=='other-epoch')assert.equal(await armSingleNormalExpense(h.env,jobId),true);
+   if(mode!=='other-epoch')assert.equal(await tryPilotStatements(h.env,jobId),true);
    const epoch=s.prepare("SELECT epoch_id,target_key FROM stable_recovery_epochs WHERE state='ARMED'").get();
    s.prepare("UPDATE sync_jobs SET status='PROCESSING',lease_token='old',lease_until=? WHERE entity_type='EXPENSE' AND entity_key IN ('exp_pilot','exp_other')").run(mode==='unexpired'?'2099-01-01T00:00:00Z':'2000-01-01T00:00:00Z');
    s.exec("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book','pilot-op','HELD','before','before')");

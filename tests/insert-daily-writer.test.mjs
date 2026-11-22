@@ -64,7 +64,7 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
  client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(range=>range.includes("'รายวัน'!X")?[]:range.includes("'97_EXPENSE_CLEAN'!A2:A2")?[[reportFormula]]:range.includes("'V52_EXPENSE_RAW_ALL'!")?[[reportFormulas.raw]]:range.includes("'V52_PURCHASE_DETAIL_ALL'!")?[[reportFormulas.detail]]:range.includes("'raw_new'!")?rawF.map(r=>r.slice()):range.includes("'detail_new'!")?detailF.map(r=>r.slice()):f.map(r=>r.slice()));
  client.batchGetSheetEffectiveSerialValues=async(_env,ranges)=>ranges.map(range=>{
   if(range.includes("'รายวัน'!X"))return [];
-  if(range.includes("'97_EXPENSE_CLEAN'!")){const header=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];return rawE[1][0]==='exp_test'?[header,[(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,'exp_test','=literal',1.23,'SHOP_BANK','ingredients','V52_CONFIRMED','']]:[header];}
+  if(range.includes("'97_EXPENSE_CLEAN'!")){const header=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];if(rawE[1][0]==='exp_pilot'){const date=rawE[1][1],serial=(Date.parse(date+'T00:00:00Z')-Date.UTC(1899,11,30))/86400000;return [header,[serial,'exp_pilot','pilot',1.20,'SHOP_BANK','ingredients','V52_CONFIRMED','']];}return rawE[1][0]==='exp_test'?[header,[(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,'exp_test','=literal',1.23,'SHOP_BANK','ingredients','V52_CONFIRMED','']]:[header];}
   if(range.includes("'V52_EXPENSE_RAW_ALL'!"))return [['Expense_ID'],...rawE.slice(1).map(r=>[r[0]])];
   if(range.includes("'V52_PURCHASE_DETAIL_ALL'!"))return [['Purchase_Item_ID','Expense_ID'],...detailE.slice(1).map(r=>[r[0],r[1]])];
   return range.includes("'raw_new'!")?rawE.map(r=>r.slice()):range.includes("'detail_new'!")?detailE.map(r=>r.slice()):e.map(r=>r.slice());
@@ -74,7 +74,7 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   if(requests[0].findReplace?.range.sheetId===2){const x=requests[0].findReplace,i=x.range.startRowIndex;if(f[i][24]!==x.find)return{replies:[{findReplace:{}}]};assert.equal(x.matchEntireCell,true);assert.equal(x.includeFormulas,false);writes++;f[i][24]=e[i][24]=x.replacement;for(const c of [0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23])e[i][c]='';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,ledgerF=change.range.sheetId===4?detailF:rawF,ledgerE=change.range.sheetId===4?detailE:rawE;if(ledgerF[i][25]!==change.find)return{replies:[{findReplace:{}}]};ledgerF[i][25]=ledgerE[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{ledgerE[i][c]=v});writes++;return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   const offset=requests[0].appendDimension?1:0,index=requests[offset].insertRange.range.startRowIndex,values=requests[offset+1].updateCells.rows[0].values;
-  assert.equal(index,4);assert.equal(requests[offset].insertRange.range.endColumnIndex,25);writes++;
+  assert.equal(index,mode==='second-pilot'?5:4);assert.equal(requests[offset].insertRange.range.endColumnIndex,25);writes++;
   const oldF=f.map(r=>r.slice()),oldE=e.map(r=>r.slice());f.push(Array(29).fill(null));e.push(Array(29).fill(null));
   // Provider can grow once for appendDimension and once for insertRange.
   if(offset&&mode!=='one-growth'){f.push(Array(29).fill(null));e.push(Array(29).fill(null));}
@@ -84,9 +84,14 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   for(let c=0;c<25;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   const payload=decodeAtomicDailyPayload(f[index][24]);assert.ok(payload);
   Object.assign(e[index],{0:year,1:month,2:day,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(year,month-1,day)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
+  if(mode==='second-pilot'){
+   const {postingYear:y,postingMonth:m,postingDay:d,description,amountSatang,category,wallet,expenseId}=payload;
+   const spent=oldE.slice(3,index).filter(r=>r[0]===y&&r[1]===m).reduce((total,r)=>total+Math.round((r[8]||0)*100),amountSatang);
+   Object.assign(e[index],{0:y,1:m,2:d,3:description,7:amountSatang/100,8:amountSatang/100,9:(100000-spent)/100,18:(100000-spent)/100,20:(Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000,21:category,22:wallet,23:'MALIPANG_EXPENSE:'+expenseId,24:f[index][24]});
+  }
   if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';if(mode==='tail-tamper')f.at(-1)[28]='=1';if(mode==='tail-effective')e.at(-1)[27]=1;return{replies:requests.map(()=>({}))};
  };
- return {...h,job,source,legacy,claim,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,dailySheet,2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
+ return {...h,job,source,legacy,claim,realBatchUpdate:saved.batchUpdateSpreadsheetWithReply,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,dailySheet,2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
 }
 
 test('monthly operator projects one record without replaying original incident or changing business data',async()=>{for(const mode of ['ok','lost-provider','post-tamper','unrelated-before','incident-child','multi']){const h=await fixture(false,true,'claim-token-recovery',false,'รายวันต่อเนื่อง_แบบร่าง'),originalRead=client.readMonthlyReportGrid,originalInfo=client.getSheetGridInfo,originalPost=client.batchUpdateSpreadsheetWithReply,originalNotice=notice.stableNoticePaused,originalLease=googleAuth.createGoogleOAuthLease;let posts=0;try{
@@ -958,10 +963,21 @@ async function miniflareDailyFixture(sqlite){
 
 for(const finalAck of ['received','lost'])
 test('Miniflare exact DAILY settlement preserves both holds when the commit ACK is '+finalAck,async()=>{
- const h=await fixture(false,true,'claim-token-recovery'),oldStyle=notice.stableNoticeStyleFingerprint;
+ const h=await fixture(false,true,'claim-token-recovery',false,'รายวันต่อเนื่อง_แบบร่าง'),oldStyle=notice.stableNoticeStyleFingerprint;
  let local;
  try{
   h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+  const pilotId='10000000-1111-2222-3333-444444444444';
+  h.sqlite.exec(`INSERT INTO continuous_cutover_operator(spreadsheet_id,operation_token,origin,state,created_at,updated_at) VALUES('book','claim-token-recovery','NEW','STARTING','now','now');
+   UPDATE continuous_cutover_operator SET state='HELD'; UPDATE continuous_cutover_operator SET state='RELEASING'; UPDATE continuous_cutover_operator SET state='COMPLETE';
+   INSERT INTO continuous_canary_operator(spreadsheet_id,expense_id,document_id,item_id,line_user_id,transaction_date,trace_id,state,created_at,updated_at) VALUES('book','exp_canary_test','doc_canary_test','item_canary_test','CANARY_NO_LINE_test','2026-11-15','trace_canary_test','DRAFT','now','now');
+   UPDATE continuous_canary_operator SET state='CONFIRMING';UPDATE continuous_canary_operator SET state='CONFIRMED';UPDATE continuous_canary_operator SET state='ARMED_CONFIRM';
+   UPDATE continuous_canary_operator SET state='DUPLICATE_ARMED',duplicate_epoch_id='duplicate_epoch';UPDATE continuous_canary_operator SET state='DUPLICATE_SEEN';UPDATE continuous_canary_operator SET state='DUPLICATE_VERIFIED';UPDATE continuous_canary_operator SET state='UNDOING';UPDATE continuous_canary_operator SET state='UNDONE';UPDATE continuous_canary_operator SET state='ARMED_UNDO';UPDATE continuous_canary_operator SET state='VERIFIED';
+   INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_pilot','pilot-msg','owner','pilot',120,'transfer','SHOP_BANK','ingredients',date('now','+7 hours'),'CONFIRMED','now',1);
+   INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,expense_id) VALUES('doc_pilot','doc-msg','owner','RECEIPT','CONFIRMED','now','exp_pilot');
+   INSERT INTO expense_document_items(item_id,document_id,expense_id,description,line_total_satang,created_at,updated_at) VALUES('item_pilot','doc_pilot','exp_pilot','item',120,'now','now');
+   INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,created_at) VALUES('link_pilot','exp_pilot','doc_pilot','PRIMARY_PURCHASE_DOCUMENT','EXACT_IDENTIFIER','now');
+   INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('${pilotId}','EXPENSE','exp_pilot',1,'trace-pilot','PENDING','now');`);
   h.sqlite.exec("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id='book'");
   h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
   h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
@@ -1005,6 +1021,97 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   assert.equal((await db.prepare('SELECT 1 ok WHERE '+guard.sql).bind(...guard.args).first()).ok,1);
   assert.equal((await call(settle)).outcome,'HELD');assert.equal(batches,3);
   assert.deepEqual(await before(),baseline);assert.equal(h.writes(),1);
+  const {operateParkedPilot,parseParkedPilot}=require('../dist/admin/parked-expense-handover.js');
+  const {takePausedPilot}=require('../dist/sheets/parked-notice-adoption.js');
+  const action={...settle,action:'HANDOVER_ONE',jobId:pilotId};
+  const check={action:'INSPECT_HANDOVER',jobId:pilotId,fingerprint:inspect.fingerprint};
+  assert.equal(parseParkedPilot({...action,ownerSupervising:false}),null);
+  assert.equal(parseParkedPilot({...check,extra:1}),null);
+  assert.deepEqual(parseParkedPilot(action),action);
+  Object.assign(h.env,{CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',SHEETS_SYNC_ENABLED:'true',UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED:'false'});
+  const operate=value=>operateParkedPilot(h.env,value,version);
+  assert.deepEqual(await operate(check),{ok:true,outcome:'ABSENT'});
+  assert.equal((await operateParkedPilot(h.env,action,'wrong-version')).outcome,'HELD');
+  assert.equal((await operate({...action,preimageDigest:'c'.repeat(64)})).outcome,'HELD');
+  await db.prepare("UPDATE sync_jobs SET next_attempt_at='2099-01-01' WHERE job_id=?").bind(pilotId).run();
+  assert.equal((await operate(action)).outcome,'UNCERTAIN'); // arming affected zero; batch rolls back the old claim delete
+  assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims WHERE operation_token='claim-token-recovery'").first()).state,'REVIEW');
+  assert.equal((await operate(check)).outcome,'ABSENT');
+  await db.prepare("UPDATE sync_jobs SET next_attempt_at=NULL WHERE job_id=?").bind(pilotId).run();
+  assert.deepEqual(await operate(action),{ok:true,outcome:'RESERVED'});
+  assert.equal((await operate(action)).outcome,'HELD');
+  assert.equal((await operate(check)).outcome,'RESERVED');
+  assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='ARMED'").first()).n,1);
+  const pilot={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_pilot',entityVersion:1,traceId:'trace-pilot'};
+  await db.prepare("UPDATE sync_jobs SET status='PROCESSING',lease_token='pilot-lease',lease_until='2099',attempt_count=1 WHERE job_id=?").bind(pilotId).run();
+  assert.equal(await takePausedPilot(h.env,pilot,'wrong-lease'),null);
+  const originalBegin=notice.beginStableNotice,originalEnd=notice.endStableNotice;
+  let begins=0,ends=0;
+  notice.beginStableNotice=async()=>{begins++;throw Error('unexpected begin notice');};
+  notice.endStableNotice=async(_env,_token,_bounded,preflight)=>{if(!ends)assert.ok(preflight);if(preflight)await preflight();ends++;};
+  try{
+   if(finalAck==='received'){
+    // Deliver through the real Worker queue entry point and production Sheets
+    // HTTP client. Only the external provider and notice fixture are simulated.
+    const worker=require('../dist/index.js').default;
+    const originalFetch=globalThis.fetch,originalToken=googleAuth.getGoogleAccessToken,model=client.batchUpdateSpreadsheetWithReply;
+    const originalCoverage=coverage.readLegacyDailyCoverage;
+    h.setMode('second-pilot');let posts=0,acks=0;h.env.JOB_QUEUE.send=async(_job,options)=>{assert.equal(options.delaySeconds,90);};
+    await db.prepare("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL,attempt_count=0 WHERE job_id=?").bind(pilotId).run();
+    try{
+     const date=(await db.prepare("SELECT transaction_date FROM expense_events WHERE expense_id='exp_pilot'").first()).transaction_date;
+     coverage.readLegacyDailyCoverage=async(...args)=>{const x=await originalCoverage(...args);return {...x,coverage:{...x.coverage,year:Number(date.slice(0,4)),month:Number(date.slice(5,7))}};};
+     googleAuth.getGoogleAccessToken=async()=> 'local-test-token';
+     client.batchUpdateSpreadsheetWithReply=h.realBatchUpdate;
+     globalThis.fetch=async(input,init)=>{
+      assert.equal(String(input),'https://sheets.googleapis.com/v4/spreadsheets/book:batchUpdate');
+      assert.equal(init.method,'POST');posts++;
+      return Response.json(await model(h.env,JSON.parse(init.body).requests,async()=>{}));
+     };
+     await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected pilot retry');}}]},h.env,{});
+     const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();
+     assert.equal(posts,1,JSON.stringify(state));assert.equal(acks,1,JSON.stringify(state));
+     assert.equal(state.status,'PENDING');assert.equal(state.last_error,'STABLE_STAGE_CONTINUE');
+     assert.equal((await operate(check)).outcome,'STAGE_VERIFIED',JSON.stringify(state));
+     const projected=h.effective().filter(r=>r[23]==='MALIPANG_EXPENSE:exp_pilot');
+     assert.equal(projected.length,1);assert.equal(projected[0][3],'pilot');assert.equal(projected[0][7],1.2);
+     assert.equal(begins,0);assert.equal(ends,1);
+     notice.beginStableNotice=async(env,token,_wait,canWrite)=>{
+      await canWrite();begins++;
+      await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='next',notice_identity='identity' WHERE state='HELD' AND operation_token=?").bind(token).run();
+     };
+     // Move only the pacing clock. Production schedules these continuations 90s apart.
+     const realNow=Date.now;let step=0;
+     try{
+      Date.now=()=>realNow()+step*90000;
+      for(const projection of ['EXPENSE_RAW','DETAIL','FINAL']){
+       step++;
+       await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected continuation retry');}}]},h.env,{});
+       const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();
+       assert.equal(state.status,projection==='FINAL'?'COMPLETED':'PENDING',projection+' '+JSON.stringify(state));
+       assert.equal(state.phase,null,JSON.stringify(state));
+      }
+      assert.equal((await db.prepare("SELECT count(*) n FROM stable_projection_writes WHERE state='VERIFIED' AND (entity_id='exp_pilot' OR entity_id LIKE 'exp_pilot|%')").first()).n,3);
+      assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='COMPLETE' AND target_key='exp_pilot'").first()).n,1);
+      assert.equal(acks,4);assert.equal(posts,3);
+     }finally{Date.now=realNow;}
+
+    }finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalToken;client.batchUpdateSpreadsheetWithReply=model;coverage.readLegacyDailyCoverage=originalCoverage;}
+    assert.equal(ends,4);
+   }else{
+    notice.stableNoticeStyleFingerprint=async()=> 'b'.repeat(64);
+    await assert.rejects(claimApi.withStableWorkbookClaim(h.env,async()=>{throw Error('unexpected business callback');},
+     pilot,undefined,undefined,{job:pilot,lease:'pilot-lease'}),/PILOT_PAUSE_UNVERIFIED/);
+    assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_operations WHERE state='ADMITTED'").first()).n,0);
+    assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims").first()).state,'REVIEW');
+    assert.equal(ends,0);
+   }
+   assert.equal(begins,finalAck==='received'?3:0);
+  }finally{notice.beginStableNotice=originalBegin;notice.endStableNotice=originalEnd;}
+  assert.equal((await db.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").first()).status,'REVIEW');
+  assert.equal((await db.prepare("SELECT status FROM failed_jobs WHERE id='failed'").first()).status,'OPEN');
+  assert.equal(h.writes(),finalAck==='received'?4:1);
+
  }finally{notice.stableNoticeStyleFingerprint=oldStyle;if(local)await local.close();h.close();}
 });
 
@@ -1027,7 +1134,7 @@ test('exact daily admin settlement pins the Worker before all D1 reads',async()=
 });
 
 test('normal-pilot readback independently checks the D1 source and effective Google row without disclosing values',async()=>{
- const {armSingleNormalExpense}=require('../dist/sheets/continuous-normal-recovery.js');
+ const {normalExpenseEpochStatements}=require('../dist/sheets/continuous-normal-recovery.js');
  const {admitStableRecovery,verifyStableRecoveryAdmission}=require('../dist/sheets/stable-recovery-admission.js');
  const {handleAdmin}=require('../dist/admin/handler.js');
  const period=new Date(Date.now()+7*3600000).toISOString().slice(0,7);
@@ -1044,7 +1151,9 @@ test('normal-pilot readback independently checks the D1 source and effective Goo
   for(const state of ['CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED','UNDOING','UNDONE','ARMED_UNDO','VERIFIED'])
    h.sqlite.prepare("UPDATE continuous_canary_operator SET state=?,duplicate_epoch_id=CASE WHEN ?='DUPLICATE_ARMED' THEN 'duplicate_epoch' ELSE duplicate_epoch_id END").run(state,state);
   h.sqlite.prepare("UPDATE sync_jobs SET job_id=?,status='PENDING',attempt_count=0,lease_until=NULL,lease_token=NULL WHERE job_id='job'").run(jobId);
-  assert.equal(await armSingleNormalExpense(h.env,jobId),true);
+  const epoch='normal_pilot296_'+crypto.randomUUID();
+  const grants=await h.env.DB.batch(normalExpenseEpochStatements(h.env,epoch,new Date().toISOString(),jobId));
+  assert.deepEqual(grants.map(r=>r.meta.changes),[1,1]);
   h.sqlite.prepare("UPDATE sync_jobs SET status='PROCESSING',attempt_count=1,lease_until='2099-01-01T00:00:00Z',lease_token='lease' WHERE job_id=?").run(jobId);
   h.sqlite.prepare("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book',?,'HELD','now','now')").run(claim);
   assert.equal(await admitStableRecovery(h.env,h.job,claim),true);

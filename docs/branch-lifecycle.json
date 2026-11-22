@@ -7568,6 +7568,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:59:50Z",
       "reason": "Independent row readback regression and drift guard for the Issue 296 pilot on its integration branch. Integrate after local tests and review, without asserting Production status."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-parked-notice-release-20261122",
+      "source_sha": "353d2547e0ad3f919216fceda4500bf25fdcf668",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-22T00:06:24Z",
+      "reason": "Dependent handover after bfee974 and 766ac30, initialized from canonical 0c08c6c. Coordinate through the Issue 296 pilot chat and integrate the reviewed change into its single release candidate."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

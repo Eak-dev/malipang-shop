@@ -1,5 +1,5 @@
 import {verifyNormalPilotRow} from './normal-pilot-readback';
-import {armSingleNormalExpense} from '../sheets/continuous-normal-recovery';
+import {parseParkedPilot,operateParkedPilot} from './parked-expense-handover';
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
@@ -147,11 +147,12 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-expense-pilot'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as {jobId?:unknown}|null;
       const headers={'cache-control':'no-store'};
-      if(!body||Object.keys(body).length!==1||typeof body.jobId!=='string')return Response.json({error:'PILOT_INPUT_INVALID',servedVersion:served},{status:400,headers});
-      try{
-        const armed=await armSingleNormalExpense(env,body.jobId);
-        return Response.json({status:armed?'ARMED':'HELD',servedVersion:served},{status:armed?200:409,headers});
-      }catch{return Response.json({status:'UNVERIFIED',servedVersion:served},{status:503,headers});}
+      const handover=parseParkedPilot(body);
+      if(handover){
+        const result=await operateParkedPilot(env,handover,served!);
+        return Response.json({...result,servedVersion:served},{status:result.ok?200:409,headers});
+      }
+      return Response.json({ok:false,error:'PILOT_INPUT_INVALID',servedVersion:served},{status:400,headers});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'){
       const headers={'cache-control':'no-store'};

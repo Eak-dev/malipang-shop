@@ -59,6 +59,11 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 /** Read-only provider readiness; never grants permission to write. */
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ'||status==='พร้อมแก้ไข • กำลังซิงก์'||status==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(status));}catch{return false;}}
 export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease,strict=false):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch(error){if(strict)throw error;return false;}}
+async function noticeStyleDigest(x:Snapshot):Promise<string>{
+ const styles=x.cells.map(c=>[c.format,c.note,c.validation,c.textRuns,c.chips]);
+ const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
+ return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+}
 /** Sanitized read-only G6b evidence. Never returns sheet values or identifiers. */
 export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,expectedStatus:string,expectedTime:string,budget?:ReviewRequestBudget,strict=false):Promise<string|null>{
  try{
@@ -66,10 +71,8 @@ export async function stableNoticeStyleFingerprint(env:Env,identityValue:string,
   // The G6b operator writes the existing รายวัน B1:C1 explicitly.  A named
   // range may move while retaining its ID; do not attest a different location.
   if(env.DB!==db||scope(env)!==initial||identity(x)!==identityValue||x.ranges[0].sheetId!==1815870717||x.ranges[0].row!==0||x.ranges[0].column!==1||x.ranges[1].sheetId!==1815870717||x.ranges[1].row!==0||x.ranges[1].column!==2||text(x.cells[0])!==expectedStatus||text(x.cells[1])!==expectedTime)return null;
-  const styles=x.cells.map(c=>[c.format,c.note,c.validation,c.textRuns,c.chips]);
-  const digest=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(styles)));
-  if(env.DB!==db||scope(env)!==initial)return null;
-  return Array.from(new Uint8Array(digest),b=>b.toString(16).padStart(2,'0')).join('');
+  const digest=await noticeStyleDigest(x);
+  return env.DB===db&&scope(env)===initial?digest:null;
  }catch(error){if(strict)throw error;return null;}
 }
 export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>Promise<void>=ms=>new Promise(resolve=>setTimeout(resolve,ms)),onMutationAuthorized:()=>void|Promise<void>=()=>{},boundedMutation=false,budget?:ReviewRequestBudget):Promise<void>{
@@ -85,10 +88,10 @@ export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>P
  await wait(15000);
  if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after),budget)||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
 }
-export async function endStableNotice(env:Env,token:string,boundedMutation=false):Promise<void>{
+export async function endStableNotice(env:Env,token:string,boundedMutation=false,beforeReady?:()=>Promise<void>,expectedStyle?:string):Promise<void>{
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,current=await claim(env,token);if(!current?.notice_stamp||!current.notice_identity||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  const reviews=await db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>();if(!reviews||!Number.isSafeInteger(reviews.n)||reviews.n<0||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  // As in beginStableNotice, the paused pre-image is read inside the fence.
- const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');seen.before=latest;});
+ const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');if(expectedStyle&&(latest.ranges[0].sheetId!==1815870717||latest.ranges[0].row!==0||latest.ranges[0].column!==1||latest.ranges[1].row!==0||latest.ranges[1].column!==2||await noticeStyleDigest(latest)!==expectedStyle))throw Error('PILOT_NOTICE_STYLE_CHANGED');if(beforeReady)await beforeReady();seen.before=latest;});
  const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!==ready||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
 }

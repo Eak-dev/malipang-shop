@@ -47,6 +47,9 @@ const scopeKeys = [
  'CONTINUOUS_DETAIL_SHEET','CONTINUOUS_DETAIL_SHEET_ID','APP_ENV','RUNTIME_MODE','EXACT_DAILY_SETTLEMENT_ENABLED',
  'MONTHLY_REPORT_OPERATOR_ENABLED','CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED','SHEETS_SYNC_ENABLED'
 ] as const satisfies readonly (keyof IncidentEnv)[];
+export function dailyIncidentScope(env:IncidentEnv):string{
+ return JSON.stringify([env.CF_VERSION_METADATA?.id,...scopeKeys.map(k=>env[k])]);
+}
 const off=(value:string|undefined)=>value===undefined||value==='false';
 const storedPreimage=`SELECT preimage_digest FROM stable_expense_projection_preimages WHERE spreadsheet_id=?
  AND entity_type='EXPENSE' AND entity_id=? AND projection='DAILY' AND sheet_id=? AND sheet_name=?
@@ -72,7 +75,7 @@ export function verifiedHeldDailyGuard(e:FailedDailyIncidentEvidence,preimageDig
  * commit together. An uncertain acknowledgment is reconciled using INSPECT. */
 export async function operateExactDailySettlement(env:IncidentEnv,operation:Operation,expectedVersion:string){
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
- const scope=()=>JSON.stringify([env.CF_VERSION_METADATA?.id,...scopeKeys.map(k=>env[k])]);
+ const scope=()=>dailyIncidentScope(env);
  const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
  let stage='CONFIG',dispatched=false;
  const held=()=>({ok:false,outcome:dispatched?'UNCERTAIN' as const:'HELD' as const,stage});

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 
 const require = createRequire(import.meta.url);
-const pilot = require('../dist/sheets/continuous-normal-recovery.js');
+const pilot = require('../dist/admin/parked-expense-handover.js');
 const {handleAdmin} = require('../dist/admin/handler.js');
 const version = '01234567-89ab-cdef-0123-456789abcdef';
 const secret = 'a'.repeat(40);
@@ -18,29 +18,24 @@ test('pilot authorizes the pinned Worker and exposes only the enrollment outcome
       body:JSON.stringify(body)
     }), env, {}
   );
-  const original = pilot.armSingleNormalExpense;
-  let calls = 0;
+  const fingerprint='b'.repeat(64);
+  const op={action:'INSPECT_HANDOVER',jobId,fingerprint};
+  const original=pilot.operateParkedPilot;
+  let calls=0;
   try {
-    pilot.armSingleNormalExpense = async (_, id) => {
-      assert.equal(id, jobId);
-      calls++;
-      if (calls === 3) throw Error('private provider response');
-      return calls === 1;
+    pilot.operateParkedPilot=async (_,body,pin)=>{
+      assert.deepEqual(body,op);assert.equal(pin,version);calls++;
+      return {ok:true,outcome:'RESERVED'};
     };
-    assert.equal((await call({jobId}, 'wrong')).status, 401);
-    assert.equal((await call({jobId}, secret, 'other')).status, 409);
-    assert.equal((await call({jobId})).status, 404);
-    env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED = 'true';
-    for (const invalid of [{}, [], {jobId:4}, {jobId, extra:true}]) {
-      assert.equal((await call(invalid)).status, 400);
+    assert.equal((await call(op,'wrong')).status,401);
+    assert.equal((await call(op,secret,'other')).status,409);
+    assert.equal((await call(op)).status,404);
+    env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED='true';
+    for(const invalid of [{},[],{jobId},{...op,extra:true},{action:'HANDOVER_ONE',jobId,fingerprint}]){
+      assert.equal((await call(invalid)).status,400);
     }
-    assert.equal(calls, 0);
-    for (const [code, status] of [[200,'ARMED'], [409,'HELD'], [503,'UNVERIFIED']]) {
-      const response = await call({jobId});
-      assert.equal(response.status, code);
-      assert.deepEqual(await response.json(), {status, servedVersion:version});
-    }
-  } finally {
-    pilot.armSingleNormalExpense = original;
-  }
+    assert.equal(calls,0);
+    const response=await call(op);assert.equal(response.status,200);
+    assert.deepEqual(await response.json(),{ok:true,outcome:'RESERVED',servedVersion:version});assert.equal(calls,1);
+  } finally {pilot.operateParkedPilot=original;}
 });

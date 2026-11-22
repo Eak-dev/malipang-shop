@@ -141,21 +141,24 @@ export async function armNextContinuousExpense(env:NormalEnv):Promise<boolean>{
  return armNormalExpenseEpoch(env);
 }
 
-/** Only the version-pinned admin action can grant the single pilot slot.
- * The existing queue owns all leases, provider writes, and verification. */
-export async function armSingleNormalExpense(env:NormalEnv,jobId:string):Promise<boolean>{
- if(env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED!=='true'||env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED!=='false'||
-    env.SHEETS_SYNC_ENABLED!=='true'||!recoveryGateValid(env)||env.STABLE_SHEETS_PACING_ENABLED!=='true'||
-    env.CONTINUOUS_DAILY_SHEET!=='รายวันต่อเนื่อง_แบบร่าง'||!env.GOOGLE_SPREADSHEET_ID||
-    !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(jobId))return false;
- return armNormalExpenseEpoch(env,jobId);
-}
-
-async function armNormalExpenseEpoch(env:NormalEnv,pilotJobId?:string):Promise<boolean>{
+async function armNormalExpenseEpoch(env:NormalEnv):Promise<boolean>{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial;
  if(!await assertContinuousDailyActivated(env))return false;
  if(!stable())throw Error('CONTINUOUS_NORMAL_SCOPE_CHANGED');
- const epoch=pilotJobId?`normal_pilot296_${crypto.randomUUID()}`:`normal_${crypto.randomUUID()}`,now=new Date().toISOString();
+ const epoch=`normal_${crypto.randomUUID()}`,now=new Date().toISOString();
+ const result=await db.batch([
+  ...normalExpenseEpochStatements(env,epoch,now),
+  db.prepare("SELECT CASE WHEN changes()=1 OR NOT EXISTS(SELECT 1 FROM stable_recovery_epochs WHERE epoch_id=?) THEN 1 ELSE json_extract('invalid-json','$') END AS ok").bind(epoch)
+ ]);
+ const first=result[0]?.meta?.changes,second=result[1]?.meta?.changes;
+ if(!stable()||result.length!==3||result.some(r=>r.success!==true)||typeof first!=='number'||!Number.isSafeInteger(first)||first!==second||![0,1].includes(first))throw Error('CONTINUOUS_NORMAL_EPOCH_UNCERTAIN');
+ return first===1;
+}
+
+/** Both statements are evaluated in the caller's transaction. The caller must
+ * assert that the expected epoch and its immutable admission were created. */
+export function normalExpenseEpochStatements(env:NormalEnv,epoch:string,now:string,pilotJobId?:string):D1PreparedStatement[]{
+ const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
  // Keep the one-shot slot after completion, restart, or uncertain acknowledgement.
  // This predicate runs in the same INSERT that grants the job permission.
  const pilotFilter=pilotJobId?`AND j.job_id=? AND e.status='CONFIRMED' AND e.version=1
@@ -182,12 +185,8 @@ async function armNormalExpenseEpoch(env:NormalEnv,pilotJobId?:string):Promise<b
  AND ${stableSourceIntegrity} AND ${continuousDailyCutoverIntegrity} AND ${continuousReportCutoverIntegrity} AND ${continuousAdmissionIntegrity} AND ${triggers}
  ${pilotFilter}
  ORDER BY j.updated_at,j.entity_key LIMIT 1`;
- const result=await db.batch([
+ return [
   db.prepare(`INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) SELECT ?,c.spreadsheet_id,'ARMED','EXPENSE',e.expense_id,e.version,?,? ${select}`).bind(epoch,now,now,book,now,...(pilotJobId?[pilotJobId]:[])),
   db.prepare("INSERT INTO continuous_normal_recovery_admissions(epoch_id,spreadsheet_id,expense_id,source_version,created_at) SELECT epoch_id,spreadsheet_id,target_key,target_version,? FROM stable_recovery_epochs WHERE epoch_id=? AND state='ARMED'").bind(now,epoch),
-  db.prepare("SELECT CASE WHEN changes()=1 OR NOT EXISTS(SELECT 1 FROM stable_recovery_epochs WHERE epoch_id=?) THEN 1 ELSE json_extract('invalid-json','$') END AS ok").bind(epoch)
- ]);
- const first=result[0]?.meta?.changes,second=result[1]?.meta?.changes;
- if(!stable()||result.length!==3||result.some(r=>r.success!==true)||typeof first!=='number'||!Number.isSafeInteger(first)||first!==second||![0,1].includes(first))throw Error('CONTINUOUS_NORMAL_EPOCH_UNCERTAIN');
- return first===1;
+ ];
 }

@@ -296,5 +296,5 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   const cancelled=await executeUnwrittenExpenseCancellation(env,{job,lease,claim,sourceRevision:source.revision,sourceDigest:source.digest,description:String(source.expense.description??''),amountSatang:Number(source.expense.amount_satang),reason:'SHEETS_READ',errorCode},invocationBudget);
   if(!cancelled||targetScope!==scope())throw Error('SYNC_UNTOUCHED_NOTICE_CANCEL_UNCERTAIN');
   return{value:'COMPLETED' as const};
- }:undefined,invocationBudget);
+ }:undefined,invocationBudget,{job,lease});
 }

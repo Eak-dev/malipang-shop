@@ -4,11 +4,19 @@
 
 ที่ฐาน 0c08c6c คิวปกติและ cron หยุดเมื่อพบ workbook claim ใน REVIEW ส่วนตัวเลือกอัตโนมัติเดิมเปิดงานถัดไปได้หลังจบ epoch แรก การทดลองจึงต้องปิดการเลือกอัตโนมัติ คง recovery gate และ pacing ตรวจ Worker รุ่นเดียว 100% และรอผู้เขียนเดิมหยุด ก่อนส่งคำสั่งต้องตรวจการพัก incident, หลักฐาน DAILY และ notice ตามกระบวนการกู้
 
-ผู้ดูแลเรียก POST `/admin/stable-sync/normal-expense-pilot` ด้วยคำสั่ง HANDOVER_ONE ผ่าน workflow ซึ่งส่งรหัสงานและหลักฐานรายการเดิม พร้อม header `x-malipang-expected-worker-version` ผ่าน admin authentication ปกติ เปิด `CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED=true` และกำหนด `CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED=false` ค่าเริ่มต้นปิด pilot ไม่ส่ง job ID หรือข้อมูลธุรกรรมลง log สาธารณะ งานต้องตรงกับแท็บรายวันที่กำหนด เป็น CONFIRMED รุ่น 1 หลัง cutover ผ่านเงื่อนไขการรับงานเดิม และอยู่ในเดือนปัจจุบันตามกรุงเทพฯ
+เส้นทาง `POST /admin/stable-sync/normal-expense-pilot` รับ `HANDOVER_ONE` หรือ `INSPECT_HANDOVER` พร้อม admin authentication และ header `x-malipang-expected-worker-version` ต้องเปิด `CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED=true` ปิด `CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED=false` และเปิด recovery gate งานที่เลือกต้องเป็น CONFIRMED รุ่น 1 หลัง cutover ในเดือนปัจจุบันตามเวลากรุงเทพฯ
 
-RESERVED ยืนยันเพียงการจองงานใน D1 จากนั้นคิวปกติจะส่งและอ่านกลับ หากผลเปิด epoch ไม่แน่ชัดให้ตรวจ epoch และ admission ใน D1 การเรียกซ้ำจะเปิดงานที่สองไม่ได้แม้งานแรกเสร็จแล้ว ก่อนขยายต้องตรวจ job, epoch, projection, preimage, marker และค่าจริงในแถวเทียบกับ D1 เมื่อหยุดให้คง recovery gate ปิดฟังก์ชันเปิด pilot และตรวจสถานะงานที่ได้รับสิทธิ์ไปแล้ว การปิดฟังก์ชันนี้ไม่ยกเลิก epoch ที่เปิดอยู่
+หลังจองแล้วต้องคง recovery gate และตรวจผลผ่าน D1 และชีตก่อนขยายงาน การปิดฟังก์ชันทดลองไม่ยกเลิก epoch ที่เปิดอยู่
 
-ถ้า lease ของงานทดสอบหมดอายุ cron จะตั้งเฉพาะงานทดสอบและ epoch เป็น REVIEW ด้วยเหตุ CONTINUOUS_SYNC_LEASE_EXPIRED_UNCERTAIN และพัก claim ที่มี operation ตรงกัน เพื่อให้ตรวจผลที่ Google อาจได้รับไปแล้วก่อนตัดสินใจกู้ต่อ
+## การรับช่วงป้ายพักแก้ไขจากรายการที่ตรวจแล้ว
+
+เมื่อ DAILY ของรายการเดิมได้รับการยืนยันและมี preimage แล้ว ผู้ดำเนินการใช้ `HANDOVER_ONE` กับงานทดลองหนึ่งรายการ พร้อมระบุ fingerprint, preimage digest และ Worker version ที่ตรวจแล้ว ต้องคงรั้วผู้เขียนภายนอกและผู้เฝ้าดูตลอดการตรวจจนได้ผลอ่านกลับ ขั้นนี้มีความเสี่ยงสูง และต้องปฏิบัติตาม release gates ของ Production
+
+Worker ตรวจข้อมูล D1 แถวในชีตและป้ายพักอีกครั้ง จากนั้นบันทึกการส่งมอบใน `admin_audit` เปลี่ยนจาก claim เดิมเป็น claim ของงานทดลอง และเปิด epoch ด้วย D1 transaction เดียว หากรับงานไม่ได้ให้ย้อนทั้ง transaction รายการเดิมยังเป็น REVIEW และ failed job ยังเป็น OPEN
+
+ตัวส่งปกติรับป้ายเดิมหลังได้ lease ของงานทดลอง ผ่าน pacing และตรวจ B1/C1 ทั้งข้อความ เวลา ตำแหน่ง และรูปแบบ งานตรวจทั้ง projection, marker, หลักฐานการเขียนและ preimage ก่อนส่งป้ายพร้อม สำหรับการซ้อม ให้ตรวจกรณี lease ผิด ป้ายเปลี่ยน และรับงานไม่ได้หลังลบ claim ภายใน transaction
+
+หากคำตอบ HANDOVER_ONE ไม่ชัดเจน ใช้ `INSPECT_HANDOVER` กับ fingerprint และ jobId เดิม ตรวจ `RESERVED`, `ADOPTED` และ `STAGE_VERIFIED` ตามลำดับ เมื่อเจอ `HELD` ให้ตรวจ claim, epoch, job, ป้าย และเหตุโดยคง gate ไว้ การยืนยัน DAILY เป็นหลักฐานเฉพาะแถวรายวัน ต้องตรวจ RAW, DETAIL และสถานะ COMPLETED ของงานแยก การย้อนโค้ดหลังจองต้องคง gate และป้ายพักจนกว่าจะตรวจหลักฐานและจัดการ claim ที่ถืออยู่
 
 ขั้น READBACK ตรวจสูตร ยอด วันที่ รายละเอียด หมวดหมู่ และกระเป๋าเงินจริงเทียบกับ D1 และอ่านแถวที่เลือกกับคอลัมน์ marker ซ้ำก่อนสรุป หากข้อมูลต้นทางหรือแถวเปลี่ยนระหว่างตรวจ ให้ถือว่า UNVERIFIED ผลตอบผู้ดูแลแสดงเฉพาะสถานะและ Worker version
 

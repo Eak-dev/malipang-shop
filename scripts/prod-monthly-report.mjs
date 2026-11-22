@@ -16,15 +16,16 @@ async function boundedText(response,limit){
  if(!response.body)fail('MONTHLY_BACKUP_UNVERIFIED');const reader=response.body.getReader(),decoder=new TextDecoder();let size=0,out='';
  try{for(;;){const part=await reader.read();if(part.done)break;size+=part.value.byteLength;if(size>limit)fail('MONTHLY_BACKUP_UNVERIFIED');out+=decoder.decode(part.value,{stream:true});}return out+decoder.decode();}finally{try{await reader.cancel();}catch{}reader.releaseLock();}
 }
-export async function runMonthlyReport(env,fetchImpl=fetch){
- const fetch=fetchImpl,{phase,base}=validateInputs(env),cf=async path=>{const r=await fetch('https://api.cloudflare.com/client/v4'+path,{headers:{Authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)fail('MONTHLY_CF_HTTP');const b=await r.json();if(!b.success)fail('MONTHLY_CF_API');return b.result;};
- if(phase==='APPEND_ONE'){
+export async function requireVerifiedBackup(env,fetch){
   const api='https://api.github.com/repos/Eak-dev/malipang-shop/actions',headers={Authorization:'Bearer '+env.GITHUB_TOKEN,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};
   const get=async path=>{const r=await fetch(api+path,{headers,redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)fail('MONTHLY_BACKUP_READ_FAILED');return r.json();};
   const run=await get(`/runs/${env.BACKUP_RUN_ID}`),jobs=await get(`/runs/${env.BACKUP_RUN_ID}/jobs?per_page=100`),matches=(jobs.jobs||[]).filter(j=>j.name==='ops');if(matches.length!==1||!Number.isSafeInteger(matches[0].id))fail('MONTHLY_BACKUP_UNVERIFIED');
   const logReply=await fetch(`${api}/jobs/${matches[0].id}/logs`,{headers,redirect:'manual',signal:AbortSignal.timeout(30000)}),location=logReply.headers.get('location');if(logReply.status!==302||!location)fail('MONTHLY_BACKUP_UNVERIFIED');const logUrl=new URL(location);if(logUrl.protocol!=='https:'||logUrl.username||logUrl.password)fail('MONTHLY_BACKUP_UNVERIFIED');
   const logResponse=await fetch(logUrl,{redirect:'error',signal:AbortSignal.timeout(30000)});if(!logResponse.ok||Number(logResponse.headers.get('content-length')||0)>2_000_000)fail('MONTHLY_BACKUP_UNVERIFIED');const log=await boundedText(logResponse,2_000_000);if(!verifyBackupEvidence(run,matches[0],log,env.EXPECTED_SHA))fail('MONTHLY_BACKUP_UNVERIFIED');
- }
+}
+export async function runMonthlyReport(env,fetchImpl=fetch){
+ const fetch=fetchImpl,{phase,base}=validateInputs(env),cf=async path=>{const r=await fetch('https://api.cloudflare.com/client/v4'+path,{headers:{Authorization:'Bearer '+env.CLOUDFLARE_API_TOKEN,Accept:'application/json'},redirect:'error',signal:AbortSignal.timeout(30000)});if(!r.ok)fail('MONTHLY_CF_HTTP');const b=await r.json();if(!b.success)fail('MONTHLY_CF_API');return b.result;};
+ if(phase==='APPEND_ONE')await requireVerifiedBackup(env,fetch);
  const result=await cf(`/accounts/${env.CLOUDFLARE_ACCOUNT_ID}/workers/scripts/malipang-backend-v5-2/deployments?per_page=2`),versions=result.deployments?.[0]?.versions||[];
  if(versions.length!==1||versions[0].percentage!==100||!/^[a-f0-9-]{36}$/.test(versions[0].version_id||''))fail('MONTHLY_WORKER_INVALID');const version=versions[0].version_id;
  if(createHash('sha256').update(version).digest('hex')!==env.EXPECTED_WORKER_VERSION_SHA256)fail('MONTHLY_WORKER_CHANGED');

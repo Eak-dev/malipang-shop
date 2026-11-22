@@ -10,7 +10,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 </style><nav aria-label="เลือกแผนผัง"><a href="#p1">ภาพรวม</a><a href="#p2">สายงาน</a><a href="#p3">เส้นทางค่าใช้จ่าย</a><a href="#p4">จุดติดขัด</a><a href="#p5">จบงานเดิม</a><a href="#p6">จบงานทดลอง</a><a href="#p7">แผนที่โค้ด</a></nav><main>
 <section id="p1" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 01</span></header>
-<h1>จาก LINE ถึงรายงานของร้าน</h1><p class="lead">ตามลูกศรจากซ้ายบน ข้อมูลผ่าน Worker สองครั้ง ครั้งแรกรับคำขอ ครั้งถัดไปประมวลผลงานจากคิว</p>
+<h1>จาก LINE ถึงรายงานของร้าน</h1><p class="lead">Webhook รับคำขอจาก LINE ส่วน Worker ที่รับข้อความคิวประมวลผลเหตุการณ์และงานส่งรายงานคนละรอบ</p>
 <div class="flow">
 <div class="row"><article class="node external">
 <h3>LINE OA</h3>
@@ -18,15 +18,15 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h3>Webhook ของ Worker</h3>
 <div>รับ <code>POST /webhook/line</code> ตรวจลายเซ็นและขนาดก่อนรับเหตุการณ์</div></article> <b class="arrow">→</b> <article class="node queue">
 <h3>Cloudflare Queues</h3>
-<div>ส่งข้อความงาน <code>LINE_EVENT</code> ลงคิว <code>malipang-jobs</code></div></article></div>
+<div>ถ้ามีเหตุการณ์ ส่ง <code>LINE_EVENT</code> เข้าคิว <code>malipang-jobs</code> ก่อนตอบ HTTP 200</div></article></div>
 <div class="drop right">↓</div>
 <div class="row"><article class="node db">
 <h3>D1 ฐานข้อมูลหลัก</h3>
 <div>บันทึกธุรกรรม สถานะ และประวัติ สำหรับงานที่ต้องลงชีต เก็บงานรอส่งด้วย</div></article> <b class="arrow">←</b> <article class="node ">
 <h3>ประมวลผลธุรกิจ</h3>
-<div>กันเหตุการณ์ซ้ำ ตรวจสิทธิ์ แล้วเลือกงานลงเวลา ค่าใช้จ่าย หรือคำสั่งอื่น</div></article> <b class="arrow">←</b> <article class="node ">
+<div>ข้ามเหตุการณ์ที่จบแล้ว รับเฉพาะแชตส่วนตัว ตรวจสิทธิ์ตามชนิดงาน</div></article> <b class="arrow">←</b> <article class="node ">
 <h3>Worker รับงานจากคิว</h3>
-<div>ทางเข้า <code>queue()</code> เลือกตัวประมวลผลตามชนิดงาน</div></article></div>
+<div><code>queue()</code> แยกชนิดงาน ข้อความที่ลองใหม่จนครบจำนวนครั้งจะเข้าคิวพัก (DLQ)</div></article></div>
 <div class="drop left">↓</div>
 <div class="row"><article class="node queue">
 <h3>งานซิงก์รายงาน</h3>
@@ -34,7 +34,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h3>Worker เขียนรายงาน</h3>
 <div>อ่านข้อมูลรุ่นที่ตกลงจะส่ง ใช้บัญชีบริการ Google ของระบบเรียก Sheets API</div></article> <b class="arrow">→</b> <article class="node external">
 <h3>Google Sheets ส่วนตัว</h3>
-<div>แสดงผลในไฟล์ของร้าน Worker อ่านกลับเพื่อตรวจแถวและบันทึกผลลง D1</div></article></div></div>
+<div>สำหรับค่าใช้จ่าย Worker อ่านแถวกลับเพื่อตรวจและบันทึกผลแต่ละขั้นลง D1</div></article></div></div>
 <div class="notes">
 <div>
 <h4>ทางเข้าของผู้ดูแล</h4><p>เส้นทาง /admin/ ใช้ตรวจ readiness กระทบยอด และเรียกขั้นตอนที่ได้รับอนุญาต</p></div>
@@ -42,7 +42,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h4>งานตามเวลา</h4><p>Cron ใน config ทุก 5 นาที เรียกงานดูแลและค้นหางานค้างที่เข้าเกณฑ์</p></div>
 <div>
 <h4>การตอบผู้ใช้</h4><p>Worker ส่งข้อความกลับผ่าน LINE Messaging API งานแจ้งเตือนที่กู้ได้มีสถานะแยก</p></div></div>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/index.ts">ทางเข้าของ Worker</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/webhook/handler.ts">Webhook</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/wrangler.jsonc">Cloudflare bindings</a></span><span>1 / 7</span></footer>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/index.ts">ทางเข้าของ Worker</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/webhook/handler.ts">Webhook</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/wrangler.jsonc">Cloudflare bindings</a></span><span>1 / 7</span></footer>
 </section>
 <section id="p2" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 02</span></header>
@@ -52,11 +52,11 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <div>HR รับคำขอ ตรวจบทบาทและสาขา เจ้าของอนุมัติตามขั้นตอน</div><span class="tinyarr">→</span>
 <div>D1 เก็บพนักงาน บทบาท และประวัติการเปลี่ยนสิทธิ์ งาน staff config ซิงก์ข้อมูลที่กำหนด</div></div>
 <div class="lane "><strong>รูปภาพ / หลักฐาน</strong><span class="tinyarr">→</span>
-<div>ดึงรูปจาก LINE ใช้ Workers AI หรือ OpenAI Vision ตามการตั้งค่าและเงื่อนไข fallback</div><span class="tinyarr">→</span>
-<div>ข้อมูลที่อ่านได้ส่งให้สายงานตรวจต่อ รูปหลักฐานที่ระบบเก็บอยู่ใน R2 แบบส่วนตัว</div></div>
+<div>ดึงรูปจาก LINE ค่าใน main ปิด Workers AI และเปิดใช้ OpenAI เมื่อมีคีย์และโควตา</div><span class="tinyarr">→</span>
+<div>ส่งรูปเข้าลงเวลาหรือค่าใช้จ่าย เก็บหลักฐานใน R2 ส่วนตัวตามการตั้งค่า ภาพที่แยกชนิดไม่ได้พัก REVIEW</div></div>
 <div class="lane "><strong>ลงเวลา</strong><span class="tinyarr">→</span>
 <div>ตรวจเวลาและ GPS ที่พิมพ์บนรูป จากนั้น AttendanceCoordinator จัดลำดับตามพนักงานและวัน</div><span class="tinyarr">→</span>
-<div>D1 เก็บเหตุการณ์เข้า–ออก เป็นข้อมูลให้การคำนวณค่าแรงและรายงานลงเวลา</div></div>
+<div>D1 เก็บเวลาเข้า–ออก เมื่อมีการลงเวลาใหม่และเปิดซิงก์ จะส่งงานลงเวลา ค่าแรงรายวันและรายสัปดาห์</div></div>
 <div class="lane "><strong>ค่าแรง / OT / กะ</strong><span class="tinyarr">→</span>
 <div>ใช้ประวัติลงเวลา อัตราค่าจ้าง กะ และ OT ที่อนุมัติ มีงานตรวจกรณีขาดการลงเวลา</div><span class="tinyarr">→</span>
 <div>D1 เก็บผลรายวันและรายสัปดาห์ ส่งรายงานค่าแรงและข้อมูลกะไปยังแท็บที่กำหนด</div></div>
@@ -65,17 +65,17 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <div>D1 เก็บค่าใช้จ่ายและรุ่นข้อมูล งานส่งชีตมีทั้งรายวัน ข้อมูลดิบ และรายละเอียดซื้อ</div></div>
 <div class="lane "><strong>ของใช้ส่วนตัว</strong><span class="tinyarr">→</span>
 <div>รับข้อความหรือปุ่มใน LINE ตรวจผู้ใช้และประมวลผลด้วยโมดูล personal-use</div><span class="tinyarr">→</span>
-<div>D1 เก็บรายการ และมีเส้นทางรายงานของใช้ส่วนตัวแยกจากค่าใช้จ่ายที่ติด Issue #296</div></div>
+<div>D1 เก็บรายการ งาน PERSONAL_USE เขียน PERSONAL_RAW โดยใช้ล็อกไฟล์เดียวกับงานค่าใช้จ่าย</div></div>
 <div class="notes">
 <div>
 <h4>ขอบเขตของ Issue #296</h4><p>อาการที่ยืนยันอยู่ในงานส่งรายงานค่าใช้จ่าย การตรวจครั้งนี้ไม่ได้ทดสอบสุขภาพทุกสายงานใน Production</p></div>
 <div>
 <h4>ระบบเดิม</h4><p>Apps Script และชีตเดิมยังอาจมีผู้เขียนภายนอก จึงต้องตรวจช่วงปล่อยงาน การเขียนหลักของ V5.2 ใช้ Sheets API โดยตรง</p></div></div>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/router/process-event.ts">ตัวแยกเหตุการณ์</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/vision/service.ts">การอ่านรูป</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/attendance/service.ts">ตัวจัดลำดับลงเวลา</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/docs/02_SHEET_MAPPING_TH.md">ผังแท็บ</a></span><span>2 / 7</span></footer>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/router/process-event.ts">ตัวแยกเหตุการณ์</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/vision/service.ts">การอ่านรูป</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/attendance/service.ts">ตัวจัดลำดับลงเวลา</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/docs/02_SHEET_MAPPING_TH.md">ผังแท็บ</a></span><span>2 / 7</span></footer>
 </section>
 <section id="p3" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 03</span></header>
-<h1>ค่าใช้จ่ายหนึ่งรายการเดินทางอย่างไร</h1><p class="lead">บนเส้นทางปกติ การยืนยันยอด การรับงาน และการพิสูจน์ว่าแถวแสดงผลถูกต้อง เป็นคนละเหตุการณ์</p>
+<h1>ค่าใช้จ่ายหนึ่งรายการเดินทางอย่างไร</h1><p class="lead">ตัวส่งคิวปกติแบบ stable ทำทีละขั้น แล้วคืนงานเดิมเข้าคิวจนตรวจครบทุกแถวที่ต้องเขียน</p>
 <div class="flow">
 <div class="row"><article class="node ">
 <h3>ผู้ใช้ยืนยันค่าใช้จ่าย</h3>
@@ -83,23 +83,23 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h3>บันทึก CONFIRMED</h3>
 <div>D1 เก็บ expense_events และรุ่นของรายการ เมื่อเปิดซิงก์จะสร้างงานส่งชีตในชุดคำสั่งยืนยัน</div></article> <b class="arrow">→</b> <article class="node queue">
 <h3>งานเข้า PENDING</h3>
-<div>sync_jobs ผูกชนิดธุรกรรม รหัสรายการ และรุ่น ข้อความคิวพา Worker กลับมาทำงานนี้</div></article></div>
+<div>หลัง D1 ยืนยันแล้ว ส่ง SHEETS_SYNC เพื่อปลุก Worker โดยอ้างชนิด รหัสรายการ และรุ่นเดิม</div></article></div>
 <div class="drop right">↓</div>
 <div class="row"><article class="node external">
-<h3>เขียนผ่าน Sheets API</h3>
-<div>DAILY ลงรายวัน, EXPENSE_RAW ลงข้อมูลดิบ และ DETAIL ลงรายละเอียดซื้อเมื่อมีรายการย่อย</div></article> <b class="arrow">←</b> <article class="node db">
+<h3>เขียนขั้นที่ยังขาด</h3>
+<div>เริ่ม DAILY ตามด้วย EXPENSE_RAW แล้วจึง DETAIL ทีละรายการย่อยผ่าน Sheets API</div></article> <b class="arrow">←</b> <article class="node db">
 <h3>บันทึกก่อนส่ง</h3>
 <div>เก็บหลักฐานการเขียนและตัวระบุแถว เพื่อตามได้ว่าคำขอใดอาจไปถึง Google แล้ว</div></article> <b class="arrow">←</b> <article class="node ">
 <h3>รับสิทธิ์เขียน</h3>
-<div>lease ระบุว่าใครทำงานชิ้นนี้ ส่วน workbook claim คุมการเขียนร่วมกันในไฟล์</div></article></div>
+<div>รับ lease ของงานและ claim ของไฟล์ ถ้า BUSY ให้ส่งคิวใหม่ตามเวลาที่ระบบกำหนด</div></article></div>
 <div class="drop left">↓</div>
 <div class="row"><article class="node external">
 <h3>อ่านผลจากชีต</h3>
 <div>Worker อ่านสูตร ค่าที่แสดง และตัวระบุแถว เพื่อตรวจว่าเป็นค่าใช้จ่ายรายการนั้น</div></article> <b class="arrow">→</b> <article class="node db">
 <h3>เทียบกับ D1</h3>
-<div>ตรวจวัน ยอด รายละเอียด หมวด และแหล่งเงิน พร้อมบันทึกผลรายขั้นที่ตรวจผ่าน</div></article> <b class="arrow">→</b> <article class="node ">
-<h3>ปิดงานหรือพักตรวจ</h3>
-<div>ครบขั้นจึงเป็น COMPLETED ถ้าผลเขียนไม่แน่ชัดให้คงหลักฐานและพัก REVIEW</div></article></div></div>
+<div>เมื่อขั้นที่เขียนตรงกับ D1 ให้บันทึกผล แล้วส่งงานเดิมกลับคิวอีก 90 วินาที (CONTINUE)</div></article> <b class="arrow">→</b> <article class="node ">
+<h3>กลับมารับงานเดิม</h3>
+<div>ถ้ายังขาดขั้น ให้เขียนขั้นถัดไป เมื่อครบแล้วตรวจทุกแถวก่อนปิด COMPLETED ผลที่ยืนยันไม่ได้อาจพัก REVIEW</div></article></div></div>
 <div class="notes">
 <div>
 <h4>แท็บรายวันเป้าหมาย</h4><p>รายวันต่อเนื่อง_แบบร่าง</p></div>
@@ -107,7 +107,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h4>แท็บข้อมูลดิบ</h4><p>V52_EXPENSE_RAW_ต่อเนื่อง</p></div>
 <div>
 <h4>แท็บรายละเอียดซื้อ</h4><p>รายละเอียดการซื้อ_ต่อเนื่อง</p></div></div>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/expense/confirm.ts">การยืนยันค่าใช้จ่าย</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/sheets/stable-expense-job.ts">ตัวส่งงาน</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/sheets/insert-daily-writer.ts">การเขียน DAILY</a></span><span>3 / 7</span></footer>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/expense/confirm.ts">การยืนยันค่าใช้จ่าย</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/sheets/stable-expense-job.ts">ตัวส่งงาน</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/sheets/insert-daily-writer.ts">การเขียน DAILY</a></span><span>3 / 7</span></footer>
 </section>
 <section id="p4" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 04</span></header>
@@ -124,51 +124,161 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <h3>2. ล็อกค้างที่ระดับไฟล์</h3>
 <div>พบ claim เดียวใน REVIEW ระหว่าง OPERATION ด้วยเหตุ INSERT_DAILY_SNAPSHOT_UNVERIFIED</div></article> <b class="arrow">→</b> <article class="node warn">
 <h3>3. งานอื่นรับสิทธิ์ไม่ได้</h3>
-<div>คิวปกติใช้ claim ร่วมของไฟล์ อีกทั้งตรวจ journal ที่ยังไม่ยืนยันก่อนอนุญาตงานถัดไป</div></article></div></div>
+<div>เมื่อ claim เป็น REVIEW ตัวกู้คิวไม่ส่งงาน ส่วนข้อความที่ถึง Worker แล้วได้ BLOCKED และ ACK โดยเก็บงานรอใน D1</div></article></div></div>
 <div class="split">
 <div>
 <h3>37 งานที่รอ</h3><p><b>8</b> สร้างหลังเปลี่ยนแท็บ เป็นกลุ่มให้เลือกตรวจสำหรับงานทดลอง</p><p><b>29</b> สร้างก่อนเปลี่ยนแท็บ ต้องเทียบประวัติเดิมก่อนนำเข้า</p></div>
 <div>
 <h3>2 งานที่พักตรวจ</h3><p><b>1</b> ผูกกับล็อกเดิม รหัส STABLE_SYNC_REVIEW</p><p><b>1</b> ประวัติก่อนเปลี่ยนแท็บยังไม่กระทบยอด รหัส CONTINUOUS_PRE_CUTOVER_UNRECONCILED</p></div></div><aside class="alert"><b>HTTP 400 อยู่คนละเส้นทาง</b> &nbsp; ตัวส่งรายเดือนหยุดที่ PREVIEW ขณะอ่านรายละเอียดทั้งกริด (GRID_FULL_INITIAL) ก่อนเลือกงานและก่อนเขียน ยังระบุ field หรือ range ที่ Google ปฏิเสธไม่ได้ และผลนี้ใช้ชี้ปัญหาสิทธิ์ของบัญชี Worker ไม่ได้</aside><p class="micro">อ่านต่อ <a href="#p5">หน้า 5 · วิธีออกจากล็อก</a> และ <a href="#p6">หน้า 6 · การวนคิวจนจบ</a> ส่วน 67 คือสถานะงานเดิมใน D1 ยังใช้ยืนยันจำนวนแถวในแท็บแบบร่างปัจจุบันไม่ได้</p>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/admin/exact-daily-proof-evidence.ts">หลักฐานเดิมและเงื่อนไขล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/sheets/continuous-normal-recovery.ts">ตัวเลือกคิวปกติ</a> · <a href="https://github.com/Eak-dev/malipang-shop/actions/runs/44960804228">ผล PREVIEW</a></span><span>4 / 7</span></footer>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/exact-daily-proof-evidence.ts">หลักฐานเดิมและเงื่อนไขล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/sheets/continuous-normal-recovery.ts">ตัวเลือกคิวปกติ</a> · <a href="https://github.com/Eak-dev/malipang-shop/actions/runs/44960804228">ผล PREVIEW</a></span><span>4 / 7</span></footer>
 </section>
 <section id="p5" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 05</span></header>
-<h1>งานเดิมจบการตรวจ DAILY ด้วยผลใด</h1><p class="lead">ตรวจค่าใช้จ่ายเดิมหนึ่งรายการ บันทึกผลการตรวจรายวัน และสรุปว่ารายการเดิมยังพักอยู่กี่รายการ</p><svg xmlns="http://www.w3.org/2000/svg" class="state-map" width="100%" viewBox="0 0 1040 375" role="img" aria-label="การตรวจ DAILY ของงานเดิมมีผลจบสองแบบ ยืนยันได้ หรือยังยืนยันไม่ได้"><defs><marker id="arr4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#42677a"/></marker></defs><path d="M253 61 H328" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><path d="M652 61 H731" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><path d="M490 107 V170" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><path d="M652 220 H731" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><path d="M878 174 V111" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><path d="M878 266 V309" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr4)"/><rect x="3" y="15" width="250" height="92" rx="8" fill="#faebe6" stroke="#a64734" stroke-width="1.6"/><text x="16" y="42" fill="#142b40" font-size="18" font-weight="bold">เริ่มจากงานเดิมที่พักไว้</text><text x="16" y="67" font-size="15" fill="#2c4c60">งานอยู่ใน REVIEW</text><text x="16" y="88" font-size="15" fill="#2c4c60">พบ DAILY ที่ยังค้างยืนยัน</text><rect x="332" y="15" width="320" height="92" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="345" y="42" fill="#142b40" font-size="18" font-weight="bold">ตรวจแถวเดิมกับ D1</text><text x="345" y="67" font-size="15" fill="#2c4c60">Worker ตรวจตัวระบุรายการ สูตร</text><text x="345" y="88" font-size="15" fill="#2c4c60">และค่าที่แสดงใน Google Sheets</text><rect x="735" y="15" width="299" height="92" rx="8" fill="#faebe6" stroke="#a64734" stroke-width="1.6"/><text x="748" y="42" fill="#142b40" font-size="18" font-weight="bold">จบรอบ · ยังยืนยัน DAILY ไม่ได้</text><text x="748" y="67" font-size="15" fill="#2c4c60">บันทึกขั้นที่หยุดและเหตุผล</text><text x="748" y="88" font-size="15" fill="#2c4c60">นับรายการนี้เป็นค้างตรวจ 1 รายการ</text><rect x="332" y="174" width="320" height="92" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="345" y="201" fill="#142b40" font-size="18" font-weight="bold">บันทึกผลตรวจ DAILY</text><text x="345" y="226" font-size="15" fill="#2c4c60">SETTLE บันทึกหลักฐานแถวและ</text><text x="345" y="247" font-size="15" fill="#2c4c60">ผล VERIFIED ในธุรกรรมเดียว</text><rect x="735" y="174" width="299" height="92" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="748" y="201" fill="#142b40" font-size="18" font-weight="bold">ตรวจผลที่บันทึกแล้ว</text><text x="748" y="226" font-size="15" fill="#2c4c60">อ่าน journal และหลักฐานของรายการ</text><text x="748" y="247" font-size="15" fill="#2c4c60">กรณีคำตอบหาย ใช้การอ่านตรวจซ้ำ</text><rect x="735" y="313" width="299" height="56" rx="8" fill="#e8f4ef" stroke="#26765f" stroke-width="1.6"/><text x="748" y="340" fill="#142b40" font-size="18" font-weight="bold">จบรอบ · ยืนยัน DAILY แล้ว</text><text x="748" y="365" font-size="15" fill="#2c4c60">รายการเดิมยังพักตามคำสั่งเจ้าของ</text><text x="693" y="48" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ไม่ครบ</text><text x="519" y="141" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ผลตรง</text><text x="689" y="207" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ตรวจผล</text><text x="932" y="143" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ยืนยันไม่ได้</text><text x="931" y="294" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ผลตรง</text></svg>
+<h1>งานเดิมจบการตรวจ DAILY ด้วยผลใด</h1><p class="lead">เริ่มจาก INSPECT ทุกครั้งที่สั่ง PROBE หรือ SETTLE เพื่อดูว่ามีหลักฐานยืนยันแถวเดิมอยู่แล้วหรือยัง</p>
+<svg xmlns="http://www.w3.org/2000/svg" class="state-map" width="100%" viewBox="0 0 1040 355" role="img" aria-label="ทางจบของ INSPECT, PROBE และ SETTLE ในการตรวจ DAILY เดิม">
+<defs><marker id="flow5arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#42677a"/></marker></defs>
+<path d="M289 50H368" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M645 50H735" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M145 88V156" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M507 88V156" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M867 88V156" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M1014 50H1032V308H1016" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M869 237V275" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<path d="M737 201H694V309H647" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
+<g><rect x="4" y="12" width="285" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="17" y="36" font-size="17" fill="#142b40" font-weight="bold">INSPECT · อ่านหลักฐานเดิม</text>
+<text x="17" y="59" font-size="14.5" fill="#2c4c60">ตรวจสถานะ DAILY และหลักฐานใน D1</text>
+<text x="17" y="78" font-size="14.5" fill="#2c4c60">ของงานที่พักไว้ใน REVIEW</text>
+</g>
+<g><rect x="370" y="12" width="275" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="383" y="36" font-size="17" fill="#142b40" font-weight="bold">PROBE · เทียบชีตกับ D1</text>
+<text x="383" y="59" font-size="14.5" fill="#2c4c60">ตรวจตัวระบุแถว สูตร และค่าที่แสดง</text>
+<text x="383" y="78" font-size="14.5" fill="#2c4c60">ยืนยันลายนิ้วมือและค่าตรวจก่อนเขียน</text>
+</g>
+<g><rect x="737" y="12" width="277" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="750" y="36" font-size="17" fill="#142b40" font-weight="bold">SETTLE · บันทึกผลใน D1</text>
+<text x="750" y="59" font-size="14.5" fill="#2c4c60">Worker พิสูจน์แถวอีกครั้งและบันทึก</text>
+<text x="750" y="78" font-size="14.5" fill="#2c4c60">ผล VERIFIED พร้อมหลักฐานแถว</text>
+</g>
+<g><rect x="4" y="158" width="285" height="79" rx="8" fill="#e8f5f0" stroke="#277964" stroke-width="1.5"/>
+<text x="17" y="182" font-size="17" fill="#142b40" font-weight="bold">จบรอบ · เคยยืนยัน DAILY แล้ว</text>
+<text x="17" y="205" font-size="14.5" fill="#2c4c60">INSPECT พบ VERIFIED และ</text>
+<text x="17" y="224" font-size="14.5" fill="#2c4c60">ค่าตรวจของแถวที่บันทึกไว้ครบ</text>
+</g>
+<g><rect x="370" y="158" width="275" height="79" rx="8" fill="#e8f5f0" stroke="#277964" stroke-width="1.5"/>
+<text x="383" y="182" font-size="17" fill="#142b40" font-weight="bold">จบการอ่าน · ผลตรงกับ D1</text>
+<text x="383" y="205" font-size="14.5" fill="#2c4c60">ถ้าสั่งเฉพาะ PROBE ให้จบที่ MATCHED</text>
+<text x="383" y="224" font-size="14.5" fill="#2c4c60">งานยังคงสถานะเดิม</text>
+</g>
+<g><rect x="737" y="158" width="277" height="79" rx="8" fill="#fff5e2" stroke="#b58237" stroke-width="1.5"/>
+<text x="750" y="182" font-size="17" fill="#142b40" font-weight="bold">INSPECT · ตรวจเมื่อผลไม่ชัด</text>
+<text x="750" y="205" font-size="14.5" fill="#2c4c60">อ่านผลเดิมและเทียบ VERIFIED</text>
+<text x="750" y="224" font-size="14.5" fill="#2c4c60">ลายนิ้วมือ และค่าตรวจของแถว</text>
+</g>
+<g><rect x="4" y="277" width="641" height="64" rx="8" fill="#faebe6" stroke="#a64734" stroke-width="1.5"/>
+<text x="17" y="301" font-size="17" fill="#142b40" font-weight="bold">จบรอบ · ยังยืนยันผลไม่ได้</text>
+<text x="17" y="324" font-size="14.5" fill="#2c4c60">หลักฐานต้นทางไม่ครบ เทียบแถวไม่ได้ หรืออ่านผล SETTLE แล้วหลักฐานไม่ตรง</text>
+</g>
+<g><rect x="737" y="277" width="277" height="64" rx="8" fill="#e8f5f0" stroke="#277964" stroke-width="1.5"/>
+<text x="750" y="301" font-size="17" fill="#142b40" font-weight="bold">จบรอบ · ยืนยัน DAILY แล้ว</text>
+<text x="750" y="324" font-size="14.5" fill="#2c4c60">งานเดิมยังอยู่ใน REVIEW</text>
+</g>
+<text x="294" y="39" font-size="13" font-weight="bold" fill="#365065">IN_FLIGHT</text>
+<text x="650" y="39" font-size="13" font-weight="bold" fill="#365065">สั่ง SETTLE</text>
+<text x="151" y="125" font-size="13" font-weight="bold" fill="#365065">VERIFIED</text>
+<text x="515" y="125" font-size="13" font-weight="bold" fill="#365065">สั่ง PROBE</text>
+<text x="875" y="125" font-size="13" font-weight="bold" fill="#365065">ผลไม่ชัด</text>
+<text x="877" y="262" font-size="13" font-weight="bold" fill="#365065">ตรง</text>
+<text x="662" y="260" font-size="13" font-weight="bold" fill="#365065">ไม่ตรง</text>
+</svg>
 <div class="notes">
-<div>
-<h4>เมื่อยืนยันได้</h4><p>จบการตรวจ DAILY โดยคง sync job เดิมใน REVIEW และ failed job เดิมใน OPEN ตามคำสั่งให้ข้ามรายการเดิม นับงานเดิมเป็นพัก 1 รายการ</p></div>
-<div>
-<h4>เมื่อหลักฐานยังไม่พอ</h4><p>จบการตรวจครั้งนี้ด้วยเหตุที่พบ เก็บล็อกและหลักฐานไว้ ผู้ดูแลเริ่มรอบตรวจใหม่ได้เมื่อมีข้อมูลเพิ่ม การตรวจรอบนี้จะไม่เขียนซ้ำ</p></div></div><aside class="alert"><b>การส่งมอบล็อกเป็นงานถัดไป</b> &nbsp; เมื่อยืนยัน DAILY เดิมแล้ว HANDOVER_ONE จึงโอนสิทธิ์คุมไฟล์ให้งานทดลองหนึ่งรายการ สถานะของงานทดลองดูหน้า 6 การส่งจริงยังต้องผ่าน UAT และการปล่อย Worker</aside>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/admin/exact-daily-settlement.ts">การพิสูจน์และอ่านผล DAILY</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/admin/parked-expense-handover.ts">การส่งมอบล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/scripts/prod-normal-queue-pilot.mjs">คำสั่งผู้ดูแล</a></span><span>5 / 7</span></footer>
+<div><h4>เมื่อ SETTLE ตอบสำเร็จ</h4><p>Worker อ่านผลที่บันทึกก่อนตอบ ตัวรันตรวจลายนิ้วมือและค่าตรวจจากคำตอบก่อนจบรอบ หากคำตอบผิดปกติจึงอ่าน INSPECT ซ้ำ</p></div>
+<div><h4>เมื่อยืนยันแถวได้แล้ว</h4><p>ปิดเฉพาะการตรวจ DAILY ส่วน sync job เดิมคง REVIEW และ failed job เดิมคง OPEN จึงยังนับรายการนี้เป็นงานพัก</p></div></div>
+<aside class="alert"><b>การส่งมอบสิทธิ์เป็นคำสั่งถัดไป</b> เมื่อ DAILY ยืนยันแล้ว ผู้ดูแลจึงสั่ง HANDOVER_ONE ได้ ภายใต้เงื่อนไขรุ่น Worker, โหมดกู้, การงดผู้เขียนอื่น, ผล backup และการเฝ้าดูตามคู่มือ</aside>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/exact-daily-settlement.ts">การพิสูจน์และอ่านผล DAILY</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/parked-expense-handover.ts">การส่งมอบล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/scripts/prod-normal-queue-pilot.mjs">คำสั่งผู้ดูแล</a></span><span>5 / 7</span></footer>
 </section>
 <section id="p6" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 06</span></header>
-<h1>งานทดลองจบรอบด้วยผลใด</h1><p class="lead">ตัวส่งทำงานตามคิว ส่วนตัวติดตามใช้หลักฐานแบบอ่านอย่างเดียวเพื่อสรุปผลภายในเวลาที่กำหนด</p><svg xmlns="http://www.w3.org/2000/svg" class="state-map" width="100%" viewBox="0 0 1040 375" role="img" aria-label="ผลจบรอบของงานทดลอง เมื่อสำเร็จ พักใน REVIEW หรือยังยืนยันไม่ได้"><defs><marker id="arr5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 Z" fill="#42677a"/></marker></defs><path d="M253 55 H329" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><path d="M652 55 H731" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><path d="M455 97 V152 H292 V55 H329" fill="none" stroke="#42677a" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arr5)"/><path d="M881 97 V138" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><path d="M881 222 V246 H143 V281" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><path d="M881 246 H524 V281" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><path d="M881 246 V281" fill="none" stroke="#42677a" stroke-width="2" marker-end="url(#arr5)"/><rect x="3" y="15" width="250" height="82" rx="8" fill="#eef6f3" stroke="#408472" stroke-width="1.6"/><text x="16" y="42" fill="#142b40" font-size="18" font-weight="bold">จองหนึ่งรายการ</text><text x="16" y="67" font-size="15" fill="#2c4c60">ตัวกู้คิวส่งข้อความงานที่จอง</text><text x="16" y="88" font-size="15" fill="#2c4c60">เมื่อถึงเกณฑ์เวลา</text><rect x="332" y="15" width="320" height="82" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="345" y="42" fill="#142b40" font-size="18" font-weight="bold">Worker ทำขั้นถัดไป</text><text x="345" y="67" font-size="15" fill="#2c4c60">DAILY → RAW → DETAIL (ถ้ามี)</text><text x="345" y="88" font-size="15" fill="#2c4c60">แล้วตรวจขั้นสุดท้าย FINAL</text><rect x="735" y="15" width="299" height="82" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="748" y="42" fill="#142b40" font-size="18" font-weight="bold">ติดตามงานทดลอง</text><text x="748" y="67" font-size="15" fill="#2c4c60">อ่านสถานะจาก D1 ตามกำหนด</text><text x="748" y="88" font-size="15" fill="#2c4c60">จนงานจบ งานพัก หรือหมดเวลารอ</text><rect x="735" y="141" width="299" height="81" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.6"/><text x="748" y="168" fill="#142b40" font-size="18" font-weight="bold">ตรวจหลักฐานก่อนจบรอบ</text><text x="748" y="193" font-size="15" fill="#2c4c60">ตรวจ job และ epoch ของงานนี้</text><text x="748" y="214" font-size="15" fill="#2c4c60">อ่านแถว DAILY เทียบ D1 เมื่อทำได้</text><rect x="3" y="285" width="280" height="84" rx="8" fill="#e8f4ef" stroke="#26765f" stroke-width="1.6"/><text x="16" y="312" fill="#142b40" font-size="18" font-weight="bold">จบ · สำเร็จ 1 รายการ</text><text x="16" y="337" font-size="15" fill="#2c4c60">job COMPLETED · epoch COMPLETE</text><text x="16" y="358" font-size="15" fill="#2c4c60">แถว DAILY ตรงกับ D1</text><rect x="370" y="285" width="304" height="84" rx="8" fill="#faebe6" stroke="#a64734" stroke-width="1.6"/><text x="383" y="312" fill="#142b40" font-size="18" font-weight="bold">จบ · พักตรวจ 1 รายการ</text><text x="383" y="337" font-size="15" fill="#2c4c60">D1 ยืนยันว่างานต้องตรวจต่อ</text><text x="383" y="358" font-size="15" fill="#2c4c60">สรุปขั้นที่ค้างและผลตรวจที่ทราบ</text><rect x="735" y="285" width="299" height="84" rx="8" fill="#fff4df" stroke="#a97824" stroke-width="1.6"/><text x="748" y="312" fill="#142b40" font-size="18" font-weight="bold">จบ · ยังยืนยันผลไม่ได้</text><text x="748" y="337" font-size="15" fill="#2c4c60">ระบุเหตุ เช่น หมดเวลาหรือแถวไม่ตรง</text><text x="748" y="358" font-size="15" fill="#2c4c60">เก็บงานไว้ให้ตรวจหลักฐานต่อ</text><text x="417" y="174" text-anchor="middle" fill="#335363" font-size="14" stroke="white" stroke-width="4" paint-order="stroke">ยังมีขั้นต่อไป · กลับเข้าคิวอีกครั้งหลัง 90 วินาที</text></svg>
+<h1>งานทดลองจบรอบด้วยผลใด</h1><p class="lead">การจองเปิดสิทธิ์ให้คิวทำงาน ตัวรันเริ่มติดตามรายการที่จองทันที ทั้งสองส่วนดำเนินงานแยกกัน</p>
+<svg xmlns="http://www.w3.org/2000/svg" class="state-map" width="100%" viewBox="0 0 1040 355" role="img" aria-label="หลังจองงานเดียว คิวทำงานขนานกับตัวรันที่อ่านสถานะและตรวจผลจบรอบ">
+<defs><marker id="flow6arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#42677a"/></marker></defs>
+<path d="M258 112H287V45H320" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M287 112V186H320" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M612 45H693" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M850 84V106H471V86" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M612 186H693" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M861 224V249H153V280" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M861 249H508V280" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<path d="M861 249V280" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow6arr)"/>
+<g><rect x="4" y="72" width="254" height="98" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="17" y="96" font-size="17" fill="#142b40" font-weight="bold">HANDOVER_ONE · จองงาน</text>
+<text x="17" y="119" font-size="14.5" fill="#2c4c60">เลือกงานเดียวที่เข้าเกณฑ์</text>
+<text x="17" y="138" font-size="14.5" fill="#2c4c60">เก็บ audit สลับ claim และเปิด epoch</text>
+<text x="17" y="157" font-size="14.5" fill="#2c4c60">คำตอบหายให้อ่าน audit ยืนยันก่อน</text>
+</g>
+<g><rect x="322" y="8" width="290" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="335" y="32" font-size="17" fill="#142b40" font-weight="bold">คิวและ Worker · ทำงานที่จอง</text>
+<text x="335" y="55" font-size="14.5" fill="#2c4c60">cron กู้เฉพาะงานที่เปิดสิทธิ์ตามเกณฑ์</text>
+<text x="335" y="74" font-size="14.5" fill="#2c4c60">Worker รับ lease และ claim ของงาน</text>
+</g>
+<g><rect x="695" y="8" width="336" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="708" y="32" font-size="17" fill="#142b40" font-weight="bold">ทำขั้นที่ยังขาดและตรวจผล</text>
+<text x="708" y="55" font-size="14.5" fill="#2c4c60">DAILY → RAW → DETAIL (ถ้ามี) → FINAL</text>
+<text x="708" y="74" font-size="14.5" fill="#2c4c60">CONTINUE ส่งงานเดิมเข้าคิวหลัง 90 วินาที</text>
+</g>
+<g><rect x="322" y="148" width="290" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="335" y="172" font-size="17" fill="#142b40" font-weight="bold">ตัวรัน · อ่าน FINISH_STATUS</text>
+<text x="335" y="195" font-size="14.5" fill="#2c4c60">ติดตาม job เดิมและ epoch จาก D1</text>
+<text x="335" y="214" font-size="14.5" fill="#2c4c60">ขณะ IN_PROGRESS อ่านซ้ำทุกนาที</text>
+</g>
+<g><rect x="695" y="148" width="336" height="76" rx="8" fill="#eef5fa" stroke="#48779c" stroke-width="1.5"/>
+<text x="708" y="172" font-size="17" fill="#142b40" font-weight="bold">ตรวจหลักฐานตามสถานะที่พบ</text>
+<text x="708" y="195" font-size="14.5" fill="#2c4c60">JOB_COMPLETE อ่าน DAILY แล้วเช็ก proof ซ้ำ</text>
+<text x="708" y="214" font-size="14.5" fill="#2c4c60">พักหรือล้มเหลว ลองอ่าน DAILY ครั้งเดียว</text>
+</g>
+<g><rect x="4" y="282" width="304" height="73" rx="8" fill="#e8f5f0" stroke="#277964" stroke-width="1.5"/>
+<text x="17" y="306" font-size="17" fill="#142b40" font-weight="bold">จบ · ยืนยันสำเร็จ 1 รายการ</text>
+<text x="17" y="329" font-size="14.5" fill="#2c4c60">งานและ epoch ปิดครบ แถวตรงกับ D1</text>
+<text x="17" y="348" font-size="14.5" fill="#2c4c60">และ proof ก่อน–หลังอ่านตรงกัน</text>
+</g>
+<g><rect x="359" y="282" width="303" height="73" rx="8" fill="#faebe6" stroke="#a64734" stroke-width="1.5"/>
+<text x="372" y="306" font-size="17" fill="#142b40" font-weight="bold">จบ · REVIEW หรือ FAILED</text>
+<text x="372" y="329" font-size="14.5" fill="#2c4c60">รายงานผลที่พบพร้อมผลตรวจ DAILY</text>
+<text x="372" y="348" font-size="14.5" fill="#2c4c60">เก็บเหตุผลและงานเดิมไว้ติดตาม</text>
+</g>
+<g><rect x="713" y="282" width="318" height="73" rx="8" fill="#fff5e2" stroke="#b58237" stroke-width="1.5"/>
+<text x="726" y="306" font-size="17" fill="#142b40" font-weight="bold">จบ · ยังยืนยันผลไม่ได้</text>
+<text x="726" y="329" font-size="14.5" fill="#2c4c60">เช่น ยังไม่เริ่ม หมดเวลา หลักฐานไม่ครบ</text>
+<text x="726" y="348" font-size="14.5" fill="#2c4c60">หรือสถานะระหว่างตรวจเปลี่ยนไป</text>
+</g>
+<text x="502" y="123" font-size="13" font-weight="bold" fill="#365065">CONTINUE กลับเข้าคิวเดิม</text>
+<text x="186" y="273" font-size="13" font-weight="bold" fill="#365065">ครบทุกหลักฐาน</text>
+<text x="519" y="272" font-size="13" font-weight="bold" fill="#365065">พบสถานะพักหรือล้มเหลว</text>
+<text x="869" y="272" font-size="13" font-weight="bold" fill="#365065">ยืนยันไม่ได้</text>
+</svg>
 <div class="notes">
-<div>
-<h4>เงื่อนไขนับสำเร็จ</h4><p>นับเฉพาะเมื่อหลักฐานการปิดงานและการอ่านแถวจริงครบ ผล DAILY เพียงขั้นเดียวใช้ประกาศว่างานทั้งรายการสำเร็จไม่ได้</p></div>
-<div>
-<h4>การติดตามหลังจบรอบ</h4><p>เมื่อหลักฐานไม่ครบ ให้เก็บเหตุผลและสถานะล่าสุดแล้วตรวจต่อแบบอ่านอย่างเดียว การหมดเวลาของตัวติดตามไม่ยกเลิกงานที่ Worker อาจยังทำอยู่</p></div></div><p class="micro">ภาพนี้แสดงตัวรันบน main หลังรวม #343 ยังไม่มีผลทดลองหนึ่งรายการใน Production ณ จุดตรวจที่ระบุบนหน้า 4</p>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/db/repositories.ts">ตัวกู้คิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/index.ts">ตัวส่งกลับเข้าคิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/tests/insert-daily-writer.test.mjs">ทดสอบคิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/admin/normal-pilot-readback.ts">อ่านแถวเทียบ D1</a></span><span>6 / 7</span></footer>
+<div><h4>เงื่อนไขของงานที่เลือก</h4><p>เลือกงาน CONFIRMED รุ่น 1 เดือนปัจจุบันตามเวลาไทย หลัง cutover สถานะ PENDING ที่ถึงเวลาทำและยังไม่เคยลองส่ง เรียงตามเวลาอัปเดตและรหัสรายการ</p></div>
+<div><h4>เมื่อครบเวลารอ</h4><p>ตัวรันอ่านทันทีและรอเพิ่มได้ 15 รอบ รอบละหนึ่งนาที เมื่อหมดเวลาหรือหลักฐานเปลี่ยน ให้ใช้ FINISH_PILOT อ่านงานเดิมต่อ งานในคิวยังมีสถานะของตัวเอง</p></div></div>
+<aside class="alert"><b>ขอบเขตของภาพ</b> เส้นทางนี้ต้องเปิด recovery gate และโหมดทดลองเฉพาะงาน ปิดการเลือกงานถัดไปอัตโนมัติ รวมถึงผ่าน UAT และ release gate ก่อนทดสอบจริง</aside>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/db/repositories.ts">ตัวกู้คิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/index.ts">ตัวส่งกลับเข้าคิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/tests/insert-daily-writer.test.mjs">ทดสอบคิว</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/normal-pilot-readback.ts">อ่านแถวเทียบ D1</a></span><span>6 / 7</span></footer>
 </section>
 <section id="p7" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 07</span></header>
 <h1>แผนที่โค้ดและหลักฐานที่ใช้ตรวจ</h1><p class="lead">ใช้หน้านี้เมื่อต้องตามเหตุจากอาการที่เห็นกลับไปยังจุดรับผิดชอบใน repository</p><table><thead>
 <tr><th>สิ่งที่ต้องการตาม</th><th>จุดเริ่มในโค้ด</th><th>หลักฐานที่ควรเห็น</th></tr></thead><tbody>
-<tr><td>LINE ส่งเข้ามาถึงหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/webhook/handler.ts">src/webhook/handler.ts</a></td><td>ลายเซ็นผ่านและส่ง LINE_EVENT เข้าคิว</td></tr>
-<tr><td>เหตุการณ์ซ้ำหรือสิทธิ์ไม่พอ</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/router/process-event.ts">src/router/process-event.ts</a></td><td>สถานะ inbound_events และผลตรวจบทบาท</td></tr>
-<tr><td>ยอดได้รับการยืนยันหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/expense/confirm.ts">src/expense/confirm.ts</a></td><td>expense_events รุ่นปัจจุบัน และ sync_jobs ที่คู่กัน</td></tr>
-<tr><td>งานอยู่ที่คิวหรือที่ไฟล์</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/sheets/stable-workbook-claim.ts">src/sheets/stable-workbook-claim.ts</a></td><td>สถานะ job, lease, workbook claim และเหตุ REVIEW</td></tr>
-<tr><td>คำขอเขียนอาจถึง Google แล้วหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/sheets/insert-daily-writer.ts">src/sheets/insert-daily-writer.ts</a></td><td>journal, ตัวระบุแถว, จำนวนแถวก่อนส่ง และผลอ่านกลับ</td></tr>
-<tr><td>งานค้างจะถูกตรวจอีกเมื่อไร</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/operations/maintenance.ts">src/operations/maintenance.ts</a></td><td>รอบ cron งานที่เข้าเกณฑ์กู้ และสถานะ lease</td></tr>
-<tr><td>แจ้งเตือนหรือส่งไม่สำเร็จ</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/index.ts">src/index.ts</a></td><td>ผล retry, failed_jobs และ dead-letter queue ตามชนิดความล้มเหลว</td></tr>
-<tr><td>ผลทดลองแถวเดียวตรงหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/src/admin/normal-pilot-readback.ts">src/admin/normal-pilot-readback.ts</a></td><td>ผลอ่านซ้ำจากบัญชี Worker และค่าที่เทียบ D1</td></tr></tbody></table>
+<tr><td>LINE ส่งเข้ามาถึงหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/webhook/handler.ts">src/webhook/handler.ts</a></td><td>ลายเซ็นผ่านและส่ง LINE_EVENT เข้าคิว</td></tr>
+<tr><td>เหตุการณ์ซ้ำหรือสิทธิ์ไม่พอ</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/router/process-event.ts">src/router/process-event.ts</a></td><td>สถานะ inbound_events และผลตรวจบทบาท</td></tr>
+<tr><td>ยอดได้รับการยืนยันหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/expense/confirm.ts">src/expense/confirm.ts</a></td><td>expense_events รุ่นปัจจุบัน และ sync_jobs ที่คู่กัน</td></tr>
+<tr><td>งานอยู่ที่คิวหรือที่ไฟล์</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/sheets/stable-workbook-claim.ts">src/sheets/stable-workbook-claim.ts</a></td><td>สถานะ job, lease, workbook claim และเหตุ REVIEW</td></tr>
+<tr><td>คำขอเขียนอาจถึง Google แล้วหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/sheets/insert-daily-writer.ts">src/sheets/insert-daily-writer.ts</a></td><td>journal, ตัวระบุแถว, จำนวนแถวก่อนส่ง และผลอ่านกลับ</td></tr>
+<tr><td>งานค้างจะถูกตรวจอีกเมื่อไร</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/operations/maintenance.ts">src/operations/maintenance.ts</a></td><td>รอบ cron และ <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/db/repositories.ts">การเลือกงานที่เข้าเกณฑ์</a></td></tr>
+<tr><td>แจ้งเตือนหรือส่งไม่สำเร็จ</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/index.ts">src/index.ts</a></td><td>ผล retry, failed_jobs และ dead-letter queue ตามชนิดความล้มเหลว</td></tr>
+<tr><td>ผลทดลองแถวเดียวตรงหรือยัง</td><td><a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/normal-pilot-readback.ts">src/admin/normal-pilot-readback.ts</a></td><td>ผลอ่านซ้ำเทียบ D1 แล้วตรวจสถานะและหลักฐานเดิมผ่าน <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/parked-expense-handover.ts">FINISH_STATUS</a></td></tr></tbody></table>
 <div class="notes">
 <div>
-<h4>หลักฐาน Production</h4><p>D1 และ deployment ตรวจแบบอ่านอย่างเดียว 22 พ.ย. 2569 เวลา 07:17 น. Worker version hash ขึ้นต้น cf0538ba</p></div>
+<h4>หลักฐาน Production</h4><p>หลักฐานเดิมจาก D1 และ deployment วันที่ 22 พ.ย. 2569 เวลา 07:17 น. Worker version hash ขึ้นต้น cf0538ba</p></div>
 <div>
-<h4>หลักฐานโค้ด</h4><p>main 5bf347f รวม #342 และ #343 แล้ว ตรวจผลจบจาก FINISH_STATUS และอ่าน DAILY เทียบ D1 ก่อนสรุปสำเร็จ สถานะ Production อ้างรอบตรวจหน้า 4</p></div></div><p class="micro">ขอบเขตภาพคือ backend ใน Eak-dev/malipang-shop และบริการที่เชื่อมต่อ ไม่รวมการสำรวจ trigger ภายใน Apps Script หรือการตรวจสุขภาพจริงทุกแท็บ</p>
-<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/README.md">ภาพรวมโครงการ</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/AGENTS.md">ข้อกำหนดการปล่อยรุ่น</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/7c5c91d588e7c6faff360000cac3a612e27af907/docs/ISSUE296_NORMAL_QUEUE_PILOT_TH.md">คู่มือทดลองหนึ่งรายการ</a></span><span>7 / 7</span></footer>
+<h4>หลักฐานโค้ด</h4><p>ตรวจโค้ดที่ main 05fd3eb • FINISH_STATUS → อ่าน DAILY เทียบ D1 → ตรวจหลักฐานซ้ำก่อนนับสำเร็จ • config ใน repo ปิด recovery gate</p></div></div><p class="micro">ขอบเขตภาพคือ backend ใน Eak-dev/malipang-shop และบริการที่เชื่อมต่อ ไม่รวมการสำรวจ trigger ภายใน Apps Script หรือการตรวจสุขภาพจริงทุกแท็บ</p>
+<footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/README.md">ภาพรวมโครงการ</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/AGENTS.md">ข้อกำหนดการปล่อยรุ่น</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/docs/ISSUE296_NORMAL_QUEUE_PILOT_TH.md">คู่มือทดลองหนึ่งรายการ</a></span><span>7 / 7</span></footer>
 </section>
 </main></html>

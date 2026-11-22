@@ -1,4 +1,4 @@
-<svg role="img" aria-labelledby="title" style="background:white;font-family:Thonburi,sans-serif" xmlns="http://www.w3.org/2000/svg" width="1440" height="1960" viewBox="0 0 1440 1960"><title id="title">MaliPang Backend — เส้นทางข้อมูลและจุดติดของคิวค่าใช้จ่าย</title>
+<svg role="img" aria-labelledby="title" style="background:white;font-family:Thonburi,sans-serif" xmlns="http://www.w3.org/2000/svg" width="1440" height="2270" viewBox="0 0 1440 2270"><title id="title">MaliPang Backend — เส้นทางข้อมูลและจุดติดของคิวค่าใช้จ่าย</title>
 <rect width="100%" height="100%" fill="white"/>
 <defs>
 <marker id="normal" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.6" markerHeight="6.6" orient="auto">
@@ -31,8 +31,8 @@
 <text x="764" y="311" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ส่งเหตุการณ์ให้ Worker</text>
 <rect x="1098" y="220" width="288" height="106" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
 <text x="1114" y="255" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">Worker</text>
-<text x="1114" y="285" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">กันเหตุการณ์ซ้ำ ตรวจสิทธิ์</text>
-<text x="1114" y="311" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เลือกสายงานของเหตุการณ์</text>
+<text x="1114" y="285" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">กันเหตุการณ์ซ้ำ</text>
+<text x="1114" y="311" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจสิทธิ์ตามประเภทงาน</text>
 <path d="M1242 326 V359 H192" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M192 359 V386" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
 <path d="M542 359 V386" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
@@ -52,8 +52,8 @@
 <text x="764" y="481" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">รอการยืนยันค่าใช้จ่าย</text>
 <rect x="1098" y="390" width="288" height="106" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
 <text x="1114" y="425" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ของใช้ส่วนตัว</text>
-<text x="1114" y="455" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจคำขอของผู้ใช้</text>
-<text x="1114" y="481" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">บันทึกรายการแยกประเภท</text>
+<text x="1114" y="455" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">รายงาน PERSONAL_RAW</text>
+<text x="1114" y="481" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ใช้ล็อกไฟล์เดียวกับรายจ่าย</text>
 <path d="M192 496 V535" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M542 496 V535" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
 <path d="M892 496 V535" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
@@ -68,116 +68,118 @@
 <text x="1026" y="595" fill="#1d374c" font-size="20" font-weight="700" text-anchor="start">การตอบผู้ใช้</text>
 <text x="1026" y="625" fill="#1d374c" font-size="17" font-weight="400" text-anchor="start">Worker ส่งข้อความผ่าน LINE Messaging API</text>
 <rect x="44" y="698" width="1352" height="46" rx="6" fill="#173c50"/>
-<text x="64" y="729" fill="#fff" font-size="24" font-weight="700" text-anchor="start">2   จาก D1 ไป Google Sheets</text>
-<text x="1373" y="729" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">ตัวอย่างค่าใช้จ่ายที่ยืนยันแล้ว</text>
+<text x="64" y="729" fill="#fff" font-size="24" font-weight="700" text-anchor="start">2   คิวปกติของค่าใช้จ่าย</text>
+<text x="1373" y="729" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">เมื่อเปิดการซิงก์และใช้ตัวส่งแบบ stable</text>
 <path d="M450 633 H26 V824 H44" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
 <path d="M336 824 h58" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
 <path d="M686 824 h58" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
 <path d="M1036 824 h58" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
 <rect x="48" y="770" width="288" height="106" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
-<text x="64" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">sync_jobs ใน D1</text>
-<text x="64" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">สร้างงาน PENDING</text>
-<text x="64" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ผูกกับค่าใช้จ่ายและรุ่นข้อมูล</text>
+<text x="64" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ยืนยันใน D1</text>
+<text x="64" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">CONFIRMED และงาน PENDING</text>
+<text x="64" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">บันทึกในธุรกรรมเดียวกัน</text>
 <rect x="398" y="770" width="288" height="106" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
-<text x="414" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">คิวปลุกตัวส่งรายงาน</text>
-<text x="414" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ข้อความ SHEETS_SYNC</text>
-<text x="414" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">cron ช่วยค้นหางานค้าง</text>
+<text x="414" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ข้อความปลุก Worker</text>
+<text x="414" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ส่งหลังบันทึก หรือ cron</text>
+<text x="414" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ค้นงานที่เข้าเกณฑ์แล้วส่ง</text>
 <rect x="748" y="770" width="288" height="106" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
-<text x="764" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ได้สิทธิ์เขียนไฟล์?</text>
-<text x="764" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจ lease ของงาน</text>
-<text x="764" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">และ claim ของไฟล์ร่วม</text>
+<text x="764" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ตรวจก่อนเขียน</text>
+<text x="764" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจ claim ร่วมของไฟล์</text>
+<text x="764" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">และรับ lease เฉพาะงาน</text>
 <rect x="1098" y="770" width="288" height="106" rx="12" fill="#eef3ff" stroke="#5474a9" stroke-width="1.8"/>
-<text x="1114" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">Google Sheets</text>
-<text x="1114" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">บัญชีบริการของ Worker</text>
-<text x="1114" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เขียน DAILY / RAW / DETAIL</text>
-<text x="1068" y="812" fill="#415b68" font-size="17" font-weight="600" text-anchor="middle">ได้</text>
-<path d="M1242 876 V930" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<path d="M1098 983 H1040" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<rect x="1098" y="934" width="288" height="105" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
-<text x="1114" y="969" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">อ่านแถวกลับ</text>
-<text x="1114" y="999" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เทียบตัวระบุแถวและค่า</text>
-<text x="1114" y="1025" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ที่แสดงกับต้นทาง D1</text>
-<rect x="748" y="934" width="288" height="105" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
-<text x="764" y="969" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">งานปกติจบ</text>
-<text x="764" y="999" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ครบทุกขั้นและตรวจผ่าน</text>
-<text x="764" y="1025" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">จึงบันทึก COMPLETED</text>
-<path d="M892 876 V904 H358 V929" fill="none" stroke="#a44e37" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#held)"/>
-<rect x="48" y="934" width="620" height="105" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
-<text x="64" y="969" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">จุดติดของ Issue #296 · ล็อกเดิมอยู่ใน REVIEW</text>
-<text x="64" y="999" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ผลการเขียน DAILY เดิมยังยืนยันไม่ครบ</text>
-<text x="64" y="1025" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">Worker คงสิทธิ์คุมไฟล์ไว้ งานอื่นจึงรอ</text>
-<text x="578" y="896" fill="#415b68" font-size="17" font-weight="600" text-anchor="middle">ติดล็อกเดิม</text>
-<rect x="44" y="1069" width="1352" height="46" rx="6" fill="#173c50"/>
-<text x="64" y="1100" fill="#fff" font-size="24" font-weight="700" text-anchor="start">3   ออกจากล็อกโดยรักษาหลักฐาน</text>
-<text x="1373" y="1100" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">เส้นประแสดงโค้ดบน main หลังรวม #343 • สถานะหน้างานตามเวลาที่ระบุด้านล่าง</text>
-<path d="M192 1039 V1063 H28 V1199 H44" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<path d="M336 1199 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<path d="M686 1199 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<path d="M1036 1199 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<rect x="48" y="1145" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
-<text x="64" y="1180" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ตรวจงานเดิม</text>
-<text x="64" y="1210" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">PROBE อ่านชีตผ่าน Worker</text>
-<text x="64" y="1236" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เทียบหลักฐานกับ D1</text>
-<rect x="398" y="1145" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
-<text x="414" y="1180" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ยืนยัน DAILY เดิม</text>
-<text x="414" y="1210" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เมื่อผลตรง SETTLE บันทึก</text>
-<text x="414" y="1236" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">หลักฐานของแถวที่ยืนยัน</text>
-<rect x="748" y="1145" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
-<text x="764" y="1180" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ส่งมอบล็อก</text>
-<text x="764" y="1210" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">HANDOVER_ONE จองสิทธิ์</text>
-<text x="764" y="1236" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ให้งานใหม่เพียง 1 รายการ</text>
-<rect x="1098" y="1145" width="288" height="106" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
-<text x="1114" y="1180" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">คิวส่งงานทดลอง</text>
-<text x="1114" y="1210" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">Worker รับงานที่จองไว้</text>
-<text x="1114" y="1236" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ทำขั้นถัดไปของงานนี้</text>
-<path d="M192 1251 V1285" fill="none" stroke="#a44e37" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#held)"/>
-<path d="M542 1251 V1285" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<rect x="48" y="1289" width="289" height="101" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
-<text x="64" y="1324" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ถ้าหลักฐานไม่พอ</text>
-<text x="64" y="1354" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">จบรอบพร้อมเหตุผล</text>
-<text x="64" y="1380" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">คงล็อกและงานไว้ให้ตรวจ</text>
-<rect x="398" y="1289" width="288" height="101" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
-<text x="414" y="1324" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">งานเดิมจบการตรวจ</text>
-<text x="414" y="1354" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ยืนยันเฉพาะ DAILY</text>
-<text x="414" y="1380" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">งานเดิมยังพักใน REVIEW</text>
-<path d="M1242 1251 V1285" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<rect x="1098" y="1289" width="288" height="101" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
-<text x="1114" y="1324" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ผลของขั้นที่เพิ่งทำ</text>
-<text x="1114" y="1354" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ผ่านและยังมีขั้นเหลือ</text>
-<text x="1114" y="1380" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">หรือถึงเวลาตรวจผลจบรอบ</text>
-<path d="M1098 1343 H1040" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<rect x="748" y="1289" width="288" height="101" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
-<text x="764" y="1324" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ยังมีขั้นเหลือ</text>
-<text x="764" y="1354" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">CONTINUE หน่วง 90 วินาที</text>
-<text x="764" y="1380" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">แล้วเข้าคิวรายการเดิม</text>
-<path d="M892 1289 V1271 H1085 V1231 H1095" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<rect x="44" y="1419" width="1352" height="46" rx="6" fill="#173c50"/>
-<text x="64" y="1450" fill="#fff" font-size="24" font-weight="700" text-anchor="start">4   ผลจบรอบของงานทดลอง</text>
-<text x="1373" y="1450" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">ตรวจ D1 และผลอ่านแถวจริงก่อนนับว่าส่งสำเร็จ</text>
-<path d="M1242 1390 V1407 H1412 V1551 H1320" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
-<rect x="168" y="1494" width="1148" height="108" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
-<text x="184" y="1529" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ติดตามงานเดียวจนจบหรือถึงขีดจำกัดการรอ</text>
-<text x="184" y="1559" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจสถานะ job และ epoch ของงานที่จองไว้ • อ่านแถว DAILY เทียบ D1 • ตรวจหลักฐานซ้ำก่อนสรุปสำเร็จ</text>
-<text x="184" y="1585" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ถ้าคำตอบการเขียนสูญหาย ให้ตรวจหลักฐานของงานเดิมก่อนดำเนินการต่อ</text>
-<path d="M742 1602 V1631 H271" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M742 1631 H1166" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
-<path d="M271 1631 V1657" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<path d="M718 1631 V1657" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<path d="M1166 1631 V1657" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
-<rect x="48" y="1661" width="421" height="108" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
-<text x="64" y="1696" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">จบ · ยืนยันสำเร็จ 1 รายการ</text>
-<text x="64" y="1726" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">งานและ epoch ปิดครบ</text>
-<text x="64" y="1752" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">แถว DAILY ตรงกับข้อมูล D1</text>
-<rect x="503" y="1661" width="421" height="108" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
-<text x="519" y="1696" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">จบ · พักตรวจหรืองานล้มเหลว</text>
-<text x="519" y="1726" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">D1 ยืนยันสถานะที่ต้องติดตาม</text>
-<text x="519" y="1752" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">บันทึกเหตุผลและผลอ่าน DAILY ที่ทราบ</text>
-<rect x="958" y="1661" width="428" height="108" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
-<text x="974" y="1696" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">จบ · ยังยืนยันผลไม่ได้</text>
-<text x="974" y="1726" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เช่น หมดเวลารอ หรือหลักฐานเปลี่ยน</text>
-<text x="974" y="1752" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">กลับมาตรวจงานเดิมได้โดยไม่เขียนซ้ำ</text>
-<rect x="48" y="1806" width="1338" height="114" rx="10" fill="#f1f5f6"/>
-<text x="68" y="1841" fill="#1d374c" font-size="23" font-weight="700" text-anchor="start">ภาพสถานะที่ตรวจไว้เมื่อ 22 พ.ย. 2569 เวลา 07:39 น.</text>
-<text x="68" y="1874" fill="#1d374c" font-size="20" font-weight="400" text-anchor="start">ค่าใช้จ่ายยืนยัน 106 รายการ  •  COMPLETED เดิม 67  •  PENDING 37  •  REVIEW 2  •  พบล็อกเดิม 1  •  งานทดลองที่เปิดจริง 0</text>
-<text x="68" y="1904" fill="#1d374c" font-size="18" font-weight="400" text-anchor="start">ตัวส่งรายเดือนเป็นอีกเส้นทางหนึ่ง เคยหยุดที่ PREVIEW ขณะอ่านกริดด้วย HTTP 400 ก่อนเริ่มเขียนชีต</text>
+<text x="1114" y="805" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ส่งรายขั้นไปชีต</text>
+<text x="1114" y="835" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">DAILY → RAW → DETAIL</text>
+<text x="1114" y="861" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ทำเฉพาะขั้นที่ยังขาด</text>
+<path d="M1242 876 V923" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<rect x="1098" y="927" width="288" height="108" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
+<text x="1114" y="962" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ตรวจผลขั้นนี้</text>
+<text x="1114" y="992" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ยังมีขั้น → CONTINUE</text>
+<text x="1114" y="1018" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ครบและผ่าน FINAL → ปิดงาน</text>
+<path d="M1098 980 H1040" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<rect x="748" y="927" width="288" height="108" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
+<text x="764" y="962" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ปิดงานใน D1</text>
+<text x="764" y="992" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตัวส่งบันทึก COMPLETED</text>
+<text x="764" y="1018" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ผลทดลองยังต้องตรวจแถวจริง</text>
+<path d="M1242 1035 V1071 H1421 V749 H542 V767" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<text x="775" y="1063" fill="#415b68" font-size="17" font-weight="600" text-anchor="middle">CONTINUE ส่งงานเดิมหลัง 90 วินาที • BUSY ใช้เวลารอตามเงื่อนไข</text>
+<path d="M892 876 V899 H193 V923" fill="none" stroke="#a44e37" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#held)"/>
+<rect x="48" y="927" width="624" height="108" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
+<text x="64" y="962" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ล็อกไฟล์ REVIEW</text>
+<text x="64" y="992" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">cron งดส่งงาน • ข้อความที่มาถึงถูก ACK เมื่อ BLOCKED</text>
+<text x="64" y="1018" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">งานอื่นยังอยู่ใน D1 และรอการกู้ตามเงื่อนไข</text>
+<rect x="44" y="1119" width="1352" height="46" rx="6" fill="#173c50"/>
+<text x="64" y="1150" fill="#fff" font-size="24" font-weight="700" text-anchor="start">3   พิสูจน์ DAILY ของงานเดิม</text>
+<text x="1373" y="1150" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">ขั้นตอนผู้ดูแล #296 • recovery gate ปิดใน wrangler.jsonc บน main</text>
+<path d="M192 1035 V1090 H25 V1240 H44" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<path d="M336 1240 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<path d="M686 1240 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<rect x="48" y="1187" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
+<text x="64" y="1222" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">INSPECT</text>
+<text x="64" y="1252" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจงานเดิมใน REVIEW</text>
+<text x="64" y="1278" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">และหลักฐานที่บันทึกไว้</text>
+<rect x="398" y="1187" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
+<text x="414" y="1222" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">PROBE</text>
+<text x="414" y="1252" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">อ่านแถวเดิมเทียบ D1</text>
+<text x="414" y="1278" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">คำสั่ง PROBE จบที่ผลตรวจ</text>
+<rect x="748" y="1187" width="288" height="106" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
+<text x="764" y="1222" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">SETTLE</text>
+<text x="764" y="1252" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">รอบ SETTLE ตรวจอีกครั้ง</text>
+<text x="764" y="1278" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">แล้วบันทึกหลักฐาน DAILY</text>
+<rect x="1098" y="1187" width="288" height="106" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
+<text x="1114" y="1222" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">จบการตรวจ DAILY</text>
+<text x="1114" y="1252" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">งานเดิมยัง REVIEW</text>
+<text x="1114" y="1278" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">failed job เดิมยัง OPEN</text>
+<path d="M1036 1240 h58" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<path d="M542 1293 V1317 H355 V1334" fill="none" stroke="#a44e37" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#held)"/>
+<path d="M892 1293 V1317 H355" fill="none" stroke="#a44e37" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<rect x="48" y="1338" width="620" height="104" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
+<text x="64" y="1373" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ผลยังยืนยันไม่ได้</text>
+<text x="64" y="1403" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เก็บเหตุผลและหลักฐาน • ถ้าคำตอบ SETTLE หาย</text>
+<text x="64" y="1429" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">อ่าน INSPECT ยืนยันรายการและหลักฐานเดิมก่อนสรุป</text>
+<path d="M1242 1293 V1334" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<rect x="748" y="1338" width="638" height="104" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
+<text x="764" y="1373" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">HANDOVER_ONE · ผู้ดูแลเรียกแยก</text>
+<text x="764" y="1403" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">เมื่อผ่านเงื่อนไข เลือกงานที่เข้าเกณฑ์หนึ่งรายการ</text>
+<text x="764" y="1429" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">D1 จอง claim และเปิดรอบทดลอง (epoch) ให้รายการนั้น</text>
+<rect x="44" y="1487" width="1352" height="46" rx="6" fill="#173c50"/>
+<text x="64" y="1518" fill="#fff" font-size="24" font-weight="700" text-anchor="start">4   หลังจองหนึ่งรายการ</text>
+<text x="1373" y="1518" fill="#deebf0" font-size="17" font-weight="500" text-anchor="end">ตัวส่งและตัวตรวจผลทำงานแยกกัน</text>
+<path d="M1065 1442 V1462 H725 V1547" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6"/>
+<path d="M725 1547 H361 V1567" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<path d="M725 1547 H1068 V1567" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<rect x="48" y="1571" width="620" height="108" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
+<text x="64" y="1606" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ตัวส่ง · cron / คิว</text>
+<text x="64" y="1636" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">กู้เฉพาะงานที่จองเมื่อถึงเวลา • Worker ทำขั้นถัดไป</text>
+<text x="64" y="1662" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">CONTINUE ส่งเข้าคิวเดิมหลัง 90 วินาที จนถึง FINAL</text>
+<rect x="748" y="1571" width="638" height="108" rx="12" fill="#f2effa" stroke="#806aa2" stroke-width="1.8"/>
+<text x="764" y="1606" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ตัวตรวจ · FINISH_STATUS</text>
+<text x="764" y="1636" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">อ่าน job และ epoch ทันทีหลังจอง • ถ้า IN_PROGRESS</text>
+<text x="764" y="1662" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ตรวจอีกไม่เกิน 15 ครั้ง ห่างกันครั้งละ 1 นาที</text>
+<path d="M1068 1679 V1710 H756 V1728" fill="none" stroke="#80659d" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="9 6" marker-end="url(#fix)"/>
+<rect x="168" y="1732" width="1148" height="107" rx="12" fill="#f0f5f9" stroke="#416a85" stroke-width="1.8"/>
+<text x="184" y="1767" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">สรุปตามหลักฐานของงานที่จอง</text>
+<text x="184" y="1797" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ถ้างานและรอบปิดแล้ว → ตรวจ DAILY จากชีตเทียบ D1 → อ่านสถานะและเทียบหลักฐานเดิมอีกครั้ง</text>
+<text x="184" y="1823" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ถ้าพักหรือล้มเหลว → ลองอ่าน DAILY หนึ่งครั้ง • ถ้าหมดเวลาหรือพิสูจน์ไม่ได้ → จบรอบพร้อมเหตุผล</text>
+<path d="M742 1839 V1865 H271" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M742 1865 H1166" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path d="M271 1865 V1892" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<path d="M718 1865 V1892" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<path d="M1166 1865 V1892" fill="none" stroke="#587384" stroke-width="2.7" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#normal)"/>
+<rect x="48" y="1896" width="421" height="108" rx="12" fill="#e8f6f0" stroke="#237260" stroke-width="1.8"/>
+<text x="64" y="1931" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ยืนยันสำเร็จ 1 รายการ</text>
+<text x="64" y="1961" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">job COMPLETED และ epoch COMPLETE</text>
+<text x="64" y="1987" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">DAILY ตรงกับ D1 และหลักฐานคงเดิม</text>
+<rect x="503" y="1896" width="421" height="108" rx="12" fill="#fff0eb" stroke="#aa4c38" stroke-width="1.8"/>
+<text x="519" y="1931" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">พักตรวจ / ล้มเหลว</text>
+<text x="519" y="1961" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">รายงาน JOB_REVIEW หรือ JOB_FAILED</text>
+<text x="519" y="1987" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">พร้อมผลอ่าน DAILY ที่ทราบ</text>
+<rect x="958" y="1896" width="428" height="108" rx="12" fill="#fff6e5" stroke="#ae7e2c" stroke-width="1.8"/>
+<text x="974" y="1931" fill="#1d374c" font-size="24" font-weight="700" text-anchor="start">ยังยืนยันไม่ได้</text>
+<text x="974" y="1961" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">รายงานสาเหตุ • ถ้าหมดเวลารอ</text>
+<text x="974" y="1987" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">ใช้ FINISH_PILOT อ่านผลเดิมต่อได้</text>
+<rect x="48" y="2055" width="1338" height="150" rx="10" fill="#f1f5f6"/>
+<text x="68" y="2091" fill="#1d374c" font-size="23" font-weight="700" text-anchor="start">หลักฐานย้อนหลังของ Issue #296</text>
+<text x="68" y="2126" fill="#1d374c" font-size="19" font-weight="400" text-anchor="start">D1 เวลา 07:17 น. วันที่ 22 พ.ย. 2569 • ยืนยัน 106 • งานเดิม COMPLETED 67 • PENDING 37 • REVIEW 2 • ล็อกไฟล์ REVIEW 1</text>
+<text x="68" y="2158" fill="#1d374c" font-size="18" font-weight="400" text-anchor="start">รายงานรายเดือนเป็นอีกทางหนึ่ง เคยหยุดที่ PREVIEW ก่อนเขียนชีต • ตัวเลขนี้ไม่ได้ตรวจสดในรอบตรวจโค้ด</text>
+<text x="68" y="2187" fill="#1d374c" font-size="18" font-weight="400" text-anchor="start">ตรวจเส้นทางโค้ดกับ main ที่ 05fd3eb • รายละเอียด เงื่อนไข และจุดอ้างอิงอยู่ในแผนผังหน้า 1–7</text>
 </svg>

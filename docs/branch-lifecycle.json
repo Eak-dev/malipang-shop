@@ -68,6 +68,14 @@
       "target_branch": "main",
       "coordination_chat": "MaliPang system flow policy",
       "reason": "Publish the flow and require reading and maintaining it for each task."
+    },
+    {
+      "issue": 346,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-audit-system-flow",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang system flow audit",
+      "reason": "Reconcile published flow pages with the implementation on canonical main."
     }
   ],
   "branches": [
@@ -7647,6 +7655,19 @@
       "status": "ACTIVE",
       "observed_at": "2026-11-22T01:51:39.880304+00:00",
       "reason": "Observed remote primary branch for the system flow policy before recording PR #345."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-audit-system-flow",
+      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "issues": [
+        346
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T02:11:09.483063+00:00",
+      "reason": "Observed the new remote task branch at the audited base before committing documentation."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

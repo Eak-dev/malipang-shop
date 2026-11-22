@@ -11,7 +11,7 @@ const env={GITHUB_SHA:sha,EXPECTED_SHA:sha,GITHUB_REF:'refs/heads/main',GITHUB_R
 const fingerprint='b'.repeat(64),preimageDigest='c'.repeat(64),jobId='12345678-1234-1234-1234-123456789abc';
 const gates={BACKUP_RUN_ID:'123',GITHUB_TOKEN:'gh-test',EXTERNAL_WRITERS_FENCED:'true',OWNER_SUPERVISING:'true'};
 
-function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,committed=false,statuses=['JOB_COMPLETE']}={}){
+function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,committed=false,statuses=['JOB_COMPLETE'],finishProofs=[preimageDigest]}={}){
   const calls=[];
   const reply=(data,status=200)=>Response.json(data,{status});
   const request=async(input,opts)=>{
@@ -38,7 +38,9 @@ function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,
     }
     const results={PROBE:'MATCHED',SETTLE:'SETTLED',HANDOVER_ONE:'RESERVED',INSPECT_HANDOVER:'ADOPTED',READBACK:outcome,
       FINISH_STATUS:body.action==='FINISH_STATUS'&&statuses.length>1?statuses.shift():statuses[0]};
-    return reply({ok:true,outcome:results[body.action],fingerprint,preimageDigest,servedVersion:version});
+    const proof=body.action==='FINISH_STATUS'&&results.FINISH_STATUS==='JOB_COMPLETE'
+      ?(finishProofs.length>1?finishProofs.shift():finishProofs[0]):undefined;
+    return reply({ok:true,outcome:results[body.action],proof,fingerprint,preimageDigest,servedVersion:version});
   };
   return {calls,request};
 }
@@ -107,6 +109,11 @@ test('bounded read-only finish reconciles both endpoints and classifies held and
   const absent=provider();
   await assert.rejects(runNormalPilot(phase,absent.request),/PILOT_FINISH_NOT_STARTED/);
   assert.equal(absent.calls.length,0);
+  const drift=provider({rows,finishProofs:['d'.repeat(64),'e'.repeat(64)]});
+  await assert.rejects(runNormalPilot(phase,drift.request),/PILOT_FINAL_STATE_CHANGED/);
+  const missing=provider({rows,finishProofs:[]});
+  await assert.rejects(runNormalPilot(phase,missing.request),/PILOT_FINAL_PROOF_UNVERIFIED/);
+  assert.deepEqual(missing.calls.map(c=>c.action),['FINISH_STATUS']);
 });
 
 test('inspect reads the audit before consulting the Worker and never selects a new candidate',async()=>{

@@ -1115,7 +1115,25 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
       }
       assert.equal((await db.prepare("SELECT count(*) n FROM stable_projection_writes WHERE state='VERIFIED' AND (entity_id='exp_pilot' OR entity_id LIKE 'exp_pilot|%')").first()).n,3);
       assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='COMPLETE' AND target_key='exp_pilot'").first()).n,1);
-      assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_COMPLETE'});
+      const completed=await operate(finish);
+      assert.match(completed.proof,/^[0-9a-f]{64}$/);
+      assert.deepEqual(completed,{ok:true,outcome:'JOB_COMPLETE',proof:completed.proof});
+      assert.deepEqual(await operate(finish),completed);
+      const {handleAdmin}=require('../dist/admin/handler.js'),secret='a'.repeat(40);
+      const finishRequest=new Request('https://synthetic.invalid/admin/stable-sync/normal-expense-pilot',{
+       method:'POST',headers:{authorization:'Bearer '+secret,'x-malipang-expected-worker-version':version},
+       body:JSON.stringify(finish)});
+      const finishResponse=await handleAdmin(finishRequest,{...h.env,ADMIN_TOKEN:secret},{});
+      assert.equal(finishResponse.status,200);
+      assert.deepEqual(await finishResponse.json(),{...completed,servedVersion:version});
+      // Include the monotonic revision so even a change-and-revert during
+      // provider readback invalidates the earlier completion observation.
+      await db.prepare("UPDATE expense_events SET amount_satang=amount_satang+1 WHERE expense_id='exp_pilot'").run();
+      const changed=await operate(finish);
+      assert.equal(changed.outcome,'JOB_COMPLETE');assert.notEqual(changed.proof,completed.proof);
+      await db.prepare("UPDATE expense_events SET amount_satang=amount_satang-1 WHERE expense_id='exp_pilot'").run();
+      const reverted=await operate(finish);
+      assert.equal(reverted.outcome,'JOB_COMPLETE');assert.notEqual(reverted.proof,completed.proof);
       // A terminal job alone cannot prove that all current D1 details were written.
       await db.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,description,created_at,updated_at)
         SELECT 'item_extra',document_id,expense_id,'missing projection',created_at,updated_at

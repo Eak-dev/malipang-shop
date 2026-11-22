@@ -2,6 +2,7 @@ import type {SheetsSyncJob} from '../types';
 import {readFailedDailyIncidentEvidence,dailyFailedPayloadDigest} from './exact-daily-proof-evidence';
 import {dailyIncidentScope,verifiedHeldDailyGuard} from './exact-daily-settlement';
 import {normalExpenseEpochStatements} from '../sheets/continuous-normal-recovery';
+import {stableSourceIntegrity} from '../sheets/stable-source-cutover';
 import {parkedAuditAction,parkedPilotEnabled,parkedSourceJoins,pilotWriteJoins,type ParkedPilotEnv} from '../sheets/parked-notice-adoption';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
@@ -53,9 +54,12 @@ async function finishStatus(env:ParkedPilotEnv,action:Select,version:string){
    SELECT * FROM admin_audit WHERE action=?
  ), target AS (
    SELECT j.entity_key AS expense,j.status AS job,j.last_error,j.lease_token,j.lease_until,j.next_attempt_at,
-          ep.epoch_id,ep.state AS epoch,w.spreadsheet_id AS book,json_extract(a.after_json,'$.token') AS token
+          ep.epoch_id,ep.state AS epoch,w.spreadsheet_id AS book,json_extract(a.after_json,'$.token') AS token,
+          rev.revision AS revision,json_array(e.expense_id,e.version,e.status,e.transaction_date,e.description,
+            e.amount_satang,e.payment_key,e.source_wallet,e.category,e.branch_id,e.updated_at) AS source_fields
    FROM audits a ${parkedSourceJoins}
    JOIN expense_events e ON e.expense_id=j.entity_key AND e.version=1 AND e.status='CONFIRMED'
+   JOIN stable_source_revision rev ON rev.singleton=1
    WHERE a.entity_key=? AND a.reason=? AND w.spreadsheet_id=? AND json_extract(a.after_json,'$.version')=?
      AND ep.epoch_id GLOB 'normal_pilot296_*' AND w.sheet_id=? AND w.sheet_name=?
  ), expected AS (
@@ -78,6 +82,8 @@ async function finishStatus(env:ParkedPilotEnv,action:Select,version:string){
      SELECT 1 FROM (SELECT 1) marker_evidence ${pilotWriteJoins}))
  )
  SELECT (SELECT count(*) FROM audits) AS audit_count,(SELECT count(*) FROM target) AS target_count,t.job,t.epoch,
+   t.revision,${stableSourceIntegrity} AS revision_valid,
+   json_array(t.book,t.epoch_id,t.token,t.source_fields,(SELECT min(source_digest) FROM written)) AS proof_inputs,
    t.lease_token IS NULL AND t.lease_until IS NULL AS unleased,
    t.lease_token IS NOT NULL AND t.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS leased,
    t.last_error IS NULL AND t.next_attempt_at IS NULL AS clean,
@@ -95,7 +101,7 @@ async function finishStatus(env:ParkedPilotEnv,action:Select,version:string){
    env.CONTINUOUS_DAILY_SHEET,Number(env.CONTINUOUS_DAILY_SHEET_ID),env.CONTINUOUS_RAW_SHEET,Number(env.CONTINUOUS_RAW_SHEET_ID),
    env.CONTINUOUS_DETAIL_SHEET,Number(env.CONTINUOUS_DETAIL_SHEET_ID))
   .all<{audit_count:number;target_count:number;job:string|null;epoch:string|null;unleased:number;leased:number;clean:number;
-   claim:string|null;open_failure:number;unfinished:number;all_written:number}>();
+   claim:string|null;open_failure:number;unfinished:number;all_written:number;revision:number;revision_valid:number;proof_inputs:string}>();
  const row=result.results?.[0];
  if(result.success!==true||result.results?.length!==1||!row)return 'UNVERIFIED';
  if(row.audit_count===0&&row.target_count===0)return 'NOT_STARTED';
@@ -107,7 +113,12 @@ async function finishStatus(env:ParkedPilotEnv,action:Select,version:string){
  // FINAL commits the job, verifies the operation, closes the epoch and releases
  // the claim in separate steps. A reader may observe an orderly close in between.
  if(row.job==='COMPLETED'&&row.unleased===1&&row.clean===1&&row.all_written===1){
-  if(row.epoch==='COMPLETE'&&row.claim===null&&row.unfinished===0)return 'JOB_COMPLETE';
+  if(row.epoch==='COMPLETE'&&row.claim===null&&row.unfinished===0){
+   if(row.revision_valid!==1||!Number.isSafeInteger(row.revision)||row.revision<0)return 'UNVERIFIED';
+   const proof=await dailyFailedPayloadDigest(JSON.stringify(['pilot-finish-v1',version,action.jobId,
+    action.fingerprint,row.revision,row.proof_inputs]));
+   return {ok:true,outcome:'JOB_COMPLETE',proof};
+  }
   if(row.claim==='HELD'&&(row.epoch==='ARMED'||row.epoch==='COMPLETE'&&row.unfinished===0))return 'IN_PROGRESS';
  }
  return 'UNVERIFIED';
@@ -120,7 +131,7 @@ export async function operateParkedPilot(env:ParkedPilotEnv,action:Action,versio
  if(action.action==='FINISH_STATUS'){
   try{
    const outcome=valid()?await finishStatus(env,action,version):'UNVERIFIED';
-   if(valid()&&outcome!=='UNVERIFIED')return {ok:true,outcome};
+   if(valid()&&outcome!=='UNVERIFIED')return typeof outcome==='string'?{ok:true,outcome}:outcome;
   }catch{/* Lack of D1 proof ends this read-only observation. */}
   return {ok:false,outcome:'UNVERIFIED'};
  }

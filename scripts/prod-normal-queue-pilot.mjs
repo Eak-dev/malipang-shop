@@ -79,14 +79,16 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay){
   const takeover=(body,success)=>request('normal-expense-pilot',body,success);
   const readback=()=>request('normal-pilot-readback',{action:'READBACK'},['MATCHED']);
   const finish=async(jobId,fingerprint)=>{
-    const status=async()=>(await takeover({action:'FINISH_STATUS',jobId,fingerprint},
-      ['NOT_STARTED','IN_PROGRESS','JOB_REVIEW','JOB_FAILED','JOB_COMPLETE','UNVERIFIED'])).outcome;
+    const status=()=>takeover({action:'FINISH_STATUS',jobId,fingerprint},
+      ['NOT_STARTED','IN_PROGRESS','JOB_REVIEW','JOB_FAILED','JOB_COMPLETE','UNVERIFIED']);
     // Observe one identity throughout. No provider writes, enrollment or replay in this loop.
     for(let observation=0;observation<16;observation++){
-      const current=await status();
+      const snapshot=await status(), current=snapshot.outcome;
       if(current==='JOB_COMPLETE'){
+        if(typeof snapshot.proof!=='string'||!digest.test(snapshot.proof))stop('PILOT_FINAL_PROOF_UNVERIFIED');
         try{await readback();}catch{stop('PILOT_JOB_COMPLETE_DAILY_UNVERIFIED');}
-        if(await status()!=='JOB_COMPLETE')stop('PILOT_FINAL_STATE_CHANGED');
+        const after=await status();
+        if(after.outcome!=='JOB_COMPLETE'||after.proof!==snapshot.proof)stop('PILOT_FINAL_STATE_CHANGED');
         return 'PILOT_JOB_COMPLETE_DAILY_MATCHED';
       }
       if(current==='JOB_REVIEW'||current==='JOB_FAILED'){

@@ -2,6 +2,13 @@ name: Bug Report
 description: รายงานปัญหาที่เกิดขึ้นจริงพร้อมหลักฐานสำหรับวิเคราะห์ root cause
 title: "[Bug] "
 body:
+  - type: checkboxes
+    id: system_flow
+    attributes:
+      label: แผนผังระบบก่อนเริ่มงาน
+      options:
+        - label: "อ่าน [ภาพรวมและหน้าที่เกี่ยวข้อง](https://github.com/Eak-dev/malipang-shop/blob/main/docs/system-flow/README.md) ก่อนเริ่มงานแล้ว"
+          required: true
   - type: dropdown
     id: environment
     attributes:

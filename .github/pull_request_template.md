@@ -16,6 +16,10 @@
 
 - 
 
+## การตรวจแผนผังระบบ
+
+ระบุหน้าของ [แผนผังระบบ](https://github.com/Eak-dev/malipang-shop/blob/main/docs/system-flow/README.md) ที่อ่านก่อนเริ่มงาน และลิงก์ส่วนที่อัปเดตใน PR นี้ ถ้า flow คงเดิมให้ระบุเหตุผลสั้น ๆ
+
 ## Files changed
 
 - 

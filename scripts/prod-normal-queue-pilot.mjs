@@ -141,17 +141,17 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay){
     await readback();
     return 'PILOT_DAILY_D1_MATCHED';
   }
-  if(phase==='INSPECT_HANDOVER'||phase==='FINISH_PILOT'){
+  const readChain=async()=>orderedChain(await rows(serialAudit),version);
+  if(phase==='FINISH_PILOT'){
+    const tip=(await readChain()).at(-1);
+    if(!tip)stop('PILOT_FINISH_NOT_STARTED');
+    await finish(tip.job_id,tip.fingerprint,true);
+    return 'PILOT_JOB_COMPLETE_DAILY_MATCHED';
+  }
+  if(phase==='INSPECT_HANDOVER'){
     const audit=await rows(reserved);
-    if(audit.length===0){
-      if(phase==='FINISH_PILOT')stop('PILOT_FINISH_NOT_STARTED');
-      return 'PILOT_NO_HANDOVER_RECORDED';
-    }
+    if(audit.length===0)return 'PILOT_NO_HANDOVER_RECORDED';
     if(audit.length!==1||!uuid.test(audit[0].job_id)||!digest.test(audit[0].fingerprint))stop('PILOT_AUDIT_UNVERIFIED');
-    if(phase==='FINISH_PILOT'){
-      await finish(audit[0].job_id,audit[0].fingerprint);
-      return 'PILOT_JOB_COMPLETE_DAILY_MATCHED';
-    }
     const result=await takeover({action:phase,jobId:audit[0].job_id,fingerprint:audit[0].fingerprint},['RESERVED','ADOPTED','STAGE_VERIFIED','HELD']);
     return 'PILOT_'+result.outcome;
   }
@@ -189,7 +189,6 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay){
     }
   };
   if(phase==='RUN_SERIAL'){
-    const readChain=async()=>orderedChain(await rows(serialAudit),version);
     const chain=await readChain(),tip=chain.at(-1);
     const selected=(await rows(serialCandidates)).map(row=>row.job_id);
     if(selected.some(id=>!uuid.test(id))||new Set(selected).size!==selected.length)stop('PILOT_SERIAL_SELECTION_UNVERIFIED');
@@ -247,7 +246,7 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay){
 export function describeResult(phase,label){
   if(phase==='RUN_SERIAL')return label==='PILOT_SERIAL_FINISHED'?'ตรวจครบชุดงานที่เลือกสำหรับรอบนี้แล้ว':'รอบต่อเนื่องหยุดตามเหตุด้านล่าง เมื่อเริ่ม RUN_SERIAL อีกครั้ง ตัวรันตรวจงานที่จองล่าสุดก่อนส่งต่อ';
   if(label==='PILOT_JOB_COMPLETE_DAILY_MATCHED')return 'งานทดลองเสร็จ 1 รายการ รอบคิวปิดแล้ว และแถวรายวันตรงกับ D1';
-  if(label==='PILOT_JOB_COMPLETE_DAILY_UNVERIFIED')return 'พบงานและรอบคิวปิดแล้ว แต่ยังยืนยันแถวรายวันกับ D1 ไม่ได้ ให้ตรวจ READBACK ก่อนขยายงาน';
+  if(label==='PILOT_JOB_COMPLETE_DAILY_UNVERIFIED')return 'พบงานและรอบคิวปิดแล้ว แต่ยังยืนยันแถวรายวันกับ D1 ไม่ได้ ใช้ FINISH_PILOT ตรวจงานล่าสุดก่อนขยาย';
   if(label==='PILOT_ORIGINAL_SETTLED_JOB_HELD'||label==='PILOT_ORIGINAL_ALREADY_SETTLED')
     return 'จบการตรวจ DAILY ของรายการเดิม ผลเขียนได้รับการยืนยัน งานเดิมพัก 1 รายการใน REVIEW ตามที่อนุมัติ';
   if(label==='PILOT_ORIGINAL_MATCHED')return 'ตรวจพบหลักฐาน DAILY ตรงกัน ขั้นบันทึก SETTLE ยังต้องตรวจแยก';

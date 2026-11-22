@@ -25,7 +25,7 @@
 <rect x="506" y="524" width="414" height="146" rx="12" fill="#fff2e9" stroke="#b16f42" stroke-width="2"/>
 <text x="522" y="559" fill="#153748" font-size="23" font-weight="700">งานพัก / ล้มเหลว / ยังยืนยันไม่ได้</text>
 <text x="522" y="587" fill="#153748" font-size="17" font-weight="400">จบรอบพร้อมเหตุผล รวมถึงกรณีหมดเวลา</text>
-<text x="522" y="612" fill="#153748" font-size="17" font-weight="400">เก็บหลักฐานไว้ตรวจงานเดิมเมื่อเริ่มต่อ</text>
+<text x="522" y="612" fill="#153748" font-size="17" font-weight="400">ตรวจงานล่าสุดด้วย FINISH_PILOT</text>
 <path d="M452 613H502" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <path d="M246 670V707" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
 <rect x="40" y="712" width="412" height="113" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>

@@ -19,8 +19,10 @@ function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,
     const url=String(input);
     if(url.includes('/deployments?'))return reply({success:true,result:{deployments:[{versions:[{version_id:version,percentage:100}]}]}});
     if(url.includes('/d1/database/')){
-      assert.match(JSON.parse(opts.body).sql,/^SELECT /);
-      return reply({success:true,result:[{success:true,results:rows}]});
+      const {sql}=JSON.parse(opts.body);
+      assert.match(sql,/^SELECT /);
+      const results=sql.includes('AS predecessor')?rows.map(r=>({...r,action:'ISSUE296_PAUSED_NOTICE_HANDOVER',book:'book',version})):rows;
+      return reply({success:true,result:[{success:true,results}]});
     }
     if(url.includes('/actions/runs/')){
       const job={name:'ops',id:1234,status:'completed',conclusion:'success',steps:[{name:'Backup and migration rehearsal',conclusion:'success'}]};
@@ -220,6 +222,9 @@ test('serial resume always verifies durable tip even when there are no new eligi
   const p=serialHarness(t,{selected:[],chain:[jobId,nextId]});
   assert.deepEqual(await runNormalPilot(serialEnv,p.request),{outcome:'PILOT_SERIAL_FINISHED',verified:1,remaining:0});
   assert.deepEqual(p.actions.map(x=>[x.action,x.jobId]),[['FINISH_STATUS',nextId],['READBACK',nextId],['FINISH_STATUS',nextId]]);
+  const readonly=serialHarness(t,{selected:[],chain:[jobId,nextId]});
+  assert.equal(await runNormalPilot({...env,PILOT_PHASE:'FINISH_PILOT'},readonly.request),'PILOT_JOB_COMPLETE_DAILY_MATCHED');
+  assert.deepEqual(readonly.actions.map(x=>[x.action,x.jobId]),[['FINISH_STATUS',nextId],['READBACK',nextId],['FINISH_STATUS',nextId]]);
   const empty=serialHarness(t,{selected:[]});
   assert.deepEqual(await runNormalPilot(serialEnv,empty.request),{outcome:'PILOT_SERIAL_FINISHED',verified:0,remaining:0});
   assert.deepEqual(empty.actions,[]);

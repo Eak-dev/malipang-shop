@@ -52,6 +52,14 @@
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
       "reason": "Owner chose a GitHub workflow (option A) to run steps 2-7 of the #296 runbook. Merge is not deployment; every run needs owner approval of that step."
+    },
+    {
+      "issue": 344,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-system-flow-policy",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang system flow policy",
+      "reason": "Publish the flow and require reading and maintaining it for each task."
     }
   ],
   "branches": [
@@ -7590,6 +7598,19 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-22T01:28:44.033098+00:00",
       "reason": "Bounded normal-queue outcome reconciliation after the single-pilot handover."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/docs-system-flow-policy",
+      "source_sha": "5bf347fc1d0987bf8b3374eae9a3f443a8f13f38",
+      "issues": [
+        344
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T01:49:41.366158+00:00",
+      "reason": "New documentation task branch observed at creation."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
+import {DatabaseSync} from 'node:sqlite';
 import {pilotInputs,runNormalPilot} from '../scripts/prod-normal-queue-pilot.mjs';
 
 const version='01234567-89ab-cdef-0123-456789abcdef', sha='a'.repeat(40);
@@ -46,7 +47,7 @@ function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,
 }
 
 test('mutation requires verified backup, correct revision, first attempt and active owner fence',()=>{
-  for(const phase of ['SETTLE','HANDOVER_ONE']){
+  for(const phase of ['SETTLE','HANDOVER_ONE','RUN_SERIAL']){
     const ok={...env,...gates,PILOT_PHASE:phase};
     assert.equal(pilotInputs(ok).phase,phase);
     for(const partial of [{OWNER_SUPERVISING:'false'},{EXTERNAL_WRITERS_FENCED:'false'},{BACKUP_RUN_ID:''},{EXPECTED_SHA:'d'.repeat(40)},{GITHUB_RUN_ATTEMPT:'2'}]){
@@ -124,4 +125,109 @@ test('inspect reads the audit before consulting the Worker and never selects a n
   const p=provider({rows:[{job_id:jobId,fingerprint}]});
   assert.equal(await runNormalPilot(phase,p.request),'PILOT_ADOPTED');
   assert.deepEqual(p.calls,[{action:'INSPECT_HANDOVER',jobId,fingerprint}]);
+});
+
+const nextId='22345678-1234-1234-1234-123456789abc',laterId='32345678-1234-1234-1234-123456789abc';
+const serialEnv={...env,...gates,PILOT_PHASE:'RUN_SERIAL'};
+
+function serialHarness(t,{selected=[jobId,nextId],chain=[],fail=()=>{}}={}){
+  const db=new DatabaseSync(':memory:');
+  t.after(()=>db.close());
+  db.exec(`CREATE TABLE sync_jobs(job_id,entity_key,entity_type,entity_version,status,attempt_count,lease_token,lease_until,next_attempt_at,updated_at);
+    CREATE TABLE expense_events(expense_id,version,status,transaction_date);
+    CREATE TABLE continuous_daily_cutovers(spreadsheet_id,state);
+    CREATE TABLE continuous_daily_post_cutover_expenses(spreadsheet_id,expense_id);
+    CREATE TABLE admin_audit(id,action,entity_key,reason,before_json,after_json);
+    INSERT INTO continuous_daily_cutovers VALUES('test-book','ACTIVE')`);
+  function add(id){
+    db.prepare("INSERT INTO sync_jobs VALUES(?,?,'EXPENSE',1,'PENDING',0,NULL,NULL,NULL,?)").run(id,id,id);
+    db.prepare("INSERT INTO expense_events VALUES(?,1,'CONFIRMED',date('now','+7 hours'))").run(id);
+    db.prepare("INSERT INTO continuous_daily_post_cutover_expenses VALUES('test-book',?)").run(id);
+  }
+  const proofFor=id=>createHash('sha256').update(id).digest('hex');
+  function record(id,previous,proof=proofFor(previous??id)){
+    db.prepare('INSERT INTO admin_audit VALUES(?,?,?,?,?,?)').run(
+      previous?'issue296:serial:'+previous:'issue296:parked:synthetic',
+      previous?'ISSUE296_SERIAL_EXPENSE_HANDOVER':'ISSUE296_PAUSED_NOTICE_HANDOVER',
+      id,fingerprint,JSON.stringify({book:'test-book',predecessorJobId:previous,proof}),JSON.stringify({version}));
+  }
+  selected.forEach(add);
+  chain.forEach((id,index)=>record(id,chain[index-1]));
+  const actions=[],base=provider(),serving=(body,outcome,more={})=>Response.json({ok:true,outcome,servedVersion:version,...more});
+  const request=async(url,opts)=>{
+    if(String(url).includes('/d1/database/')){
+      const {sql}=JSON.parse(opts.body);
+      assert.match(sql,/^SELECT /);
+      return Response.json({success:true,result:[{success:true,results:db.prepare(sql).all()}]});
+    }
+    if(!String(url).startsWith(env.MALIPANG_WORKER_URL))return base.request(url,opts);
+    const body=JSON.parse(opts.body);actions.push(body);
+    const substitute=fail(body,{db,record,add,actions,serving,proofFor});
+    if(substitute)return substitute;
+    switch(body.action){
+      case 'INSPECT':return serving(body,'INSPECTED',{fingerprint,projectionState:'IN_FLIGHT',preimageDigest:null});
+      case 'PROBE':return serving(body,'MATCHED',{fingerprint,preimageDigest});
+      case 'SETTLE':return serving(body,'SETTLED',{fingerprint,preimageDigest});
+      case 'HANDOVER_ONE':record(body.jobId);return serving(body,'RESERVED');
+      case 'FINISH_STATUS':return serving(body,'JOB_COMPLETE',{proof:proofFor(body.jobId)});
+      case 'READBACK':return serving(body,'MATCHED');
+      case 'ADVANCE_ONE':
+        assert.equal(body.proof,proofFor(body.jobId));
+        record(body.nextJobId,body.jobId,body.proof);return serving(body,'RESERVED');
+      default:assert.fail('Unexpected worker action');
+    }
+  };
+  return {actions,request,db};
+}
+
+test('serial run settles A, finishes B then C against their exact rows and does not adopt new arrivals',async t=>{
+  const p=serialHarness(t,{fail(body,{add}){
+    if(body.action==='HANDOVER_ONE')add(laterId);
+  }});
+  assert.deepEqual(await runNormalPilot(serialEnv,p.request),{outcome:'PILOT_SERIAL_FINISHED',verified:2,remaining:0});
+  assert.deepEqual(p.actions.map(x=>x.action),['INSPECT','PROBE','SETTLE','HANDOVER_ONE',
+    'FINISH_STATUS','READBACK','FINISH_STATUS','ADVANCE_ONE','FINISH_STATUS','READBACK','FINISH_STATUS']);
+  assert.deepEqual(p.actions.filter(x=>x.action==='READBACK'),
+    [jobId,nextId].map(id=>({action:'READBACK',jobId:id,fingerprint})));
+  assert.deepEqual(p.actions[7],{action:'ADVANCE_ONE',jobId,fingerprint,proof:createHash('sha256').update(jobId).digest('hex'),
+    nextJobId:nextId,externalWritersFenced:true,ownerSupervising:true});
+});
+
+test('uncertain B prevents C reservation and retains exact partial counts',async t=>{
+  const p=serialHarness(t,{chain:[jobId],fail(body,{serving}){
+    if(body.action==='READBACK')return serving(body,'UNVERIFIED');
+  }});
+  await assert.rejects(runNormalPilot(serialEnv,p.request),{message:'PILOT_JOB_COMPLETE_DAILY_UNVERIFIED',serialProgress:{verified:0,remaining:2}});
+  assert.deepEqual(p.actions.map(x=>x.action),['FINISH_STATUS','READBACK']);
+});
+
+test('serial advance lost response checks exact committed edge without resending',async t=>{
+  for(const mode of ['confirmed','wrong-proof','absent']){
+    const p=serialHarness(t,{chain:[jobId],fail(body,{record}){
+      if(body.action==='ADVANCE_ONE'){
+        if(mode!=='absent')record(body.nextJobId,body.jobId,mode==='confirmed'?body.proof:'f'.repeat(64));
+        throw Error('simulated lost response');
+      }
+    }});
+    const run=runNormalPilot(serialEnv,p.request);
+    if(mode==='confirmed')assert.deepEqual(await run,{outcome:'PILOT_SERIAL_FINISHED',verified:2,remaining:0});
+    else await assert.rejects(run,{message:'PILOT_RESPONSE_UNKNOWN_NO_RETRY',serialProgress:{verified:1,remaining:1}});
+    assert.equal(p.actions.filter(body=>body.action==='ADVANCE_ONE').length,1);
+  }
+});
+
+test('serial resume always verifies durable tip even when there are no new eligible jobs',async t=>{
+  const p=serialHarness(t,{selected:[],chain:[jobId,nextId]});
+  assert.deepEqual(await runNormalPilot(serialEnv,p.request),{outcome:'PILOT_SERIAL_FINISHED',verified:1,remaining:0});
+  assert.deepEqual(p.actions.map(x=>[x.action,x.jobId]),[['FINISH_STATUS',nextId],['READBACK',nextId],['FINISH_STATUS',nextId]]);
+  const empty=serialHarness(t,{selected:[]});
+  assert.deepEqual(await runNormalPilot(serialEnv,empty.request),{outcome:'PILOT_SERIAL_FINISHED',verified:0,remaining:0});
+  assert.deepEqual(empty.actions,[]);
+});
+
+test('corrupt or disconnected serial audit fails before a new reservation',async t=>{
+  const p=serialHarness(t,{chain:[jobId,nextId]});
+  p.db.exec("UPDATE admin_audit SET before_json=json_set(before_json,'$.predecessorJobId','invalid') WHERE action='ISSUE296_SERIAL_EXPENSE_HANDOVER'");
+  await assert.rejects(runNormalPilot(serialEnv,p.request),/PILOT_SERIAL_CHAIN_UNVERIFIED/);
+  assert.deepEqual(p.actions,[]);
 });

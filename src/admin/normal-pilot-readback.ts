@@ -8,9 +8,13 @@ import {readLegacyDailyCoverage} from '../sheets/legacy-daily-coverage';
 import {verifyMixedDailyAccounting} from '../sheets/mixed-daily-accounting';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
 
+import {parkedAuditAction,serialAuditAction} from '../sheets/parked-notice-adoption';
+
+export type PilotReadbackIdentity = {jobId:string; fingerprint:string};
+
 /** Independent current-row confirmation after the normal writer has journaled DAILY.
  * The response contains no cell values. Completion of the queue is checked separately. */
-export async function verifyNormalPilotRow(env:Env):Promise<boolean>{
+export async function verifyNormalPilotRow(env:Env, identity?:PilotReadbackIdentity):Promise<boolean>{
   const book=env.GOOGLE_SPREADSHEET_ID, db=env.DB;
   const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED,
     env.STABLE_PHASE1_ENABLED,env.STABLE_RECOVERY_GATE_ENABLED,env.STABLE_SHEETS_PACING_ENABLED,
@@ -22,10 +26,24 @@ export async function verifyNormalPilotRow(env:Env):Promise<boolean>{
     env.STABLE_RECOVERY_GATE_ENABLED!=='true' || env.CONTINUOUS_DAILY_SHEET!=='รายวันต่อเนื่อง_แบบร่าง')return false;
   const target=await assertContinuousDailyActivated(env);
   if(!target || target.sheet!==env.CONTINUOUS_DAILY_SHEET)return false;
-  const read=()=>db.prepare(`SELECT e.expense_id, e.transaction_date, e.version, p.operation_token, m.marker,
+  // A legacy unqualified READBACK addresses the original pilot only. A serial
+  // observation must bind the reservation, job and source to the same epoch.
+  const identityJoin=identity ? `
+    JOIN admin_audit audit ON audit.action IN (?,?) AND audit.entity_key=? AND audit.reason=?
+      AND json_extract(audit.before_json,'$.book')=r.spreadsheet_id
+      AND json_extract(audit.after_json,'$.epoch')=r.epoch_id
+      AND json_extract(audit.after_json,'$.version')=?
+    JOIN sync_jobs selected ON selected.job_id=audit.entity_key AND selected.entity_type=r.target_type
+      AND selected.entity_key=r.target_key AND selected.entity_version=r.target_version` : '';
+  const originalPilot=identity ? '' : `AND NOT EXISTS(SELECT 1 FROM admin_audit serial
+    WHERE serial.action=? AND json_extract(serial.after_json,'$.epoch')=r.epoch_id)`;
+  const identityArgs=identity
+    ? [parkedAuditAction,serialAuditAction,identity.jobId,identity.fingerprint,env.CF_VERSION_METADATA?.id??'']
+    : [];
+  const read=()=>db.prepare(`SELECT r.epoch_id, e.expense_id, e.transaction_date, e.version, p.operation_token, m.marker,
       i.preimage_digest, i.preimage_width, e.description, e.amount_satang, e.payment_key,
       e.source_wallet, e.category, rev.revision
-    FROM stable_recovery_epochs r
+    FROM stable_recovery_epochs r ${identityJoin}
     JOIN continuous_normal_recovery_admissions a ON a.epoch_id=r.epoch_id AND a.spreadsheet_id=r.spreadsheet_id
       AND a.expense_id=r.target_key AND a.source_version=r.target_version
     JOIN expense_events e ON e.expense_id=r.target_key AND e.version=r.target_version
@@ -41,7 +59,8 @@ export async function verifyNormalPilotRow(env:Env):Promise<boolean>{
     WHERE r.spreadsheet_id=? AND r.epoch_id GLOB 'normal_pilot296_*' AND r.target_type='EXPENSE'
       AND p.state='VERIFIED' AND p.projection='DAILY' AND p.sheet_id=? AND p.sheet_name=?
       AND e.version=1 AND e.status='CONFIRMED' AND substr(e.transaction_date,1,7)=strftime('%Y-%m','now','+7 hours')
-    LIMIT 2`).bind(book,target.sheetId,target.sheet).all<{expense_id:string;transaction_date:string;marker:string;preimage_width:number}>();
+      ${originalPilot}
+    LIMIT 2`).bind(...identityArgs,book,target.sheetId,target.sheet,...(identity?[]:[serialAuditAction])).all<{expense_id:string;transaction_date:string;marker:string;preimage_width:number}>();
   const before=await read(), item=before.results?.[0];
   if(!stable() || before.success!==true || before.results?.length!==1 || !item)return false;
   const policy={kind:'continuous-expense' as const,budget:new ReviewRequestBudget(48,'invocation')};

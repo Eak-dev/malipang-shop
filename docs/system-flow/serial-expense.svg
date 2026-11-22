@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 1170" width="960" height="1170" role="img" aria-labelledby="title desc" style="font-family:Thonburi,sans-serif"><title id="title">ส่งค่าใช้จ่ายที่ยืนยันแล้วต่อทีละรายการ</title><desc id="desc">คง A ใน REVIEW ตรวจ B เทียบ D1 และตรวจหลักฐานอีกครั้งก่อนเปิดรอบของ C หากผลไม่ชัดเจนให้จบรอบและตรวจงานเดิมต่อ</desc><defs><marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#446476"/></marker></defs><rect width="960" height="1170" fill="#fff"/>
+<text x="40" y="49" fill="#3a6075" font-size="21" font-weight="700">MaliPang  /  คิวรายงานค่าใช้จ่าย</text>
+<text x="40" y="98" fill="#153748" font-size="41" font-weight="700">ส่งค่าใช้จ่ายต่อทีละรายการ</text>
+<text x="40" y="132" fill="#153748" font-size="19" font-weight="400">RUN_SERIAL  •  แหล่งข้อมูลหลักคือ D1  •  ใช้บัญชีบริการของ Worker อ่านแถว DAILY</text>
+<rect x="40" y="174" width="414" height="122" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>
+<text x="56" y="209" fill="#153748" font-size="23" font-weight="700">เริ่มครั้งแรก</text>
+<text x="56" y="237" fill="#153748" font-size="17" font-weight="400">เลือกชุดงานที่เข้าเกณฑ์ของรอบนี้</text>
+<text x="56" y="262" fill="#153748" font-size="17" font-weight="400">ตรวจ DAILY ของ A และจองงาน B</text>
+<rect x="506" y="174" width="414" height="122" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>
+<text x="522" y="209" fill="#153748" font-size="23" font-weight="700">เริ่มต่อหลังหยุด</text>
+<text x="522" y="237" fill="#153748" font-size="17" font-weight="400">อ่านประวัติการจองใน D1</text>
+<text x="522" y="262" fill="#153748" font-size="17" font-weight="400">ระบุงานล่าสุดจากสายงานเดิม</text>
+<path d="M247 296V323H480V348" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M713 296V323H480" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="145" y="353" width="670" height="108" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>
+<text x="161" y="388" fill="#153748" font-size="23" font-weight="700">ติดตามเฉพาะงานที่จอง</text>
+<text x="161" y="416" fill="#153748" font-size="17" font-weight="400">Worker เขียน DAILY → RAW → DETAIL ที่มี แล้วปิดงาน</text>
+<text x="161" y="441" fill="#153748" font-size="17" font-weight="400">ตัวรันอ่าน FINISH_STATUS ตามรหัสงานและหลักฐานของการจอง</text>
+<path d="M480 461V491H245V519" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M480 491H712V519" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="40" y="524" width="412" height="146" rx="12" fill="#edf8ef" stroke="#438467" stroke-width="2"/>
+<text x="56" y="559" fill="#153748" font-size="23" font-weight="700">งานกับรอบการเขียนปิดครบ</text>
+<text x="56" y="587" fill="#153748" font-size="17" font-weight="400">อ่านแถว DAILY ของงานนี้เทียบ D1</text>
+<text x="56" y="612" fill="#153748" font-size="17" font-weight="400">ตรวจสถานะอีกครั้ง หลักฐานต้องคงเดิม</text>
+<rect x="506" y="524" width="414" height="146" rx="12" fill="#fff2e9" stroke="#b16f42" stroke-width="2"/>
+<text x="522" y="559" fill="#153748" font-size="23" font-weight="700">งานพัก / ล้มเหลว / ยังยืนยันไม่ได้</text>
+<text x="522" y="587" fill="#153748" font-size="17" font-weight="400">จบรอบพร้อมเหตุผล รวมถึงกรณีหมดเวลา</text>
+<text x="522" y="612" fill="#153748" font-size="17" font-weight="400">เก็บหลักฐานไว้ตรวจงานเดิมเมื่อเริ่มต่อ</text>
+<path d="M452 613H502" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M246 670V707" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="40" y="712" width="412" height="113" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>
+<text x="56" y="747" fill="#153748" font-size="23" font-weight="700">ยังมีงานถัดไปในชุดนี้</text>
+<text x="56" y="775" fill="#153748" font-size="17" font-weight="400">ADVANCE_ONE ตรวจแถวเดิมอีกครั้ง</text>
+<text x="56" y="800" fill="#153748" font-size="17" font-weight="400">แล้วจองงานถัดไปในธุรกรรม D1 เดียว</text>
+<rect x="506" y="712" width="414" height="113" rx="12" fill="#edf8ef" stroke="#438467" stroke-width="2"/>
+<text x="522" y="747" fill="#153748" font-size="23" font-weight="700">จบชุดที่เลือก</text>
+<text x="522" y="775" fill="#153748" font-size="17" font-weight="400">เมื่อยืนยันงานล่าสุดและไม่มีงานถัดไป</text>
+<text x="522" y="800" fill="#153748" font-size="17" font-weight="400">รายงานจำนวนที่ยืนยันในรอบนี้</text>
+<path d="M246 684H713V707" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<path d="M246 825V857" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<rect x="40" y="862" width="880" height="118" rx="12" fill="#edf5fa" stroke="#548297" stroke-width="2"/>
+<text x="56" y="897" fill="#153748" font-size="23" font-weight="700">ถ้าคำตอบการจองหาย</text>
+<text x="56" y="925" fill="#153748" font-size="17" font-weight="400">ตรวจประวัติว่า B ส่งสิทธิ์ให้ C คนเดียวด้วยหลักฐานเดิมหรือไม่</text>
+<text x="56" y="950" fill="#153748" font-size="17" font-weight="400">พบตรงกัน → ติดตาม C ต่อ • ยืนยันไม่ได้ → จบรอบพร้อมเหตุผล</text>
+<path d="M40 920H17V410H141" fill="none" stroke="#446476" stroke-width="2.5" stroke-linejoin="round" marker-end="url(#arrow)"/>
+<text x="42" y="1046" fill="#153748" font-size="23" font-weight="700">A ยังอยู่ใน REVIEW และยังมีหลักฐานของเหตุเดิม</text>
+<text x="42" y="1085" fill="#153748" font-size="18" font-weight="400">จำนวนที่ยืนยันในรอบนี้รวมงานเดิมที่กลับมาตรวจซ้ำได้ และนับเฉพาะชุดงานที่เลือก</text>
+<text x="42" y="1120" fill="#153748" font-size="18" font-weight="400">เส้นทางนี้ใช้เมื่อเปิดโหมดทดลองและผู้ดูแลเลือก RUN_SERIAL</text>
+</svg>

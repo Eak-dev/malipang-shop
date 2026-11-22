@@ -139,9 +139,16 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-pilot-readback'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
       const headers={'cache-control':'no-store'};
       const body=await request.json().catch(()=>null);
-      if(!body||body.action!=='READBACK'||Object.keys(body).length!==1)return Response.json({ok:false},{status:400,headers});
+      if(!body||body.action!=='READBACK')return Response.json({ok:false},{status:400,headers});
+      let identity;
+      if(Object.keys(body).length!==1){
+        if(Object.keys(body).length!==3||typeof body.jobId!=='string'||typeof body.fingerprint!=='string'||
+          !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(body.jobId)||!/^[0-9a-f]{64}$/.test(body.fingerprint))
+          return Response.json({ok:false},{status:400,headers});
+        identity={jobId:body.jobId,fingerprint:body.fingerprint};
+      }
       let matched=false;
-      try{matched=await verifyNormalPilotRow(env);}catch{/* Unavailable evidence keeps the pilot held. */}
+      try{matched=await verifyNormalPilotRow(env,identity);}catch{/* Unavailable evidence keeps the pilot held. */}
       return Response.json({ok:matched,outcome:matched?'MATCHED':'UNVERIFIED',servedVersion:served},{status:matched?200:409,headers});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-expense-pilot'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){

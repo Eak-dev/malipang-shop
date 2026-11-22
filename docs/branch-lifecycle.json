@@ -7,6 +7,14 @@
   "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
   "work_items": [
     {
+      "issue": 348,
+      "mode": "MANAGED",
+      "primary_branch": "codex/fix-serial-expense-handover",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang queue serial handover",
+      "reason": "Implement resumable sequential expense processing after reconciling the parked job."
+    },
+    {
       "issue": 285,
       "mode": "MANAGED",
       "coordination_chat": "LINE expense payment review loop",
@@ -71,6 +79,19 @@
     }
   ],
   "branches": [
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/fix-serial-expense-handover",
+      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T02:21:31.958766+00:00",
+      "reason": "Verified new remote work branch at canonical main before committing changes."
+    },
     {
       "scope": "local",
       "source": "issue296-normal-queue-one-pilot",

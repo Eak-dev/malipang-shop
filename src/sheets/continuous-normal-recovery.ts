@@ -157,14 +157,16 @@ async function armNormalExpenseEpoch(env:NormalEnv):Promise<boolean>{
 
 /** Both statements are evaluated in the caller's transaction. The caller must
  * assert that the expected epoch and its immutable admission were created. */
-export function normalExpenseEpochStatements(env:NormalEnv,epoch:string,now:string,pilotJobId?:string):D1PreparedStatement[]{
+export function normalExpenseEpochStatements(env:NormalEnv,epoch:string,now:string,pilotJobId?:string,completedPilotEpoch?:string):D1PreparedStatement[]{
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
- // Keep the one-shot slot after completion, restart, or uncertain acknowledgement.
- // This predicate runs in the same INSERT that grants the job permission.
+ // The original one-shot slot stays consumed after completion. The serial
+ // operator may arm another exact job only in its audited predecessor CAS batch.
  const pilotFilter=pilotJobId?`AND j.job_id=? AND e.status='CONFIRMED' AND e.version=1
  AND length(e.transaction_date)=10 AND date(e.transaction_date,'+0 days')=e.transaction_date
  AND substr(e.transaction_date,1,7)=strftime('%Y-%m','now','+7 hours')
- AND NOT EXISTS(SELECT 1 FROM stable_recovery_epochs prior WHERE prior.spreadsheet_id=c.spreadsheet_id AND prior.epoch_id GLOB 'normal_pilot296_*')`:'';
+ ${completedPilotEpoch
+   ? "AND EXISTS(SELECT 1 FROM stable_recovery_epochs prior WHERE prior.spreadsheet_id=c.spreadsheet_id AND prior.epoch_id=? AND prior.epoch_id GLOB 'normal_pilot296_*' AND prior.state='COMPLETE')"
+   : "AND NOT EXISTS(SELECT 1 FROM stable_recovery_epochs prior WHERE prior.spreadsheet_id=c.spreadsheet_id AND prior.epoch_id GLOB 'normal_pilot296_*')"}`:'';
 
  const select=`FROM sync_jobs j JOIN expense_events e ON e.expense_id=j.entity_key JOIN continuous_daily_post_cutover_expenses post ON post.expense_id=e.expense_id AND post.spreadsheet_id=? JOIN continuous_daily_cutovers c ON c.spreadsheet_id=post.spreadsheet_id AND c.state='ACTIVE'
  WHERE j.entity_type='EXPENSE' AND j.entity_version=e.version AND j.status='PENDING' AND j.attempt_count=0 AND j.lease_token IS NULL AND j.lease_until IS NULL AND (j.next_attempt_at IS NULL OR j.next_attempt_at<=?)
@@ -186,7 +188,7 @@ export function normalExpenseEpochStatements(env:NormalEnv,epoch:string,now:stri
  ${pilotFilter}
  ORDER BY j.updated_at,j.entity_key LIMIT 1`;
  return [
-  db.prepare(`INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) SELECT ?,c.spreadsheet_id,'ARMED','EXPENSE',e.expense_id,e.version,?,? ${select}`).bind(epoch,now,now,book,now,...(pilotJobId?[pilotJobId]:[])),
+  db.prepare(`INSERT INTO stable_recovery_epochs(epoch_id,spreadsheet_id,state,target_type,target_key,target_version,created_at,updated_at) SELECT ?,c.spreadsheet_id,'ARMED','EXPENSE',e.expense_id,e.version,?,? ${select}`).bind(epoch,now,now,book,now,...(pilotJobId?[pilotJobId]:[]),...(completedPilotEpoch?[completedPilotEpoch]:[])),
   db.prepare("INSERT INTO continuous_normal_recovery_admissions(epoch_id,spreadsheet_id,expense_id,source_version,created_at) SELECT epoch_id,spreadsheet_id,target_key,target_version,? FROM stable_recovery_epochs WHERE epoch_id=? AND state='ARMED'").bind(now,epoch),
  ];
 }

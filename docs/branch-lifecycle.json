@@ -7579,6 +7579,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-22T00:06:24Z",
       "reason": "Dependent handover after bfee974 and 766ac30, initialized from canonical 0c08c6c. Coordinate through the Issue 296 pilot chat and integrate the reviewed change into its single release candidate."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-finish-review-flows",
+      "source_sha": "7c5c91d588e7c6faff360000cac3a612e27af907",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-22T01:28:44.033098+00:00",
+      "reason": "Bounded normal-queue outcome reconciliation after the single-pilot handover."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

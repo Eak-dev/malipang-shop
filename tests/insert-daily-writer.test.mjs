@@ -1025,11 +1025,15 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   const {takePausedPilot}=require('../dist/sheets/parked-notice-adoption.js');
   const action={...settle,action:'HANDOVER_ONE',jobId:pilotId};
   const check={action:'INSPECT_HANDOVER',jobId:pilotId,fingerprint:inspect.fingerprint};
+  const finish={...check,action:'FINISH_STATUS'};
+  assert.deepEqual(parseParkedPilot(finish),finish);
+  assert.equal(parseParkedPilot({...finish,extra:true}),null);
   assert.equal(parseParkedPilot({...action,ownerSupervising:false}),null);
   assert.equal(parseParkedPilot({...check,extra:1}),null);
   assert.deepEqual(parseParkedPilot(action),action);
   Object.assign(h.env,{CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',SHEETS_SYNC_ENABLED:'true',UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED:'false'});
   const operate=value=>operateParkedPilot(h.env,value,version);
+  assert.deepEqual(await operate(finish),{ok:true,outcome:'NOT_STARTED'});
   assert.deepEqual(await operate(check),{ok:true,outcome:'ABSENT'});
   assert.equal((await operateParkedPilot(h.env,action,'wrong-version')).outcome,'HELD');
   assert.equal((await operate({...action,preimageDigest:'c'.repeat(64)})).outcome,'HELD');
@@ -1039,6 +1043,10 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   assert.equal((await operate(check)).outcome,'ABSENT');
   await db.prepare("UPDATE sync_jobs SET next_attempt_at=NULL WHERE job_id=?").bind(pilotId).run();
   assert.deepEqual(await operate(action),{ok:true,outcome:'RESERVED'});
+  assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+  assert.deepEqual(await operate({...finish,fingerprint:'f'.repeat(64)}),{ok:false,outcome:'UNVERIFIED'});
+  const otherVersion='bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+  assert.deepEqual(await operateParkedPilot({...h.env,CF_VERSION_METADATA:{id:otherVersion}},finish,otherVersion),{ok:false,outcome:'UNVERIFIED'});
   assert.equal((await operate(action)).outcome,'HELD');
   assert.equal((await operate(check)).outcome,'RESERVED');
   assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='ARMED'").first()).n,1);
@@ -1073,6 +1081,13 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
      assert.equal(posts,1,JSON.stringify(state));assert.equal(acks,1,JSON.stringify(state));
      assert.equal(state.status,'PENDING');assert.equal(state.last_error,'STABLE_STAGE_CONTINUE');
      assert.equal((await operate(check)).outcome,'STAGE_VERIFIED',JSON.stringify(state));
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+     // Confirmed DAILY can coexist with a later hold or a terminal job failure.
+     await db.prepare("UPDATE sync_jobs SET status='REVIEW' WHERE job_id=?").bind(pilotId).run();
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_REVIEW'});
+     await db.prepare("UPDATE sync_jobs SET status='FAILED' WHERE job_id=?").bind(pilotId).run();
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_FAILED'});
+     await db.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id=?").bind(pilotId).run();
      const projected=h.effective().filter(r=>r[23]==='MALIPANG_EXPENSE:exp_pilot');
      assert.equal(projected.length,1);assert.equal(projected[0][3],'pilot');assert.equal(projected[0][7],1.2);
      assert.equal(begins,0);assert.equal(ends,1);
@@ -1086,6 +1101,13 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
       Date.now=()=>realNow()+step*90000;
       for(const projection of ['EXPENSE_RAW','DETAIL','FINAL']){
        step++;
+       if(projection==='FINAL'){
+        const end=notice.endStableNotice;
+        notice.endStableNotice=async(...args)=>{
+         assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+         return end(...args);
+        };
+       }
        await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected continuation retry');}}]},h.env,{});
        const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();
        assert.equal(state.status,projection==='FINAL'?'COMPLETED':'PENDING',projection+' '+JSON.stringify(state));
@@ -1093,6 +1115,12 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
       }
       assert.equal((await db.prepare("SELECT count(*) n FROM stable_projection_writes WHERE state='VERIFIED' AND (entity_id='exp_pilot' OR entity_id LIKE 'exp_pilot|%')").first()).n,3);
       assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='COMPLETE' AND target_key='exp_pilot'").first()).n,1);
+      assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_COMPLETE'});
+      // A terminal job alone cannot prove that all current D1 details were written.
+      await db.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,description,created_at,updated_at)
+        SELECT 'item_extra',document_id,expense_id,'missing projection',created_at,updated_at
+        FROM expense_document_items WHERE expense_id='exp_pilot' LIMIT 1`).run();
+      assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
       assert.equal(acks,4);assert.equal(posts,3);
      }finally{Date.now=realNow;}
 
@@ -1104,6 +1132,7 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
      pilot,undefined,undefined,{job:pilot,lease:'pilot-lease'}),/PILOT_PAUSE_UNVERIFIED/);
     assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_operations WHERE state='ADMITTED'").first()).n,0);
     assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims").first()).state,'REVIEW');
+    assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_REVIEW'});
     assert.equal(ends,0);
    }
    assert.equal(begins,finalAck==='received'?3:0);

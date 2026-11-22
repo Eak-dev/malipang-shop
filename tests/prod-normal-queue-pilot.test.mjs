@@ -11,7 +11,7 @@ const env={GITHUB_SHA:sha,EXPECTED_SHA:sha,GITHUB_REF:'refs/heads/main',GITHUB_R
 const fingerprint='b'.repeat(64),preimageDigest='c'.repeat(64),jobId='12345678-1234-1234-1234-123456789abc';
 const gates={BACKUP_RUN_ID:'123',GITHUB_TOKEN:'gh-test',EXTERNAL_WRITERS_FENCED:'true',OWNER_SUPERVISING:'true'};
 
-function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false}={}){
+function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,committed=false,statuses=['JOB_COMPLETE']}={}){
   const calls=[];
   const reply=(data,status=200)=>Response.json(data,{status});
   const request=async(input,opts)=>{
@@ -32,8 +32,12 @@ function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false}
     calls.push(body);
     assert.equal(opts.headers['x-malipang-expected-worker-version'],version);
     if(body.action==='INSPECT')return reply({ok:true,outcome:'INSPECTED',fingerprint,projectionState:state,preimageDigest:state==='VERIFIED'?preimageDigest:null,servedVersion:version});
-    if(missingAck&&['SETTLE','HANDOVER_ONE'].includes(body.action))throw Error('sensitive test value');
-    const results={PROBE:'MATCHED',SETTLE:'SETTLED',HANDOVER_ONE:'RESERVED',INSPECT_HANDOVER:'ADOPTED',READBACK:outcome};
+    if(missingAck&&['SETTLE','HANDOVER_ONE'].includes(body.action)){
+      if(committed&&body.action==='SETTLE')state='VERIFIED';
+      throw Error('sensitive test value');
+    }
+    const results={PROBE:'MATCHED',SETTLE:'SETTLED',HANDOVER_ONE:'RESERVED',INSPECT_HANDOVER:'ADOPTED',READBACK:outcome,
+      FINISH_STATUS:body.action==='FINISH_STATUS'&&statuses.length>1?statuses.shift():statuses[0]};
     return reply({ok:true,outcome:results[body.action],fingerprint,preimageDigest,servedVersion:version});
   };
   return {calls,request};
@@ -60,8 +64,8 @@ test('probe and final readback only succeed against their pinned exact receipts'
 test('protected runner admits one private candidate, never retries or falls through on uncertainty',async()=>{
   const phase={...env,...gates,PILOT_PHASE:'HANDOVER_ONE'};
   const p=provider({state:'VERIFIED',rows:[{job_id:jobId}]});
-  assert.equal(await runNormalPilot(phase,p.request),'PILOT_ONE_RESERVED');
-  assert.deepEqual(p.calls.map(c=>c.action),['INSPECT','HANDOVER_ONE']);
+  assert.equal(await runNormalPilot(phase,p.request),'PILOT_JOB_COMPLETE_DAILY_MATCHED');
+  assert.deepEqual(p.calls.map(c=>c.action),['INSPECT','HANDOVER_ONE','FINISH_STATUS','READBACK','FINISH_STATUS']);
   assert.deepEqual(p.calls[1],{action:'HANDOVER_ONE',fingerprint,preimageDigest,jobId,ownerSupervising:true,externalWritersFenced:true});
   for(const [step,state] of [['SETTLE','IN_FLIGHT'],['HANDOVER_ONE','VERIFIED']]){
     const lost=provider({missingAck:true,state,rows:[{job_id:jobId}]});
@@ -71,6 +75,38 @@ test('protected runner admits one private candidate, never retries or falls thro
   const held=provider();
   await assert.rejects(runNormalPilot(phase,held.request),/PILOT_ORIGINAL_UNVERIFIED/);
   assert.deepEqual(held.calls.map(c=>c.action),['INSPECT']);
+});
+
+test('missing write responses reconcile exact old and pilot evidence without re-dispatch',async()=>{
+  const original=provider({missingAck:true,committed:true});
+  assert.equal(await runNormalPilot({...env,...gates,PILOT_PHASE:'SETTLE'},original.request),'PILOT_ORIGINAL_SETTLED_JOB_HELD');
+  assert.deepEqual(original.calls.map(c=>c.action),['INSPECT','PROBE','SETTLE','INSPECT']);
+  const pilot=provider({missingAck:true,state:'VERIFIED',rows:[{job_id:jobId,fingerprint}]});
+  assert.equal(await runNormalPilot({...env,...gates,PILOT_PHASE:'HANDOVER_ONE'},pilot.request),'PILOT_JOB_COMPLETE_DAILY_MATCHED');
+  assert.equal(pilot.calls.filter(c=>c.action==='HANDOVER_ONE').length,1);
+});
+
+test('bounded read-only finish reconciles both endpoints and classifies held and uncertain runs',async()=>{
+  const phase={...env,PILOT_PHASE:'FINISH_PILOT'},rows=[{job_id:jobId,fingerprint}];
+  for(const [statuses,outcome,expected] of [
+    [['IN_PROGRESS','JOB_COMPLETE'],'MATCHED','PILOT_JOB_COMPLETE_DAILY_MATCHED'],
+    [['JOB_REVIEW'],'MATCHED','PILOT_JOB_REVIEW_DAILY_MATCHED'],
+    [['JOB_FAILED'],'UNVERIFIED','PILOT_JOB_FAILED_DAILY_UNVERIFIED'],
+    [['JOB_COMPLETE','JOB_REVIEW'],'MATCHED','PILOT_FINAL_STATE_CHANGED'],
+    [['JOB_COMPLETE'],'UNVERIFIED','PILOT_JOB_COMPLETE_DAILY_UNVERIFIED'],
+    [['IN_PROGRESS'],'MATCHED','PILOT_OBSERVATION_TIMEOUT_IN_PROGRESS'],
+    [['NOT_STARTED'],'MATCHED','PILOT_FINISH_NOT_STARTED'],
+  ]){
+    let waits=0;
+    const p=provider({rows,statuses:[...statuses],outcome}),run=runNormalPilot(phase,p.request,async ms=>{assert.equal(ms,60000);waits++;});
+    if(expected==='PILOT_JOB_COMPLETE_DAILY_MATCHED')assert.equal(await run,expected);
+    else await assert.rejects(run,{message:expected});
+    assert.equal(waits,expected.includes('TIMEOUT')?15:statuses[0]==='IN_PROGRESS'?1:0);
+    assert.ok(p.calls.every(c=>['FINISH_STATUS','READBACK'].includes(c.action)));
+  }
+  const absent=provider();
+  await assert.rejects(runNormalPilot(phase,absent.request),/PILOT_FINISH_NOT_STARTED/);
+  assert.equal(absent.calls.length,0);
 });
 
 test('inspect reads the audit before consulting the Worker and never selects a new candidate',async()=>{

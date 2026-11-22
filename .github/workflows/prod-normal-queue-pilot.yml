@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: PROBE, INSPECT_HANDOVER and READBACK read only. SETTLE records proof. HANDOVER_ONE admits one job.
+        description: HANDOVER_ONE admits and observes one job. FINISH_PILOT resumes read-only observation.
         type: choice
-        options: [PROBE, SETTLE, HANDOVER_ONE, INSPECT_HANDOVER, READBACK]
+        options: [PROBE, SETTLE, HANDOVER_ONE, INSPECT_HANDOVER, READBACK, FINISH_PILOT]
         required: true
       expected_sha:
         description: Exact reviewed main SHA
@@ -37,7 +37,7 @@ jobs:
   operator:
     if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 40
     environment: production
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262

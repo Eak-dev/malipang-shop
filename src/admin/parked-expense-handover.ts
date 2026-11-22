@@ -2,6 +2,7 @@ import type {SheetsSyncJob} from '../types';
 import {readFailedDailyIncidentEvidence,dailyFailedPayloadDigest} from './exact-daily-proof-evidence';
 import {dailyIncidentScope,verifiedHeldDailyGuard} from './exact-daily-settlement';
 import {normalExpenseEpochStatements} from '../sheets/continuous-normal-recovery';
+import {stableSourceIntegrity} from '../sheets/stable-source-cutover';
 import {parkedAuditAction,parkedPilotEnabled,parkedSourceJoins,pilotWriteJoins,type ParkedPilotEnv} from '../sheets/parked-notice-adoption';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
@@ -12,13 +13,13 @@ import {proveDailyProviderPostimage} from '../sheets/exact-daily-provider-proof'
 const digest=/^[0-9a-f]{64}$/;
 const uuid=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
 type Select={jobId:string;fingerprint:string};
-type Action=Select & ({action:'INSPECT_HANDOVER'}|{action:'HANDOVER_ONE';preimageDigest:string;ownerSupervising:true;externalWritersFenced:true});
+type Action=Select & ({action:'INSPECT_HANDOVER'}|{action:'FINISH_STATUS'}|{action:'HANDOVER_ONE';preimageDigest:string;ownerSupervising:true;externalWritersFenced:true});
 export function parseParkedPilot(value:unknown):Action|null{
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
  const v=value as Record<string,unknown>,n=Object.keys(v).length;
  if(typeof v.jobId!=='string'||!uuid.test(v.jobId)||typeof v.fingerprint!=='string'||!digest.test(v.fingerprint))return null;
  const select={jobId:v.jobId,fingerprint:v.fingerprint};
- if(v.action==='INSPECT_HANDOVER'&&n===3)return {...select,action:v.action};
+ if((v.action==='INSPECT_HANDOVER'||v.action==='FINISH_STATUS')&&n===3)return {...select,action:v.action};
  if(v.action==='HANDOVER_ONE'&&n===6&&typeof v.preimageDigest==='string'&&digest.test(v.preimageDigest)&&v.externalWritersFenced===true&&v.ownerSupervising===true)
   return {...select,action:v.action,preimageDigest:v.preimageDigest,externalWritersFenced:true,ownerSupervising:true};
  return null;
@@ -45,10 +46,95 @@ async function inspect(env:ParkedPilotEnv,action:Select){
  return 'HELD';
 }
 
+/** Read one D1 snapshot. A verified first stage can coexist with a failed later
+ * stage. Only FINAL closes both the job and its epoch; the runner then compares
+ * the displayed DAILY row against D1 in a separate provider read. */
+async function finishStatus(env:ParkedPilotEnv,action:Select,version:string){
+ const result=await env.DB.prepare(`WITH audits AS (
+   SELECT * FROM admin_audit WHERE action=?
+ ), target AS (
+   SELECT j.entity_key AS expense,j.status AS job,j.last_error,j.lease_token,j.lease_until,j.next_attempt_at,
+          ep.epoch_id,ep.state AS epoch,w.spreadsheet_id AS book,json_extract(a.after_json,'$.token') AS token,
+          rev.revision AS revision,json_array(e.expense_id,e.version,e.status,e.transaction_date,e.description,
+            e.amount_satang,e.payment_key,e.source_wallet,e.category,e.branch_id,e.updated_at) AS source_fields
+   FROM audits a ${parkedSourceJoins}
+   JOIN expense_events e ON e.expense_id=j.entity_key AND e.version=1 AND e.status='CONFIRMED'
+   JOIN stable_source_revision rev ON rev.singleton=1
+   WHERE a.entity_key=? AND a.reason=? AND w.spreadsheet_id=? AND json_extract(a.after_json,'$.version')=?
+     AND ep.epoch_id GLOB 'normal_pilot296_*' AND w.sheet_id=? AND w.sheet_name=?
+ ), expected AS (
+   SELECT expense AS entity_id,'DAILY' AS projection,? AS sheet_name,? AS sheet_id FROM target
+   UNION ALL SELECT expense,'EXPENSE_RAW',?,? FROM target
+   UNION ALL SELECT t.expense||'|'||item.item_id,'DETAIL',?,?
+     FROM target t JOIN expense_document_items item ON item.expense_id=t.expense
+ ), written AS (
+   SELECT p.* FROM target t JOIN stable_projection_writes p ON p.spreadsheet_id=t.book AND p.entity_type='EXPENSE'
+     AND (p.entity_id=t.expense OR substr(p.entity_id,1,length(t.expense)+1)=t.expense||'|')
+ ), verified AS (
+   SELECT p.entity_id,p.projection FROM target t JOIN written p ON p.source_version=1 AND p.state='VERIFIED'
+   JOIN expected e ON e.projection=p.projection AND e.entity_id=p.entity_id
+     AND e.sheet_name=p.sheet_name AND p.sheet_id=e.sheet_id
+   JOIN stable_recovery_operations o ON o.epoch_id=t.epoch_id AND o.operation_token=p.operation_token AND o.state='VERIFIED'
+   JOIN stable_expense_projection_preimages pi ON pi.spreadsheet_id=p.spreadsheet_id AND pi.entity_type=p.entity_type
+     AND pi.entity_id=p.entity_id AND pi.projection=p.projection AND pi.sheet_id=p.sheet_id AND pi.sheet_name=p.sheet_name
+     AND pi.source_version=p.source_version AND pi.source_digest=p.source_digest
+   WHERE p.projection<>'DAILY' OR (p.operation_token=t.token AND EXISTS (
+     SELECT 1 FROM (SELECT 1) marker_evidence ${pilotWriteJoins}))
+ )
+ SELECT (SELECT count(*) FROM audits) AS audit_count,(SELECT count(*) FROM target) AS target_count,t.job,t.epoch,
+   t.revision,${stableSourceIntegrity} AS revision_valid,
+   json_array(t.book,t.epoch_id,t.token,t.source_fields,(SELECT min(source_digest) FROM written)) AS proof_inputs,
+   t.lease_token IS NULL AND t.lease_until IS NULL AS unleased,
+   t.lease_token IS NOT NULL AND t.lease_until>strftime('%Y-%m-%dT%H:%M:%fZ','now') AS leased,
+   t.last_error IS NULL AND t.next_attempt_at IS NULL AS clean,
+   (SELECT state FROM stable_workbook_claims c WHERE c.spreadsheet_id=t.book AND
+     (c.operation_token=t.token OR c.operation_token IN (SELECT operation_token FROM stable_recovery_operations WHERE epoch_id=t.epoch_id))) AS claim,
+   EXISTS(SELECT 1 FROM failed_jobs f WHERE f.queue_name='malipang-jobs' AND f.status='OPEN'
+     AND f.job_key='EXPENSE:'||t.expense||':1') AS open_failure,
+   EXISTS(SELECT 1 FROM stable_recovery_operations o WHERE o.epoch_id=t.epoch_id AND o.state<>'VERIFIED') AS unfinished,
+   (SELECT count(*) FROM written)=(SELECT count(*) FROM expected)
+     AND (SELECT count(DISTINCT source_digest) FROM written)=1
+     AND NOT EXISTS(SELECT entity_id,projection FROM expected EXCEPT SELECT entity_id,projection FROM verified) AS all_written
+ FROM (SELECT 1) anchor LEFT JOIN target t ON 1=1 LIMIT 2`)
+  .bind(parkedAuditAction,action.jobId,action.fingerprint,env.GOOGLE_SPREADSHEET_ID,version,
+   Number(env.CONTINUOUS_DAILY_SHEET_ID),env.CONTINUOUS_DAILY_SHEET,
+   env.CONTINUOUS_DAILY_SHEET,Number(env.CONTINUOUS_DAILY_SHEET_ID),env.CONTINUOUS_RAW_SHEET,Number(env.CONTINUOUS_RAW_SHEET_ID),
+   env.CONTINUOUS_DETAIL_SHEET,Number(env.CONTINUOUS_DETAIL_SHEET_ID))
+  .all<{audit_count:number;target_count:number;job:string|null;epoch:string|null;unleased:number;leased:number;clean:number;
+   claim:string|null;open_failure:number;unfinished:number;all_written:number;revision:number;revision_valid:number;proof_inputs:string}>();
+ const row=result.results?.[0];
+ if(result.success!==true||result.results?.length!==1||!row)return 'UNVERIFIED';
+ if(row.audit_count===0&&row.target_count===0)return 'NOT_STARTED';
+ if(row.audit_count!==1||row.target_count!==1)return 'UNVERIFIED';
+ if(row.job==='FAILED')return 'JOB_FAILED';
+ if(row.job==='REVIEW'||row.epoch==='REVIEW'||row.claim==='REVIEW')return 'JOB_REVIEW';
+ if(row.open_failure!==0)return 'UNVERIFIED';
+ if(row.epoch==='ARMED'&&((row.job==='PENDING'&&row.unleased===1)||(row.job==='PROCESSING'&&row.leased===1)))return 'IN_PROGRESS';
+ // FINAL commits the job, verifies the operation, closes the epoch and releases
+ // the claim in separate steps. A reader may observe an orderly close in between.
+ if(row.job==='COMPLETED'&&row.unleased===1&&row.clean===1&&row.all_written===1){
+  if(row.epoch==='COMPLETE'&&row.claim===null&&row.unfinished===0){
+   if(row.revision_valid!==1||!Number.isSafeInteger(row.revision)||row.revision<0)return 'UNVERIFIED';
+   const proof=await dailyFailedPayloadDigest(JSON.stringify(['pilot-finish-v1',version,action.jobId,
+    action.fingerprint,row.revision,row.proof_inputs]));
+   return {ok:true,outcome:'JOB_COMPLETE',proof};
+  }
+  if(row.claim==='HELD'&&(row.epoch==='ARMED'||row.epoch==='COMPLETE'&&row.unfinished===0))return 'IN_PROGRESS';
+ }
+ return 'UNVERIFIED';
+}
+
 export async function operateParkedPilot(env:ParkedPilotEnv,action:Action,version:string){
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
  const prior=dailyIncidentScope(env);
  const valid=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&dailyIncidentScope(env)===prior&&parkedPilotEnabled(env,version);
+ if(action.action==='FINISH_STATUS'){
+  try{
+   const outcome=valid()?await finishStatus(env,action,version):'UNVERIFIED';
+   if(valid()&&outcome!=='UNVERIFIED')return typeof outcome==='string'?{ok:true,outcome}:outcome;
+  }catch{/* Lack of D1 proof ends this read-only observation. */}
+  return {ok:false,outcome:'UNVERIFIED'};
+ }
  const held=()=>({ok:false,outcome:'HELD'});let submitted=false;
  if(!valid()||!book)return held();
  try{

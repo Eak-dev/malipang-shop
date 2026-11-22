@@ -6,6 +6,8 @@
 
 ## ภาพรวมระบบ
 
+ผลจบรอบของ [งานทดลองคิวปกติ #296](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) ตรวจหลักฐานการพักรายการเดิมและแถวเป้าหมายของงานใหม่ก่อนรายงานผล
+
 ระบบรับงานจาก LINE OA และ Back Office ผ่าน Cloudflare Worker โดยมี D1 เป็น operational source of truth, Google Sheets เป็นส่วนรายงานและงานปฏิบัติการ, R2 เก็บหลักฐานส่วนตัว และ Queue ช่วยประมวลผลงานเบื้องหลัง ระบบครอบคลุมค่าใช้จ่าย, การลงเวลา, กะ, Payroll, สิทธิ์ผู้ใช้, ข้อมูลภาพ และรายงานของเจ้าของ
 
 - ภาพรวมและวิธีพัฒนา: [README](../README.md), [architecture](07_ARCHITECTURE_AND_OPERATING_MODEL_TH.md), [roadmap](11_IMPLEMENTATION_ROADMAP_TH.md)

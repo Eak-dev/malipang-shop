@@ -4,6 +4,7 @@ import {stableNoticeStyleFingerprint} from './stable-edit-notice';
 import {admitStableRecovery} from './stable-recovery-admission';
 
 export const parkedAuditAction='ISSUE296_PAUSED_NOTICE_HANDOVER';
+export const serialAuditAction='ISSUE296_SERIAL_EXPENSE_HANDOVER';
 export type ParkedPilotEnv=Env & {CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED?:string;CONTINUOUS_CANARY_OPERATOR_ENABLED?:string};
 export function parkedPilotEnabled(env:ParkedPilotEnv,version:string):boolean{
  const off=(flag:string|undefined)=>flag===undefined||flag==='false';

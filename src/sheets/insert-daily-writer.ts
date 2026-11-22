@@ -23,7 +23,7 @@ import {paymentOptionForPair} from '../expense/document';
 import {assertContinuousDailyActivated} from './continuous-daily-route';
 import {pendingDailyCancellations,verifyDailyCarrierEvidence} from './daily-carrier-auth';
 import {readContinuousReportHealth} from './continuous-report-health';
-import {dailyPayloadDigest,dailySnapshotDigest,matchesCommittedDailyInsert} from './continuous-daily-write-evidence';
+import {dailyPaddingStart,dailyPayloadDigest,dailySnapshotDigest,matchesCommittedDailyInsert} from './continuous-daily-write-evidence';
 import {capturePublicationBatchSnapshot,publicationSnapshotRange,type PublicationBatchSnapshot,type PublicationSnapshotSpec} from './publication-batch-snapshot';
 import {planPublicationSnapshot} from './publication-snapshot-plan';
 import {ReviewRequestBudget} from './review-request-budget';
@@ -114,12 +114,12 @@ export async function verifyInsertedDailyFinalSnapshot(env:Env,job:SheetsSyncJob
 export function verifyInsertedDailyTransform(before:Snapshot,after:Snapshot,oldRows:number,columns:number,row:number,publication?:{sheet:string;rows:number}):boolean{
  if(row<5||row>oldRows||oldRows>=5000||columns<29||columns>100||before.formula.length>oldRows||after.formula.length>oldRows+1)return false;
  const upgradedJ=appendDailyRowFormulas(publication)[9],shiftedColumns=publication?26:25;
- const blankLast=Array.from({length:shiftedColumns},(_,c)=>blank(before.formula[oldRows-1]?.[c])&&blank(before.effective[oldRows-1]?.[c])).every(Boolean);
+ const paddingStart=dailyPaddingStart(before,oldRows,shiftedColumns);
  for(let r=0;r<oldRows;r++)for(let c=0;c<columns;c++){
   const b=before.formula[r]?.[c],be=before.effective[r]?.[c];
   if(c>=shiftedColumns||r<row-1){if(!same(b,after.formula[r]?.[c])||!same(be,after.effective[r]?.[c]))return false;continue;}
   if(helper.has(c)){
-   if(blankLast&&r===oldRows-1&&blank(after.formula[r+1]?.[c])&&blank(after.effective[r+1]?.[c]))continue;
+   if(r>=paddingStart&&blank(after.formula[r+1]?.[c])&&blank(after.effective[r+1]?.[c]))continue;
    const upgraded=c===9&&b===upgradedJ,expected=upgraded?upgradedJ:continuousDailyHelperFormulas(r+2)[c];
    if(!upgraded&&b!==continuousDailyHelperFormulas(r+1)[c]||after.formula[r+1]?.[c]!==expected||!blank(be)||!blank(after.effective[r+1]?.[c]))return false;
   }else if(!blank(b)||!blank(be)||!blank(after.formula[r+1]?.[c])||!blank(after.effective[r+1]?.[c]))return false;
@@ -208,13 +208,13 @@ export async function insertDailyExpenseUnderClaim(env:Env,job:SheetsSyncJob,lea
  const row=Math.max(5,last+1);if(row>grid.rowCount)throw new InsertDailyDefiniteFailure('CAPACITY');
  // Prove the whole shifted tail has only known blank template formulas.
  const upgradedJ=appendDailyRowFormulas(publication)[9],shiftedColumns=publication?26:25;
- const blankTail=Array.from({length:shiftedColumns},(_,c)=>blank(before.formula[grid.rowCount-1]?.[c])&&blank(before.effective[grid.rowCount-1]?.[c])).every(Boolean);
+ const paddingStart=dailyPaddingStart(before,grid.rowCount,shiftedColumns);
+ const blankTail=paddingStart<grid.rowCount;
  // Padding can result in two new rows. Reject before intent if that would
  // exceed the supported maximum even when the provider grows the grid twice.
  if(blankTail&&grid.rowCount>4998)throw new InsertDailyDefiniteFailure('CAPACITY');
- for(let i=row-1;i<grid.rowCount;i++)for(let c=0;c<shiftedColumns;c++){
+ for(let i=row-1;i<paddingStart;i++)for(let c=0;c<shiftedColumns;c++){
   const f=before.formula[i]?.[c],e=before.effective[i]?.[c];
-  if(blankTail&&i===grid.rowCount-1)continue;
   if(helper.has(c)){if(!blank(e))throw Error('INSERT_DAILY_TAIL_UNVERIFIED');if(f!==continuousDailyHelperFormulas(i+1)[c]&&(c!==9||f!==upgradedJ))throw new InsertDailyDefiniteFailure('ROW_FORMULA');}
   else if(!blank(f)||!blank(e))throw Error('INSERT_DAILY_TAIL_UNVERIFIED');
  }

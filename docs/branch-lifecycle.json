@@ -7611,6 +7611,21 @@
       "status": "ACTIVE",
       "observed_at": "2026-11-22T01:49:41.366158+00:00",
       "reason": "New documentation task branch observed at creation."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-system-flow-policy",
+      "source_sha": "b5b8e51feee5acdabeb5c6588ee60d175c3cdb5a",
+      "issues": [
+        344
+      ],
+      "pull_requests": [
+        345
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T01:51:39.880304+00:00",
+      "reason": "Observed remote primary branch for the system flow policy before recording PR #345."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

@@ -23,3 +23,7 @@ Repository `Eak-dev/malipang-shop`, branch `codex/issue348-serial-handover`, bas
 - ยังไม่ได้ทดสอบ external provider process ตอบช้าหลัง kill, production Worker isolate, migration บนสำเนา production-shaped, guard body ภายใต้ privileged DDL, โหลดหลาย DETAIL/latency/quota จริง หรือ version/migration drift ครบเส้นทาง. การหาแถวไม่พบครั้งเดียวและ lease หมดไม่ใช่ proof ว่าคำขอเก่าจบ.
 - อ่านย้อนหลังข้ามเดือน/รุ่นเป็น read-only; legacy ที่หลักฐานไม่ครบต้อง RECONCILE. ไม่ให้สิทธิ์เขียนข้ามรุ่นโดยเดา.
 - ตรวจ Issue และ PR สด, review diff/migrations และผลทดสอบบน HEAD ใหม่; ปิดช่อง local ที่ทำได้, อัปเดต audit/flow และรัน `npm run check` กับ `npx wrangler deploy --dry-run` ซ้ำหลังแก้โค้ด. เตรียม UAT/rollback/forward-fix และ migration rehearsal ตาม gate; การทดสอบหรือปล่อยจริงอยู่ภายใต้ #296 แยก. อย่าปิด Issue หรืออ้าง production fixed จนเกณฑ์และ authority ครบ.
+
+## งานทดสอบภาพเพิ่มเติม
+
+เจ้าของให้รวมงาน test gate และการเก็บรูปลงเวลาเจ็ดรูปใน branch นี้แล้ว ดู [handoff งานทดสอบภาพ](LIVE_TEST_INPUTS_HANDOFF_TH.md). รูปจริงเก็บส่วนตัวนอก Git; การทดสอบ live ทั้งหกไม่ถูกข้ามอีก แต่จะล้มเมื่อ prerequisite ขาด และยังไม่ได้พิสูจน์ผลภาพจริง.

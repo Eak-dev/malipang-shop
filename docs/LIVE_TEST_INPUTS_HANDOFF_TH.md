@@ -6,7 +6,7 @@
 
 ## ฐานและสถานะ
 
-Repository `Eak-dev/malipang-shop`, branch `codex/require-live-test-inputs`, สร้างจาก canonical main `d95608e43aad2b0f835c660577ad6318ccef93c8` หลัง fetch/ff-only. Commit ที่มีเอกสารนี้คือจุดรับช่วง. นี่เป็น checkout แยกจากร่าง #348 branch `codex/issue348-serial-handover` commit `6d0c28671a54eccb1a4730a469d0be6e6894ea41`; อย่าสมมติว่าโค้ดสอง branch รวมกันแล้ว. ตรวจสถานะ branch/HEAD/worktree, canonical main, งานแชตอื่น และ AGENTS/gate ก่อนทำต่อ; ห้ามทับ checkout #296 ที่มีงานค้าง. อ่าน `docs/system-flow/README.md`, ภาพรวมระบบหน้า 1–2 และ `docs/03_TEST_AND_CUTOVER_TH.md`; การเปลี่ยนนี้มีเฉพาะ test gate ไม่มี runtime flow เปลี่ยน.
+Repository `Eak-dev/malipang-shop`, branch ปัจจุบัน `codex/issue348-serial-handover` รวมงานทดสอบจาก `codex/require-live-test-inputs` ผ่าน cherry-pick `6ebbe7b` ต่อจากร่าง #348 `6d0c286`; ทั้งสองมีฐาน canonical main `d95608e43aad2b0f835c660577ad6318ccef93c8`. ตรวจ HEAD ปัจจุบันก่อนรับช่วง. ตรวจสถานะ branch/HEAD/worktree, canonical main, งานแชตอื่น และ AGENTS/gate ก่อนทำต่อ; ห้ามทับ checkout #296 ที่มีงานค้าง. อ่าน `docs/system-flow/README.md`, ภาพรวมระบบหน้า 1–2 และ `docs/03_TEST_AND_CUTOVER_TH.md`; การเปลี่ยนนี้มีเฉพาะ test gate ไม่มี runtime flow เปลี่ยน.
 
 ## ทำแล้วและหลักฐาน
 

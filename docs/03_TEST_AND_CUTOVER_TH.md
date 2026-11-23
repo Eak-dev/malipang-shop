@@ -80,3 +80,7 @@ contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และค�
 - Queue retry, DLQ และ rollback ทดสอบแล้ว
 
 ระหว่าง Shadow ใช้ `RUNTIME_MODE=shadow` และ `SHADOW_LINE_OUTPUT=false` เมื่อผ่านจึงเปลี่ยนเป็น `production` และสลับ LINE Webhook
+
+## การตรวจครบทุกกรณีที่ใช้ข้อมูลจริง
+
+`npm run check` บังคับกรณี live ทั้งหก ไม่ข้ามเมื่อขาดการตั้งค่า: ต้องเตรียม `MALIPANG_VISION_BASE_URL`, `MALIPANG_EXPENSE_BASE_URL`, `MALIPANG_ADMIN_TOKEN_FILE`, `MALIPANG_BANK_SLIP_IMAGE_MAP`, ภาพนาฬิกาเจ็ดรูป และ `ONLINE_ORDER_PRIVATE_FIXTURES` ให้ตรงชุด expected เดิมก่อนรัน หากขาดให้รายงาน failure ไม่ถือเป็นผลทดสอบจริง. ต้องใช้สภาพแวดล้อมทดสอบและอำนาจที่เหมาะสม; ห้ามเก็บภาพหรือข้อมูลส่วนตัวใน Git. Flow runtime ไม่เปลี่ยน: เปลี่ยนเฉพาะเงื่อนไขชุดตรวจ.

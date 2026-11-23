@@ -81,9 +81,9 @@ test('legacy card aliases map to canonical payment and wallet keys',()=>{
 const liveBaseUrl=String(process.env.MALIPANG_EXPENSE_BASE_URL||'').replace(/\/$/,'');
 const liveTokenFile=process.env.MALIPANG_ADMIN_TOKEN_FILE;
 
-test('live Worker expense evaluator matches the complete text matrix',{
-  skip:!liveBaseUrl||!liveTokenFile
-},async t=>{
+test('live Worker expense evaluator matches the complete text matrix',async t=>{
+  assert.ok(liveBaseUrl,'MALIPANG_EXPENSE_BASE_URL is required');
+  assert.ok(liveTokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
   const adminToken=(await readFile(liveTokenFile,'utf8')).trim();
   assert.ok(adminToken.length>=32,'admin token is missing or too short');
   const evaluate=async text=>{

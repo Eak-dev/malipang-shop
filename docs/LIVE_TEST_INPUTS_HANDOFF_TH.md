@@ -1,0 +1,24 @@
+# ส่งต่อ: ยกเลิกการข้ามหกกรณีทดสอบและเตรียมรูปจริง
+
+## ความต้องการของเจ้าของ
+
+เจ้าของต้องการให้ระบบทดสอบ MaliPang เองรัน `npm run check` ทั้งชุดโดยไม่ข้ามหกกรณีที่เคยขาดข้อมูล: สลิป 1, รูปลงเวลา 1, ข้อความค่าใช้จ่าย 1 และคำสั่งซื้อออนไลน์ 3. ต้องปรับเงื่อนไขและข้อมูลที่คาดหวังให้เหมาะกับรูปใหม่ ไม่ลดเกณฑ์หรือปรับ expected ตามผลของระบบ; รายงานผ่าน/ล้ม/ข้ามตามจริง. เจ้าของอนุญาตใช้ข้อมูลส่วนตัวจริงเพื่อทดสอบ และต้องการใช้สิทธิ์ OpenAI/ระบบเดิม ไม่สร้าง key ใหม่. ห้าม commit หรือเผยแพร่รูป/ข้อมูลส่วนตัว/credentials. การใช้รูปไม่เท่ากับอำนาจสร้างธุรกรรมหรือเขียน Production: #348 จำกัด local/dry-run; การเขียน Google/D1 จริงและ release ต้องผ่าน authority/gate #296 แยก. Endpoint ประเมินภาพอาจบันทึก metrics จึงต้องตรวจผลข้างเคียงและใช้สภาพแวดล้อมทดสอบที่อนุญาต.
+
+## ฐานและสถานะ
+
+Repository `Eak-dev/malipang-shop`, branch `codex/require-live-test-inputs`, สร้างจาก canonical main `d95608e43aad2b0f835c660577ad6318ccef93c8` หลัง fetch/ff-only. Commit ที่มีเอกสารนี้คือจุดรับช่วง. นี่เป็น checkout แยกจากร่าง #348 branch `codex/issue348-serial-handover` commit `6d0c28671a54eccb1a4730a469d0be6e6894ea41`; อย่าสมมติว่าโค้ดสอง branch รวมกันแล้ว. ตรวจสถานะ branch/HEAD/worktree, canonical main, งานแชตอื่น และ AGENTS/gate ก่อนทำต่อ; ห้ามทับ checkout #296 ที่มีงานค้าง. อ่าน `docs/system-flow/README.md`, ภาพรวมระบบหน้า 1–2 และ `docs/03_TEST_AND_CUTOVER_TH.md`; การเปลี่ยนนี้มีเฉพาะ test gate ไม่มี runtime flow เปลี่ยน.
+
+## ทำแล้วและหลักฐาน
+
+- เปลี่ยนหกกรณีใน `tests/bank-slip-photo-fixtures.test.mjs`, `tests/clock-photo-fixtures.test.mjs`, `tests/expense.test.mjs`, `tests/owner-online-order-real-images.test.mjs` ให้ขาด inputs เป็น failure พร้อมเหตุ ไม่ข้าม; รูปนาฬิกาต้องเลือกครบเจ็ดกรณี. เพิ่มคำอธิบายใน `docs/03_TEST_AND_CUTOVER_TH.md`. **ผลกระทบ:** `npm run check` บน branch นี้จะล้มถ้าไม่เตรียมบริการ/fixtures; หากตั้งค่าชี้ live service จะมีการเรียกจริง จึงต้องตรวจปลายทางและอำนาจก่อนรัน.
+- ตรวจบน base นี้ `npm run check`: 2,433 tests, 2,427 pass, 6 fail, 0 skip; หก failure คือไม่มี vision URL สองกรณี, expense URL หนึ่งกรณี และ private order manifest สามกรณี. ไม่ได้รันภาพจริง. `npx wrangler deploy --dry-run` exit 0 และ `git diff --check` ผ่าน. จำนวนต่างจากงาน #348 เนื่องจาก branch ฐานต่างกัน.
+- รูปลงเวลาเจ็ดรูปคัดลอกและเทียบ checksum กับต้นฉบับแล้ว เก็บส่วนตัวใน workspace ที่ `private-test-fixtures/clock-20261123/` นอก repository, directory 0700/files 0600 พร้อม README. รูป 1–5 เจ้าของคาดว่าควรผ่าน; 6–7 ควรไม่ผ่าน ทั้งสองไม่มี timestamp และพิกัด GPS สีขาว ดังนั้นห้ามบังคับว่ารหัสต้องเป็น GPS_MISSING เพราะระบบตรวจ timestamp ก่อน. Comment ใน test ชี้ตำแหน่ง; **รูปชุดใหม่ยังไม่ผูกเข้ากับ cases.json เดิม** ซึ่งกำหนดข้อมูลของรูปชุดเก่า. ใช้ receivedAt จำลองใกล้เวลาภาพเพื่อทดสอบย้อนหลัง และตรวจรัศมีร้าน; การคาดว่าผ่านไม่ใช่ผลจริง.
+- ได้สลิปใหม่ครบ KBank/เป๋าตัง/SCB และรูปคำสั่งซื้อออนไลน์หนึ่งรูปจากเจ้าของ แต่ไฟล์แนบอยู่ใน temporary attachment storage อาจถูกลบได้ ไม่ได้คัดลอกเข้า repository. มี temporary scripts เฉพาะรูปใหม่ใน `/private/tmp/malipang-slip-test-20261123/` และ `/private/tmp/malipang-clock-test-20261123/`; เป็นของชั่วคราวและยังข้ามเมื่อไม่มี service/token ไม่ใช่ผลผ่าน. ห้ามพิมพ์ข้อมูลส่วนบุคคลใน log.
+
+## งานค้างและข้อควรระวัง
+
+1. ตรวจว่ารูปสลิปและคำสั่งซื้อยังเข้าถึงได้และรักษาไว้เป็นส่วนตัวหากจำเป็น; ต้องมีตัวอย่างคำสั่งซื้ออีกสองรายการที่แยกกัน หรือยืนยันขอบเขตใหม่กับเจ้าของก่อนเปลี่ยนสามกรณีเดิม. ชุดเดิมคาดหวังข้อมูลจากภาพคนละชุด ห้ามใช้รูปซ้ำ/ปรับ assertion ให้ดูผ่าน.
+2. จัด manifest/expected แยกส่วนตัวสำหรับภาพใหม่ที่เจ้าของให้ รวมเวลารับย้อนหลัง; อย่าทับ fixtures/expected เก่าหรือยอมรับ output จากระบบเป็น ground truth โดยไม่ตรวจ. ตรวจรูป seven และสลิปสามประเภทให้ครบ; รูปคำสั่งซื้อเดิมมี manifest ของผล extraction ที่ไม่ระบุตัวตนและ expected เฉพาะ ต้องจัดให้ตรงรูปจริง.
+3. ค้น/เชื่อมบริการ MaliPang **สภาพแวดล้อมทดสอบ** กับ admin token และ provider ที่มีสิทธิ์ โดยไม่เปิดเผย key; ยังไม่พบค่าที่จำเป็นใน environment หรือไฟล์ตั้งค่าที่ตรวจ. ห้ามส่งรูปไป Production หรือเขียน remote D1/Google เพียงเพื่อให้ผ่าน โดยไม่ผ่าน gate/authority แยก. อาจมีค่าบริการ API เมื่อทดสอบ provider จริง.
+4. รันหกกรณีและ full check พร้อม dry-run บน revision สุดท้าย; แสดงผลผ่าน/ล้ม/ข้าม และแยกข้อที่ไม่รันเพราะ prerequisite ขาด. ปัจจุบัน fail 6 ไม่ใช่ระบบอ่านผิดและไม่ใช่ทดสอบสำเร็จ. ตรวจเรื่อง live tests ใน CI: strict default อาจทำ CI ล้มโดยตั้งใจเมื่อไม่มีข้อมูล และต้องป้องกันการชี้ production โดยไม่ตั้งใจ; ประสานเจ้าของก่อนเปลี่ยน release control.
+5. อ่าน handoff #348 ใน branch เดิมหากต้องทำ #348 ต่อ; อย่าอนุมาน Production จากผลทดสอบร่างหรือ commit นี้. ไม่ได้ push, merge, deploy หรือแก้ข้อมูลจริงในงานนี้.

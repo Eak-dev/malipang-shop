@@ -9,7 +9,9 @@ import {handleExpensePostback} from '../dist/expense/service.js';
 const manifest=process.env.ONLINE_ORDER_PRIVATE_FIXTURES;
 const fixtures=manifest?JSON.parse(readFileSync(manifest,'utf8')).cases:[];
 for(const [index,expected] of [62200,46200,51900].entries()){
- test(`approved real image ${index+1}: extraction through final confirmation, repeat and reply recovery`,{skip:!manifest},async()=>{
+ test(`approved real image ${index+1}: extraction through final confirmation, repeat and reply recovery`,async()=>{
+  assert.ok(manifest,'ONLINE_ORDER_PRIVATE_FIXTURES is required');
+  assert.ok(fixtures[index],`private fixture ${index+1} is required`);
   const sample=fixtures[index];assert.equal(sample.expectedSatang,expected);assert.equal(sample.imageHashVerified,true);
   const h=ownerOrderFixture();try{
    const {row}=await h.receive(sample.document,{id:'synthetic_real_'+index,attempts:sample.attempts,...(index===2?{line:'fixture_staff'}:{})});

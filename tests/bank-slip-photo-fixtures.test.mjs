@@ -13,7 +13,10 @@ test('bank slip fixture contract covers KBank, SCB, and Paotang',()=>{
   for(const item of cases){assert.ok(item.expected.paidAmountBaht>0);assert.match(item.expected.paymentDate,/^\d{4}-\d{2}-\d{2}$/);}
 });
 
-test('live OpenAI evaluator extracts every supplied bank slip',{skip:!baseUrl||!tokenFile||cases.some(item=>!imageMap[item.id])},async t=>{
+test('live OpenAI evaluator extracts every supplied bank slip',async t=>{
+  assert.ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
+  assert.ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
+  assert.ok(cases.every(item=>imageMap[item.id]),'MALIPANG_BANK_SLIP_IMAGE_MAP must contain all three fixture images');
   const token=(await readFile(tokenFile,'utf8')).trim();
   for(const item of cases){await t.test(item.id,async t=>{
     const image=await readFile(imageMap[item.id]);

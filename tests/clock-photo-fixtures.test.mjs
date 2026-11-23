@@ -4,6 +4,8 @@ import {readFile} from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 
+// Owner-supplied private examples: workspace/private-test-fixtures/clock-20261123/README_TH.md.
+// These are new cases; do not pair them with the original cases.json expectations.
 const fixtureDir=path.join(path.dirname(fileURLToPath(import.meta.url)),'fixtures','clock-photos');
 const cases=JSON.parse(await readFile(path.join(fixtureDir,'cases.json'),'utf8'));
 const fixtureImages=await Promise.all(cases.map(async item=>{
@@ -36,9 +38,11 @@ const openAIModel=process.env.MALIPANG_OPENAI_MODEL||'';
 const selectedIds=new Set(String(process.env.MALIPANG_CLOCK_CASES||'').split(',').map(value=>value.trim()).filter(Boolean));
 const selectedCases=selectedIds.size?cases.filter(item=>selectedIds.has(item.id)):cases;
 
-test('live vision enforces white timestamp, GPS, and shop-clock evidence',{
-  skip:!baseUrl||!tokenFile||!fixtureImagesPresent
-},async t=>{
+test('live vision enforces white timestamp, GPS, and shop-clock evidence',async t=>{
+  assert.ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
+  assert.ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
+  assert.ok(fixtureImagesPresent,'all seven clock fixture images are required');
+  assert.equal(selectedCases.length,cases.length,'all seven clock cases must be selected');
   assert.ok(['pipeline','openai','workers-ai'].includes(provider));
   const adminToken=(await readFile(tokenFile,'utf8')).trim();
   assert.ok(adminToken.length>=32,'admin token is missing or too short');

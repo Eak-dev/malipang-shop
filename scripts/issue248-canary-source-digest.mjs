@@ -5,14 +5,14 @@
 // a provider self-test digest and the canary digest.
 // - The exception accepts only the zero-item canary, so the statement hashes
 //   '{"expense":<row>,"links":[],"documents":[],"items":[]}' where <row> is
-//   json_object over EXPENSE_COLUMNS in table order (= SELECT e.* without
-//   __stable_revision). Any link, document or item yields no digest.
+//   json_object over the version 1 EXPENSE_COLUMNS in table order. The optional
+//   0070 provenance namespace is separately verified and excluded from this hash. Any link, document or item yields no digest.
 // - SHA-256 is written in SQL: a recursive CTE over the hex of the UTF-8 bytes.
 //   A constant synthetic row goes through the same JSON and SHA-256 SQL; its
 //   digest must equal JSON.stringify + sha256 here, so a provider whose JSON,
 //   integer or bitwise semantics differ stops the release instead of passing.
-// - A UNION ALL with one constant per column fails to compile if expense_events
-//   gains or loses a column, so the JSON cannot silently skip a column.
+// - The schema must match the exact pre-0070 or 0070 column names and order;
+//   unknown columns return no result instead of silently changing the v1 digest.
 // - One statement is one consistent snapshot. Its revision must equal the epoch
 //   query's revision (every source-table write bumps it via trigger).
 // This proves the canary equals the G7 digest NOW. It cannot prove that no
@@ -73,11 +73,11 @@ export function canarySourceSql(targetKey,targetVersion){
 (SELECT count(*) FROM expense_document_links WHERE expense_id=${k}) AS links,
 (SELECT count(*) FROM expense_documents WHERE expense_id=${k} OR document_id IN (SELECT document_id FROM expense_document_links WHERE expense_id=${k})) AS documents,
 (SELECT count(*) FROM expense_document_items WHERE expense_id=${k}) AS items,
-(SELECT count(*) FROM (SELECT e.* FROM expense_events e WHERE 0 UNION ALL SELECT ${EXPENSE_COLUMNS.map((_,i)=>i+1).join(',')})) AS width),
+(SELECT group_concat(name,',') FROM (SELECT name FROM pragma_table_info('expense_events') ORDER BY cid)) AS schema_names),
 canary_json(j) AS (SELECT ${jsonOf('e')} FROM expense_events e,src WHERE e.expense_id=${k} AND e.version=${v} AND e.status='CONFIRMED' AND src.expense_rows=1 AND src.links=0 AND src.documents=0 AND src.items=0),
 ${SELFTEST_CTES},
 ${sha256Ctes('sha_canary','SELECT hex(j) FROM canary_json WHERE length(CAST(j AS BLOB))<=256000')}
-SELECT rev,expense_rows,links,documents,items,${digestOf('sha_selftest')} AS selftest,${digestOf('sha_canary')} AS digest FROM src WHERE width=1`.replace(/\n/g,' '); // one line: no literal holds a newline
+SELECT rev,expense_rows,links,documents,items,${digestOf('sha_selftest')} AS selftest,${digestOf('sha_canary')} AS digest FROM src WHERE schema_names IN ('${EXPENSE_COLUMNS.join(',')}','${[...EXPENSE_COLUMNS,'serial_source_namespace'].join(',')}')`.replace(/\n/g,' '); // one line: no literal holds a newline
 }
 function checkTarget(targetKey,targetVersion){if(typeof targetKey!=='string'||!/^exp_[A-Za-z0-9_-]{1,128}$/.test(targetKey)||!Number.isSafeInteger(targetVersion)||targetVersion<1)fail('TARGET');}
 const readOnlyRow=(rows,columns)=>{

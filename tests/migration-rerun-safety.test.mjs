@@ -15,7 +15,7 @@ const NOTICE_PREFIX_MIGRATION='0064_notice_status_prefix.sql';
 const COMPLETED_CANARY_MIGRATION='0065_canary_completed_recovery.sql';
 const SCOPED_HOLD_MIGRATION='0066_scoped_hold_incident.sql';
 const MONTHLY_REPORT_MIGRATION='0067_monthly_report_journal.sql';
-const baselineNames=names.filter(n=>![INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION].includes(n));
+const baselineNames=names.filter(n=>Number(n.slice(0,4))<=61);
 const read=n=>readFileSync(new URL(n,dir),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
 // the other migration files byte for byte, and the schema all files produced.
@@ -75,7 +75,9 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
 });
 
 test('issue296 incident migrations are append-only and preserve trigger names on rerun',()=>{
- assert.deepEqual(names.slice(-6),[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION]);
+ const incident=[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION];
+ assert.deepEqual(names.slice(baselineNames.length,baselineNames.length+incident.length),incident);
+ assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);

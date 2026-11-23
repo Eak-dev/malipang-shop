@@ -8,11 +8,11 @@
   "work_items": [
     {
       "issue": 348,
-      "mode": "MANAGED",
-      "primary_branch": "codex/fix-serial-expense-handover",
+      "mode": "MIGRATION_PENDING",
+      "primary_branch": "codex/issue348-serial-handover",
       "target_branch": "main",
-      "coordination_chat": "MaliPang queue serial handover",
-      "reason": "Implement resumable sequential expense processing after reconciling the parked job."
+      "coordination_chat": "Issue 348 serial handover continuation",
+      "reason": "Continuation after PR #349 merged; new primary starts at synchronized main. Previous branch retained pending live audit; no deletion authority."
     },
     {
       "issue": 285,
@@ -79,6 +79,17 @@
     }
   ],
   "branches": [
+    {
+      "scope": "local",
+      "source": "issue348-work",
+      "branch": "codex/issue348-serial-handover",
+      "source_sha": "d95608e43aad2b0f835c660577ad6318ccef93c8",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T03:55:34.463Z",
+      "reason": "Continuation branch based on synchronized canonical main after PR #349; observed SHA precedes implementation. Remote registration follows push."
+    },
     {
       "scope": "remote",
       "source": "canonical-github",

@@ -12,11 +12,12 @@ class Statement{
   constructor(owner,sql){this.owner=owner;this.sql=sql;this.args=[];}
   bind(...args){this.args=args;return this;}
   async first(){return this.owner.sqlite.prepare(this.sql).get(...this.args)??null;}
-  async all(){return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
+  async all(){return{success:true,results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
   runSync(){
     const stmt=this.owner.sqlite.prepare(this.sql);
-    if(/^\s*SELECT\b/i.test(this.sql))return{results:stmt.all(...this.args),meta:{changes:0}};
-    const result=stmt.run(...this.args);return{meta:{changes:Number(result.changes)}};
+    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{success:true,results:stmt.all(...this.args),meta:{changes:0}};
+    if(/\bRETURNING\b/i.test(this.sql)){const results=stmt.all(...this.args);return{success:true,results,meta:{changes:results.length}};}
+    const result=stmt.run(...this.args);return{success:true,meta:{changes:Number(result.changes)}};
   }
   async run(){return this.runSync();}
 }

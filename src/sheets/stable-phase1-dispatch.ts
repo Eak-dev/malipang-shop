@@ -78,6 +78,25 @@ export async function dispatchStablePhase1(env:Env,job:SheetsSyncJob,attempt=1,i
   if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||held.success!==true||!Number.isSafeInteger(held.meta?.changes))throw Error('CANCEL_PREDECESSOR_HOLD_UNCERTAIN');
   if(Number(held.meta.changes)===1)return 'REVIEW';
  }
+ // Local mock containment only: an expired lease is not evidence that a
+ // provider request stopped. Preserve the claim and in-flight journal, and
+ // stop this exact attested job for reconciliation instead of BUSY redelivery.
+ if(env.APP_ENV==='test'&&env.SERIAL_MOCK_CONTINUATION_ENABLED==='true'&&env.STABLE_REDRIVE_HOLD_ENABLED==='true'&&job.entityType==='EXPENSE'){
+  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,version=env.CF_VERSION_METADATA?.id;
+  if(typeof version!=='string'||!version)throw Error('SERIAL_EXPIRED_HOLD_UNCERTAIN');
+  const held=await db.prepare(`UPDATE sync_jobs AS j SET status='REVIEW',last_error='SERIAL_EXPIRED_PROVIDER_UNCERTAIN',next_attempt_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   WHERE j.entity_type='EXPENSE' AND j.entity_key=? AND j.entity_version=? AND j.trace_id=? AND j.status='PROCESSING' AND j.lease_token IS NOT NULL AND j.lease_until IS NOT NULL AND j.lease_until<=strftime('%Y-%m-%dT%H:%M:%fZ','now')
+   AND EXISTS(SELECT 1 FROM serial_pilot_attested_handoffs h JOIN stable_recovery_epochs e ON e.epoch_id=h.successor_epoch_id AND e.spreadsheet_id=h.spreadsheet_id AND e.target_type='EXPENSE' AND e.target_key=j.entity_key AND e.target_version=j.entity_version AND e.state='ARMED'
+    JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.state IN ('HELD','REVIEW') AND ((c.phase='SERIAL_PILOT_ADOPTED' AND c.operation_token=h.claim_token) OR (c.phase='SERIAL_CONTINUATION' AND EXISTS(
+      SELECT 1 FROM serial_pilot_continuation_sessions s JOIN serial_pilot_continuation_permits permit ON permit.epoch_id=s.epoch_id AND permit.job_id=s.job_id AND permit.operation_token=c.operation_token AND j.serial_provenance_version=1 AND permit.lease_token=j.lease_token AND permit.lease_generation>0 AND permit.lease_generation<=j.serial_lease_generation AND permit.worker_version=h.worker_version
+      JOIN serial_pilot_continuation_authorizations auth ON auth.operation_token=permit.operation_token AND auth.epoch_id=permit.epoch_id AND auth.job_id=permit.job_id AND auth.lease_token=permit.lease_token AND auth.lease_generation=permit.lease_generation AND auth.worker_version=permit.worker_version
+      WHERE s.epoch_id=h.successor_epoch_id AND s.job_id=j.job_id AND s.spreadsheet_id=h.spreadsheet_id AND s.nonce=h.nonce)))
+    JOIN stable_recovery_operations o ON o.epoch_id=e.epoch_id AND o.operation_token=c.operation_token AND o.state='ADMITTED'
+    JOIN stable_projection_writes p ON p.spreadsheet_id=h.spreadsheet_id AND p.operation_token=c.operation_token AND p.entity_type='EXPENSE' AND p.source_version=j.entity_version AND (p.entity_id=j.entity_key OR substr(p.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|') AND p.state IN ('IN_FLIGHT','REVIEW')
+    WHERE h.successor_job_id=j.job_id AND h.spreadsheet_id=?) RETURNING job_id`).bind(job.entityKey,job.entityVersion,job.traceId,book).all<{job_id:string}>();
+  if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.CF_VERSION_METADATA?.id!==version||env.APP_ENV!=='test'||env.SERIAL_MOCK_CONTINUATION_ENABLED!=='true'||env.STABLE_REDRIVE_HOLD_ENABLED!=='true'||held.success!==true||!Array.isArray(held.results)||held.results.length>1)throw Error('SERIAL_EXPIRED_HOLD_UNCERTAIN');
+  if(held.results.length===1)return 'REVIEW';
+ }
  const lease=await claimSheetSyncJob(env,job);
  if(!lease){
   // A terminal financial record blocks the atomic lease CAS; ACK this

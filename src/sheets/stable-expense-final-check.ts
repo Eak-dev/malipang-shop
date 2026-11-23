@@ -24,10 +24,34 @@ const detailHeaders=['Purchase_Item_ID','Expense_ID','Document_ID','วันท
 type Journal={entity_id:string;projection:string;sheet_id:number;sheet_name:string;source_version:number;source_digest:string;state:string;operation_token?:string};
 export type PublicationFinalEvidence=DailyPublicationAccountingEvidence&{phase:'STAGED'|'PUBLISHED'};
 
+/** Bound projection snapshot encoding before any JSON allocation. */
+export function assertFinalSnapshotWithinBudget(matrices:unknown[][][][]):void{
+ let cells=0,estimated=1024;
+ for(const sheets of matrices)for(const rows of sheets)for(const row of rows){
+  estimated+=2;
+  for(const value of row){
+   if(++cells>300_000)throw Error('STABLE_FINAL_PROOF_TOO_LARGE');
+   if(typeof value==='string')estimated+=value.length*6+3;
+   else if(value===null||value===undefined||typeof value==='boolean'||typeof value==='number'&&Number.isFinite(value))estimated+=32;
+   else throw Error('STABLE_FINAL_PROOF_VALUE');
+   if(estimated>4_000_000)throw Error('STABLE_FINAL_PROOF_TOO_LARGE');
+  }
+ }
+}
+
+export type CapturedProjectionProof=Readonly<{providerDigest:string;providerObservedAt:string;sourceRevision:number;sourceDigest:string}>;
+const capturedFinalProofs=new WeakMap<CapturedProjectionProof,{db:Env['DB'];book:string|undefined;entityType:string;entityKey:string;entityVersion:number;traceId:string;claim:string;lease:string}>();
+/** In-process provenance only, never durable provider or fence proof. */
+export function consumeCapturedProjectionProof(proof:CapturedProjectionProof,env:Env,job:SheetsSyncJob,claim:string,lease:string):boolean{
+ const binding=capturedFinalProofs.get(proof);capturedFinalProofs.delete(proof);
+ return !!binding&&binding.db===env.DB&&binding.book===env.GOOGLE_SPREADSHEET_ID&&binding.entityType===job.entityType&&binding.entityKey===job.entityKey&&binding.entityVersion===job.entityVersion&&binding.traceId===job.traceId&&binding.claim===claim&&binding.lease===lease&&Object.isFrozen(proof);
+}
+
 /** Verify the complete current workbook immediately before closing a staged
  * expense. Journal evidence alone cannot prove that a person did not edit an
  * earlier projection between stages. */
-export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,source:StableExpenseSource,journals:Journal[],publication?:PublicationFinalEvidence,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,snapshot?:PublicationBatchSnapshot):Promise<void>{
+export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,source:StableExpenseSource,journals:Journal[],publication?:PublicationFinalEvidence,policy:ContinuousSheetsReadPolicy=continuousSheetsReadPolicy,snapshot?:PublicationBatchSnapshot,captureProof=false,proofGuard?:()=>Promise<boolean>,captureBinding?:{claim:string;lease:string}):Promise<void|CapturedProjectionProof>{
+ if(captureProof&&snapshot)throw Error('STABLE_FINAL_PROOF_SNAPSHOT_UNVERIFIED');
  const scope=()=>JSON.stringify([env.GOOGLE_SPREADSHEET_ID,env.SHEET_EXPENSE_DAILY,env.SHEET_EXPENSE_RAW,env.SHEET_PURCHASE_DETAILS,env.GOOGLE_SERVICE_ACCOUNT_EMAIL,env.GOOGLE_PRIVATE_KEY_BASE64,env.EXTERNAL_API_TIMEOUT_MS,env.STABLE_PHASE1_ENABLED,env.CONTINUOUS_DAILY_ENABLED,env.CONTINUOUS_DAILY_SHEET,env.CONTINUOUS_DAILY_SHEET_ID,env.CONTINUOUS_RAW_SHEET,env.CONTINUOUS_RAW_SHEET_ID,env.CONTINUOUS_DETAIL_SHEET,env.CONTINUOUS_DETAIL_SHEET_ID,env.APP_ENV,env.RUNTIME_MODE]),initialScope=scope(),db=env.DB;
  const target=await assertContinuousDailyActivated(env),dailyJournal=journals.find(j=>j.entity_id===job.entityKey&&j.projection==='DAILY'),daily=dailyJournal?.sheet_name||env.SHEET_EXPENSE_DAILY;
  const atomic=!!target&&daily===target.sheet;
@@ -84,6 +108,21 @@ export async function verifyStableExpenseProjections(env:Env,job:SheetsSyncJob,s
   if(await readContinuousReportHealth(env,report,publicationCopy?{dailySheet:daily}:undefined,policy,snapshot)!=='OK')throw Error('STABLE_FINAL_REPORT_UNVERIFIED');
  }
  if(env.DB!==db||scope()!==initialScope)throw Error('STABLE_FINAL_SCOPE_CHANGED');
+ if(!captureProof)return;
+ if(!proofGuard||!await proofGuard()||env.DB!==db||scope()!==initialScope)throw Error('STABLE_FINAL_PROOF_UNVERIFIED');
+ const providerObservedAt=new Date().toISOString();
+ // This covers the projection grids only. Legacy/report reads occurred at
+ // other times and require the independent external fence to stay valid.
+ // Bound inspected cells and a conservative JSON size before stringifying.
+ assertFinalSnapshotWithinBudget([formula,effective]);
+ const payload=JSON.stringify(['MALIPANG_PROJECTION_SNAPSHOT_V1',env.GOOGLE_SPREADSHEET_ID,job.entityType,job.entityKey,job.entityVersion,source.revision,source.digest,names,grids,formula,effective]);
+ if(payload.length>4_000_000)throw Error('STABLE_FINAL_PROOF_TOO_LARGE');
+ const encoded=new TextEncoder().encode(payload);if(encoded.byteLength>8_000_000)throw Error('STABLE_FINAL_PROOF_TOO_LARGE');
+ const bytes=await crypto.subtle.digest('SHA-256',encoded);
+ if(!await proofGuard()||env.DB!==db||scope()!==initialScope)throw Error('STABLE_FINAL_PROOF_UNVERIFIED');
+ const proof=Object.freeze({providerDigest:[...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,'0')).join(''),providerObservedAt,sourceRevision:source.revision,sourceDigest:source.digest});
+ if(captureBinding)capturedFinalProofs.set(proof,{db,book:env.GOOGLE_SPREADSHEET_ID,entityType:job.entityType,entityKey:job.entityKey,entityVersion:job.entityVersion,traceId:job.traceId,claim:captureBinding.claim,lease:captureBinding.lease});
+ return proof;
 }
 
 /** Separate post-publication readback. It repeats source projections,

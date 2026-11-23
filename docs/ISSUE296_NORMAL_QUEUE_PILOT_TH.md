@@ -59,3 +59,19 @@ Worker ตรวจข้อมูล D1 แถวในชีตและป้
 ถ้าต้องหยุดการส่งต่อ ให้หยุดตัวรันแล้วใช้ FINISH_PILOT ตรวจงานล่าสุดในสายแบบอ่านอย่างเดียว แม้ยังมีงานอื่นรอก็จะไม่จองเพิ่ม คง gate และ Worker รุ่นเดิมไว้ เพราะประวัติการจองผูกกับ Worker version ที่สร้างประวัตินั้น หากเปลี่ยนรุ่นกลางสายต้องตรวจหลักฐานเพื่อกู้เฉพาะงานก่อนขยาย ห้ามใช้ผล READBACK แบบไม่ระบุรายการตัดสินงานถัดไป
 
 ตัวส่ง DAILY ตรวจแถวว่างที่เกิดจากการเพิ่มและเลื่อนช่วงท้ายแท็บทั้งในมุมสูตรและค่าที่แสดง ยอมรับแถวว่างติดกันที่ปลายช่วงที่เลื่อน ตรวจคอลัมน์งบประมาณตามตำแหน่งเดิม และคงการพักงานเมื่อพบช่องว่างแทรกกลางส่วนสูตรหรือผลอ่านกลับไม่ตรง
+
+## ร่าง #348: ตรวจรอบและผลจำลองในเครื่อง
+
+อ่าน [acceptance audit](ISSUE348_ACCEPTANCE_AUDIT_TH.md) และ [sequence ล่าสุด](system-flow/serial-sequence.md#6-รอบจำลอง-348-พัก-b-จอง-c-และบันทึกผล) ก่อนใช้หลักฐานจาก branch นี้. ขอบเขตที่อนุญาตคือพัฒนา ทดสอบในเครื่อง และ dry-run; การเขียน Google/D1 จริงและการปล่อยรุ่นต้องผ่าน authority และ gate ของ #296 แยก. ตัวอย่าง mock oracle และ fence ไม่พิสูจน์การหยุด writer, มนุษย์ หรือ provider request จริง และ migration barriers คงปิด.
+
+`HOLD_RESERVED` เก็บ B ใน REVIEW พร้อม claim/epoch; RUN_SERIAL ใน local test รับ coordinator ที่ฉีดเพื่อเรียก helper จำลอง attestation และ CAS ส่งสิทธิ์ C เมื่อหลักฐานตรง; CLI ปกติไม่มี coordinator และไม่ใช่คำสั่งที่ได้รับอำนาจใช้งานจริง. C อาจต้องผ่าน DAILY, RAW, DETAIL หลายรายการ และ FINAL; หากผล provider หรือ notice ไม่ชัดให้เก็บ claim และ intent แล้ว reconcile โดยไม่ส่งซ้ำ. สถานะ READY ใน Sheets อาจเกิดก่อนคำตอบ D1 จึงต้องมี external fence ที่พิสูจน์แล้วต่อเนื่องจนกว่าจะ reconcile.
+
+รอบแบบทดลองของ `RUN_SERIAL` เปิดได้เฉพาะ local test ที่ฉีด durable identity store และใช้ localhost: store สร้าง marker แบบไม่ทับก่อน SETTLE/OPEN ผูก roundId กับ scope ของ workbook/Worker; หาก marker เดิมมีอยู่หรืออ่านไม่ชัด ให้หยุดและตรวจ roundId เดิม ห้ามสร้างรอบใหม่จาก `LIST_OPEN` ว่าง. CLI/workflow ปกติไม่ได้ฉีด store จึง fail closed ใน round-mode. Store ทดลองเป็นไฟล์เฉพาะเครื่อง ต้องรักษา directory เดิม; ไม่พิสูจน์การประสานข้ามเครื่องหรือการหยุด writer.
+
+`RECOVER_ROUND` อ่านรอบเดิมเท่านั้น: หากยัง OPEN ให้หยุด RECONCILE เพราะคำขอปิดก่อนหน้าอาจยังค้าง; หาก CLOSED แสดงผลที่บันทึกไว้ ไม่ส่ง CLOSE ซ้ำ.
+
+เมื่อเริ่ม `RUN_SERIAL` ใหม่แล้วพบรอบ `OPEN` กับ tip ที่จองไว้ ตัวรันอ่านผลและ receipt เดิม แต่หยุด RECONCILE ก่อน `RECORD_VERIFIED`, `ADVANCE_ONE` หรือ `CLOSE` แม้ receipt ตรง เพราะคำขอจาก process เดิมอาจยังไม่สิ้นสุด หากรอบเดิมปิดแล้วใช้ `READ_ROUND` กับ roundId เดิมเพื่ออ่านผลย้อนหลัง; การอ่านไม่ใช่สิทธิ์เขียน และห้ามอนุมานจากไม่พบข้อมูลครั้งเดียวว่าคำขอเก่าจบแล้ว.
+
+ผลรอบจำลองแยก VERIFIED (หลักฐาน v2 ณ เวลาตรวจ), PARKED (B พักและ mock handoff ไป C ถูกบันทึก), NOT_STARTED (positive provenance ว่าไม่เริ่มภายใต้ guard ที่ตรวจ) และ RECONCILE (หลักฐานยังไม่พอ). ผลจบรอบไม่ได้หมายความว่าทุกรายการสำเร็จ. `CLOSE_MOCK_ROUND` เป็น phase เฉพาะ localhost ที่ต้องตั้ง `PILOT_LOCAL_MOCK=true` และ Worker `APP_ENV=test`: อ่านรอบก่อน หาก OPEN ต้องมี coordinator จำลองที่ฉีดมายืนยัน quiescence ผูก round/รุ่น/fence/nonce ก่อนส่งหนึ่งครั้ง หากไม่มีหรือไม่ชัดให้หยุด; หาก CLOSED อ่านผลเดิม หลังคำตอบหายตัวรันอ่านรอบเดิม ไม่ส่งคำสั่งปิดซ้ำ. CLI ปกติไม่มี coordinator นี้. Phase นี้ไม่ได้เปิดใน workflow ปฏิบัติการ. สำหรับการทดลอง transport แบบ synthetic เท่านั้น `node tests/helpers/serial-local-mock-cli.mjs` ใช้ฐาน SQLite ชั่วคราวและ coordinator ใน fixture; ไม่รับ URL/key และไม่รัน Worker หรือ D1 จริง.
+
+`READ_ROUND` และ `READ_HISTORICAL` ใช้อ่านข้อมูลเดิมข้ามรุ่น/เดือนเท่านั้น ไม่ยืนยันค่า Sheets ปัจจุบันและไม่ให้สิทธิ์จองต่อ. หาก snapshot, proof รุ่น v2, epoch หรือ audit ขาด/ขัดกัน ให้หยุดและตรวจ D1/claim/journal; ห้ามตีความการไม่มีแถวหรือ claim ในการอ่านครั้งเดียวว่า provider หยุดเขียน. การกู้จนปิดครบหลัง process kill และสายสิทธิ์ข้ามรุ่นยังต้องพิสูจน์ตาม acceptance audit.

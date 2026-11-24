@@ -1,0 +1,84 @@
+name: Production expense text evaluation
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Reviewed main commit containing this workflow
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: malipang-production-expense-text-evaluation
+  cancel-in-progress: false
+
+jobs:
+  evaluate:
+    if: github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production
+    steps:
+      - name: Check out the reviewed main commit
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+
+      - name: Build the existing synthetic test suite
+        run: |
+          npm ci --ignore-scripts
+          npm run build:test
+
+      - name: Evaluate only synthetic expense text
+        shell: bash
+        env:
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          CONFIGURED_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        run: |
+          set -euo pipefail
+          umask 077
+          readonly origin='https://malipang-backend-v5-2.eakkachai-dev.workers.dev'
+          if [[ "${CONFIGURED_WORKER_URL%/}" != "$origin" || "${#MALIPANG_ADMIN_TOKEN}" -lt 32 ]]; then
+            echo 'Production target or Admin credential is unavailable.' >&2
+            exit 1
+          fi
+          scratch=$(mktemp -d "$RUNNER_TEMP/expense-text.XXXXXX")
+          trap 'python3 -c '\''import shutil,sys; shutil.rmtree(sys.argv[1])'\'' "$scratch"' EXIT
+          printf '%s' "$MALIPANG_ADMIN_TOKEN" > "$scratch/token"
+          unset MALIPANG_ADMIN_TOKEN
+
+          cat > "$scratch/restrict-fetch.mjs" <<'JS'
+          const target = 'https://malipang-backend-v5-2.eakkachai-dev.workers.dev/admin/expense/evaluate';
+          const send = globalThis.fetch;
+          let requests = 0;
+          globalThis.fetch = (url, options = {}) => {
+            if (url !== target || options.method !== 'POST' || ++requests > 151) {
+              throw new Error('PRODUCTION_EXPENSE_REQUEST_OUTSIDE_SCOPE');
+            }
+            return send(url, {...options, redirect: 'error', signal: AbortSignal.timeout(10000)});
+          };
+          JS
+
+          export MALIPANG_EXPENSE_BASE_URL="$origin"
+          export MALIPANG_ADMIN_TOKEN_FILE="$scratch/token"
+          result=0
+          node --import "$scratch/restrict-fetch.mjs" --test \
+            --test-name-pattern='^live Worker expense evaluator' \
+            tests/expense.test.mjs > "$scratch/result.tap" 2>&1 || result=$?
+
+          # Keep request/response values and raw TAP out of the workflow log.
+          grep -E '^# (tests|pass|fail|cancelled|skipped) [0-9]+$' "$scratch/result.tap" || true
+          if [[ "$result" != 0 ]] || ! grep -qx '# tests 152' "$scratch/result.tap" || \
+            ! grep -qx '# pass 152' "$scratch/result.tap" || ! grep -qx '# skipped 0' "$scratch/result.tap"; then
+            echo 'The approved 151 synthetic checks did not all pass.' >&2
+            exit 1
+          fi

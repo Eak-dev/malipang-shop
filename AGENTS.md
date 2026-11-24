@@ -100,6 +100,8 @@ Read the following only when the task can affect them:
 - `docs/09_OWNER_ACTION_CHECKLIST_TH.md` when owner action is actually required
 - `docs/10_CODEX_TASK_TEMPLATE_TH.md` when creating or normalizing Codex tasks
 
+After reading project context, every new issue, task or chat (including work without an issue) must read [the system flow](docs/system-flow/README.md), its overview and the relevant detail pages before diagnosis, planning or implementation. Record the section consulted in the issue or task notes. If the change alters an entry point, data path, system interaction, decision, retry, hold, recovery or terminal outcome, update the affected diagrams and their published views in the same change. During review compare the flow to implementation and test evidence. Record the updated section, or briefly explain why the flow is unchanged, before closing the task. Date live observations separately from behaviour verified in source.
+
 Then inspect only the additional files relevant to the assigned task.
 
 ## Runtime and tooling

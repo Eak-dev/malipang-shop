@@ -1,0 +1,98 @@
+name: Production private photo evaluation
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Reviewed main commit containing this workflow
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: issue348-production-private-photo-evaluation
+  cancel-in-progress: false
+jobs:
+  evaluate:
+    if: github.repository == 'Eak-dev/malipang-shop' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Load the tested private transport
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 440e22061cf27ed76b0188bfc3f15bde63e20f88
+          path: reviewed-transfer
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Load the reviewed image tests from PR 350
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: bc49025e580d1f48c852342c2c769472d52142a2
+          path: reviewed-tests
+          persist-credentials: false
+          sparse-checkout: tests
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch and validate all ten approved files
+        shell: bash
+        env:
+          SCOPED_READER: ${{ secrets.ISSUE348_R2_READER }}
+          PHOTO_CONTROL: ${{ secrets.ISSUE348_PHOTO_CONTROL }}
+          R2_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/issue348.XXXXXX")
+          export ISSUE348_SCRATCH="$scratch"
+          printf 'ISSUE348_SCRATCH=%s\n' "$scratch" >> "$GITHUB_ENV"
+          node scripts/issue348-stage-private-photos.mjs
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$scratch/clock/manifest.json"
+          export MALIPANG_BANK_SLIP_PRIVATE_MANIFEST="$scratch/slip/manifest.json"
+          node --test --test-name-pattern='^clock photo fixture contract|^bank slip fixture contract' \
+            reviewed-tests/tests/{clock-photo-fixtures,bank-slip-photo-fixtures}.test.mjs > "$scratch/contracts.tap" 2>&1
+          grep -qx '# pass 2' "$scratch/contracts.tap"
+      - name: Run only the approved production image evaluations
+        shell: bash
+        env:
+          ADMIN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_VISION_BASE_URL: ${{ vars.MALIPANG_WORKER_URL }}
+          MALIPANG_OPENAI_MODEL: gpt-4.1-mini
+          MALIPANG_VISION_PROVIDER: openai
+          MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE: '0.70'
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$MALIPANG_VISION_BASE_URL" == 'https://malipang-backend-v5-2.eakkachai-dev.workers.dev' && ${#ADMIN} -ge 32 ]]
+          export MALIPANG_ADMIN_TOKEN_FILE="$ISSUE348_SCRATCH/token"
+          printf '%s' "$ADMIN" > "$MALIPANG_ADMIN_TOKEN_FILE"
+          unset ADMIN
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/clock/manifest.json"
+          export MALIPANG_BANK_SLIP_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/slip/manifest.json"
+          result=0
+          node --import ./scripts/issue348-guard-photo-fetch.mjs --test --test-concurrency=1 \
+            --test-name-pattern='^live vision enforces|^live OpenAI evaluator' \
+            reviewed-tests/tests/{clock-photo-fixtures,bank-slip-photo-fixtures}.test.mjs \
+            > "$ISSUE348_SCRATCH/live.tap" 2>&1 || result=$?
+          grep -E '^# (tests|pass|fail|cancelled|skipped) [0-9]+$' "$ISSUE348_SCRATCH/live.tap" || true
+          # Emit only known case identifiers and statuses; raw TAP contains private readings.
+          sed -nE 's/^[[:space:]]*(not ok|ok) [0-9]+ - (photo-0[1-7]|kbank-kplus|paotang-gwallet|scb-easy)$/\1 \2/p' "$ISSUE348_SCRATCH/live.tap"
+          if grep -q 'ISSUE348_TRANSPORT_OUTCOME_UNKNOWN' "$ISSUE348_SCRATCH/live.tap"; then
+            echo 'At least one submission has an unknown outcome. Reconcile before a new dispatch.'
+          fi
+          if [[ "$result" != 0 ]]; then
+            echo 'Review submitted cases and Production usage before any new dispatch.'
+          fi
+          [[ "$result" == 0 ]]
+          grep -qx '# pass 12' "$ISSUE348_SCRATCH/live.tap"
+      - name: Remove transient files
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${ISSUE348_SCRATCH:-}" == "$RUNNER_TEMP"/issue348.* ]]; then
+            rm -rf -- "$ISSUE348_SCRATCH"
+          fi

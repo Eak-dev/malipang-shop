@@ -9,6 +9,20 @@ export type DailyWriteCoordinates={sheetId:number;row:number;rowCount:number;col
 const helpers=new Set([8,9,17,18,20]);
 const blank=(v:unknown)=>v===undefined||v===null||v==='';
 const same=(a:unknown,b:unknown)=>blank(a)&&blank(b)||a===b;
+/** Index of the contiguous empty suffix within the columns moved by insertRange.
+ * Sheets can leave more than one padding row after appendDimension + insertRange.
+ * The budget panel to the right stays in place and is compared separately. */
+export function dailyPaddingStart(snapshot:DailyWriteSnapshot,rows:number,shiftedColumns:number):number{
+ let start=rows;
+ while(start>0){
+  const row=start-1;
+  for(let col=0;col<shiftedColumns;col++){
+   if(!blank(snapshot.formula[row]?.[col])||!blank(snapshot.effective[row]?.[col]))return start;
+  }
+  start=row;
+ }
+ return start;
+}
 function shape(snapshot:DailyWriteSnapshot,rows:number,columns:number):boolean{
  return !!snapshot&&Array.isArray(snapshot.formula)&&Array.isArray(snapshot.effective)&&snapshot.formula.length<=rows&&snapshot.effective.length<=rows&&[...snapshot.formula,...snapshot.effective].every(row=>Array.isArray(row)&&row.length<=columns&&row.every(cell=>blank(cell)||typeof cell==='string'||typeof cell==='boolean'||typeof cell==='number'&&Number.isFinite(cell)));
 }
@@ -35,7 +49,7 @@ export async function matchesCommittedDailyInsert(after:DailyWriteSnapshot,c:Dai
  if(!coords(c)||!parsed?.operationMarker||!!parsed.publicationVersion!==!!publication||!/^([0-9a-f]{64})$/.test(beforeDigest)||!/^([0-9a-f]{64})$/.test(payloadDigest)||!shape(after,c.rowCount+1,c.columnCount)||await dailyPayloadDigest(payload)!==payloadDigest)return false;
  let formula:Record<number,string>;try{formula=appendDailyRowFormulas(publication);}catch{return false;}
  const index=c.row-1,af=after.formula,ae=after.effective,shiftedColumns=publication?26:25;
- const blankLast=Array.from({length:shiftedColumns},(_,col)=>blank(af[c.rowCount]?.[col])&&blank(ae[c.rowCount]?.[col])).every(Boolean);
+ const paddingStart=dailyPaddingStart(after,c.rowCount+1,shiftedColumns);
  if(af[index]?.[24]!==payload||ae[index]?.[24]!==payload)return false;
  if(publication&&(ae[index]?.[25]!=='STAGED'||!blank(ae[index]?.[23])))return false;
  let matches=0;for(const row of af)if(decodeAtomicDailyPayload(row[24])?.operationMarker===parsed.operationMarker)matches++;
@@ -50,7 +64,7 @@ export async function matchesCommittedDailyInsert(after:DailyWriteSnapshot,c:Dai
   for(let col=0;col<c.columnCount;col++){
    if(col>=shiftedColumns||r<index){fr.push(af[r]?.[col]??null);er.push(ae[r]?.[col]??null);continue;}
    const shifted=af[r+1]?.[col],shiftedEffective=ae[r+1]?.[col];
-   if(blankLast&&r===c.rowCount-1){fr.push(null);er.push(null);continue;}
+   if(r+1>=paddingStart){fr.push(null);er.push(null);continue;}
    if(helpers.has(col)){
     const upgraded=col===9&&shifted===formula[9],expected=upgraded?formula[9]:continuousDailyHelperFormulas(r+2)[col];
     if(shifted!==expected||!blank(shiftedEffective))return false;

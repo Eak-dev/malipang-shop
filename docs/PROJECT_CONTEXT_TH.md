@@ -4,7 +4,15 @@
 
 การพัก sync job ใน REVIEW ตรวจแถวที่เปลี่ยนโดยตรงผ่าน `UPDATE RETURNING` แทนจำนวน D1 ที่อาจรวม trigger แจ้งเตือน; ไม่ใช่การกู้รายการเดิมหรือหลักฐานสถานะ Production ดู Issue #296.
 
+ทุกงานให้อ่าน [แผนผังระบบและคิวรายงาน](system-flow/README.md) ก่อนเริ่ม พร้อมอัปเดตส่วนที่เปลี่ยนใน PR เดียวกัน
+
+ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง
+
 ## ภาพรวมระบบ
+
+ตัวรันคิวค่าใช้จ่ายมีโหมด [RUN_SERIAL](ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) สำหรับส่งงานหลัง cutover ทีละรายการโดยตรวจแถวเดิมและหลักฐาน D1 ก่อนจองงานถัดไป ดู [แผนผัง](system-flow/serial-expense.svg)
+
+ผลจบรอบของ [งานทดลองคิวปกติ #296](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) ตรวจหลักฐานการพักรายการเดิมและแถวเป้าหมายของงานใหม่ก่อนรายงานผล
 
 ระบบรับงานจาก LINE OA และ Back Office ผ่าน Cloudflare Worker โดยมี D1 เป็น operational source of truth, Google Sheets เป็นส่วนรายงานและงานปฏิบัติการ, R2 เก็บหลักฐานส่วนตัว และ Queue ช่วยประมวลผลงานเบื้องหลัง ระบบครอบคลุมค่าใช้จ่าย, การลงเวลา, กะ, Payroll, สิทธิ์ผู้ใช้, ข้อมูลภาพ และรายงานของเจ้าของ
 
@@ -14,6 +22,7 @@
 - ต้นแบบ local เท่านั้นสำหรับ [นับ D1 และ queue ต่อ invocation](INVOCATION_BINDING_BUDGET_WIP.md); ยังไม่ได้เชื่อม Worker หรือเปิดใช้งาน
 - พนักงานและ Payroll: [นโยบายค่าแรง](14_PAYROLL_POLICY_WAGE_HISTORY_AND_FIXED_OT_TH.md), [release Payroll](16_WEDNESDAY_PAYROLL_RELEASE_TH.md); สิทธิ์: [identity/access](19_V11_IDENTITY_ACCESS_TH.md)
 - ปฏิบัติการและ release: [operations](04_OPERATIONS_TH.md), [release/cutover](08_RELEASE_AND_CUTOVER_PLAN_TH.md), [การทดสอบ](03_TEST_AND_CUTOVER_TH.md)
+- การตรวจตัวประเมินข้อความค่าใช้จ่ายบน Production ใช้ [workflow สำหรับข้อมูลจำลอง](03_TEST_AND_CUTOVER_TH.md#ทดสอบตัวประเมินข้อความค่าใช้จ่ายบน-production) โดยผ่านผู้อนุมัติของ GitHub Environment
 - ระบบ Legacy: [สถานะ Apps Script](06_LEGACY_APPS_SCRIPT_STATUS_TH.md), [แผนปิดตามขั้นตอน](17_LEGACY_APPS_SCRIPT_STAGED_SHUTDOWN_TH.md)
 - เว็บหลังบ้าน: [Epic #175](https://github.com/Eak-dev/malipang-shop/issues/175) และงานย่อยที่เชื่อมโยง
 
@@ -36,6 +45,11 @@
 - กติกานี้ให้ผู้พัฒนาหรือ agent ที่ทำงานอัปเดตระหว่างทำงาน ไม่ใช่ระบบ background ที่แก้ไฟล์ได้เอง และไม่รับประกันว่าแหล่งข้อมูลภายนอกจะตรงเสมอ
 
 ## งานซิงก์รายวันแบบต่อเนื่องที่กำลังพัฒนา
+
+ขั้นตรวจ [DAILY ของงานค้าง #296](ISSUE296_EXACT_HELD_DAILY_TH.md) เทียบหลักฐานจากชีตและ D1 และบันทึกผลเฉพาะ projection กับ preimage แบบ atomic โดยคง REVIEW และ failed job เดิมไว้ สถานะ Production ต้องตรวจแยกจากการมีโค้ดใน repository.
+
+[การทดลองงานเดียวในคิวปกติ](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) รองรับรับช่วงป้ายพักจากงานเดิมที่ยืนยัน DAILY แล้วด้วย transaction เดียว และจำกัดการเปิด epoch สำหรับค่าใช้จ่ายที่ระบุและต้องตรวจแถวจริงก่อนขยายงาน
+
 
 มี [ตัวส่งรายงานค่าใช้จ่ายเดือนปัจจุบันจาก D1](ISSUE296_MONTHLY_D1_PREVIEW_TH.md) สำหรับ #296 ซึ่งพักค่าใช้จ่ายรุ่นที่ผูกกับล็อกเดิมและคัดรายการพร้อมและเพิ่มแถวครั้งละหนึ่งรายการ; PREVIEW ที่พักตรวจมีการวินิจฉัยขั้นและคำขอย่อยของ grid แบบไม่เปิดเผยข้อมูล เพื่อหาสาเหตุโดยไม่ให้สิทธิ์เขียนเพิ่ม. สถานะใน repository ไม่ใช่หลักฐานว่า Production deploy หรือเขียนชีตแล้ว.
 

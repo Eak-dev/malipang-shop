@@ -8,6 +8,9 @@ const {runStableExpenseCancellationJob}=require('../dist/sheets/stable-expense-c
 const {pendingDailyCancellations,verifyDailyCarrierEvidence}=require('../dist/sheets/daily-carrier-auth.js');
 const {matchesCommittedDailyInsert}=require('../dist/sheets/continuous-daily-write-evidence.js');
 const {readObservedDailyIncidentSource}=require('../dist/sheets/stable-expense-source.js');
+const {DAILY_FAILED_INCIDENT_EVIDENCE_SQL,failedDailyIncidentFingerprint,readFailedDailyIncidentEvidence}=require('../dist/admin/exact-daily-proof-evidence.js');
+const {operateExactDailySettlement,parseExactDailyOperation}=require('../dist/admin/exact-daily-settlement.js');
+const probeExactFailedDailyOnly=async(env,fingerprint,version)=>(await operateExactDailySettlement(env,{action:'PROBE',fingerprint},version)).outcome==='MATCHED';
 const {operateMonthlyReport}=require('../dist/sheets/monthly-report-operator.js'),googleAuth=require('../dist/sheets/google-auth.js');
 const {verifyReviewedDailyProjection}=require('../dist/sheets/continuous-daily-positive-recovery.js'),notice=require('../dist/sheets/stable-edit-notice.js');
 const {cancelAtomicDailyCandidateUnderClaim}=require('../dist/sheets/atomic-daily-cancellation-candidate.js');
@@ -23,7 +26,8 @@ const simulatedReadiness=require('../dist/sheets/continuous-notice-readiness.js'
 simulatedReadiness.noticeReadinessFingerprint=async()=> 'f'.repeat(64);
 simulatedReadiness.noticeReadinessReady=async()=>true;
 simulatedReadiness.noticeReadinessSql='(? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL AND ? IS NOT NULL)';
-async function fixture(preCutover=false,createAdmission=true,claim='claim',includeItem=false,dailySheet='draft'){
+async function fixture(preCutover=false,createAdmission=true,claim='claim',includeItem=false,dailySheet='draft',postingDate='2026-11-15'){
+ const [year,month,day]=postingDate.split('-').map(Number);
  const h=expenseSqlite(),names=['getSheetGridInfo','getSpreadsheetSheetProperties','getSheetCellNumberFormats','batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues','batchUpdateSpreadsheetWithReply'],saved=Object.fromEntries(names.map(k=>[k,client[k]])),originalRoute=route.continuousDailyTarget,originalOwned=claimApi.stableWorkbookClaimOwned,originalCoverage=coverage.readLegacyDailyCoverage,prepare=h.DB.prepare,batch=h.DB.batch;
  h.DB.prepare=function(sql){const stmt=prepare.call(this,sql),run=stmt.run,all=stmt.all;stmt.run=async function(){return{...await run.call(this),success:true};};stmt.all=async function(){return{...await all.call(this),success:true};};return stmt;};h.DB.batch=async function(stmts){return(await batch.call(this,stmts)).map(x=>({...x,success:true}));};
  Object.assign(h.env,{GOOGLE_SPREADSHEET_ID:'book',SHEET_EXPENSE_DAILY:'รายวัน',SHEET_EXPENSE_RAW:'V52_EXPENSE_RAW',SHEET_PURCHASE_DETAILS:'รายละเอียดการซื้อ',APP_ENV:'test',RUNTIME_MODE:'shadow',STABLE_PHASE1_ENABLED:'true',STABLE_CANCELLATION_PREIMAGE_ENABLED:'true',CONTINUOUS_DAILY_ENABLED:'true',CONTINUOUS_DAILY_SHEET:dailySheet,CONTINUOUS_DAILY_SHEET_ID:'2',CONTINUOUS_RAW_SHEET:'raw_new',CONTINUOUS_RAW_SHEET_ID:'3',CONTINUOUS_DETAIL_SHEET:'detail_new',CONTINUOUS_DETAIL_SHEET_ID:'4'});
@@ -31,7 +35,10 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
  const viewManifest=JSON.stringify([{sheetId:3,title:'raw_new',kind:'LEDGER'},{sheetId:4,title:'detail_new',kind:'LEDGER'},{sheetId:5,title:'V52_EXPENSE_RAW_ALL',kind:'VIEW'},{sheetId:6,title:'V52_PURCHASE_DETAIL_ALL',kind:'VIEW'}]);
  const reportFormula='=1+1',reportManifest=JSON.stringify([{sheetId:7,sheetName:'97_EXPENSE_CLEAN',row:2,column:1,after:createHash('sha256').update(reportFormula).digest('hex')}]);
  for(const stage of ['VIEWS','DAILY_J','REPORTS']){const manifest=stage==='VIEWS'?viewManifest:stage==='REPORTS'?reportManifest:'[{}]',hash=createHash('sha256').update(manifest).digest('hex');h.sqlite.prepare("INSERT INTO continuous_report_cutover_attempts(spreadsheet_id,stage,operation_token,manifest_digest,manifest_json,cell_count,state,created_at,updated_at) VALUES('book',?,?,?,?,?,'IN_FLIGHT','now','now')").run(stage,claim,hash,manifest,JSON.parse(manifest).length);h.sqlite.prepare("UPDATE continuous_report_cutover_attempts SET state='VERIFIED' WHERE stage=?").run(stage);}
- const createSource=()=>h.sqlite.exec("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_test','message','owner','=literal',123,'transfer','SHOP_BANK','ingredients','2026-11-15','CONFIRMED','now',1); INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_test',1,'fixture','PROCESSING',1,'now','2099-01-01T00:00:00.000Z','lease')");
+ const createSource=()=>{
+  h.sqlite.prepare("INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_test','message','owner','=literal',123,'transfer','SHOP_BANK','ingredients',?,'CONFIRMED','now',1)").run(postingDate);
+  h.sqlite.exec("INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,lease_until,lease_token) VALUES('job','EXPENSE','exp_test',1,'fixture','PROCESSING',1,'now','2099-01-01T00:00:00.000Z','lease')");
+ };
  if(preCutover){createSource();h.sqlite.exec("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL WHERE job_id='job'");}
  const revision=h.sqlite.prepare('SELECT revision FROM stable_source_revision WHERE singleton=1').get().revision;
  await h.DB.batch(continuousDailyCutoverStatements(h.env,{book:'book',legacySheetId:1,legacySheetName:'รายวัน',continuousSheetId:2,continuousSheetName:dailySheet,rawSheetId:3,rawSheetName:'raw_new',detailSheetId:4,detailSheetName:'detail_new',claim,revision,mustBeCancelledOrAbsentExpenseIds:['exp_absent1','exp_absent2']}));
@@ -48,8 +55,8 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
  for(let n=2;n<=6;n++){Object.assign(detailF[n-1],ledgerCarrierFormulas('DETAIL',n));detailF[n-1][25]=detailE[n-1][25]=ledgerCarrierMarker(n);}
  const reportFormulas=(await import('../scripts/combined-ledger-report-formulas.mjs')).combinedLedgerSpillFormulas({rawNew:'raw_new',detailNew:'detail_new',rawCombined:'V52_EXPENSE_RAW_ALL',detailCombined:'V52_PURCHASE_DETAIL_ALL',rawOldRows:1000,rawNewRows:6,detailOldRows:1000,detailNewRows:6});
  f[2][7]='เงินโอน';e[2][7]='เงินโอน';for(let n=4;n<=8;n++)Object.assign(f[n-1],continuousDailyHelperFormulas(n));
- for(const rows of [f,e])Object.assign(rows[3],{26:2026,27:11,28:1000});
- const legacy={grid:{sheetId:1,rowCount:10,columnCount:25},formula:[],effective:[],coverage:{status:'VERIFIED',legacyDebitSatang:0,openingSatang:100000,checkedRows:0,year:2026,month:11}};
+ for(const rows of [f,e])Object.assign(rows[3],{26:year,27:month,28:1000});
+ const legacy={grid:{sheetId:1,rowCount:10,columnCount:25},formula:[],effective:[],coverage:{status:'VERIFIED',legacyDebitSatang:0,openingSatang:100000,checkedRows:0,year,month}};
  route.continuousDailyTarget=()=>({sheet:dailySheet,sheetId:2});claimApi.stableWorkbookClaimOwned=async()=>true;coverage.readLegacyDailyCoverage=async()=>legacy;
  client.getSheetGridInfo=async(_env,name)=>{if(mode==='metadata-error'&&writes&&name==='draft')throw Error('synthetic metadata timeout');return name==='raw_new'?{sheetId:3,rowCount:rawF.length,columnCount:26}:name==='detail_new'?{sheetId:4,rowCount:detailF.length,columnCount:26}:{sheetId:mode==='identity-drift'&&writes?99:2,rowCount:f.length,columnCount:29};};
  client.getSpreadsheetSheetProperties=async()=>[{sheetId:10,title:'V52_EXPENSE_RAW',rowCount:1000,columnCount:26},{sheetId:3,title:'raw_new',rowCount:rawF.length,columnCount:26},{sheetId:11,title:'รายละเอียดการซื้อ',rowCount:1000,columnCount:20},{sheetId:4,title:'detail_new',rowCount:detailF.length,columnCount:26},{sheetId:5,title:'V52_EXPENSE_RAW_ALL',rowCount:9999,columnCount:18},{sheetId:6,title:'V52_PURCHASE_DETAIL_ALL',rowCount:9999,columnCount:20},{sheetId:7,title:'97_EXPENSE_CLEAN',rowCount:4500,columnCount:8}];
@@ -57,7 +64,11 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
  client.batchGetSheetFormulaValues=async(_env,ranges)=>ranges.map(range=>range.includes("'รายวัน'!X")?[]:range.includes("'97_EXPENSE_CLEAN'!A2:A2")?[[reportFormula]]:range.includes("'V52_EXPENSE_RAW_ALL'!")?[[reportFormulas.raw]]:range.includes("'V52_PURCHASE_DETAIL_ALL'!")?[[reportFormulas.detail]]:range.includes("'raw_new'!")?rawF.map(r=>r.slice()):range.includes("'detail_new'!")?detailF.map(r=>r.slice()):f.map(r=>r.slice()));
  client.batchGetSheetEffectiveSerialValues=async(_env,ranges)=>ranges.map(range=>{
   if(range.includes("'รายวัน'!X"))return [];
-  if(range.includes("'97_EXPENSE_CLEAN'!")){const header=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];return rawE[1][0]==='exp_test'?[header,[(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,'exp_test','=literal',1.23,'SHOP_BANK','ingredients','V52_CONFIRMED','']]:[header];}
+  if(range.includes("'97_EXPENSE_CLEAN'!")){const header=['Date','Expense_ID / Legacy row','Description','Amount','Wallet','Category','Source','Sales_Addback_Basis'];if(mode==='third-pilot'){
+   const confirmed=rawE.slice(1).filter(row=>row[7]==='CONFIRMED');
+   return [header,...confirmed.map(row=>[(Date.parse(row[1]+'T00:00:00Z')-Date.UTC(1899,11,30))/86400000,row[0],row[2],row[3],row[5],row[6],'V52_CONFIRMED',''])];
+  }
+  if(rawE[1][0]==='exp_pilot'){const date=rawE[1][1],serial=(Date.parse(date+'T00:00:00Z')-Date.UTC(1899,11,30))/86400000;return [header,[serial,'exp_pilot','pilot',1.20,'SHOP_BANK','ingredients','V52_CONFIRMED','']];}return rawE[1][0]==='exp_test'?[header,[(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,'exp_test','=literal',1.23,'SHOP_BANK','ingredients','V52_CONFIRMED','']]:[header];}
   if(range.includes("'V52_EXPENSE_RAW_ALL'!"))return [['Expense_ID'],...rawE.slice(1).map(r=>[r[0]])];
   if(range.includes("'V52_PURCHASE_DETAIL_ALL'!"))return [['Purchase_Item_ID','Expense_ID'],...detailE.slice(1).map(r=>[r[0],r[1]])];
   return range.includes("'raw_new'!")?rawE.map(r=>r.slice()):range.includes("'detail_new'!")?detailE.map(r=>r.slice()):e.map(r=>r.slice());
@@ -67,7 +78,7 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   if(requests[0].findReplace?.range.sheetId===2){const x=requests[0].findReplace,i=x.range.startRowIndex;if(f[i][24]!==x.find)return{replies:[{findReplace:{}}]};assert.equal(x.matchEntireCell,true);assert.equal(x.includeFormulas,false);writes++;f[i][24]=e[i][24]=x.replacement;for(const c of [0,1,2,3,5,6,7,8,9,10,11,12,13,14,15,16,17,18,20,21,22,23])e[i][c]='';return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   if(requests[0].findReplace){const change=requests[0].findReplace,i=change.range.startRowIndex,ledgerF=change.range.sheetId===4?detailF:rawF,ledgerE=change.range.sheetId===4?detailE:rawE;if(ledgerF[i][25]!==change.find)return{replies:[{findReplace:{}}]};ledgerF[i][25]=ledgerE[i][25]=change.replacement;ledgerCarrierDisplay(decodeLedgerCarrier(change.replacement)).forEach((v,c)=>{ledgerE[i][c]=v});writes++;return{replies:[{findReplace:{valuesChanged:1,occurrencesChanged:1}}]};}
   const offset=requests[0].appendDimension?1:0,index=requests[offset].insertRange.range.startRowIndex,values=requests[offset+1].updateCells.rows[0].values;
-  assert.equal(index,4);assert.equal(requests[offset].insertRange.range.endColumnIndex,25);writes++;
+  assert.equal(index,mode==='third-pilot'?6:mode==='second-pilot'?5:4);assert.equal(requests[offset].insertRange.range.endColumnIndex,25);writes++;
   const oldF=f.map(r=>r.slice()),oldE=e.map(r=>r.slice());f.push(Array(29).fill(null));e.push(Array(29).fill(null));
   // Provider can grow once for appendDimension and once for insertRange.
   if(offset&&mode!=='one-growth'){f.push(Array(29).fill(null));e.push(Array(29).fill(null));}
@@ -76,10 +87,15 @@ async function fixture(preCutover=false,createAdmission=true,claim='claim',inclu
   for(let i=index+1;i<f.length;i++)if(oldF[i-1]?.[8])Object.assign(f[i],continuousDailyHelperFormulas(i+1));
   for(let c=0;c<25;c++){f[index][c]=values[c].userEnteredValue?.formulaValue??values[c].userEnteredValue?.stringValue??null;e[index][c]=null;}
   const payload=decodeAtomicDailyPayload(f[index][24]);assert.ok(payload);
-  Object.assign(e[index],{0:2026,1:11,2:15,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(2026,10,15)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
+  Object.assign(e[index],{0:year,1:month,2:day,3:'=literal',7:1.23,8:1.23,9:998.77,18:998.77,20:(Date.UTC(year,month-1,day)-Date.UTC(1899,11,30))/86400000,21:'ingredients',22:'บัญชีร้าน',23:'MALIPANG_EXPENSE:exp_test',24:f[index][24]});
+  if(mode==='second-pilot'||mode==='third-pilot'){
+   const {postingYear:y,postingMonth:m,postingDay:d,description,amountSatang,category,wallet,expenseId}=payload;
+   const spent=oldE.slice(3,index).filter(r=>r[0]===y&&r[1]===m).reduce((total,r)=>total+Math.round((r[8]||0)*100),amountSatang);
+   Object.assign(e[index],{0:y,1:m,2:d,3:description,7:amountSatang/100,8:amountSatang/100,9:(100000-spent)/100,18:(100000-spent)/100,20:(Date.UTC(y,m-1,d)-Date.UTC(1899,11,30))/86400000,21:category,22:wallet,23:'MALIPANG_EXPENSE:'+expenseId,24:f[index][24]});
+  }
   if(mode==='timeout')throw Error('synthetic lost response');if(mode==='tamper')f[6][9]='=0';if(mode==='tail-tamper')f.at(-1)[28]='=1';if(mode==='tail-effective')e.at(-1)[27]=1;return{replies:requests.map(()=>({}))};
  };
- return {...h,job,source,legacy,claim,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,dailySheet,2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
+ return {...h,job,source,legacy,claim,realBatchUpdate:saved.batchUpdateSpreadsheetWithReply,formula:()=>f,effective:()=>e,rawFormula:()=>rawF,rawEffective:()=>rawE,detailFormula:()=>detailF,detailEffective:()=>detailE,writes:()=>writes,setMode:x=>{mode=x;},async run(){return insertDailyExpenseUnderClaim(h.env,job,'lease',claim,source,dailySheet,2);},close(){Object.assign(client,saved);route.continuousDailyTarget=originalRoute;claimApi.stableWorkbookClaimOwned=originalOwned;coverage.readLegacyDailyCoverage=originalCoverage;h.close();}};
 }
 
 test('monthly operator projects one record without replaying original incident or changing business data',async()=>{for(const mode of ['ok','lost-provider','post-tamper','unrelated-before','incident-child','multi']){const h=await fixture(false,true,'claim-token-recovery',false,'รายวันต่อเนื่อง_แบบร่าง'),originalRead=client.readMonthlyReportGrid,originalInfo=client.getSheetGridInfo,originalPost=client.batchUpdateSpreadsheetWithReply,originalNotice=notice.stableNoticePaused,originalLease=googleAuth.createGoogleOAuthLease;let posts=0;try{
@@ -126,6 +142,21 @@ test('inserts safely when the final row is entirely blank',async()=>{const h=awa
  const evidence=h.sqlite.prepare('SELECT * FROM continuous_daily_write_evidence').get(),coords={sheetId:evidence.sheet_id,row:evidence.target_row,rowCount:evidence.before_rows,columnCount:evidence.before_columns};
  assert.equal(await matchesCommittedDailyInsert({formula:h.formula().slice(0,-1),effective:h.effective().slice(0,-1)},coords,h.formula()[coords.row-1][24],evidence.before_digest,evidence.payload_digest),true);
  }finally{h.close();}});
+test('repeated blank padding accepts only a contiguous, fully blank shifted suffix',async()=>{
+ for(const fault of ['interior-gap','missing-helper','effective-value']){
+  const h=await fixture();
+  try{
+   for(const grid of [h.formula(),h.effective()])grid.push(Array(29).fill(null),Array(29).fill(null));
+   if(fault==='interior-gap')h.formula()[5].fill(null);
+   if(fault==='missing-helper')h.formula()[6][8]=null;
+   if(fault==='effective-value')h.effective().at(-2)[8]=123;
+   await assert.rejects(h.run(),/INSERT_DAILY_(ROW_FORMULA|TAIL_UNVERIFIED)/,fault);
+   assert.equal(h.writes(),0,fault);
+   assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_projection_writes').get().n,0,fault);
+  }finally{h.close();}
+ }
+});
+
 test('blank tail readback accepts one-row provider growth',async()=>{const h=await fixture();try{
  h.formula().at(-1).fill(null);h.effective().at(-1).fill(null);h.setMode('one-growth');await h.run();
  assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
@@ -880,3 +911,494 @@ test('QA deterministic Miniflare monthly diagnostics and multi-run',async t=>{t.
  if(mode==='undo'||mode==='content-drift'){assert.equal(preview.ready,1);result=await operateMonthlyReport(h.env,'APPEND_ONE',workerHash,preview.candidate);assert.equal(result.status,'DONE');assert.equal(posts,2);const after=await realdb.prepare("SELECT status,version,description FROM expense_events WHERE expense_id='exp_aa'").first();if(mode==='undo')assert.deepEqual(after,{status:'CANCELLED',version:2,description:'=literal'});else assert.deepEqual(after,{status:'CONFIRMED',version:1,description:'SYNTHETIC EDIT'});let next=await operateMonthlyReport(h.env,'PREVIEW',workerHash);assert.equal(next.stale,1);console.log('QA_STALE',JSON.stringify({mode,otherContinued:true,stale:next.stale,oldReceiptRetained:(await realdb.prepare("SELECT count(*) n FROM monthly_report_intents WHERE expense_id='exp_aa' AND state='VERIFIED'").first()).n}));}
  assert.deepEqual(await realdb.prepare("SELECT * FROM expense_events WHERE expense_id='exp_test'").first(),beforeExpense);const businessAfter={jobs:await realdb.prepare('SELECT * FROM sync_jobs ORDER BY job_id').all(),claims:await realdb.prepare('SELECT * FROM stable_workbook_claims').all(),projection:await realdb.prepare('SELECT * FROM stable_projection_writes').all()};for(const key of ['jobs','claims','projection'])assert.deepEqual(businessAfter[key].results,businessBefore[key].results);
  }finally{budgetClass.prototype.consumeRead=oldRead;budgetClass.prototype.claimMutation=oldClaim;if(mf)await mf.dispose();if(dir)(await import('node:fs')).rmSync(dir,{recursive:true,force:true});client.readMonthlyReportGrid=originalRead;client.getSheetGridInfo=originalInfo;client.batchUpdateSpreadsheetWithReply=originalPost;notice.stableNoticePaused=originalNotice;googleAuth.createGoogleOAuthLease=originalLease;h.close();}}});
+
+test('failed-hold read-only proof selects exactly one pinned row and rejects all drift',async()=>{for(const mode of ['exact','payload','error','attempt','trace','resolved','other-open','revision']){const h=await fixture(false,true,'claim-token-recovery');try{
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
+ h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+ h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+ const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book');assert.ok(row);const hash=await failedDailyIncidentFingerprint(row);
+ if(mode==='payload')h.sqlite.exec("UPDATE failed_jobs SET payload_json='{}' WHERE id='failed'");
+ if(mode==='error')h.sqlite.exec("UPDATE failed_jobs SET error='DEAD_LETTER_MAX_RETRIES' WHERE id='failed'");
+ if(mode==='attempt')h.sqlite.exec("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'");
+ if(mode==='trace')h.sqlite.exec("UPDATE failed_jobs SET trace_id='other' WHERE id='failed'");
+ if(mode==='resolved')h.sqlite.exec("UPDATE failed_jobs SET status='RESOLVED' WHERE id='failed'");
+ if(mode==='other-open')h.sqlite.exec("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('other','other','other','EXPENSE:exp_test:2','{}','failure','OPEN',1,'now','now')");
+ if(mode==='revision')h.sqlite.exec('UPDATE stable_source_revision SET revision=revision+1 WHERE singleton=1');
+ assert.equal(!!await readFailedDailyIncidentEvidence(h.env,hash),mode==='exact');
+
+ assert.equal(h.writes(),1);
+ }finally{h.close();}}});
+test('failed-hold provider probe is read-only and rejects changed failed row',async()=>{const h=await fixture(false,true,'claim-token-recovery'),oldStyle=notice.stableNoticeStyleFingerprint;try{
+ h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+ h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
+ h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+ h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+ h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+ const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book'),hash=await failedDailyIncidentFingerprint(row);notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+ const statements=[],prepare=h.DB.prepare;h.DB.prepare=function(sql){statements.push(sql);return prepare.call(this,sql)};
+ client.batchUpdateSpreadsheetWithReply=async()=>{throw Error('unexpected provider mutation')};
+ Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',CF_VERSION_METADATA:{id:'synthetic-version'}});h.env.EXACT_DAILY_SETTLEMENT_ENABLED='true';const workerHash='synthetic-version';
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),true);assert.equal(h.writes(),1);
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,'f'.repeat(64)),false);
+ h.env.STABLE_RECOVERY_GATE_ENABLED='false';assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),true);
+ const oldInfo=client.getSheetGridInfo;for(const [before,after] of [['false','true'],['true','false']]){h.env.STABLE_RECOVERY_GATE_ENABLED=before;let drifted=false;client.getSheetGridInfo=async(...args)=>{const value=await oldInfo(...args);if(!drifted){drifted=true;h.env.STABLE_RECOVERY_GATE_ENABLED=after;}return value;};assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);assert.equal(drifted,true);client.getSheetGridInfo=oldInfo;}
+ for(const invalid of ['invalid','',undefined]){h.env.STABLE_RECOVERY_GATE_ENABLED=invalid;assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);}h.env.STABLE_RECOVERY_GATE_ENABLED='true';
+ h.formula().at(-1)[28]='=1';assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);h.formula().at(-1)[28]=null;
+ notice.stableNoticeStyleFingerprint=async()=>null;assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+ assert.ok(statements.length>0);assert.ok(statements.every(sql=>/^\s*SELECT\b/i.test(sql)));
+ const get=client.batchGetSheetFormulaValues;let changed=false;
+ client.batchGetSheetFormulaValues=async(...args)=>{if(!changed){changed=true;h.sqlite.exec("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'");}return get(...args);};
+ assert.equal(await probeExactFailedDailyOnly(h.env,hash,workerHash),false);assert.equal(changed,true);
+ assert.equal(h.sqlite.prepare("SELECT status FROM failed_jobs WHERE id='failed'").get().status,'OPEN');assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'IN_FLIGHT');assert.equal(h.writes(),1);
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;h.close();}});
+
+test('exact DAILY settlement validates request shape and owner observations',()=>{
+ const fingerprint='a'.repeat(64),preimageDigest='b'.repeat(64);
+ const settle={action:'SETTLE',fingerprint,preimageDigest,externalWritersFenced:true,ownerSupervising:true};
+ for(const body of [null,[],{}, {action:'INSPECT',extra:true}, {action:'PROBE',fingerprint:'no'},
+  {...settle,externalWritersFenced:false},{...settle,ownerSupervising:false},{...settle,extra:true}])
+  assert.equal(parseExactDailyOperation(body),null);
+ for(const body of [{action:'INSPECT'}, {action:'PROBE',fingerprint},settle])assert.deepEqual(parseExactDailyOperation(body),body);
+});
+
+async function miniflareDailyFixture(sqlite){
+ const {mkdtempSync,readdirSync,copyFileSync,rmSync}=await import('node:fs');
+ const {join}=await import('node:path'),{tmpdir}=await import('node:os'),{Miniflare}=await import('miniflare');
+ const dir=mkdtempSync(join(tmpdir(),'exact-daily-d1-'));
+ let mf;
+ const close=async()=>{try{if(mf)await mf.dispose();}finally{rmSync(dir,{recursive:true,force:true});}};
+ try{
+  const fixturePath=join(dir,'fixture.sqlite');sqlite.exec(`VACUUM INTO '${fixturePath.replaceAll("'","''")}'`);
+  const options={modules:true,d1Databases:{DB:'fixture'},d1Persist:dir,script:'export default {async fetch(_r,e){await e.DB.prepare("SELECT 1").first();return new Response("ok")}}'};
+  mf=new Miniflare(options);await mf.dispatchFetch('http://local/');await mf.dispose();mf=null;
+  const folder=join(dir,'miniflare-D1DatabaseObject'),dbfile=readdirSync(folder).find(x=>x.endsWith('.sqlite'));
+  for(const ext of ['-wal','-shm'])rmSync(join(folder,dbfile+ext),{force:true});
+  copyFileSync(fixturePath,join(folder,dbfile));mf=new Miniflare(options);
+  const db=await mf.getD1Database('DB');
+  return {db,close};
+ }catch(error){await close();throw error;}
+}
+
+async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitingId,version,tick}){
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ const {recoverPendingSheetJobs}=require('../dist/db/repositories.js');
+ const worker=require('../dist/index.js').default;
+ const secret='s'.repeat(40),env={...h.env,ADMIN_TOKEN:secret};
+ const call=async(route,body)=>{
+  const request=new Request('https://example.test/admin/stable-sync/'+route,{
+   method:'POST',headers:{authorization:'Bearer '+secret,'x-malipang-expected-worker-version':version},
+   body:JSON.stringify(body)
+  });
+  return (await handleAdmin(request,env,{})).json();
+ };
+ const operate=body=>call('normal-expense-pilot',body);
+ const advance={...finish,action:'ADVANCE_ONE',nextJobId:successorId,proof:completed.proof,externalWritersFenced:true,ownerSupervising:true};
+ const read=(jobId,fingerprint)=>call('normal-pilot-readback',{action:'READBACK',jobId,fingerprint});
+ const countAdvances=async()=>(await db.prepare("SELECT count(*) n FROM admin_audit WHERE action='ISSUE296_SERIAL_EXPENSE_HANDOVER'").first()).n;
+ const before=(await db.prepare('SELECT expense_id,status,version,amount_satang FROM expense_events ORDER BY expense_id').all()).results;
+ const methodNames=['batchGetSheetFormulaValues','batchGetSheetEffectiveSerialValues'];
+ const originalReads=methodNames.map(name=>client[name]);
+ const queued=[];
+ env.JOB_QUEUE={send:async(body,options)=>queued.push({body,options})};
+ try{
+  // Honor the same narrow row and carrier ranges as the Sheets values API.
+  for(const [i,name] of methodNames.entries())client[name]=async(env,ranges,policy)=>{
+   const grid=i===0?h.formula():h.effective();
+   const row=/!A(\d+):AC\1$/.exec(ranges[0]);
+   if(ranges.length===2&&row&&/!Y1:Y\d+$/.test(ranges[1])){
+    return [[grid[Number(row[1])-1].slice()],grid.map(r=>[r[24]])];
+   }
+   return originalReads[i](env,ranges,policy);
+  };
+  const valueRow=h.effective().find(row=>row[23]==='MALIPANG_EXPENSE:exp_pilot');
+  assert.ok(valueRow);
+  const oldAmount=valueRow[7];
+  valueRow[7]=999;
+  assert.equal((await operate(advance)).ok,false,'D1 completion alone cannot admit C');
+  assert.equal(await countAdvances(),0);
+  valueRow[7]=oldAmount;
+  assert.equal((await read(finish.jobId,finish.fingerprint)).outcome,'MATCHED');
+  for(const bad of [{proof:'0'.repeat(64)},{ownerSupervising:false},{externalWritersFenced:false}]){
+   assert.notEqual((await operate({...advance,...bad})).ok,true);
+  }
+  assert.equal(await countAdvances(),0);
+
+  const batch=env.DB.batch;
+  try{
+   // Another writer invalidates A's failure evidence after B's live readback.
+   env.DB.batch=async statements=>{
+    await db.prepare("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'").run();
+    return batch.call(env.DB,statements);
+   };
+   assert.equal((await operate(advance)).ok,false);
+   assert.equal(await countAdvances(),0,'an invalidated parked root must roll back the whole handover');
+   await db.prepare("UPDATE failed_jobs SET attempt_count=1 WHERE id='failed'").run();
+
+   // D1 commits the transfer but the caller loses the acknowledgement.
+   env.DB.batch=async statements=>{
+    await batch.call(env.DB,statements);
+    throw Error('synthetic successor acknowledgement lost');
+   };
+   assert.equal((await operate(advance)).ok,false);
+   assert.equal(await countAdvances(),1);
+  }finally{env.DB.batch=batch;}
+  const competing=await Promise.all([operate(advance),operate({...advance,nextJobId:waitingId})]);
+  assert.equal(competing[1].ok,false,'stale B request cannot admit another child');
+  assert.equal(await countAdvances(),1);
+  const audit=await db.prepare("SELECT entity_key,json_extract(before_json,'$.predecessorJobId') predecessor FROM admin_audit WHERE id=?").bind('issue296:serial:'+finish.jobId).first();
+  assert.deepEqual(audit,{entity_key:successorId,predecessor:finish.jobId});
+  const finishC={...finish,jobId:successorId};
+  assert.equal((await operate(finishC)).outcome,'IN_PROGRESS');
+  assert.equal((await read(successorId,finish.fingerprint)).ok,false,'B evidence cannot satisfy an unwritten C');
+  assert.equal(await recoverPendingSheetJobs(env,300),1);
+  h.setMode('third-pilot');
+  for(const expectedStatus of ['PENDING','PENDING','COMPLETED']){
+   assert.equal(queued.length,1);
+   const {body}=queued.shift();
+   assert.equal(body.entityKey,'exp_serial');
+   tick();
+   let acknowledgements=0;
+   await worker.queue({queue:'malipang-jobs',messages:[{body,attempts:1,ack(){acknowledgements++;},retry(){assert.fail('unexpected successor retry');}}]},env,{});
+   assert.equal(acknowledgements,1);
+   const state=await db.prepare('SELECT status,last_error FROM sync_jobs WHERE job_id=?').bind(successorId).first();
+   assert.equal(state.status,expectedStatus,JSON.stringify(state));
+   if(expectedStatus==='PENDING')assert.equal(queued[0]?.options?.delaySeconds,90);
+  }
+  assert.equal(queued.length,0);
+  const proofC=await operate(finishC);
+  assert.equal(proofC.outcome,'JOB_COMPLETE');
+  assert.notEqual(proofC.proof,completed.proof);
+  assert.equal((await read(successorId,finish.fingerprint)).outcome,'MATCHED');
+  assert.deepEqual(await operate(finishC),proofC);
+  assert.equal((await read(waitingId,finish.fingerprint)).ok,false);
+  assert.equal((await db.prepare('SELECT status FROM sync_jobs WHERE job_id=?').bind(waitingId).first()).status,'PENDING');
+  assert.equal((await db.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").first()).status,'REVIEW');
+  assert.equal((await db.prepare("SELECT status FROM failed_jobs WHERE id='failed'").first()).status,'OPEN');
+  assert.deepEqual((await db.prepare('SELECT expense_id,status,version,amount_satang FROM expense_events ORDER BY expense_id').all()).results,before);
+  const posted=h.effective().filter(row=>row[23]==='MALIPANG_EXPENSE:exp_serial');
+  assert.equal(posted.length,1);
+  assert.equal(posted[0][7],2.6);
+  // A successor can itself become a proven predecessor; concurrent operator retries
+  // must not create two admissions or reuse the original B -> C link.
+  const advanceD={...advance,jobId:successorId,nextJobId:waitingId,proof:proofC.proof};
+  const admitted=await Promise.all([operate(advanceD),operate(advanceD)]);
+  assert.ok(admitted.some(result=>result.outcome==='RESERVED'),JSON.stringify(admitted));
+  assert.equal(await countAdvances(),2);
+  const open=await db.prepare("SELECT target_key FROM stable_recovery_epochs WHERE state='ARMED'").all();
+  assert.deepEqual(open.results,[{target_key:'exp_wait'}]);
+  assert.equal(h.writes(),6,'reservation alone cannot write to Sheets');
+ }finally{
+  for(const [i,name] of methodNames.entries())client[name]=originalReads[i];
+ }
+}
+
+for(const finalAck of ['received','lost'])
+test('Miniflare exact DAILY settlement preserves both holds when the commit ACK is '+finalAck,async()=>{
+ const h=await fixture(false,true,'claim-token-recovery',false,'รายวันต่อเนื่อง_แบบร่าง'),oldStyle=notice.stableNoticeStyleFingerprint;
+ let local;
+ try{
+  h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+  const pilotId='10000000-1111-2222-3333-444444444444';
+  h.sqlite.exec(`INSERT INTO continuous_cutover_operator(spreadsheet_id,operation_token,origin,state,created_at,updated_at) VALUES('book','claim-token-recovery','NEW','STARTING','now','now');
+   UPDATE continuous_cutover_operator SET state='HELD'; UPDATE continuous_cutover_operator SET state='RELEASING'; UPDATE continuous_cutover_operator SET state='COMPLETE';
+   INSERT INTO continuous_canary_operator(spreadsheet_id,expense_id,document_id,item_id,line_user_id,transaction_date,trace_id,state,created_at,updated_at) VALUES('book','exp_canary_test','doc_canary_test','item_canary_test','CANARY_NO_LINE_test','2026-11-15','trace_canary_test','DRAFT','now','now');
+   UPDATE continuous_canary_operator SET state='CONFIRMING';UPDATE continuous_canary_operator SET state='CONFIRMED';UPDATE continuous_canary_operator SET state='ARMED_CONFIRM';
+   UPDATE continuous_canary_operator SET state='DUPLICATE_ARMED',duplicate_epoch_id='duplicate_epoch';UPDATE continuous_canary_operator SET state='DUPLICATE_SEEN';UPDATE continuous_canary_operator SET state='DUPLICATE_VERIFIED';UPDATE continuous_canary_operator SET state='UNDOING';UPDATE continuous_canary_operator SET state='UNDONE';UPDATE continuous_canary_operator SET state='ARMED_UNDO';UPDATE continuous_canary_operator SET state='VERIFIED';
+   INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version) VALUES('exp_pilot','pilot-msg','owner','pilot',120,'transfer','SHOP_BANK','ingredients',date('now','+7 hours'),'CONFIRMED','now',1);
+   INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,expense_id) VALUES('doc_pilot','doc-msg','owner','RECEIPT','CONFIRMED','now','exp_pilot');
+   INSERT INTO expense_document_items(item_id,document_id,expense_id,description,line_total_satang,created_at,updated_at) VALUES('item_pilot','doc_pilot','exp_pilot','item',120,'now','now');
+   INSERT INTO expense_document_links(link_id,expense_id,document_id,relation_type,match_method,created_at) VALUES('link_pilot','exp_pilot','doc_pilot','PRIMARY_PURCHASE_DOCUMENT','EXACT_IDENTIFIER','now');
+   INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at) VALUES('${pilotId}','EXPENSE','exp_pilot',1,'trace-pilot','PENDING','now');`);
+  const successorId='20000000-1111-2222-3333-444444444444';
+  const waitingId='30000000-1111-2222-3333-444444444444';
+  for(const [jobId,expenseId] of [[successorId,'exp_serial'],[waitingId,'exp_wait']]){
+   h.sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,created_at,version)
+    VALUES(?,?,'owner',?,260,'transfer','SHOP_BANK','ingredients',date('now','+7 hours'),'CONFIRMED','now',1)`).run(expenseId,expenseId,expenseId);
+   h.sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,updated_at)
+    VALUES(?,'EXPENSE',?,1,?,'PENDING','2020-01-01T00:00:00.000Z')`).run(jobId,expenseId,expenseId);
+  }
+  h.sqlite.exec("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE spreadsheet_id='book'");
+  h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+  h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+  local=await miniflareDailyFixture(h.sqlite);
+  const {db}=local,version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  let fault='',batches=0;
+  const updates=new WeakSet();
+  h.env.DB={prepare(sql){
+   const statement=db.prepare(sql);
+   if(!sql.startsWith('UPDATE stable_projection_writes'))return statement;
+   return {bind(...args){const bound=statement.bind(...args);updates.add(bound);return bound;}};
+  },async batch(statements){
+   if(!updates.has(statements[0]))return db.batch(statements);
+   batches++;
+   if(fault==='rollback')return db.batch([statements[0],db.prepare("SELECT json_extract('invalid-json','$')"),...statements.slice(1)]);
+   if(fault==='race')await db.prepare("UPDATE failed_jobs SET attempt_count=2 WHERE id='failed'").run();
+   const result=await db.batch(statements);if(fault==='lostAck')throw Error('synthetic D1 acknowledgement lost');return result;
+  }};
+  Object.assign(h.env,{STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',EXACT_DAILY_SETTLEMENT_ENABLED:'true',CF_VERSION_METADATA:{id:version}});
+  const before=async()=>Promise.all(['stable_workbook_claims','sync_jobs','failed_jobs','expense_events','sync_alert_incidents'].map(async table=>(await db.prepare('SELECT * FROM '+table).all()).results));
+  const baseline=await before(),call=operation=>operateExactDailySettlement(h.env,operation,version);
+  const inspect=await call({action:'INSPECT'});assert.equal(inspect.outcome,'INSPECTED',JSON.stringify(inspect));assert.equal(inspect.projectionState,'IN_FLIGHT');
+  const probe=await call({action:'PROBE',fingerprint:inspect.fingerprint});assert.equal(probe.outcome,'MATCHED',JSON.stringify(probe));
+  const settle={action:'SETTLE',fingerprint:inspect.fingerprint,preimageDigest:probe.preimageDigest,externalWritersFenced:true,ownerSupervising:true};
+  h.env.STABLE_RECOVERY_GATE_ENABLED='false';assert.equal((await call(settle)).stage,'CONFIG');h.env.STABLE_RECOVERY_GATE_ENABLED='true';
+  h.env.MONTHLY_REPORT_OPERATOR_ENABLED='true';assert.equal((await call(settle)).stage,'CONFIG');h.env.MONTHLY_REPORT_OPERATOR_ENABLED='false';
+  h.env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED='true';assert.equal((await call(settle)).stage,'CONFIG');h.env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED='false';
+  assert.equal((await call({...settle,preimageDigest:'f'.repeat(64)})).stage,'PREIMAGE');assert.equal(batches,0);
+  for(const failure of ['rollback','race']){
+   fault=failure;const result=await call(settle);assert.equal(result.outcome,'UNCERTAIN',JSON.stringify(result));
+   if(fault==='race')await db.prepare("UPDATE failed_jobs SET attempt_count=1 WHERE id='failed'").run();
+   assert.equal((await call({action:'INSPECT'})).projectionState,'IN_FLIGHT');
+   assert.equal((await db.prepare('SELECT count(*) n FROM stable_expense_projection_preimages').first()).n,0);
+  }
+  fault=finalAck==='lost'?'lostAck':'';
+  const done=await call(settle);assert.equal(done.outcome,finalAck==='lost'?'UNCERTAIN':'SETTLED',JSON.stringify(done));
+  const recovered=await call({action:'INSPECT'});assert.equal(recovered.projectionState,'VERIFIED',JSON.stringify(recovered));assert.equal(recovered.preimageDigest,probe.preimageDigest);assert.equal(recovered.fingerprint,inspect.fingerprint);
+  const {verifiedHeldDailyGuard}=require('../dist/admin/exact-daily-settlement.js');
+  const pinned=await readFailedDailyIncidentEvidence(h.env,recovered.fingerprint),guard=verifiedHeldDailyGuard(pinned,recovered.preimageDigest);
+  assert.equal((await db.prepare('SELECT 1 ok WHERE '+guard.sql).bind(...guard.args).first()).ok,1);
+  assert.equal((await call(settle)).outcome,'HELD');assert.equal(batches,3);
+  assert.deepEqual(await before(),baseline);assert.equal(h.writes(),1);
+  const {operateParkedPilot,parseParkedPilot}=require('../dist/admin/parked-expense-handover.js');
+  const {takePausedPilot}=require('../dist/sheets/parked-notice-adoption.js');
+  const action={...settle,action:'HANDOVER_ONE',jobId:pilotId};
+  const check={action:'INSPECT_HANDOVER',jobId:pilotId,fingerprint:inspect.fingerprint};
+  const finish={...check,action:'FINISH_STATUS'};
+  assert.deepEqual(parseParkedPilot(finish),finish);
+  assert.equal(parseParkedPilot({...finish,extra:true}),null);
+  assert.equal(parseParkedPilot({...action,ownerSupervising:false}),null);
+  assert.equal(parseParkedPilot({...check,extra:1}),null);
+  assert.deepEqual(parseParkedPilot(action),action);
+  Object.assign(h.env,{CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',SHEETS_SYNC_ENABLED:'true',UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED:'false'});
+  const operate=value=>operateParkedPilot(h.env,value,version);
+  assert.deepEqual(await operate(finish),{ok:true,outcome:'NOT_STARTED'});
+  assert.deepEqual(await operate(check),{ok:true,outcome:'ABSENT'});
+  assert.equal((await operateParkedPilot(h.env,action,'wrong-version')).outcome,'HELD');
+  assert.equal((await operate({...action,preimageDigest:'c'.repeat(64)})).outcome,'HELD');
+  await db.prepare("UPDATE sync_jobs SET next_attempt_at='2099-01-01' WHERE job_id=?").bind(pilotId).run();
+  assert.equal((await operate(action)).outcome,'UNCERTAIN'); // arming affected zero; batch rolls back the old claim delete
+  assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims WHERE operation_token='claim-token-recovery'").first()).state,'REVIEW');
+  assert.equal((await operate(check)).outcome,'ABSENT');
+  await db.prepare("UPDATE sync_jobs SET next_attempt_at=NULL WHERE job_id=?").bind(pilotId).run();
+  assert.deepEqual(await operate(action),{ok:true,outcome:'RESERVED'});
+  assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+  assert.deepEqual(await operate({...finish,fingerprint:'f'.repeat(64)}),{ok:false,outcome:'UNVERIFIED'});
+  const otherVersion='bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee';
+  assert.deepEqual(await operateParkedPilot({...h.env,CF_VERSION_METADATA:{id:otherVersion}},finish,otherVersion),{ok:false,outcome:'UNVERIFIED'});
+  assert.equal((await operate(action)).outcome,'HELD');
+  assert.equal((await operate(check)).outcome,'RESERVED');
+  assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='ARMED'").first()).n,1);
+  const pilot={kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_pilot',entityVersion:1,traceId:'trace-pilot'};
+  await db.prepare("UPDATE sync_jobs SET status='PROCESSING',lease_token='pilot-lease',lease_until='2099',attempt_count=1 WHERE job_id=?").bind(pilotId).run();
+  assert.equal(await takePausedPilot(h.env,pilot,'wrong-lease'),null);
+  const originalBegin=notice.beginStableNotice,originalEnd=notice.endStableNotice;
+  let begins=0,ends=0;
+  notice.beginStableNotice=async()=>{begins++;throw Error('unexpected begin notice');};
+  notice.endStableNotice=async(_env,_token,_bounded,preflight)=>{if(!ends)assert.ok(preflight);if(preflight)await preflight();ends++;};
+  try{
+   if(finalAck==='received'){
+    // Deliver through the real Worker queue entry point and production Sheets
+    // HTTP client. Only the external provider and notice fixture are simulated.
+    const worker=require('../dist/index.js').default;
+    const originalFetch=globalThis.fetch,originalToken=googleAuth.getGoogleAccessToken,model=client.batchUpdateSpreadsheetWithReply;
+    const originalCoverage=coverage.readLegacyDailyCoverage;
+    h.setMode('second-pilot');let posts=0,acks=0;h.env.JOB_QUEUE.send=async(_job,options)=>{assert.equal(options.delaySeconds,90);};
+    await db.prepare("UPDATE sync_jobs SET status='PENDING',lease_token=NULL,lease_until=NULL,attempt_count=0 WHERE job_id=?").bind(pilotId).run();
+    try{
+     const date=(await db.prepare("SELECT transaction_date FROM expense_events WHERE expense_id='exp_pilot'").first()).transaction_date;
+     coverage.readLegacyDailyCoverage=async(...args)=>{const x=await originalCoverage(...args);return {...x,coverage:{...x.coverage,year:Number(date.slice(0,4)),month:Number(date.slice(5,7))}};};
+     googleAuth.getGoogleAccessToken=async()=> 'local-test-token';
+     client.batchUpdateSpreadsheetWithReply=h.realBatchUpdate;
+     globalThis.fetch=async(input,init)=>{
+      assert.equal(String(input),'https://sheets.googleapis.com/v4/spreadsheets/book:batchUpdate');
+      assert.equal(init.method,'POST');posts++;
+      return Response.json(await model(h.env,JSON.parse(init.body).requests,async()=>{}));
+     };
+     await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected pilot retry');}}]},h.env,{});
+     const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();
+     assert.equal(posts,1,JSON.stringify(state));assert.equal(acks,1,JSON.stringify(state));
+     assert.equal(state.status,'PENDING');assert.equal(state.last_error,'STABLE_STAGE_CONTINUE');
+     assert.equal((await operate(check)).outcome,'STAGE_VERIFIED',JSON.stringify(state));
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+     // Confirmed DAILY can coexist with a later hold or a terminal job failure.
+     await db.prepare("UPDATE sync_jobs SET status='REVIEW' WHERE job_id=?").bind(pilotId).run();
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_REVIEW'});
+     await db.prepare("UPDATE sync_jobs SET status='FAILED' WHERE job_id=?").bind(pilotId).run();
+     assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_FAILED'});
+     await db.prepare("UPDATE sync_jobs SET status='PENDING' WHERE job_id=?").bind(pilotId).run();
+     const projected=h.effective().filter(r=>r[23]==='MALIPANG_EXPENSE:exp_pilot');
+     assert.equal(projected.length,1);assert.equal(projected[0][3],'pilot');assert.equal(projected[0][7],1.2);
+     assert.equal(begins,0);assert.equal(ends,1);
+     notice.beginStableNotice=async(env,token,_wait,canWrite)=>{
+      await canWrite();begins++;
+      await env.DB.prepare("UPDATE stable_workbook_claims SET notice_stamp='next',notice_identity='identity' WHERE state='HELD' AND operation_token=?").bind(token).run();
+     };
+     // Move only the pacing clock. Production schedules these continuations 90s apart.
+     const realNow=Date.now;let step=0;
+     try{
+      Date.now=()=>realNow()+step*90000;
+      const closeNotice=notice.endStableNotice;
+      for(const projection of ['EXPENSE_RAW','DETAIL','FINAL']){
+       step++;
+       if(projection==='FINAL'){
+        notice.endStableNotice=async(...args)=>{
+         assert.deepEqual(await operate(finish),{ok:true,outcome:'IN_PROGRESS'});
+         return closeNotice(...args);
+        };
+       }
+       await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected continuation retry');}}]},h.env,{});
+       const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();
+       assert.equal(state.status,projection==='FINAL'?'COMPLETED':'PENDING',projection+' '+JSON.stringify(state));
+       assert.equal(state.phase,null,JSON.stringify(state));
+      }
+      assert.equal((await db.prepare("SELECT count(*) n FROM stable_projection_writes WHERE state='VERIFIED' AND (entity_id='exp_pilot' OR entity_id LIKE 'exp_pilot|%')").first()).n,3);
+      assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_epochs WHERE state='COMPLETE' AND target_key='exp_pilot'").first()).n,1);
+      const completed=await operate(finish);
+      assert.match(completed.proof,/^[0-9a-f]{64}$/);
+      assert.deepEqual(completed,{ok:true,outcome:'JOB_COMPLETE',proof:completed.proof});
+      assert.deepEqual(await operate(finish),completed);
+      const {handleAdmin}=require('../dist/admin/handler.js'),secret='a'.repeat(40);
+      const finishRequest=new Request('https://synthetic.invalid/admin/stable-sync/normal-expense-pilot',{
+       method:'POST',headers:{authorization:'Bearer '+secret,'x-malipang-expected-worker-version':version},
+       body:JSON.stringify(finish)});
+      const finishResponse=await handleAdmin(finishRequest,{...h.env,ADMIN_TOKEN:secret},{});
+      assert.equal(finishResponse.status,200);
+      assert.deepEqual(await finishResponse.json(),{...completed,servedVersion:version});
+      notice.endStableNotice=closeNotice;
+      await verifySerialWorkerChain({h,db,finish,completed,successorId,waitingId,version,tick:()=>++step});
+      // Include the monotonic revision so even a change-and-revert during
+      // provider readback invalidates the earlier completion observation.
+      await db.prepare("UPDATE expense_events SET amount_satang=amount_satang+1 WHERE expense_id='exp_pilot'").run();
+      const changed=await operate(finish);
+      assert.equal(changed.outcome,'JOB_COMPLETE');assert.notEqual(changed.proof,completed.proof);
+      await db.prepare("UPDATE expense_events SET amount_satang=amount_satang-1 WHERE expense_id='exp_pilot'").run();
+      const reverted=await operate(finish);
+      assert.equal(reverted.outcome,'JOB_COMPLETE');assert.notEqual(reverted.proof,completed.proof);
+      // A terminal job alone cannot prove that all current D1 details were written.
+      await db.prepare(`INSERT INTO expense_document_items(item_id,document_id,expense_id,description,created_at,updated_at)
+        SELECT 'item_extra',document_id,expense_id,'missing projection',created_at,updated_at
+        FROM expense_document_items WHERE expense_id='exp_pilot' LIMIT 1`).run();
+      assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
+      assert.equal(acks,4);assert.equal(posts,5);
+     }finally{Date.now=realNow;}
+
+    }finally{globalThis.fetch=originalFetch;googleAuth.getGoogleAccessToken=originalToken;client.batchUpdateSpreadsheetWithReply=model;coverage.readLegacyDailyCoverage=originalCoverage;}
+    assert.equal(ends,7);
+   }else{
+    notice.stableNoticeStyleFingerprint=async()=> 'b'.repeat(64);
+    await assert.rejects(claimApi.withStableWorkbookClaim(h.env,async()=>{throw Error('unexpected business callback');},
+     pilot,undefined,undefined,{job:pilot,lease:'pilot-lease'}),/PILOT_PAUSE_UNVERIFIED/);
+    assert.equal((await db.prepare("SELECT count(*) n FROM stable_recovery_operations WHERE state='ADMITTED'").first()).n,0);
+    assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims").first()).state,'REVIEW');
+    assert.deepEqual(await operate(finish),{ok:true,outcome:'JOB_REVIEW'});
+    assert.equal(ends,0);
+   }
+   assert.equal(begins,finalAck==='received'?6:0);
+  }finally{notice.beginStableNotice=originalBegin;notice.endStableNotice=originalEnd;}
+  assert.equal((await db.prepare("SELECT status FROM sync_jobs WHERE job_id='job'").first()).status,'REVIEW');
+  assert.equal((await db.prepare("SELECT status FROM failed_jobs WHERE id='failed'").first()).status,'OPEN');
+  assert.equal(h.writes(),finalAck==='received'?6:1);
+
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;if(local)await local.close();h.close();}
+});
+
+
+test('exact daily admin settlement pins the Worker before all D1 reads',async()=>{
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ const version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',token='a'.repeat(40);
+ const env={ADMIN_TOKEN:token,EXACT_DAILY_SETTLEMENT_ENABLED:'true',CF_VERSION_METADATA:{id:version}};
+ const request=(headers,body)=>new Request('https://example.test/admin/stable-sync/exact-daily-settlement',{
+  method:'POST',headers,body:JSON.stringify(body)
+ });
+ const body={action:'INSPECT'}, auth={authorization:'Bearer '+token};
+ assert.equal((await handleAdmin(request({},body),env,{})).status,401);
+ assert.equal((await handleAdmin(request(auth,body),env,{})).status,409);
+ const pinned={...auth,'x-malipang-expected-worker-version':version};
+ assert.equal((await handleAdmin(request(pinned,{action:'SETTLE'}),env,{})).status,400);
+ const gated=await handleAdmin(request(pinned,body),env,{});
+ assert.equal(gated.headers.get('cache-control'),'no-store');
+ assert.deepEqual(await gated.json(),{ok:false,outcome:'HELD',stage:'CONFIG',servedVersion:version});
+});
+
+test('normal-pilot readback independently checks the D1 source and effective Google row without disclosing values',async()=>{
+ const {normalExpenseEpochStatements}=require('../dist/sheets/continuous-normal-recovery.js');
+ const {admitStableRecovery,verifyStableRecoveryAdmission}=require('../dist/sheets/stable-recovery-admission.js');
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ const period=new Date(Date.now()+7*3600000).toISOString().slice(0,7);
+ const sheet='รายวันต่อเนื่อง_แบบร่าง',claim='pilot-readback-operation';
+ const h=await fixture(false,true,claim,false,sheet,period+'-15');
+ let local;
+ const token='s'.repeat(40),version='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',jobId='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+ try{
+  Object.assign(h.env,{SHEETS_SYNC_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true',STABLE_RECOVERY_GATE_ENABLED:'true',
+   CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED:'false',CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',ADMIN_TOKEN:token,CF_VERSION_METADATA:{id:version}});
+  h.sqlite.prepare("INSERT INTO continuous_cutover_operator(spreadsheet_id,operation_token,origin,state,created_at,updated_at) VALUES('book',?,'NEW','STARTING','now','now')").run(claim);
+  h.sqlite.exec("UPDATE continuous_cutover_operator SET state='HELD';UPDATE continuous_cutover_operator SET state='RELEASING';UPDATE continuous_cutover_operator SET state='COMPLETE'; DELETE FROM stable_workbook_claims");
+  h.sqlite.exec("INSERT INTO continuous_canary_operator(spreadsheet_id,expense_id,document_id,item_id,line_user_id,transaction_date,trace_id,state,created_at,updated_at) VALUES('book','exp_canary_test','doc_canary_test','item_canary_test','CANARY_NO_LINE_test','2026-11-15','trace_canary_test','DRAFT','now','now')");
+  for(const state of ['CONFIRMING','CONFIRMED','ARMED_CONFIRM','DUPLICATE_ARMED','DUPLICATE_SEEN','DUPLICATE_VERIFIED','UNDOING','UNDONE','ARMED_UNDO','VERIFIED'])
+   h.sqlite.prepare("UPDATE continuous_canary_operator SET state=?,duplicate_epoch_id=CASE WHEN ?='DUPLICATE_ARMED' THEN 'duplicate_epoch' ELSE duplicate_epoch_id END").run(state,state);
+  h.sqlite.prepare("UPDATE sync_jobs SET job_id=?,status='PENDING',attempt_count=0,lease_until=NULL,lease_token=NULL WHERE job_id='job'").run(jobId);
+  const epoch='normal_pilot296_'+crypto.randomUUID();
+  const grants=await h.env.DB.batch(normalExpenseEpochStatements(h.env,epoch,new Date().toISOString(),jobId));
+  assert.deepEqual(grants.map(r=>r.meta.changes),[1,1]);
+  h.sqlite.prepare("UPDATE sync_jobs SET status='PROCESSING',attempt_count=1,lease_until='2099-01-01T00:00:00Z',lease_token='lease' WHERE job_id=?").run(jobId);
+  h.sqlite.prepare("INSERT INTO stable_workbook_claims(spreadsheet_id,operation_token,state,created_at,updated_at) VALUES('book',?,'HELD','now','now')").run(claim);
+  assert.equal(await admitStableRecovery(h.env,h.job,claim),true);
+  await h.run();await verifyStableRecoveryAdmission(h.env,claim);
+  const link=h.sqlite.prepare("SELECT o.operation_token=projection.operation_token AND o.operation_token=m.operation_token AS matched FROM stable_recovery_operations o JOIN stable_projection_writes projection ON projection.projection='DAILY' JOIN atomic_daily_marker_reservations m ON m.entity_id=projection.entity_id").get();
+  assert.equal(link.matched,1);
+  local=await miniflareDailyFixture(h.sqlite);h.env.DB=local.db;
+
+  let fault='',calls=0;
+  const first=[client.batchGetSheetFormulaValues,client.batchGetSheetEffectiveSerialValues];
+  const response=(base,effective)=>async(env,ranges,policy)=>{
+   const fresh=ranges.length===2, grid=effective?h.effective():h.formula();
+   let result=fresh?[[grid[4].slice()],grid.map(row=>[row[24]])]:structuredClone(await base(env,ranges,policy));
+   if(!effective&&fault==='provider-error')throw Error('private detail');
+   if(!effective&&!fresh&&fault==='extra-range')return [...result,[]];
+   if(!effective&&!fresh&&fault==='missing-range')return [];
+   if(!effective&&!fresh&&fault==='duplicate')result[0][5]=result[0][4].slice();
+   if(!effective&&!fresh&&fault==='wrong-marker')result[0][4][24]=result[0][4][24].replace(/INSERT_[0-9a-f]{32}/,'INSERT_'+'0'.repeat(32));
+   if(effective&&!fresh){
+    const columns={date:2,serial:20,amount:7,description:3,category:21,wallet:22,identity:23};
+    if(Object.hasOwn(columns,fault))result[0][4][columns[fault]]='synthetic private mismatch';
+   }
+   if(effective&&fresh&&fault==='late-edit')result[0][0][7]=999;
+   if(!effective&&fresh&&fault==='late-duplicate')result[1][5]=result[1][4].slice();
+   if(effective&&fresh&&fault==='late-source')await local.db.prepare("UPDATE expense_events SET amount_satang=222 WHERE expense_id='exp_test'").run();
+   calls++;return result;
+  };
+  client.batchGetSheetFormulaValues=response(first[0],false);client.batchGetSheetEffectiveSerialValues=response(first[1],true);
+  const read=async(expected,identity={})=>{
+   const request=new Request('https://example.test/admin/stable-sync/normal-pilot-readback',{method:'POST',
+    headers:{authorization:'Bearer '+token,'x-malipang-expected-worker-version':version},body:JSON.stringify({action:'READBACK',...identity})});
+   const response=await handleAdmin(request,h.env,{});
+   assert.equal(response.status,expected?200:409,fault);
+   assert.deepEqual(await response.json(),{ok:expected,outcome:expected?'MATCHED':'UNVERIFIED',servedVersion:version},fault);
+  };
+  await read(true);assert.equal(calls,4);
+  for(const [field,bad,original] of [
+    ['description','changed source','=literal'],['category','other','ingredients'],['amount_satang',789,123],
+    ['source_wallet','PETTY_CASH','SHOP_BANK'],['transaction_date',period+'-16',period+'-15']
+  ]){
+    const update=local.db.prepare("UPDATE expense_events SET "+field+"=? WHERE expense_id='exp_test'");
+    await update.bind(bad).run();await read(false);await update.bind(original).run();
+  }
+  await read(true);
+  for(fault of ['date','serial','amount','description','category','wallet','identity','wrong-marker','duplicate','missing-range','extra-range','provider-error','late-edit','late-duplicate','late-source'])await read(false);
+  fault='';
+  await local.db.prepare("UPDATE expense_events SET amount_satang=123 WHERE expense_id='exp_test'").run();
+  const fingerprint='c'.repeat(64), identity={jobId,fingerprint};
+  await read(false,identity);
+  await local.db.prepare(`INSERT INTO admin_audit(id,action,entity_key,reason,before_json,after_json,created_at)
+    VALUES('serial-test','ISSUE296_SERIAL_EXPENSE_HANDOVER',?,?,?,?,'now')`)
+    .bind(jobId,fingerprint,JSON.stringify({book:'book'}),JSON.stringify({epoch,version})).run();
+  await read(true,identity);
+  await read(false,{...identity,fingerprint:'d'.repeat(64)});
+  await read(false,{...identity,jobId:version});
+  await read(false); // Unqualified legacy probes never pick another reservation.
+  assert.equal(h.writes(),1);
+ }finally{if(local)await local.close();h.close();}
+});

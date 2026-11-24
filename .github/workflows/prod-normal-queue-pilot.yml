@@ -1,0 +1,73 @@
+name: "MaliPang #296 normal queue pilot"
+on:
+  workflow_dispatch:
+    inputs:
+      phase:
+        description: RUN_SERIAL reconciles the current tip and processes this run’s selected queue one job at a time.
+        type: choice
+        options: [PROBE, SETTLE, HANDOVER_ONE, INSPECT_HANDOVER, READBACK, FINISH_PILOT, RUN_SERIAL]
+        required: true
+      expected_sha:
+        description: Exact reviewed main SHA
+        type: string
+        required: true
+      expected_worker_version_sha256:
+        description: SHA-256 of the current 100-percent Worker version ID
+        type: string
+        required: true
+      backup_run_id:
+        description: Fresh successful private backup and restore run ID after 2026-11-21 10:07:19 UTC
+        type: string
+        required: false
+      external_writers_fenced:
+        description: Current fact — external and manual writers are fenced
+        type: boolean
+        default: false
+      owner_supervising:
+        description: Current fact — owner is supervising
+        type: boolean
+        default: false
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: malipang-release-control
+  cancel-in-progress: false
+jobs:
+  operator:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.phase == 'RUN_SERIAL' && 360 || 40 }}
+    environment: production
+    steps:
+      - name: Check the requested revision before checkout
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+        run: test "$EXPECTED_SHA" = "$GITHUB_SHA"
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with: {node-version: 22}
+      - name: Test workflow guards
+        run: node --test tests/prod-normal-queue-pilot.test.mjs tests/prod-monthly-report.test.mjs
+      - name: Assert latest remote main
+        run: |
+          test "$GITHUB_REF" = refs/heads/main
+          test "$(git ls-remote origin refs/heads/main | cut -f1)" = "$GITHUB_SHA"
+      - name: Run the selected normal queue operation
+        id: pilot
+        env:
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
+          PILOT_PHASE: ${{ inputs.phase }}
+          BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
+          EXTERNAL_WRITERS_FENCED: ${{ inputs.external_writers_fenced }}
+          OWNER_SUPERVISING: ${{ inputs.owner_supervising }}
+          GITHUB_TOKEN: ${{ github.token }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          MALIPANG_ADMIN_TOKEN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_WORKER_URL: ${{ vars.MALIPANG_WORKER_URL }}
+        run: node scripts/prod-normal-queue-pilot.mjs

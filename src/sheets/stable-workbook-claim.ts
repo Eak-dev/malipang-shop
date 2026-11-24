@@ -1,5 +1,6 @@
+import {takePausedPilot,inheritPausedPilot,verifiedPilotStage,type PausedPilot} from './parked-notice-adoption';
 import {hasTerminalSheetHold,STABLE_TERMINAL_HOLD} from './sheet-terminal-hold';
-import type {Env} from '../types';
+import type {Env,SheetsSyncJob} from '../types';
 import type {ReviewRequestBudget} from './review-request-budget';
 import type {GoogleOAuthLease} from './google-auth';
 import {hasNormalNoticeHandoff,normalNoticeHandoffReady,wakeNormalNoticeHandoff} from './continuous-normal-notice-handoff';
@@ -52,8 +53,9 @@ export async function stableWorkbookClaimOwned(env:Env,token:string,budget?:Revi
  * human editor, an old deployment, or any writer not using this guard.
  * The caller must return only after all provider writes are read back and
  * verified; an exception retains the claim for review rather than retrying. */
-export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity,onUntouchedNoticeFailure?:(token:string,error:unknown)=>Promise<{value:T}|null>,invocationBudget?:ReviewRequestBudget):Promise<T>{
-  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,gateSetting=env.STABLE_RECOVERY_GATE_ENABLED,pacingSetting=env.STABLE_SHEETS_PACING_ENABLED,token=crypto.randomUUID();
+export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string)=>Promise<T>,identity?:RecoveryIdentity,onUntouchedNoticeFailure?:(token:string,error:unknown)=>Promise<{value:T}|null>,invocationBudget?:ReviewRequestBudget,expenseInvocation?:{job:SheetsSyncJob;lease:string}):Promise<T>{
+  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,flag=env.STABLE_PHASE1_ENABLED,gateSetting=env.STABLE_RECOVERY_GATE_ENABLED,pacingSetting=env.STABLE_SHEETS_PACING_ENABLED;
+  let token:string=crypto.randomUUID(),pilot:PausedPilot|null=null;
   const handoffFlag=env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED;
   const untouchedScope=()=>env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED===handoffFlag&&env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.STABLE_PHASE1_ENABLED===flag&&env.STABLE_RECOVERY_GATE_ENABLED===gateSetting&&env.STABLE_SHEETS_PACING_ENABLED===pacingSetting;
   const sheetJob=identity&&'entityType' in identity?identity:undefined;
@@ -73,7 +75,11 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     const args:unknown[]=sheetJob?[book,token,`${sheetJob.entityType}:${sheetJob.entityKey}:${sheetJob.entityVersion}`,...(guardedJob?[guardedJob.entityType,guardedJob.entityKey,guardedJob.entityVersion]:[])]:[book,token];
     const inserted=await db.prepare(admissionSql).bind(...args).run();
     if(inserted.success!==true||!Number.isSafeInteger(inserted.meta?.changes))throw new Error('STABLE_WORKBOOK_CLAIM_OUTCOME_UNKNOWN');
-    if(Number(inserted.meta.changes)!==1){
+    if(Number(inserted.meta?.changes)!==1&&sheetJob?.entityType==='EXPENSE'&&expenseInvocation&&sheetJob===expenseInvocation.job&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
+      pilot=await takePausedPilot(env,expenseInvocation.job,expenseInvocation.lease);
+      if(pilot)token=pilot.token;
+    }
+    if(Number(inserted.meta?.changes)!==1&&!pilot){
       if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
       if(guardedJob&&await nonfinancialJobClosed(db,guardedJob))throw Error(STABLE_NONFINANCIAL_JOB_CLOSED);
       // A held claim is temporary; a review claim waits for an operator. An
@@ -84,13 +90,17 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
     claimed=true;
     const paced=await admitPacedWorkbookOperation(env,identity,token);
     if(!paced){
+      if(pilot)throw Error('PILOT_PACING_REVIEW');
       const released=await db.prepare("DELETE FROM stable_workbook_claims WHERE spreadsheet_id=? AND operation_token=? AND state='HELD' AND notice_stamp IS NULL").bind(book,token).run();
       if(released.success!==true||Number(released.meta?.changes)!==1)throw Error('STABLE_SHEETS_PACING_RELEASE_UNCERTAIN');
       claimed=false;
       throw Error(STABLE_SHEETS_PACING_BLOCKED);
     }
     phase='BEGIN_NOTICE';
-    if(flag==='true')await beginStableNotice(env,token,undefined,async()=>{
+    if(pilot&&expenseInvocation){
+      beginNoticeMayHaveWritten=true; // The original operation already paused this workbook.
+      await inheritPausedPilot(env,expenseInvocation.job,expenseInvocation.lease,pilot,invocationBudget);
+    }else if(flag==='true')await beginStableNotice(env,token,undefined,async()=>{
       // The pre-image is verified and no provider POST has been sent yet.
       // Admit here (not before the notice GETs) so a safe read deferral
       // cannot strand an ADMITTED recovery epoch.
@@ -120,8 +130,12 @@ export async function withStableWorkbookClaim<T>(env:Env,operation:(token:string
       // Never fall through to the legacy two-cell notice writer in opt-in mode.
       throw Error('NORMAL_NOTICE_HANDOFF_UNSUPPORTED_STAGE');
     }
+    const ticket=pilot;
+    const beforeReady=ticket?async()=>{
+      if(result!=='CONTINUE'||!await verifiedPilotStage(env,ticket))throw Error('PILOT_STAGE_UNVERIFIED');
+    }:undefined;
     phase='END_NOTICE';
-    if(flag==='true')await endStableNotice(env,token,boundedNotice);
+    if(flag==='true')await endStableNotice(env,token,boundedNotice,beforeReady,ticket?.style);
     if(sheetJob&&await hasTerminalSheetHold(env,sheetJob))throw Error(STABLE_TERMINAL_HOLD);
     if(env.DB!==db||env.GOOGLE_SPREADSHEET_ID!==book||env.STABLE_PHASE1_ENABLED!==flag)throw new Error('STABLE_WORKBOOK_SCOPE_CHANGED');
     phase='RELEASE';

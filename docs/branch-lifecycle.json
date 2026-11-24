@@ -7,6 +7,14 @@
   "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
   "work_items": [
     {
+      "issue": 348,
+      "mode": "MANAGED",
+      "primary_branch": "codex/fix-serial-expense-handover",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang queue serial handover",
+      "reason": "Implement resumable sequential expense processing after reconciling the parked job."
+    },
+    {
       "issue": 285,
       "mode": "MANAGED",
       "coordination_chat": "LINE expense payment review loop",
@@ -52,9 +60,51 @@
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
       "reason": "Owner chose a GitHub workflow (option A) to run steps 2-7 of the #296 runbook. Merge is not deployment; every run needs owner approval of that step."
+    },
+    {
+      "issue": 344,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-system-flow-policy",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang system flow policy",
+      "reason": "Publish the flow and require reading and maintaining it for each task."
+    },
+    {
+      "issue": 346,
+      "mode": "MANAGED",
+      "primary_branch": "codex/docs-audit-system-flow",
+      "target_branch": "main",
+      "coordination_chat": "MaliPang system flow audit",
+      "reason": "Reconcile published flow pages with the implementation on canonical main."
     }
   ],
   "branches": [
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/fix-serial-expense-handover",
+      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T02:21:31.958766+00:00",
+      "reason": "Verified new remote work branch at canonical main before committing changes."
+    },
+    {
+      "scope": "local",
+      "source": "issue296-normal-queue-one-pilot",
+      "branch": "codex/issue296-normal-queue-one-pilot",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:48:15.023878+00:00",
+      "reason": "Single-slot normal queue pilot; observed base before implementation. Does not release the original incident."
+    },
     {
       "scope": "local",
       "source": "issue296-report-skip",
@@ -7522,6 +7572,162 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:10:38Z",
       "reason": "Supporting Issue 296 read-only diagnostics after PREVIEW reported a grid HTTP error; identifies the failed GET before a separately tested fix. Snapshot is the branch base before this change and does not imply Production deployment."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-exact-held-proof-20261122",
+      "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:49:12Z",
+      "reason": "Supporting Issue 296 branch from synchronized main for the original DAILY projection only. Integration target is the named queue recovery change after independent review. Worker and queue state require separate provider verification."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-expiry",
+      "source_sha": "1801b93dc6ed5d72ff3ecebdcecdda4e51c10422",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:55:31Z",
+      "reason": "Supporting exact pilot lease expiry watchdog, based on the normal recovery integration branch for independent testing and integration there. Local work only."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-pilot-readback-tests",
+      "source_sha": "d07a9a68e44e221815d2b057f2e96fe27d1473f6",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-21T23:59:50Z",
+      "reason": "Independent row readback regression and drift guard for the Issue 296 pilot on its integration branch. Integrate after local tests and review, without asserting Production status."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-parked-notice-release-20261122",
+      "source_sha": "353d2547e0ad3f919216fceda4500bf25fdcf668",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-22T00:06:24Z",
+      "reason": "Dependent handover after bfee974 and 766ac30, initialized from canonical 0c08c6c. Coordinate through the Issue 296 pilot chat and integrate the reviewed change into its single release candidate."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/issue296-finish-review-flows",
+      "source_sha": "7c5c91d588e7c6faff360000cac3a612e27af907",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-22T01:28:44.033098+00:00",
+      "reason": "Bounded normal-queue outcome reconciliation after the single-pilot handover."
+    },
+    {
+      "scope": "local",
+      "source": "macbook-air-malipang-shop",
+      "branch": "codex/docs-system-flow-policy",
+      "source_sha": "5bf347fc1d0987bf8b3374eae9a3f443a8f13f38",
+      "issues": [
+        344
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T01:49:41.366158+00:00",
+      "reason": "New documentation task branch observed at creation."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-system-flow-policy",
+      "source_sha": "b5b8e51feee5acdabeb5c6588ee60d175c3cdb5a",
+      "issues": [
+        344
+      ],
+      "pull_requests": [
+        345
+      ],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T01:51:39.880304+00:00",
+      "reason": "Observed remote primary branch for the system flow policy before recording PR #345."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/docs-audit-system-flow",
+      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "issues": [
+        346
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-22T02:11:09.483063+00:00",
+      "reason": "Observed the new remote task branch at the audited base before committing documentation."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-expense-workflow",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-image-test",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

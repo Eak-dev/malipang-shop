@@ -1,3 +1,5 @@
+import {verifyNormalPilotRow} from './normal-pilot-readback';
+import {parseParkedPilot,operateParkedPilot} from './parked-expense-handover';
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
 import { finalizeMissingPunchPayrolls } from "../payroll/finalize";
@@ -37,6 +39,7 @@ import {ReviewRequestBudget} from '../sheets/review-request-budget';
 import {SheetsHttpError,SheetsReadNetworkError,SheetsMutationOutcomeUnknownError} from '../sheets/client';
 import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from '../sheets/google-auth';
 import {OperationTimeoutError} from '../shared/async';
+import {operateExactDailySettlement,parseExactDailyOperation} from './exact-daily-settlement';
 import {operateMonthlyReport} from '../sheets/monthly-report-operator';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
@@ -45,7 +48,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
   // Prevent an old or mixed deployment from executing a cutover/canary step.
   // The authenticated caller pins the Worker version obtained independently
   // from Cloudflare; an absent/malformed metadata binding fails closed.
-  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report'].includes(url.pathname);
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report','/admin/stable-sync/normal-expense-pilot','/admin/stable-sync/exact-daily-settlement','/admin/stable-sync/normal-pilot-readback'].includes(url.pathname);
   const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
   if(guardedMutation){
@@ -132,6 +135,38 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/continuous-canary'){
       const body=await request.json().catch(()=>({})) as {action?:unknown};
       return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-pilot-readback'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
+      const headers={'cache-control':'no-store'};
+      const body=await request.json().catch(()=>null);
+      if(!body||body.action!=='READBACK')return Response.json({ok:false},{status:400,headers});
+      let identity;
+      if(Object.keys(body).length!==1){
+        if(Object.keys(body).length!==3||typeof body.jobId!=='string'||typeof body.fingerprint!=='string'||
+          !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(body.jobId)||!/^[0-9a-f]{64}$/.test(body.fingerprint))
+          return Response.json({ok:false},{status:400,headers});
+        identity={jobId:body.jobId,fingerprint:body.fingerprint};
+      }
+      let matched=false;
+      try{matched=await verifyNormalPilotRow(env,identity);}catch{/* Unavailable evidence keeps the pilot held. */}
+      return Response.json({ok:matched,outcome:matched?'MATCHED':'UNVERIFIED',servedVersion:served},{status:matched?200:409,headers});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-expense-pilot'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
+      const body=await request.json().catch(()=>null) as {jobId?:unknown}|null;
+      const headers={'cache-control':'no-store'};
+      const handover=parseParkedPilot(body);
+      if(handover){
+        const result=await operateParkedPilot(env,handover,served!);
+        return Response.json({...result,servedVersion:served},{status:result.ok?200:409,headers});
+      }
+      return Response.json({ok:false,error:'PILOT_INPUT_INVALID',servedVersion:served},{status:400,headers});
+    }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'){
+      const headers={'cache-control':'no-store'};
+      const operation=parseExactDailyOperation(await request.json().catch(()=>null));
+      if(!operation)return Response.json({ok:false,error:'INVALID_EXACT_DAILY_OPERATION'},{status:400,headers});
+      const outcome=await operateExactDailySettlement(env,operation,served!);
+      return Response.json({...outcome,servedVersion:served},{status:outcome.ok?200:409,headers});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/monthly-report'&&env.MONTHLY_REPORT_OPERATOR_ENABLED==='true'){
       const value=await request.json().catch(()=>null) as unknown;if(!value||typeof value!=='object'||Array.isArray(value))return Response.json({ok:false,error:'MONTHLY_REPORT_INVALID'},{status:400,headers:{'cache-control':'no-store'}});

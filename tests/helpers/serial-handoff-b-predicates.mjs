@@ -8,8 +8,8 @@ const require=createRequire(import.meta.url);
 // database. Whether the same state is reachable through the runtime is UNKNOWN;
 // these tests only prove whether the handoff re-checks the predicate that
 // holdReservedPilot enforced. They never touch a real barrier or provider.
-export const FAULTS=['projection-inflight','projection-review','projection-verified','row-index','failed-job','dlq-producer','attempt-count'];
-export const BPRED_MODES=['bpred-positive','bpred-ack-before','bpred-ack-after',...['t1','t2'].flatMap(t=>FAULTS.map(f=>`bpred-${t}-${f}`))];
+export const FAULTS=['projection-inflight','projection-review','projection-verified','projection-child','row-index','row-index-child','failed-job','dlq-producer','dlq-guarded','attempt-count'];
+export const BPRED_MODES=['bpred-positive','bpred-unrelated-prefix','bpred-ack-before','bpred-ack-after',...['t1','t2'].flatMap(t=>FAULTS.map(f=>`bpred-${t}-${f}`))];
 // Not covered (FK or insert-trigger preconditions make a synthetic row non-trivial):
 // stable_expense_cancellation_writes, continuous_publication_intents, continuous_normal_notice_handoffs.
 // continuous_notice_dispatches: its insert trigger (0046:18) requires a notice handoff and a claim in
@@ -22,17 +22,22 @@ async function inject(env,fault,bExpense,pilotId){
   // 0034 rejects rows that do not target the active continuous sheet, so use its ids.
   const cut=await db.prepare("SELECT continuous_sheet_id id,continuous_sheet_name name FROM continuous_daily_cutovers WHERE spreadsheet_id='book' AND state='ACTIVE'").first();
   assert.ok(cut,'fixture has an ACTIVE continuous cutover');
-  return run("INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) VALUES('book','EXPENSE',?,'DAILY',?,?,1,?,'fault-op',?,'now')",bExpense,cut.id,cut.name,'0'.repeat(64),fault.slice('projection-'.length).toUpperCase().replace('INFLIGHT','IN_FLIGHT'));
+  const child=fault==='projection-child';
+  return run("INSERT INTO stable_projection_writes(spreadsheet_id,entity_type,entity_id,projection,sheet_id,sheet_name,source_version,source_digest,operation_token,state,updated_at) VALUES('book','EXPENSE',?,'DAILY',?,?,1,?,'fault-op',?,'now')",child?bExpense+'|DETAIL':bExpense,cut.id,cut.name,'0'.repeat(64),child?'VERIFIED':fault.slice('projection-'.length).toUpperCase().replace('INFLIGHT','IN_FLIGHT'));
  }
- if(fault==='row-index')return run("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('fault-sheet',?,2)",bExpense);
+ if(fault==='row-index'||fault==='row-index-child')return run("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('fault-sheet',?,2)",fault==='row-index-child'?bExpense+'|DETAIL':bExpense);
  if(fault==='failed-job')return run("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('fault-failed','malipang-jobs','fault-trace',?,'{}','FAULT','OPEN',1,'now','now')",'EXPENSE:'+bExpense+':1');
- if(fault==='dlq-producer'){
+ if(fault==='dlq-producer'||fault==='dlq-guarded'){
   // Reachable producer path: src/index.ts DLQ consumer calls createFailedJob without
   // reading sync_jobs.status, so a late SHEETS_SYNC message for held B is recorded.
   const {createFailedJob}=require('../../dist/db/repositories.js');
   const b=await db.prepare('SELECT trace_id,entity_version FROM sync_jobs WHERE job_id=?').bind(pilotId).first();
-  const outcome=await createFailedJob(env,'malipang-jobs',b.trace_id,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:bExpense,entityVersion:b.entity_version,traceId:b.trace_id},'DEAD_LETTER_MAX_RETRIES');
-  assert.equal(outcome,'RECORDED');
+  const producerEnv=fault==='dlq-guarded'?{...env,EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED:'true'}:env;
+  const produce=()=>createFailedJob(producerEnv,'malipang-jobs',b.trace_id,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:bExpense,entityVersion:b.entity_version,traceId:b.trace_id},'DEAD_LETTER_MAX_RETRIES');
+  // With the existing guarded producer, D1 may persist the row while its
+  // acknowledgement is uncertain. This is separate from the handoff outcome.
+  if(fault==='dlq-guarded')await assert.rejects(produce,/EXPENSE_FAILED_JOB_UNCERTAIN/);
+  else assert.equal(await produce(),'RECORDED');
   assert.equal((await db.prepare('SELECT count(*) n FROM failed_jobs WHERE job_key=?').bind('EXPENSE:'+bExpense+':'+b.entity_version).first()).n,1,'producer wrote the failed job');
   return;
  }
@@ -64,12 +69,13 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,r
  const ctx={pilotId,successorId,snapshot,claimToken};
  const original=db.batch;
  const withBatch=async(wrapper,fn)=>{db.batch=wrapper;try{return await fn();}finally{db.batch=original;}};
- let batchError,batchCalls=0;
+ let batchError,batchCalls=0,injecting=false;
  // Counts db.batch submissions per call so a lost/uncertain answer can never be
  // followed by an automatic resend inside advanceAttestedHeldPilot.
- const call=async()=>{batchCalls=0;const inner=db.batch;db.batch=async x=>{batchCalls++;try{return await inner.call(db,x);}catch(error){batchError=error.message;if(process.env.BPRED_TRACE)console.log('BPRED_BATCH_ERROR',mode,batchError);throw error;}};try{return await advance(env,att,key,()=>true);}finally{db.batch=inner;}};
+ const call=async()=>{batchCalls=0;const inner=db.batch;db.batch=async x=>{if(!injecting)batchCalls++;try{return await inner.call(db,x);}catch(error){batchError=error.message;if(process.env.BPRED_TRACE)console.log('BPRED_BATCH_ERROR',mode,batchError);throw error;}};try{return await advance(env,att,key,()=>true);}finally{db.batch=inner;}};
 
- if(scenario==='positive'){
+ if(scenario==='positive'||scenario==='unrelated-prefix'){
+  if(scenario==='unrelated-prefix')await inject(env,'row-index',bExpense+'-other',pilotId);
   const result=await call();assert.equal(result.outcome,'RESERVED',JSON.stringify(result));
   assert.equal((await one(db,'SELECT count(*) n FROM serial_pilot_attested_handoffs')).n,1);
   assert.equal((await one(db,'SELECT state FROM stable_recovery_epochs WHERE epoch_id=?',snapshot.context.predecessorEpochId)).state,'CLOSED');
@@ -117,7 +123,7 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,r
   result=await call();assert.equal(result.outcome,'HELD','t1 outcome '+JSON.stringify(result));
   assert.equal(batchCalls,0,'t1 submits no batch');
  }else{
-  let injectError,injecting=false;
+  let injectError;
   // createFailedJob may itself use db.batch; let that nested call reach the real one.
   result=await withBatch(async statements=>{if(injecting)return original.call(db,statements);injecting=true;try{await inject(env,fault,bExpense,pilotId);}catch(error){injectError=error;throw error;}finally{injecting=false;}return original.call(db,statements);},call);
   assert.equal(injectError,undefined,'FIXTURE_INJECTION_FAILED: '+injectError?.message);
@@ -126,4 +132,16 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,r
  }
  if(process.env.BPRED_TRACE)console.log('BPRED_TRACE',mode,JSON.stringify(result),batchError??'');
  await assertNotAdvanced(db,ctx);
+ // A rollback of the handoff must not erase the independently recorded evidence.
+ if(fault.startsWith('projection-')){
+  const entity=fault==='projection-child'?bExpense+'|DETAIL':bExpense;
+  assert.equal((await one(db,"SELECT count(*) n FROM stable_projection_writes WHERE entity_type='EXPENSE' AND entity_id=?",entity)).n,1);
+ }else if(fault.startsWith('row-index')){
+  const entity=fault==='row-index-child'?bExpense+'|DETAIL':bExpense;
+  assert.equal((await one(db,'SELECT count(*) n FROM sheet_row_index WHERE entity_key=?',entity)).n,1);
+ }else if(fault==='failed-job'||fault==='dlq-producer'||fault==='dlq-guarded'){
+  assert.equal((await one(db,'SELECT count(*) n FROM failed_jobs WHERE job_key=?','EXPENSE:'+bExpense+':1')).n,1);
+ }else if(fault==='attempt-count'){
+  assert.equal((await one(db,'SELECT attempt_count n FROM sync_jobs WHERE job_id=?',pilotId)).n,1);
+ }
 }

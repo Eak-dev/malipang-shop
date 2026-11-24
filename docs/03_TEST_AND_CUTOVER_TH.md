@@ -56,7 +56,9 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 
 ## Regression test สลิปธนาคารและวอลเล็ต
 
-contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และครอบคลุม KBank/K+, SCB และเป๋าตัง/G-Wallet รูปจริงไม่เก็บใน Git ให้ส่ง path ผ่าน `MALIPANG_BANK_SLIP_IMAGE_MAP` แล้วรัน `npm run test:bank-slips`
+`npm run test:bank-slips` ตรวจ KBank/K+, SCB และเป๋าตัง/G-Wallet สำหรับภาพเดิม ใช้ `tests/fixtures/bank-slip-cases.json` กับ `MALIPANG_BANK_SLIP_IMAGE_MAP` ส่วนภาพชุดใหม่ให้ตั้ง `MALIPANG_BANK_SLIP_PRIVATE_MANIFEST` ชี้ manifest ที่เก็บส่วนตัวนอก Git และใช้ปลายทาง UAT ที่ยืนยันแล้วตามเงื่อนไขในส่วนรูปลงเวลา เลือกเพียงวิธีเดียว
+
+Manifest ใช้ `cases` สามรายการตาม `id` เดิม แต่ละรายการระบุชื่อ JPEG ที่อยู่ข้าง manifest, `sha256`, `readingVerified: true` หลังตรวจจากภาพโดยอิสระ และ `expected` ที่ตรงภาพ ได้แก่ `channel`, `paymentDate`, `paymentTime`, `paidAmountBaht` และ `allowedCategories` สำหรับเป๋าตังให้ระบุ `grossAmountBaht` กับ `discountAmountBaht` ด้วย ชุดทดสอบปฏิเสธ JPEG ที่ hash ไม่ตรงหรือซ้ำกัน และรายงานความคลาดเคลื่อนเป็นชื่อฟิลด์โดยไม่เผยค่าจากสลิป
 
 ผล baseline วันที่ 22 กรกฎาคม 2026 ผ่าน `3/3`: ทั้งหมดเป็น `BANK_SLIP` และ validation ผ่าน KBank แปลงปีสองหลัก `26` เป็น `2026`, SCB ใช้ยอด 50 บาท และเป๋าตังแยกยอด 40 บาท/ส่วนลด 24 บาท/ยอดจ่ายจริง 16 บาทถูกต้อง
 
@@ -91,4 +93,4 @@ contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และค�
 
 ## การตรวจครบทุกกรณีที่ใช้ข้อมูลจริง
 
-`npm run check` บังคับกรณี live ทั้งหก ไม่ข้ามเมื่อขาดการตั้งค่า: ต้องเตรียม `MALIPANG_VISION_BASE_URL`, `MALIPANG_EXPENSE_BASE_URL`, `MALIPANG_ADMIN_TOKEN_FILE`, `MALIPANG_BANK_SLIP_IMAGE_MAP`, ภาพนาฬิกาเจ็ดรูป และ `ONLINE_ORDER_PRIVATE_FIXTURES` ให้ตรงชุด expected เดิมก่อนรัน หากขาดให้รายงาน failure ไม่ถือเป็นผลทดสอบจริง. ต้องใช้สภาพแวดล้อมทดสอบและอำนาจที่เหมาะสม; ห้ามเก็บภาพหรือข้อมูลส่วนตัวใน Git. Flow runtime ไม่เปลี่ยน: เปลี่ยนเฉพาะเงื่อนไขชุดตรวจ.
+`npm run check` ล้มเมื่อกรณี live ทั้งหกขาดการตั้งค่า เตรียม `MALIPANG_VISION_BASE_URL`, `MALIPANG_EXPENSE_BASE_URL`, `MALIPANG_ADMIN_TOKEN_FILE` และ `ONLINE_ORDER_PRIVATE_FIXTURES` เลือกชุดสลิปและภาพลงเวลาตามคู่มือด้านบน และตรวจให้ภาพตรงกับ expected ของชุดที่เลือก ใช้สภาพแวดล้อมทดสอบที่ได้รับอนุญาตและเก็บภาพกับข้อมูลส่วนตัวนอก Git การเปลี่ยนนี้อยู่ในชุดทดสอบโดยไม่มีผลต่อเส้นทาง runtime

@@ -7545,7 +7545,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-preview-diagnostics-20261121",
       "source_sha": "2f1ed10413ea58ec9d2eb547f2f7e37ae42bd9d7",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:00:29Z",
@@ -7556,7 +7558,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-preview-safe-diagnostics-20261121",
       "source_sha": "2edef502c3dab4bc4a3891b2deed06b248b9b589",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:01:15Z",
@@ -7567,7 +7571,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-grid-error-diagnostics-20261121",
       "source_sha": "0edbb608f59766a3fb560915cadcfc614ab30b52",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T16:10:38Z",
@@ -7578,7 +7584,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-exact-held-proof-20261122",
       "source_sha": "0c08c6cad5c74589d7ca4ce31cca6ea84e391ce7",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:49:12Z",
@@ -7589,7 +7597,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-pilot-expiry",
       "source_sha": "1801b93dc6ed5d72ff3ecebdcecdda4e51c10422",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:55:31Z",
@@ -7600,7 +7610,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-pilot-readback-tests",
       "source_sha": "d07a9a68e44e221815d2b057f2e96fe27d1473f6",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-21T23:59:50Z",
@@ -7611,7 +7623,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-parked-notice-release-20261122",
       "source_sha": "353d2547e0ad3f919216fceda4500bf25fdcf668",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-22T00:06:24Z",
@@ -7622,7 +7636,9 @@
       "source": "macbook-air-malipang-shop",
       "branch": "codex/issue296-finish-review-flows",
       "source_sha": "7c5c91d588e7c6faff360000cac3a612e27af907",
-      "issues": [296],
+      "issues": [
+        296
+      ],
       "pull_requests": [],
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-22T01:28:44.033098+00:00",
@@ -7698,6 +7714,36 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-24T09:43:44Z",
       "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-image-test",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

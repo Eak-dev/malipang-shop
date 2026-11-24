@@ -58,6 +58,12 @@ contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และค�
 
 ผลจาก workflow อ้างอิง Worker ที่ให้บริการขณะรัน ให้บันทึก Worker version จาก Cloudflare ก่อนและหลังการทดสอบแยกจาก SHA ของ workflow งานนี้ครอบคลุมการแปลข้อความ ส่วนภาพ การส่งคิว และการเขียนรายงานให้ตรวจตามขั้นตอนของงานนั้น
 
+## ทดสอบรูปส่วนตัวของ Issue 348
+
+workflow `Production private photo evaluation` รับเฉพาะ main ที่ตรงกับ SHA ที่ตรวจและผ่าน reviewer ของ production environment. ก่อนอนุมัติให้ตรวจ Worker version และค่า ATTENDANCE_CLOCK_MIN_CONFIDENCE 0.70. ตรวจว่า bucket ทดสอบเป็น private และสิทธิ์อ่านยังไม่หมดอายุ. Environment เก็บ ISSUE348_R2_READER และ ISSUE348_PHOTO_CONTROL แยกจาก Admin. ตัวรับสร้างลิงก์ GET สำหรับแพ็กเกจเดียว มีอายุห้านาที.
+
+หลังตรวจแพ็กเกจเข้ารหัส SHA-256 ของทั้งสิบไฟล์ และ manifest ทั้งสองชุด จึงส่งรูปลงเวลาเจ็ดรูปและสลิปสามใบไปยังตัวประเมินภาพของร้าน. Worker อาจเรียก OpenAI ถึงยี่สิบครั้งและเขียนสถิติใน Production D1. ตรวจขอบเขตตาม #296 ก่อน dispatch. หากผลคำขอคลุมเครือให้กระทบยอดก่อนเปิดรอบใหม่. หากต้องหยุดให้ยกเลิกรันและเพิกถอนสิทธิ์ของชุดทดสอบ. ไฟล์ชั่วคราวถูกนำออกเมื่อจบงาน.
+
 ## UAT ขั้นต่ำ
 
 ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test

@@ -1,0 +1,40 @@
+name: Issue 348 synthetic transfer rehearsal
+
+on:
+  push:
+    branches:
+      - codex/issue348-r2-rehearsal
+
+permissions:
+  contents: read
+
+jobs:
+  synthetic-loopback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Verify the synthetic transfer and validation
+        run: node --test tests/issue348-transfer-rehearsal.test.mjs
+      - name: Verify smoke outcomes over loopback HTTP
+        shell: bash
+        run: |
+          script=scripts/issue348-transfer-rehearsal.mjs
+          result=$(node "$script" --smoke)
+          printf '%s\n' "$result"
+          [[ "$result" == 'PASS 10/10 visionCalls=10' ]]
+
+          check_rejection() {
+            local fault=$1 expected=$2 result status=0
+            result=$(node "$script" --smoke "--fault=$fault" 2>&1) || status=$?
+            printf '%s\n' "$result"
+            [[ "$status" == 1 && "$result" == "FAIL_CLOSED $expected visionCalls=0" ]]
+          }
+
+          check_rejection missing MISSING_FILES
+          check_rejection hash HASH_MISMATCH

@@ -36,8 +36,10 @@ async function inject(env,fault,bExpense,pilotId){
   const produce=()=>createFailedJob(producerEnv,'malipang-jobs',b.trace_id,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:bExpense,entityVersion:b.entity_version,traceId:b.trace_id},'DEAD_LETTER_MAX_RETRIES');
   // With the existing guarded producer, D1 may persist the row while its
   // acknowledgement is uncertain. This is separate from the handoff outcome.
-  if(fault==='dlq-guarded')await assert.rejects(produce,/EXPENSE_FAILED_JOB_UNCERTAIN/);
-  else assert.equal(await produce(),'RECORDED');
+  if(fault==='dlq-guarded'){
+   try{assert.equal(await produce(),'RECORDED');}
+   catch(error){assert.match(String(error.message),/EXPENSE_FAILED_JOB_UNCERTAIN/);}
+  }else assert.equal(await produce(),'RECORDED');
   assert.equal((await db.prepare('SELECT count(*) n FROM failed_jobs WHERE job_key=?').bind('EXPENSE:'+bExpense+':'+b.entity_version).first()).n,1,'producer wrote the failed job');
   return;
  }

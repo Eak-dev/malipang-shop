@@ -14,7 +14,7 @@
 
 ร่าง [Issue #348: ตรวจเกณฑ์](ISSUE348_ACCEPTANCE_AUDIT_TH.md) มีการทดสอบ local `final-whole` ที่ให้ RUN_SERIAL เปิดรอบ พัก B ส่งสิทธิ์ C แบบจำลอง แล้วให้ Worker ทำ DAILY, RAW, สอง DETAIL และ FINAL ก่อนบันทึกผลจบรอบ; provider readback, notice, backup, oracle และ fence เป็น mock. round-mode ทดลองต้องฉีด local identity store และบันทึก marker ก่อน SETTLE/OPEN; marker เดิมหรือไม่ชัดต้องหยุด ไม่ถือ LIST_OPEN ว่างเป็นสิทธิ์เริ่มรอบใหม่. CLI/workflow ปกติไม่มี store จึง fail closed. ผล full check 2,565 ผ่าน, 0 ล้มเหลว, 6 ข้าม และ dry-run exit 0 เป็นผลก่อนเพิ่ม durable identity และต้องตรวจซ้ำ. **ยังไม่รับงาน #348**: หลักฐาน mock ไม่พิสูจน์สถานะ Production หรือการหยุด writer ภายนอก และการเขียน Google/D1 จริงหรือปล่อยรุ่นต้องมี authority และ gate แยกตาม #296; barriers ยังคงปิดโดยปริยาย.
 
-ร่าง #348 ตรวจหลักฐานของ B ซ้ำหลังพัก ก่อนเซ็น attestation และใน batch จอง C หากขัดกันก่อนส่งจะหยุดที่ HELD หากพบใน batch จะ rollback เก็บ claim เดิมและหยุดที่ UNCERTAIN โดยไม่ส่งซ้ำ ดู [ลำดับรอบจำลอง](system-flow/serial-sequence.md#6-รอบจำลอง-348-พัก-b-จอง-c-และบันทึกผล)
+ร่าง #348 ตรวจหลักฐาน B หลังพัก ถ้าขัดกันก่อนเซ็น context เป็น null และงดจอง ถ้าขัดกันหลังเซ็นก่อนส่ง batch ให้คืน HELD หากพบใน batch จะ rollback และเก็บ claim เดิม เมื่อได้ UNCERTAIN ให้หยุดจอง ตรวจหลักฐานเดิม และห้ามส่งซ้ำ ดู [ลำดับรอบจำลอง](system-flow/serial-sequence.md#6-รอบจำลอง-348-พัก-b-จอง-c-และบันทึกผล)
 
 ระบบรับงานจาก LINE OA และ Back Office ผ่าน Cloudflare Worker โดยมี D1 เป็น operational source of truth, Google Sheets เป็นส่วนรายงานและงานปฏิบัติการ, R2 เก็บหลักฐานส่วนตัว และ Queue ช่วยประมวลผลงานเบื้องหลัง ระบบครอบคลุมค่าใช้จ่าย, การลงเวลา, กะ, Payroll, สิทธิ์ผู้ใช้, ข้อมูลภาพ และรายงานของเจ้าของ
 

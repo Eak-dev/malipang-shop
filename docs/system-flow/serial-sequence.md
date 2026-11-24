@@ -159,23 +159,28 @@ sequenceDiagram
     T->>D: อ่านซ้ำว่า B ไม่เคยลองทำและไม่มีหลักฐานผลข้างเคียง
     alt พบหลักฐานขัดกับเงื่อนไขของ hold
         D-->>T: context เป็น null
-        T-->>R: HELD เก็บ claim เดิมและงดส่ง batch
+        T-->>R: หยุดก่อนเซ็นและงดเรียกจอง C
     else การอ่านผ่าน
         T->>O: ขอ attestation จำลองที่ผูก B, C, epoch, nonce และ fence
         O-->>T: ลงนามตามบริบทเดิม
-        T->>D: helper อ่าน context ซ้ำ แล้วส่ง batch ตรวจ B และจอง C
-        alt หลักฐาน B เปลี่ยนหลังอ่านและถูกพบใน batch
-            D-->>T: ย้อนทั้ง batch และเก็บ claim เดิม
-            T-->>R: UNCERTAIN หยุดตรวจหลักฐาน ห้ามส่งซ้ำ
-        else batch ผ่านและจอง C
-            W->>S: C ทำ DAILY, RAW และ DETAIL แต่ละรายการ
-            W->>D: เก็บ intent, postimage และผล FINAL ตามขั้น
-            alt คำขอหรือผลตอบกลับของ C ไม่ชัด
-                W->>D: เก็บ claim และหลักฐาน REVIEW โดยไม่ส่งซ้ำ
-            else หลักฐานพอสำหรับปิดรอบจำลอง
-                R->>W: CLOSE_MOCK_PARKED
-                W->>D: ตรวจ v2 proof และชุดรายการซ้ำ แล้วปิดรอบ
-                D-->>R: VERIFIED / PARKED / NOT_STARTED / RECONCILE
+        T->>D: helper อ่าน context ซ้ำหลังเซ็นก่อนส่ง batch
+        alt หลักฐานขัดกันก่อนส่ง batch
+            T-->>R: HELD คง claim เดิมและงดส่ง batch
+        else การอ่านซ้ำผ่าน
+            T->>D: ส่ง batch ตรวจ B และจอง C
+            alt หลักฐาน B เปลี่ยนหลังอ่านและถูกพบใน batch
+                D-->>T: ย้อนทั้ง batch และเก็บ claim เดิม
+                T-->>R: UNCERTAIN หยุดจอง ตรวจหลักฐานเดิม ห้ามส่งซ้ำ
+            else batch ผ่านและจอง C
+                W->>S: C ทำ DAILY, RAW และ DETAIL แต่ละรายการ
+                W->>D: เก็บ intent, postimage และผล FINAL ตามขั้น
+                alt คำขอหรือผลตอบกลับของ C ไม่ชัด
+                    W->>D: เก็บ claim และหลักฐาน REVIEW โดยไม่ส่งซ้ำ
+                else หลักฐานพอสำหรับปิดรอบจำลอง
+                    R->>W: CLOSE_MOCK_PARKED
+                    W->>D: ตรวจ v2 proof และชุดรายการซ้ำ แล้วปิดรอบ
+                    D-->>R: VERIFIED / PARKED / NOT_STARTED / RECONCILE
+                end
             end
         end
     end
@@ -183,6 +188,6 @@ sequenceDiagram
     Note over R,S: READ_HISTORICAL / READ_ROUND อ่านย้อนหลัง ไม่ให้สิทธิ์เขียน
 ```
 
-การอ่านก่อนเซ็นและการอ่านซ้ำของ helper ต้องพบว่า B ยังมี attempt เป็น 0 และไม่มี projection, cancellation, row index, intent, notice handoff, notice dispatch หรือ failed job ตามคีย์ที่กำหนด หากการอ่านซ้ำก่อนส่งไม่ผ่าน ให้คืน HELD โดยไม่ส่ง batch หลังเริ่มส่งแล้ว ถ้าหลักฐาน B ทำให้การจองไม่ผ่าน ให้เก็บ claim เดิม อ่านหลักฐานเดิมเพื่อตรวจผล และหยุดโดยไม่ส่งซ้ำเมื่อได้ UNCERTAIN หาก lease ของ C หมดและ intent ค้างตรงสาย ให้พัก C เป็น REVIEW พร้อมเก็บ claim และ intent แม้ Worker เปลี่ยนรุ่น
+การอ่านก่อนเซ็นและการอ่านซ้ำของ helper ต้องพบว่า B ยังมี attempt เป็น 0 และไม่มี projection, cancellation, row index, intent, notice handoff, notice dispatch หรือ failed job ตามคีย์ที่กำหนด ถ้าการอ่านก่อนเซ็นคืน context เป็น null ให้หยุดโดยงดเซ็นและงดเรียกจอง C ถ้าการอ่านซ้ำหลังเซ็นไม่ผ่าน ให้ helper คืน HELD โดยงดส่ง batch ถ้าหลักฐาน B ทำให้ batch ไม่ผ่าน ให้ย้อนทั้ง batch และเก็บ claim เดิม เมื่อได้ UNCERTAIN ให้หยุดจอง ตรวจหลักฐานเดิม และห้ามส่งซ้ำ หาก lease ของ C หมดและ intent ค้างตรงสาย ให้พัก C เป็น REVIEW พร้อมเก็บ claim และ intent แม้ Worker เปลี่ยนรุ่น
 
 PARKED หมายถึง B ถูกพักและมี mock handoff ที่บันทึกไว้ ไม่ยืนยันว่า C สำเร็จ; VERIFIED เป็นผลที่ Worker บันทึก ณ เวลาตรวจ ไม่ยืนยันสถานะชีตปัจจุบัน. NOT_STARTED ต้องมี positive birth/lease provenance และไม่มี intent ที่เกี่ยวข้อง; legacy หรือข้อมูลขัดกันเป็น RECONCILE. การปล่อยจริงและเขียน Google/D1 จริงต้องผ่าน authority และ external-writer fence ของ #296 แยกต่างหาก. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) · [ตรวจและโอนสิทธิ์จำลอง](../../src/admin/serial-attested-handoff.ts) · [ทดสอบหลักฐาน B](../../tests/helpers/serial-handoff-b-predicates.mjs) · [รหัสปิดรอบ](../../src/admin/serial-expense-handover.ts)

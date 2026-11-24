@@ -25,7 +25,7 @@
 
 round-mode ทดลองต้องมี identity store เฉพาะเครื่องบันทึก roundId ก่อน SETTLE/OPEN; marker เดิมหรืออ่านไม่ชัดให้หยุด ไม่สร้างรอบใหม่แม้ LIST_OPEN ว่าง. เมื่อ restart พบ OPEN ให้ RECONCILE; ถ้ารอบ CLOSED ใช้ READ_ROUND อ่านผลเดิม. CLI/workflow ปกติไม่มี store และ fail closed.
 
-หน้า 8 และ sequence 6 แสดงเฉพาะร่างทดสอบ #348: หลังพัก B ตรวจหลักฐานก่อนเซ็นและใน batch ที่จอง C หากขัดกันก่อนส่งจะหยุดที่ HELD หากพบใน batch จะ rollback โดยคง claim และหยุดที่ UNCERTAIN โดยไม่ส่งซ้ำ ส่วน oracle/fence เป็นแบบจำลอง, barriers ปิด และการอ่านข้ามเดือนหรือรุ่นไม่ให้สิทธิ์เขียน. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) ระบุเกณฑ์ที่ยังไม่ผ่าน; ไม่มีการสรุปสถานะ Production จากผลทดสอบในเครื่อง.
+หน้า 8 และ sequence 6 แสดงเฉพาะร่างทดสอบ #348: หลังพัก B ถ้าหลักฐานขัดกันก่อนเซ็น context เป็น null และงดจอง ถ้าขัดกันหลังเซ็นก่อนส่ง batch ให้คืน HELD หากพบใน batch จะ rollback โดยคง claim เดิม เมื่อได้ UNCERTAIN ให้หยุดจอง ตรวจหลักฐานเดิม และห้ามส่งซ้ำ ส่วน oracle/fence เป็นแบบจำลอง, barriers ปิด และการอ่านข้ามเดือนหรือรุ่นไม่ให้สิทธิ์เขียน. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) ระบุเกณฑ์ที่ยังไม่ผ่าน; ไม่มีการสรุปสถานะ Production จากผลทดสอบในเครื่อง.
 
 ## ที่มาของข้อมูล
 

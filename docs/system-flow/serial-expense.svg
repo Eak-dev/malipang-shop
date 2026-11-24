@@ -49,11 +49,12 @@
 <rect x="40" y="1165" width="880" height="264" rx="12" fill="#fff6e3" stroke="#b8802a" stroke-width="2"/>
 <text x="56" y="1201" fill="#153748" font-size="23" font-weight="700">#348 · ร่างจำลองในเครื่องเท่านั้น</text>
 <text x="56" y="1227" fill="#153748" font-size="17">บันทึก identity → ผนึกชุดงาน → พัก B (REVIEW) และเก็บ claim</text>
-<text x="56" y="1251" fill="#153748" font-size="17">อ่าน B ก่อนเซ็น: พบหลักฐานใหม่ → context null / HELD งดส่ง batch</text>
-<text x="56" y="1275" fill="#153748" font-size="17">mock oracle เซ็น → batch ตรวจ B ซ้ำ; พบหลักฐานใหม่ → rollback / UNCERTAIN</text>
-<text x="56" y="1299" fill="#153748" font-size="17">ผล UNCERTAIN เก็บ claim เดิมและหยุดตรวจ ห้ามส่งซ้ำ</text>
-<text x="56" y="1323" fill="#153748" font-size="17">restart OPEN → RECONCILE; CLOSED → อ่านผลเดิม ไม่ส่งซ้ำ</text>
-<text x="56" y="1347" fill="#153748" font-size="17">lease C หมด + intent ค้าง → REVIEW คง claim; อ่านข้ามรุ่นไม่ให้สิทธิ์เขียน</text>
+<text x="56" y="1251" fill="#153748" font-size="17">ก่อนเซ็น: หลักฐาน B ขัดกัน → context เป็น null งดเซ็นและงดจอง</text>
+<text x="56" y="1275" fill="#153748" font-size="17">หลัง mock oracle เซ็น: ตรวจ B ซ้ำก่อนส่ง → ขัดกันคืน HELD งดส่ง batch</text>
+<text x="56" y="1299" fill="#153748" font-size="17">พบหลักฐานใน batch → rollback คง claim เดิม คืน UNCERTAIN</text>
+<text x="56" y="1323" fill="#153748" font-size="17">UNCERTAIN: หยุดจอง ตรวจหลักฐานเดิม ห้ามส่งซ้ำ</text>
+<text x="56" y="1347" fill="#153748" font-size="17">restart OPEN → RECONCILE / CLOSED → อ่านผลเดิม อ่านข้ามรุ่นไม่ให้สิทธิ์เขียน</text>
 <text x="56" y="1371" fill="#153748" font-size="17">ปิดรอบตามหลักฐาน: VERIFIED / PARKED / NOT_STARTED / RECONCILE</text>
-<text x="56" y="1403" fill="#9c4439" font-size="17" font-weight="700">barrier ปิด • Google/D1 จริงและ release ต้องผ่าน gate แยกของ #296</text>
+<text x="56" y="1393" fill="#153748" font-size="17">lease C หมดและ intent ค้าง → REVIEW คง claim</text>
+<text x="56" y="1415" fill="#9c4439" font-size="17" font-weight="700">barrier ปิด • Google/D1 จริงและ release ต้องผ่าน gate แยกของ #296</text>
 </svg>

@@ -66,6 +66,8 @@ Worker ตรวจข้อมูล D1 แถวในชีตและป้
 
 `HOLD_RESERVED` เก็บ B ใน REVIEW พร้อม claim/epoch; RUN_SERIAL ใน local test รับ coordinator ที่ฉีดเพื่อเรียก helper จำลอง attestation และ CAS ส่งสิทธิ์ C เมื่อหลักฐานตรง; CLI ปกติไม่มี coordinator และไม่ใช่คำสั่งที่ได้รับอำนาจใช้งานจริง. C อาจต้องผ่าน DAILY, RAW, DETAIL หลายรายการ และ FINAL; หากผล provider หรือ notice ไม่ชัดให้เก็บ claim และ intent แล้ว reconcile โดยไม่ส่งซ้ำ. สถานะ READY ใน Sheets อาจเกิดก่อนคำตอบ D1 จึงต้องมี external fence ที่พิสูจน์แล้วต่อเนื่องจนกว่าจะ reconcile.
 
+ก่อนเซ็น attestation และก่อนส่ง batch โอนสิทธิ์ ให้ตรวจซ้ำว่า B ยังไม่เคยลองทำและไม่มีหลักฐานผลข้างเคียง ถ้าพบหลักฐานที่ขัดกัน context เป็น null และ helper คืน HELD โดยไม่ส่ง batch หากหลักฐานเปลี่ยนหลังอ่านแล้วถูกตรวจพบใน batch ธุรกรรมจะ rollback และเก็บ claim เดิม เมื่อได้ UNCERTAIN ให้หยุดตรวจ audit/round/claim ของรอบเดิมและงดส่งซ้ำ
+
 รอบแบบทดลองของ `RUN_SERIAL` เปิดได้เฉพาะ local test ที่ฉีด durable identity store และใช้ localhost: store สร้าง marker แบบไม่ทับก่อน SETTLE/OPEN ผูก roundId กับ scope ของ workbook/Worker; หาก marker เดิมมีอยู่หรืออ่านไม่ชัด ให้หยุดและตรวจ roundId เดิม ห้ามสร้างรอบใหม่จาก `LIST_OPEN` ว่าง. CLI/workflow ปกติไม่ได้ฉีด store จึง fail closed ใน round-mode. Store ทดลองเป็นไฟล์เฉพาะเครื่อง ต้องรักษา directory เดิม; ไม่พิสูจน์การประสานข้ามเครื่องหรือการหยุด writer.
 
 `RECOVER_ROUND` อ่านรอบเดิมเท่านั้น: หากยัง OPEN ให้หยุด RECONCILE เพราะคำขอปิดก่อนหน้าอาจยังค้าง; หาก CLOSED แสดงผลที่บันทึกไว้ ไม่ส่ง CLOSE ซ้ำ.

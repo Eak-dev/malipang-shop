@@ -154,23 +154,35 @@ sequenceDiagram
     R->>W: เปิด round และผนึกสมาชิก
     W->>D: ผนึก snapshot แล้วจอง B ในคำสั่งถัดไป
     R->>W: HOLD_RESERVED เมื่อพิสูจน์เงื่อนไขได้
-    W->>D: แข่ง lease; B REVIEW และคง claim/epoch
+    W->>D: แข่ง lease แล้วให้ B REVIEW และคง claim/epoch
     R->>T: เรียก coordinator ที่ฉีดเฉพาะ local test
-    T->>O: สร้าง attestation จำลองที่ผูก B, C, nonce และ fence
-    O-->>T: หลักฐานจำลองตามบริบทเดิม
-    T->>D: เรียก helper ตรวจซ้ำและโอนสิทธิ์ C อะตอมมิก
-    W->>S: C ทำ DAILY, RAW และ DETAIL แต่ละรายการ
-    W->>D: เก็บ intent, postimage และผล FINAL ตามขั้น
-    alt คำขอหรือผลตอบกลับไม่ชัด
-        W->>D: เก็บ claim/หลักฐาน REVIEW; ไม่ส่งซ้ำ
-        Note over W,D: local mock: lease C หมดและ intent ค้างตรงสายเดิม → REVIEW แม้เปลี่ยนรุ่น; คง claim และ intent
-    else หลักฐานพอสำหรับปิดรอบจำลอง
-        R->>W: CLOSE_MOCK_PARKED
-        W->>D: ตรวจ v2 proof และชุดรายการซ้ำ แล้วปิดรอบ
-        D-->>R: VERIFIED / PARKED / NOT_STARTED / RECONCILE
+    T->>D: อ่านซ้ำว่า B ไม่เคยลองทำและไม่มีหลักฐานผลข้างเคียง
+    alt พบหลักฐานขัดกับเงื่อนไขของ hold
+        D-->>T: context เป็น null
+        T-->>R: HELD เก็บ claim เดิมและงดส่ง batch
+    else การอ่านผ่าน
+        T->>O: ขอ attestation จำลองที่ผูก B, C, epoch, nonce และ fence
+        O-->>T: ลงนามตามบริบทเดิม
+        T->>D: helper อ่าน context ซ้ำ แล้วส่ง batch ตรวจ B และจอง C
+        alt หลักฐาน B เปลี่ยนหลังอ่านและถูกพบใน batch
+            D-->>T: ย้อนทั้ง batch และเก็บ claim เดิม
+            T-->>R: UNCERTAIN หยุดตรวจหลักฐาน ห้ามส่งซ้ำ
+        else batch ผ่านและจอง C
+            W->>S: C ทำ DAILY, RAW และ DETAIL แต่ละรายการ
+            W->>D: เก็บ intent, postimage และผล FINAL ตามขั้น
+            alt คำขอหรือผลตอบกลับของ C ไม่ชัด
+                W->>D: เก็บ claim และหลักฐาน REVIEW โดยไม่ส่งซ้ำ
+            else หลักฐานพอสำหรับปิดรอบจำลอง
+                R->>W: CLOSE_MOCK_PARKED
+                W->>D: ตรวจ v2 proof และชุดรายการซ้ำ แล้วปิดรอบ
+                D-->>R: VERIFIED / PARKED / NOT_STARTED / RECONCILE
+            end
+        end
     end
-    Note over R,D: identity local ก่อน SETTLE/OPEN; restart ให้หยุด ไม่ส่งซ้ำ
+    Note over R,D: identity local ก่อน SETTLE/OPEN เมื่อ restart ให้หยุด ไม่ส่งซ้ำ
     Note over R,S: READ_HISTORICAL / READ_ROUND อ่านย้อนหลัง ไม่ให้สิทธิ์เขียน
 ```
 
-PARKED หมายถึง B ถูกพักและมี mock handoff ที่บันทึกไว้ ไม่ยืนยันว่า C สำเร็จ; VERIFIED เป็นผลที่ Worker บันทึก ณ เวลาตรวจ ไม่ยืนยันสถานะชีตปัจจุบัน. NOT_STARTED ต้องมี positive birth/lease provenance และไม่มี intent ที่เกี่ยวข้อง; legacy หรือข้อมูลขัดกันเป็น RECONCILE. การปล่อยจริงและเขียน Google/D1 จริงต้องผ่าน authority และ external-writer fence ของ #296 แยกต่างหาก. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) · [รหัสปิดรอบ](../../src/admin/serial-expense-handover.ts)
+การอ่านก่อนเซ็นและการอ่านซ้ำของ helper ต้องพบว่า B ยังมี attempt เป็น 0 และไม่มี projection, cancellation, row index, intent, notice handoff, notice dispatch หรือ failed job ตามคีย์ที่กำหนด หากการอ่านซ้ำก่อนส่งไม่ผ่าน ให้คืน HELD โดยไม่ส่ง batch หลังเริ่มส่งแล้ว ถ้าหลักฐาน B ทำให้การจองไม่ผ่าน ให้เก็บ claim เดิม อ่านหลักฐานเดิมเพื่อตรวจผล และหยุดโดยไม่ส่งซ้ำเมื่อได้ UNCERTAIN หาก lease ของ C หมดและ intent ค้างตรงสาย ให้พัก C เป็น REVIEW พร้อมเก็บ claim และ intent แม้ Worker เปลี่ยนรุ่น
+
+PARKED หมายถึง B ถูกพักและมี mock handoff ที่บันทึกไว้ ไม่ยืนยันว่า C สำเร็จ; VERIFIED เป็นผลที่ Worker บันทึก ณ เวลาตรวจ ไม่ยืนยันสถานะชีตปัจจุบัน. NOT_STARTED ต้องมี positive birth/lease provenance และไม่มี intent ที่เกี่ยวข้อง; legacy หรือข้อมูลขัดกันเป็น RECONCILE. การปล่อยจริงและเขียน Google/D1 จริงต้องผ่าน authority และ external-writer fence ของ #296 แยกต่างหาก. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) · [ตรวจและโอนสิทธิ์จำลอง](../../src/admin/serial-attested-handoff.ts) · [ทดสอบหลักฐาน B](../../tests/helpers/serial-handoff-b-predicates.mjs) · [รหัสปิดรอบ](../../src/admin/serial-expense-handover.ts)

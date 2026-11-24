@@ -97,3 +97,20 @@ jobs:
           cp -R "$received" "$RUNNER_TEMP/changed"
           printf Z | dd of="$RUNNER_TEMP/changed/synthetic-10" bs=1 count=1 conv=notrunc
           check_rejection "$RUNNER_TEMP/changed" 'REJECT HASH_MISMATCH files=10 mockVisionCalls=0'
+
+  private-r2:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Download the synthetic package from private R2
+        env:
+          R2_ACCOUNT: c395a1bc15b7c95267173de5ccd6407d
+          SYNTHETIC_GET_URL: ${{ secrets.ISSUE348_SYNTHETIC_GET_URL }}
+          SYNTHETIC_CONTROL: ${{ secrets.ISSUE348_SYNTHETIC_CONTROL }}
+        run: node scripts/issue348-r2-smoke.mjs

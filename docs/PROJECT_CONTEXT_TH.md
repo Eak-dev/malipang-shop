@@ -6,6 +6,8 @@
 
 ทุกงานให้อ่าน [แผนผังระบบและคิวรายงาน](system-flow/README.md) ก่อนเริ่ม พร้อมอัปเดตส่วนที่เปลี่ยนใน PR เดียวกัน
 
+ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง
+
 ## ภาพรวมระบบ
 
 ตัวรันคิวค่าใช้จ่ายมีโหมด [RUN_SERIAL](ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) สำหรับส่งงานหลัง cutover ทีละรายการโดยตรวจแถวเดิมและหลักฐาน D1 ก่อนจองงานถัดไป ดู [แผนผัง](system-flow/serial-expense.svg)
@@ -24,6 +26,7 @@
 - ต้นแบบ local เท่านั้นสำหรับ [นับ D1 และ queue ต่อ invocation](INVOCATION_BINDING_BUDGET_WIP.md); ยังไม่ได้เชื่อม Worker หรือเปิดใช้งาน
 - พนักงานและ Payroll: [นโยบายค่าแรง](14_PAYROLL_POLICY_WAGE_HISTORY_AND_FIXED_OT_TH.md), [release Payroll](16_WEDNESDAY_PAYROLL_RELEASE_TH.md); สิทธิ์: [identity/access](19_V11_IDENTITY_ACCESS_TH.md)
 - ปฏิบัติการและ release: [operations](04_OPERATIONS_TH.md), [release/cutover](08_RELEASE_AND_CUTOVER_PLAN_TH.md), [การทดสอบ](03_TEST_AND_CUTOVER_TH.md)
+- การตรวจตัวประเมินข้อความค่าใช้จ่ายบน Production ใช้ [workflow สำหรับข้อมูลจำลอง](03_TEST_AND_CUTOVER_TH.md#ทดสอบตัวประเมินข้อความค่าใช้จ่ายบน-production) โดยผ่านผู้อนุมัติของ GitHub Environment
 - ระบบ Legacy: [สถานะ Apps Script](06_LEGACY_APPS_SCRIPT_STATUS_TH.md), [แผนปิดตามขั้นตอน](17_LEGACY_APPS_SCRIPT_STAGED_SHUTDOWN_TH.md)
 - เว็บหลังบ้าน: [Epic #175](https://github.com/Eak-dev/malipang-shop/issues/175) และงานย่อยที่เชื่อมโยง
 

@@ -7712,6 +7712,66 @@
       "status": "ACTIVE",
       "observed_at": "2026-11-22T02:11:09.483063+00:00",
       "reason": "Observed the new remote task branch at the audited base before committing documentation."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-expense-workflow",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-image-test",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-private-image-evaluation",
+      "source_sha": "92333a9fb4b9c607876896d440faf7a1197ca879",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        352
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:08:18+00:00",
+      "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

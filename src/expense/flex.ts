@@ -78,6 +78,7 @@ export function buildExpenseSummaryFlex(expense:ExpenseFlexRecord):FlexMessage{
   const unresolved=expense.unresolvedRequiredFields||[],canSave=unresolved.length===0;
   if(unresolved.length)body.push(row("ยังต้องตรวจสอบ",unresolved.map(requiredLabel).join(" • ")));
   const required=new Set(unresolved),editActions=[
+    ...(required.has("amount")&&expense.documentType==="BANK_SLIP"&&expense.amountSatang>0?[action("ยืนยันยอดจ่าย",`a=expense_accept_slip_amount&id=${id}`)]:[]),
     ...(required.has("payment")?[action("💳 วิธีชำระ",`a=expense_payment_menu&id=${id}`,"primary",brownButton)]:[]),
     ...(required.has("description")?[action("📝 รายการ",`a=expense_item_menu&id=${id}`)]:[]),
     ...(required.has("category")?[action("🏷️ หมวดหมู่",`a=expense_category_menu&id=${id}`)]:[]),

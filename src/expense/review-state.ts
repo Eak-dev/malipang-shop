@@ -99,7 +99,12 @@ export function purchaseReviewState(document:PurchaseDocument,input:{description
 export function bankSlipReviewState(document:BankSlipDocument,input:{description:string;amountSatang:number;paymentKey:string;sourceWallet:string;category:string;transactionDate:string},review:boolean):ExpenseReviewState{
   const reasons=[document.note];
   const categoryIsFallback=input.category === "general" && (document.needsReview||document.confidence<0.85||review);
-  return baseState({...input,reviewReasons:reasons,needsReview:review,confidence:document.confidence,generalCategoryRequiresConfirmation:categoryIsFallback});
+  const state=baseState({...input,reviewReasons:reasons,needsReview:review,confidence:document.confidence,generalCategoryRequiresConfirmation:categoryIsFallback});
+  // The payment pair for a slip is fixed. A merchant alone does not identify the purchase.
+  state.requiredFields=state.requiredFields.filter(field=>field!=="payment");
+  if(!document.suggestedDescription.trim())state.requiredFields=unique([...state.requiredFields,"description"]);
+  if(!expenseCategories.has(document.suggestedCategory))state.requiredFields=unique([...state.requiredFields,"category"]);
+  return state;
 }
 
 /** Compatibility for drafts created before review state was persisted. */

@@ -44,7 +44,7 @@ npm run test:clock-photos
 
 Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 MiB ต้องใช้ Admin Token และไม่บันทึกรูปลง R2
 
-กติกาใหม่คาดว่า Photo 1–5 ผ่านเพราะมี Timestamp และ GPS ครบ ส่วน Photo 6–7 ต้องไม่ผ่านด้วย `GPS_MISSING` เพราะมี Timestamp แต่ไม่มีพิกัดบนภาพ ต้องรัน Live baseline ใหม่หลัง Deploy
+สำหรับชุดมาตรฐานใน `tests/fixtures/clock-photos` คาดว่า Photo 1–5 ผ่านเพราะมี Timestamp และ GPS ครบ ส่วน Photo 6–7 ต้องไม่ผ่านด้วย `GPS_MISSING` เพราะมี Timestamp แต่ไม่มีพิกัดบนภาพ ต้องรัน Live baseline ใหม่หลัง Deploy
 
 ## Regression test สลิปธนาคารและวอลเล็ต
 
@@ -63,6 +63,8 @@ contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และค�
 workflow `Production private photo evaluation` รับเฉพาะ main ที่ตรงกับ SHA ที่ตรวจและผ่าน reviewer ของ production environment. ก่อนอนุมัติให้ตรวจ Worker version และค่า ATTENDANCE_CLOCK_MIN_CONFIDENCE 0.70. ตรวจว่า bucket ทดสอบเป็น private และสิทธิ์อ่านยังไม่หมดอายุ. Environment เก็บ ISSUE348_R2_READER และ ISSUE348_PHOTO_CONTROL แยกจาก Admin. ตัวรับสร้างลิงก์ GET สำหรับแพ็กเกจเดียว มีอายุห้านาที.
 
 หลังตรวจแพ็กเกจเข้ารหัส SHA-256 ของทั้งสิบไฟล์ และ manifest ทั้งสองชุด จึงส่งรูปลงเวลาเจ็ดรูปและสลิปสามใบไปยังตัวประเมินภาพของร้าน. Worker อาจเรียก OpenAI ถึงยี่สิบครั้งและเขียนสถิติใน Production D1. ตรวจขอบเขตตาม #296 ก่อน dispatch. หากผลคำขอคลุมเครือให้กระทบยอดก่อนเปิดรอบใหม่. หากต้องหยุดให้ยกเลิกรันและเพิกถอนสิทธิ์ของชุดทดสอบ. ไฟล์ชั่วคราวถูกนำออกเมื่อจบงาน.
+
+สำหรับ fixture รูปลงเวลาของ #348 รูป 07 ต้องถูกปฏิเสธเพราะไม่มีวันและเวลาถ่ายที่ใช้ลงเวลาได้ ตรวจค่าที่อ่านและเหตุผลการปฏิเสธตามลำดับ validation ของ Worker ผลที่คาดหวังนี้ไม่ได้อ้างผลจากรัน Production
 
 ## UAT ขั้นต่ำ
 

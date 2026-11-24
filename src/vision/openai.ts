@@ -71,7 +71,7 @@ function normalizeBankSlipDocument(value:unknown):BankSlipDocument|null{
   const transactionStatus=statuses.includes(text(obj.transactionStatus) as typeof statuses[number])?text(obj.transactionStatus) as BankSlipDocument["transactionStatus"]:"UNKNOWN";
   const printedYear=text(obj.printedYear),yearDigits=printedYear.match(/\d{2,4}/)?.[0]||"",rawDate=text(obj.paymentDate),dateMatch=/^(\d{4})-(\d{2})-(\d{2})$/.exec(rawDate);let paymentDate=rawDate;
   if(dateMatch&&yearDigits){const visible=Number(yearDigits),year=yearDigits.length===2?(visible<=79?2000+visible:1900+visible):visible>=2400?visible-543:visible;paymentDate=`${year.toString().padStart(4,"0")}-${dateMatch[2]}-${dateMatch[3]}`;}
-  const rawCurrency=text(obj.currency).toUpperCase(),currency=["THB","BAHT","บาท","฿"].includes(rawCurrency)?"THB":rawCurrency||"THB";
+  const rawCurrency=text(obj.currency).toUpperCase(),currency=["THB","BAHT","บาท","฿"].includes(rawCurrency)?"THB":rawCurrency;
   return{documentType:"BANK_SLIP",channel,institution,transactionType,transactionStatus,printedYear,paymentDate,paymentTime:text(obj.paymentTime),referenceId:text(obj.referenceId),sender:text(obj.sender),senderAccountMasked:text(obj.senderAccountMasked),recipient:text(obj.recipient),recipientAccountMasked:text(obj.recipientAccountMasked),merchant:text(obj.merchant),grossAmountBaht:numberOrNull(obj.grossAmountBaht),discountAmountBaht:numberOrNull(obj.discountAmountBaht),paidAmountBaht:numberOrNull(obj.paidAmountBaht),currency,suggestedDescription:text(obj.suggestedDescription),suggestedCategory:text(obj.suggestedCategory)||"general",confidence:Number(obj.confidence||0),needsReview:Boolean(obj.needsReview),note:text(obj.note)};
 }
 

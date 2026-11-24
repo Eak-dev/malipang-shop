@@ -12,6 +12,9 @@ jobs:
   synthetic-loopback:
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      manifest: ${{ steps.originals.outputs.manifest }}
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -38,3 +41,59 @@ jobs:
 
           check_rejection missing MISSING_FILES
           check_rejection hash HASH_MISMATCH
+      - name: Generate the ten synthetic originals
+        id: originals
+        run: |
+          manifest=$(node scripts/issue348-artifact-rehearsal.mjs prepare "$RUNNER_TEMP/synthetic-originals")
+          printf 'manifest=%s\n' "$manifest" >> "$GITHUB_OUTPUT"
+      - name: Upload only the synthetic originals
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: issue348-synthetic-originals
+          path: ${{ runner.temp }}/synthetic-originals/
+          retention-days: 1
+          if-no-files-found: error
+
+  verify-artifact:
+    needs: synthetic-loopback
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22'
+      - name: Download the sender's artifact
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.synthetic-loopback.outputs.artifact-id }}
+          merge-multiple: true
+          path: ${{ runner.temp }}/received
+      - name: Verify downloaded originals and two damaged copies
+        shell: bash
+        env:
+          EXPECTED_MANIFEST: ${{ needs.synthetic-loopback.outputs.manifest }}
+        run: |
+          script=scripts/issue348-artifact-rehearsal.mjs
+          received="$RUNNER_TEMP/received"
+          result=$(node "$script" receive "$received")
+          printf '%s\n' "$result"
+          [[ "$result" == 'PASS files=10 hashes=10 mockVisionCalls=10' ]]
+
+          check_rejection() {
+            local directory=$1 expected=$2 result status=0
+            result=$(node "$script" receive "$directory" 2>&1) || status=$?
+            printf '%s\n' "$result"
+            [[ "$status" == 1 && "$result" == "$expected" ]]
+          }
+
+          cp -R "$received" "$RUNNER_TEMP/missing"
+          rm "$RUNNER_TEMP/missing/synthetic-10"
+          check_rejection "$RUNNER_TEMP/missing" 'REJECT MISSING_FILES files=9 mockVisionCalls=0'
+
+          cp -R "$received" "$RUNNER_TEMP/changed"
+          printf Z | dd of="$RUNNER_TEMP/changed/synthetic-10" bs=1 count=1 conv=notrunc
+          check_rejection "$RUNNER_TEMP/changed" 'REJECT HASH_MISMATCH files=10 mockVisionCalls=0'

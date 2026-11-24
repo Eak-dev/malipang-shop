@@ -5,7 +5,7 @@ import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import {fileURLToPath} from 'node:url';
+import {fileURLToPath,pathToFileURL} from 'node:url';
 
 // Two explicit fixture sources:
 //  - default: tests/fixtures/clock-photos/cases.json (unchanged legacy contract);
@@ -19,18 +19,35 @@ const fixtureDir=path.join(path.dirname(selfPath),'fixtures','clock-photos');
 const isChild=process.env.CLOCK_FIXTURE_CHILD==='1';
 const ok=(condition,message)=>assert.ok(Boolean(condition),message);
 
-// The compiled validator lives in the ignored dist/ folder. `npm run test:clock-photos` does not
-// build, so a clean checkout has no dist: load it lazily (only the synthetic tests need it) and, if
-// missing, run the project's own local compile (`npm run build:test`; no network, no live call).
+// The validator under test is compiled from the CURRENT src/ on every run into a fresh temp folder
+// (TypeScript transpile of src/domain/attendance.ts and its relative imports; no type-check, no
+// network). dist/ is never read, so a missing or stale dist (another SHA) cannot be tested by mistake,
+// and the checkout's dist/ is not modified.
+async function buildValidator({srcRoot,outDir,ts}){
+  const seen=new Set();
+  const visit=async rel=>{
+    if(seen.has(rel))return;seen.add(rel);
+    let text;try{text=await readFile(path.join(srcRoot,`${rel}.ts`),'utf8');}catch{ok(false,'validator source could not be read');}
+    const out=ts.transpileModule(text,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022},fileName:`${rel}.ts`});
+    await mkdir(path.dirname(path.join(outDir,rel)),{recursive:true});
+    await writeFile(path.join(outDir,`${rel}.js`),out.outputText);
+    for(const match of out.outputText.matchAll(/require\("(\.{1,2}\/[^"]+)"\)/g))await visit(path.posix.normalize(path.posix.join(path.posix.dirname(rel),match[1])));
+  };
+  await visit('domain/attendance');
+  await writeFile(path.join(outDir,'package.json'),JSON.stringify({type:'commonjs'}));
+  return path.join(outDir,'domain','attendance.js');
+}
+async function importFreshValidator(srcRoot){
+  const ts=(await import('typescript')).default;
+  const outDir=await mkdtemp(path.join(os.tmpdir(),'clock-validator-'));
+  try{
+    const entry=await buildValidator({srcRoot,outDir,ts});
+    return (await import(pathToFileURL(entry).href)).validateAttendancePhoto;
+  }finally{await rm(outDir,{recursive:true,force:true});}
+}
 let validatorPromise;
 function loadValidator(){
-  validatorPromise??=(async()=>{
-    const url=new URL('../dist/domain/attendance.js',import.meta.url).href;
-    try{return (await import(url)).validateAttendancePhoto;}catch{/* dist missing: build below */}
-    const run=spawnSync('npm',['run','build:test'],{cwd:path.join(path.dirname(selfPath),'..'),env:{PATH:process.env.PATH,HOME:process.env.HOME},encoding:'utf8',timeout:600000});
-    ok(run.status===0,'local build of the compiled validator failed');
-    return (await import(`${url}?built=1`)).validateAttendancePhoto;
-  })();
+  validatorPromise??=importFreshValidator(path.join(path.dirname(selfPath),'..','src'));
   return validatorPromise;
 }
 
@@ -41,16 +58,27 @@ const PRE_GPS_CODES=['NOT_CLOCK','CLOCK_NOT_CONFIRMED','TIMESTAMP_MISSING','TIME
 const ISO_WITH_ZONE=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
 const sha256=buffer=>createHash('sha256').update(buffer).digest('hex');
 const isEmptyText=value=>value==null||value==='';
+const validDate=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(`${value}T00:00:00Z`))&&new Date(`${value}T00:00:00Z`).toISOString().startsWith(value);
+const validTime=value=>typeof value==='string'&&/^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/.test(value);
+const validCoord=(value,limit)=>typeof value==='number'&&Number.isFinite(value)&&Math.abs(value)<=limit;
 // Providers that actually read the photo. 'none' and 'openai-error' (src/vision/service.ts failedVision) are failures even when HTTP is 200.
 const SUCCESS_PROVIDERS=['openai','workers-ai'];
 // Allowlist for diagnostics only; any other identifier is masked.
 const DIAGNOSTIC_PROVIDERS=['openai','workers-ai','pipeline','none','openai-error'];
-// Thresholds mirror the validator defaults (ATTENDANCE_CLOCK_MIN_CONFIDENCE).
-const CLOCK_MIN_CONFIDENCE=0.7;
+// /admin/vision/evaluate does not return the effective ATTENDANCE_CLOCK_MIN_CONFIDENCE, so the test
+// cannot prove it from the response. The operator must state the endpoint's value explicitly via
+// MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE (private mode, live only); absent or invalid = live blocked.
+// The test never guesses a default. The value is an operator attestation, not something verified here.
+function parseClockMin(text){
+  if(typeof text!=='string'||!/^(?:0\.\d+|1(?:\.0+)?)$/.test(text.trim()))return null;
+  const value=Number(text.trim());
+  return value>0&&value<=1?value:null;
+}
+const endpointClockMin=parseClockMin(process.env.MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE);
 // The single code src/domain/attendance.ts:51-55 returns for a reading that has no date/time.
-function expectedRejectCode(reading){
+function expectedRejectCode(reading,clockMin){
   if(reading.kind!=='CLOCK')return 'NOT_CLOCK';
-  if(reading.clockPresent!==true||reading.clockConfidence<CLOCK_MIN_CONFIDENCE)return 'CLOCK_NOT_CONFIRMED';
+  if(reading.clockPresent!==true||reading.clockConfidence<clockMin)return 'CLOCK_NOT_CONFIRMED';
   if(!reading.overlayPresent)return 'TIMESTAMP_MISSING';
   if(!reading.overlayTextWhite)return 'TIMESTAMP_NOT_WHITE';
   return 'TIMESTAMP_FIELDS_MISSING';
@@ -111,7 +139,7 @@ else{
 const cases=loaded.ok?loaded.cases:[];
 
 // Pure checkers: assertion messages are fixed text and never include actual/expected values.
-function checkPrivateReading(item,result){
+function checkPrivateReading(item,result,clockMin){
   const reading=result&&result.reading,validation=result&&result.validation;
   ok(reading&&validation,`${item.id}: response shape`);
   const timestampPresent=!isEmptyText(reading.photoDate)&&!isEmptyText(reading.photoTime);
@@ -123,7 +151,11 @@ function checkPrivateReading(item,result){
     ok(validation.ok===true,`${item.id}: owner expects accepted`);
     ok(code==='OK',`${item.id}: owner expects validation OK`);
     ok(reading.kind==='CLOCK'&&reading.clockPresent===true&&reading.overlayPresent===true&&reading.overlayTextWhite===true,`${item.id}: clock and white overlay required`);
-    ok(timestampPresent&&gpsPresent,`${item.id}: timestamp and GPS required`);
+    // Every pass case needs well-formed values, verified or not; only verified ones are compared exactly.
+    ok(validDate(reading.photoDate),`${item.id}: photo date must be a valid calendar date`);
+    ok(validTime(reading.photoTime),`${item.id}: photo time must be a valid time`);
+    ok(validCoord(reading.latitude,90),`${item.id}: latitude must be a finite number in range`);
+    ok(validCoord(reading.longitude,180),`${item.id}: longitude must be a finite number in range`);
     if(item.readingVerified&&item.expectedReading){
       const want=item.expectedReading;
       ok(reading.photoDate===want.photoDate,`${item.id}: verified date matches`);
@@ -141,7 +173,8 @@ function checkPrivateReading(item,result){
     // Without date/time the validator stops at or before TIMESTAMP_FIELDS_MISSING, so GPS_MISSING would contradict the reading.
     ok(PRE_GPS_CODES.includes(code),`${item.id}: rejection code consistent with validation order`);
     // The code must be exactly the first failing predicate of this reading, not merely a pre-GPS code.
-    ok(code===expectedRejectCode(reading),`${item.id}: rejection code matches first failing check of the reading`);
+    ok(Number.isFinite(clockMin)&&clockMin>0&&clockMin<=1,`${item.id}: effective clock confidence threshold must be stated`);
+    ok(code===expectedRejectCode(reading,clockMin),`${item.id}: rejection code matches first failing check of the reading`);
   }
 }
 
@@ -202,6 +235,7 @@ test('live vision enforces white timestamp, GPS, and shop-clock evidence',async 
   ok(loaded.ok,`private manifest rejected: ${loaded.ok?'':loaded.code}`);
   ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
   ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
+  ok(!privateMode||endpointClockMin!==null,'MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE (the endpoint effective ATTENDANCE_CLOCK_MIN_CONFIDENCE) is required');
   ok(cases.length===7&&cases.every(item=>item.image),'all seven clock fixture images are required');
   ok(selectedCases.length===cases.length,'all seven clock cases must be selected');
   ok(['pipeline','openai','workers-ai'].includes(provider),'provider must be pipeline, openai, or workers-ai');
@@ -219,7 +253,7 @@ test('live vision enforces white timestamp, GPS, and shop-clock evidence',async 
       try{result=await response.json();}catch{ok(false,`${item.id}: HTTP ${response.status} non-JSON response`);}
       ok(response.ok===true,`${item.id}: HTTP ${response.status}`);
       ok(result&&result.ok===true,`${item.id}: endpoint failed`);
-      if(item.mode==='private')checkPrivateReading(item,result);else checkLegacyReading(item,result);
+      if(item.mode==='private')checkPrivateReading(item,result,endpointClockMin);else checkLegacyReading(item,result);
       t.diagnostic(JSON.stringify(diagnosticFor(item,result)));
     });
   }
@@ -261,8 +295,8 @@ test('synthetic validator: GPS_MISSING only when date and time are present',asyn
 
 const rejectReading=overrides=>({provider:'openai',kind:'CLOCK',clockPresent:true,clockConfidence:0.99,overlayPresent:false,overlayTextWhite:false,photoDate:null,photoTime:null,latitude:null,longitude:null,...overrides});
 const rejectResult=(code,readingOverrides)=>({reading:rejectReading(readingOverrides),validation:{ok:false,validationCode:code}});
-const failsSanitized=(item,result,message)=>{
-  let error;try{checkPrivateReading(item,result);}catch(caught){error=caught;}
+const failsSanitized=(item,result,message,clockMin=0.7)=>{
+  let error;try{checkPrivateReading(item,result,clockMin);}catch(caught){error=caught;}
   ok(error instanceof assert.AssertionError,message);
   ok(!String(error.message).includes('SECRET')&&!String(error.stack).includes('SECRET'),'synthetic: failure text must not carry reading values');
   ok(error.actual===false&&error.expected===true,'synthetic: failure carries booleans only');
@@ -270,7 +304,7 @@ const failsSanitized=(item,result,message)=>{
 
 test('synthetic private-case checkers: reject case rules and sanitized failures',()=>{
   const rejectItem={id:'photo-06',ownerExpected:'reject'};
-  checkPrivateReading(rejectItem,rejectResult('TIMESTAMP_MISSING',{photoTime:''}));
+  checkPrivateReading(rejectItem,rejectResult('TIMESTAMP_MISSING',{photoTime:''}),0.7);
   const marker='SECRET-2000-01-02 03:04:05 13.123456,100.654321 /private/path';
   const bad=[
     rejectResult('GPS_MISSING',{photoDate:marker,photoTime:marker,overlayPresent:true,overlayTextWhite:true}),
@@ -295,7 +329,7 @@ test('synthetic reject case: provider none/openai-error is a failed read even wi
     // Even a reading that is otherwise perfectly consistent is refused for these providers.
     failsSanitized(rejectItem,rejectResult('TIMESTAMP_MISSING',{provider:failed}),`synthetic: consistent reading from ${failed} must still fail`);
   }
-  checkPrivateReading(rejectItem,rejectResult('TIMESTAMP_MISSING',{provider:'workers-ai'}));
+  checkPrivateReading(rejectItem,rejectResult('TIMESTAMP_MISSING',{provider:'workers-ai'}),0.7);
 });
 
 test('synthetic reject case: validationCode must equal the first failing predicate of the reading',async()=>{
@@ -310,8 +344,8 @@ test('synthetic reject case: validationCode must equal the first failing predica
   for(const overrides of readings){
     const reading=rejectReading(overrides);
     const real=validateAttendancePhoto({...reading,overlayConfidence:0.99,locationText:'synthetic place',note:''},syntheticReceived,syntheticRules);
-    ok(real.validationCode===expectedRejectCode(reading),'synthetic: oracle equals the real validator');
-    checkPrivateReading(rejectItem,{reading,validation:{ok:false,validationCode:real.validationCode}});
+    ok(real.validationCode===expectedRejectCode(reading,0.7),'synthetic: oracle equals the real validator');
+    checkPrivateReading(rejectItem,{reading,validation:{ok:false,validationCode:real.validationCode}},0.7);
     seen.add(real.validationCode);
   }
   ok(PRE_GPS_CODES.every(code=>seen.has(code)),'synthetic: every pre-GPS code was exercised');
@@ -329,8 +363,87 @@ test('synthetic pass-case checker: verified values compared, provisional values 
   const passResult={reading:{provider:'openai',kind:'CLOCK',clockPresent:true,overlayPresent:true,overlayTextWhite:true,photoDate:marker,photoTime:'03:04:05',latitude:13,longitude:100},validation:{ok:true,validationCode:'OK'}};
   failsSanitized(passItem,passResult,'synthetic: mismatch of a verified value must fail');
   // An unverified (provisional) reading is not compared with provider output.
-  checkPrivateReading({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09'}});
+  checkPrivateReading({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09'}},0.7);
   failsSanitized({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09',provider:'none'}},'synthetic: failed provider must not pass a pass case');
+});
+
+test('synthetic effective threshold: oracle follows the stated clock confidence threshold (0.70 and 0.80), never a guess',async()=>{
+  const validateAttendancePhoto=await loadValidator();
+  const rejectItem={id:'photo-06',ownerExpected:'reject'};
+  for(const clockMin of [0.7,0.8]){
+    const rules={...syntheticRules,clockMinConfidence:clockMin};
+    for(const clockConfidence of [0.65,0.75,0.85]){
+      const reading=rejectReading({clockConfidence});
+      const real=validateAttendancePhoto({...reading,overlayConfidence:0.99,locationText:'synthetic place',note:''},syntheticReceived,rules);
+      const expected=clockConfidence<clockMin?'CLOCK_NOT_CONFIRMED':'TIMESTAMP_MISSING';
+      ok(real.validationCode===expected&&expectedRejectCode(reading,clockMin)===expected,'synthetic: oracle equals the real validator at this threshold');
+      checkPrivateReading(rejectItem,{reading,validation:{ok:false,validationCode:real.validationCode}},clockMin);
+    }
+  }
+  // The reported case: confidence .75 with endpoint threshold .80 is CLOCK_NOT_CONFIRMED and is accepted only when .80 is stated.
+  const reading=rejectReading({clockConfidence:0.75});
+  const atEighty={reading,validation:{ok:false,validationCode:'CLOCK_NOT_CONFIRMED'}};
+  checkPrivateReading(rejectItem,atEighty,0.8);
+  failsSanitized(rejectItem,atEighty,'synthetic: the same result is refused if 0.70 is stated',0.7);
+  const atSeventy={reading,validation:{ok:false,validationCode:'TIMESTAMP_MISSING'}};
+  checkPrivateReading(rejectItem,atSeventy,0.7);
+  failsSanitized(rejectItem,atSeventy,'synthetic: a 0.70 result is refused if 0.80 is stated',0.8);
+  // No stated threshold: refused, never defaulted.
+  for(const missing of [null,NaN,0,1.5])failsSanitized(rejectItem,atSeventy,'synthetic: missing or invalid threshold must fail',missing);
+  // undefined is called directly: failsSanitized would substitute its own default for it.
+  let undefinedError;try{checkPrivateReading(rejectItem,atSeventy,undefined);}catch(caught){undefinedError=caught;}
+  ok(undefinedError instanceof assert.AssertionError,'synthetic: undefined threshold must fail');
+  ok(parseClockMin('0.7')===0.7&&parseClockMin('0.80')===0.8&&parseClockMin(' 1 ')===1,'synthetic: valid thresholds parse');
+  for(const bad of [undefined,'',' ','0','abc','-0.5','1.5','0.7x','.7','NaN','Infinity'])ok(parseClockMin(bad)===null,'synthetic: invalid threshold text is refused');
+});
+
+test('synthetic pass cases: well-formed values are required even when the reading is provisional',()=>{
+  const item={id:'photo-02',ownerExpected:'pass',readingVerified:false,expectedReading:null};
+  const good={provider:'openai',kind:'CLOCK',clockPresent:true,overlayPresent:true,overlayTextWhite:true,photoDate:'2000-01-02',photoTime:'03:04:05',latitude:13.5,longitude:100.5};
+  const make=overrides=>({reading:{...good,...overrides},validation:{ok:true,validationCode:'OK'}});
+  // Positive: provisional values are not compared with any expectation, only checked for form.
+  checkPrivateReading(item,make({}),0.7);
+  checkPrivateReading(item,make({photoDate:'2000-12-31',photoTime:'23:59',latitude:-90,longitude:-180}),0.7);
+  checkPrivateReading(item,make({photoDate:'2004-02-29',photoTime:'00:00:00',latitude:0,longitude:180}),0.7);
+  const bad=[
+    {photoDate:'not-a-date'},{photoDate:'2000-13-45'},{photoDate:'2001-02-29'},{photoDate:20000102},{photoDate:null},{photoDate:''},
+    {photoTime:'25:61'},{photoTime:'3:04'},{photoTime:'03:04:60'},{photoTime:30405},{photoTime:null},{photoTime:''},
+    // The reported shape: latitude empty with longitude out of range, plus single-axis variants.
+    {latitude:null,longitude:181},{latitude:null},{longitude:null},{latitude:null,longitude:null},
+    {latitude:'13.5'},{longitude:'100.5'},{latitude:NaN},{longitude:Infinity},{latitude:91},{latitude:-91},{longitude:181},{longitude:-181}
+  ];
+  for(const overrides of bad)failsSanitized(item,make(overrides),'synthetic: malformed pass-case value must fail');
+});
+
+test('synthetic validator build: always compiled from the given source, never from a stale or missing dist',async()=>{
+  const ts=(await import('typescript')).default;
+  const root=await mkdtemp(path.join(os.tmpdir(),'clock-build-'));
+  try{
+    const writeSource=async(dir,behaviour)=>{
+      await mkdir(path.join(dir,'src','domain'),{recursive:true});await mkdir(path.join(dir,'src','shared'),{recursive:true});
+      await writeFile(path.join(dir,'src','shared','time.ts'),'export const stamp:string="'+behaviour+'";');
+      await writeFile(path.join(dir,'src','domain','attendance.ts'),'import {stamp} from "../shared/time";\nimport type {Unused} from "../types";\nexport function validateAttendancePhoto():string{return stamp;}');
+    };
+    const load=async(dir,out)=>{const entry=await buildValidator({srcRoot:path.join(dir,'src'),outDir:out,ts});return {entry,fn:(await import(pathToFileURL(entry).href)).validateAttendancePhoto};};
+    // Clean: no dist anywhere.
+    const clean=path.join(root,'clean');await writeSource(clean,'FRESH-1');
+    const first=await load(clean,path.join(root,'out1'));
+    ok(first.fn()==='FRESH-1'&&first.entry.startsWith(path.join(root,'out1')),'synthetic: clean tree compiles into the temp folder');
+    // Stale dist present beside the source: it must be ignored and left untouched.
+    const stale=path.join(root,'stale');await writeSource(stale,'FRESH-2');
+    await mkdir(path.join(stale,'dist','domain'),{recursive:true});
+    await writeFile(path.join(stale,'dist','package.json'),'{"type":"commonjs"}');
+    await writeFile(path.join(stale,'dist','domain','attendance.js'),'exports.validateAttendancePhoto=()=>"STALE";');
+    const second=await load(stale,path.join(root,'out2'));
+    ok(second.fn()==='FRESH-2','synthetic: stale dist is not used');
+    ok((await readFile(path.join(stale,'dist','domain','attendance.js'),'utf8')).includes('STALE'),'synthetic: existing dist is left unmodified');
+    // Source changes after a first build: a new build reflects it (distinct output folder = new module).
+    await writeSource(stale,'FRESH-3');
+    ok((await load(stale,path.join(root,'out3'))).fn()==='FRESH-3','synthetic: changed source is rebuilt');
+    // A missing source file fails closed with a fixed message.
+    let error;try{await buildValidator({srcRoot:path.join(root,'nowhere'),outDir:path.join(root,'out4'),ts});}catch(caught){error=caught;}
+    ok(error instanceof assert.AssertionError&&!String(error.message).includes(root),'synthetic: missing source fails without a path');
+  }finally{await rm(root,{recursive:true,force:true});}
 });
 
 test('synthetic diagnostics carry only allowlisted non-identifying fields',()=>{
@@ -462,7 +575,6 @@ function runChild(env){
 }
 if(!isChild){
   test('synthetic end-to-end output: failing and passing private runs leak no path or private values',async()=>{
-    await loadValidator(); // children must find dist already built (they get a minimal env and never build)
     const root=await mkdtemp(path.join(os.tmpdir(),'clock-fixture-'));
     try{
       const missing=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:path.join(root,'SECRETDIR','missing.json')});

@@ -84,6 +84,9 @@ jobs:
           if grep -q 'ISSUE348_TRANSPORT_OUTCOME_UNKNOWN' "$ISSUE348_SCRATCH/live.tap"; then
             echo 'At least one submission has an unknown outcome. Reconcile before a new dispatch.'
           fi
+          if [[ "$result" != 0 ]]; then
+            echo 'Review submitted cases and Production usage before any new dispatch.'
+          fi
           [[ "$result" == 0 ]]
           grep -qx '# pass 12' "$ISSUE348_SCRATCH/live.tap"
       - name: Remove transient files

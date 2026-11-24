@@ -19,14 +19,16 @@ globalThis.fetch = async (target, options) => {
   if (!permitted || target !== permitted.url || options.method !== 'POST') throw Error('Image request outside approved scope');
   allowed.delete(hash);
   let response;
+  let result;
   try {
     response = await send(target, {...options, redirect: 'error', signal: AbortSignal.timeout(120000)});
+    if (response.ok) result = await response.clone().json();
   } catch {
     console.error('ISSUE348_TRANSPORT_OUTCOME_UNKNOWN');
     throw Error('Transport outcome unknown');
   }
   if (response.ok && permitted.overlay) {
-    const {reading} = await response.clone().json();
+    const reading = result?.reading;
     if (reading?.photoDate !== permitted.overlay.date || reading?.photoTime !== permitted.overlay.time) {
       throw Error('Reviewed overlay mismatch');
     }

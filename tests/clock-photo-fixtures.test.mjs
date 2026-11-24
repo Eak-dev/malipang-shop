@@ -1,33 +1,150 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {readFile} from 'node:fs/promises';
+import {readFile,mkdtemp,mkdir,writeFile,rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {validateAttendancePhoto} from '../dist/domain/attendance.js';
 
-// Owner-supplied private examples: workspace/private-test-fixtures/clock-20261123/README_TH.md.
-// These are new cases; do not pair them with the original cases.json expectations.
-const fixtureDir=path.join(path.dirname(fileURLToPath(import.meta.url)),'fixtures','clock-photos');
-const cases=JSON.parse(await readFile(path.join(fixtureDir,'cases.json'),'utf8'));
-const fixtureImages=await Promise.all(cases.map(async item=>{
-  try{return await readFile(path.join(fixtureDir,item.file));}catch{return null;}
-}));
-const fixtureImagesPresent=fixtureImages.every(Boolean);
+// Two explicit fixture sources:
+//  - default: tests/fixtures/clock-photos/cases.json (unchanged legacy contract);
+//  - private: MALIPANG_CLOCK_PRIVATE_MANIFEST points to a manifest OUTSIDE Git.
+// When the variable is set the private source is used exclusively; there is no
+// silent fallback to cases.json. Private values (timestamps, GPS, paths, read
+// errors) must never reach assertion messages or diagnostics: every failure
+// below uses fixed, boolean-based messages (assert.ok with a literal message).
+const selfPath=fileURLToPath(import.meta.url);
+const fixtureDir=path.join(path.dirname(selfPath),'fixtures','clock-photos');
+const isChild=process.env.CLOCK_FIXTURE_CHILD==='1';
+const ok=(condition,message)=>assert.ok(Boolean(condition),message);
+
+// Owner-stated expectations, fixed in code so a manifest cannot drift toward system output.
+const OWNER_EXPECTED={'photo-01':'pass','photo-02':'pass','photo-03':'pass','photo-04':'pass','photo-05':'pass','photo-06':'reject','photo-07':'reject'};
+// Validation order from src/domain/attendance.ts: a reading without date/time must stop at or before this code.
+const PRE_GPS_CODES=['NOT_CLOCK','CLOCK_NOT_CONFIRMED','TIMESTAMP_MISSING','TIMESTAMP_NOT_WHITE','TIMESTAMP_FIELDS_MISSING'];
+const ISO_WITH_ZONE=/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/;
+const sha256=buffer=>createHash('sha256').update(buffer).digest('hex');
+const isEmptyText=value=>value==null||value==='';
+
+async function loadPrivateManifest(manifestPath){
+  const fail=code=>({ok:false,code});
+  if(typeof manifestPath!=='string'||!manifestPath.trim())return fail('MANIFEST_PATH_EMPTY');
+  const manifestFile=path.resolve(manifestPath),dir=path.dirname(manifestFile);
+  let text;try{text=await readFile(manifestFile,'utf8');}catch{return fail('MANIFEST_UNREADABLE');}
+  let manifest;try{manifest=JSON.parse(text);}catch{return fail('MANIFEST_NOT_JSON');}
+  if(!manifest||!Array.isArray(manifest.cases))return fail('MANIFEST_SHAPE_INVALID');
+  if(manifest.cases.length!==7)return fail('MANIFEST_CASE_COUNT');
+  const ids=manifest.cases.map(item=>item&&item.id);
+  if(new Set(ids).size!==7||!ids.every(id=>typeof id==='string'&&Object.hasOwn(OWNER_EXPECTED,id)))return fail('MANIFEST_IDS_INVALID');
+  const cases=[];
+  for(const item of manifest.cases){
+    if(item.ownerExpected!==OWNER_EXPECTED[item.id])return fail('MANIFEST_OWNER_EXPECTED_MISMATCH');
+    if(typeof item.receivedAt!=='string'||!ISO_WITH_ZONE.test(item.receivedAt)||!Number.isFinite(new Date(item.receivedAt).getTime()))return fail('MANIFEST_RECEIVED_AT_INVALID');
+    if(typeof item.file!=='string'||!item.file||path.isAbsolute(item.file))return fail('MANIFEST_IMAGE_PATH_INVALID');
+    const imagePath=path.resolve(dir,item.file),relative=path.relative(dir,imagePath);
+    if(!relative||relative.startsWith('..')||path.isAbsolute(relative))return fail('MANIFEST_IMAGE_PATH_INVALID');
+    if(typeof item.sha256!=='string'||!/^[0-9a-f]{64}$/.test(item.sha256))return fail('MANIFEST_HASH_INVALID');
+    let expectedReading=null;
+    if(item.ownerExpected==='reject'){
+      if(item.expectedReading!=null)return fail('MANIFEST_REJECT_HAS_READING');
+    }else if(item.readingVerified===true){
+      const reading=item.expectedReading;
+      if(!reading||!/^\d{4}-\d{2}-\d{2}$/.test(reading.photoDate)||!/^\d{2}:\d{2}(?::\d{2})?$/.test(reading.photoTime)||!Number.isFinite(reading.latitude)||!Number.isFinite(reading.longitude))return fail('MANIFEST_EXPECTED_READING_INVALID');
+      expectedReading={photoDate:reading.photoDate,photoTime:reading.photoTime,latitude:reading.latitude,longitude:reading.longitude};
+    }
+    let image;try{image=await readFile(imagePath);}catch{return fail('IMAGE_UNREADABLE');}
+    if(image.length<3||image[0]!==0xff||image[1]!==0xd8)return fail('IMAGE_NOT_JPEG');
+    if(sha256(image)!==item.sha256)return fail('IMAGE_HASH_MISMATCH');
+    // readingVerified stays false until an independent reviewer compares the values with the photo.
+    cases.push({id:item.id,mode:'private',image,receivedAt:item.receivedAt,ownerExpected:item.ownerExpected,readingVerified:item.readingVerified===true,expectedReading});
+  }
+  return{ok:true,cases};
+}
+
+const manifestEnv=process.env.MALIPANG_CLOCK_PRIVATE_MANIFEST;
+const privateMode=manifestEnv!==undefined;
+let loaded;
+if(privateMode){loaded=await loadPrivateManifest(manifestEnv);}
+else{
+  const legacy=JSON.parse(await readFile(path.join(fixtureDir,'cases.json'),'utf8'));
+  const images=await Promise.all(legacy.map(async item=>{try{return await readFile(path.join(fixtureDir,item.file));}catch{return null;}}));
+  loaded={ok:true,cases:legacy.map((item,index)=>({id:item.id,mode:'legacy',image:images[index],receivedAt:item.receivedAt,expected:item.expected}))};
+}
+const cases=loaded.ok?loaded.cases:[];
+
+// Pure checkers: assertion messages are fixed text and never include actual/expected values.
+function checkPrivateReading(item,result){
+  const reading=result&&result.reading,validation=result&&result.validation;
+  ok(reading&&validation,`${item.id}: response shape`);
+  const timestampPresent=!isEmptyText(reading.photoDate)&&!isEmptyText(reading.photoTime);
+  const gpsPresent=reading.latitude!=null&&reading.longitude!=null;
+  const code=String(validation.validationCode);
+  if(item.ownerExpected==='pass'){
+    ok(validation.ok===true,`${item.id}: owner expects accepted`);
+    ok(code==='OK',`${item.id}: owner expects validation OK`);
+    ok(reading.kind==='CLOCK'&&reading.clockPresent===true&&reading.overlayPresent===true&&reading.overlayTextWhite===true,`${item.id}: clock and white overlay required`);
+    ok(timestampPresent&&gpsPresent,`${item.id}: timestamp and GPS required`);
+    if(item.readingVerified&&item.expectedReading){
+      const want=item.expectedReading;
+      ok(reading.photoDate===want.photoDate,`${item.id}: verified date matches`);
+      ok(reading.photoTime===want.photoTime,`${item.id}: verified time matches`);
+      ok(Math.abs(reading.latitude-want.latitude)<0.00001&&Math.abs(reading.longitude-want.longitude)<0.00001,`${item.id}: verified GPS matches`);
+    }
+  }else{
+    ok(validation.ok===false,`${item.id}: owner expects rejection`);
+    ok(code!=='OK',`${item.id}: rejection code present`);
+    // Nothing may be fabricated for a photo without these overlay fields.
+    ok(isEmptyText(reading.photoDate)&&isEmptyText(reading.photoTime),`${item.id}: no date or time may be invented`);
+    ok(!gpsPresent,`${item.id}: no GPS may be invented`);
+    // Without date/time the validator stops at or before TIMESTAMP_FIELDS_MISSING, so GPS_MISSING would contradict the reading.
+    ok(PRE_GPS_CODES.includes(code),`${item.id}: rejection code consistent with validation order`);
+  }
+}
+
+function checkLegacyReading(item,result){
+  const reading=result&&result.reading,validation=result&&result.validation,want=item.expected;
+  ok(reading&&validation,`${item.id}: response shape`);
+  ok(reading.kind===want.kind,`${item.id}: kind`);
+  ok(reading.photoDate===want.photoDate,`${item.id}: photo date`);
+  ok(reading.photoTime===want.photoTime,`${item.id}: photo time`);
+  ok(reading.clockPresent===true&&reading.overlayPresent===true&&reading.overlayTextWhite===true,`${item.id}: clock and white overlay`);
+  if(want.latitude==null)ok(reading.latitude===null&&reading.longitude===null,`${item.id}: GPS absent`);
+  else ok(Math.abs(reading.latitude-want.latitude)<0.00001&&Math.abs(reading.longitude-want.longitude)<0.00001,`${item.id}: GPS`);
+  ok(validation.ok===want.accepted,`${item.id}: acceptance`);
+  ok(validation.validationCode===want.validationCode,`${item.id}: validation code`);
+}
+
+// Allowlisted, non-identifying diagnostics only: no timestamp, GPS, address, path or text.
+function diagnosticFor(item,result){
+  const reading=result.reading||{},validation=result.validation||{};
+  const code=/^[A-Z_]{1,40}$/.test(String(validation.validationCode))?validation.validationCode:'UNRECOGNISED';
+  const provider=/^[a-z0-9-]{1,30}$/.test(String(reading.provider))?reading.provider:'unrecognised';
+  return{id:item.id,provider,accepted:validation.ok===true,validationCode:code,clockPresent:reading.clockPresent===true,overlayPresent:reading.overlayPresent===true,timestampPresent:!isEmptyText(reading.photoDate)&&!isEmptyText(reading.photoTime),gpsPresent:reading.latitude!=null&&reading.longitude!=null};
+}
 
 test('clock photo fixture contract contains the seven supplied photos',async()=>{
-  assert.equal(cases.length,7);
-  assert.equal(new Set(cases.map(item=>item.id)).size,7);
-  for(const [index,item] of cases.entries()){
-    const image=fixtureImages[index];
-    if(image){
-      assert.ok(image.length>0,`${item.id}: image is empty`);
-      assert.deepEqual([...image.subarray(0,2)],[0xff,0xd8],`${item.id}: not a JPEG`);
+  ok(loaded.ok,`private manifest rejected: ${loaded.ok?'':loaded.code}`);
+  ok(cases.length===7,'seven cases required');
+  ok(new Set(cases.map(item=>item.id)).size===7,'case ids must be unique');
+  for(const item of cases){
+    if(item.mode==='private'){
+      ok(item.image.length>0&&item.image[0]===0xff&&item.image[1]===0xd8,`${item.id}: JPEG image required`);
+      ok(Number.isFinite(new Date(item.receivedAt).getTime()),`${item.id}: receivedAt`);
+      continue;
     }
-    assert.equal(item.expected.kind,'CLOCK');
-    assert.match(item.expected.photoDate,/^\d{4}-\d{2}-\d{2}$/);
-    assert.match(item.expected.photoTime,/^\d{2}:\d{2}(?::\d{2})?$/);
-    assert.equal(typeof item.expected.accepted,'boolean');
-    if(item.expected.accepted){assert.ok(Number.isFinite(item.expected.latitude));assert.ok(Number.isFinite(item.expected.longitude));}
-    assert.ok(Number.isFinite(new Date(item.receivedAt).getTime()));
+    if(item.image){
+      ok(item.image.length>0,`${item.id}: image is empty`);
+      ok(item.image[0]===0xff&&item.image[1]===0xd8,`${item.id}: not a JPEG`);
+    }
+    const want=item.expected;
+    ok(want.kind==='CLOCK',`${item.id}: kind`);
+    ok(/^\d{4}-\d{2}-\d{2}$/.test(want.photoDate),`${item.id}: photoDate format`);
+    ok(/^\d{2}:\d{2}(?::\d{2})?$/.test(want.photoTime),`${item.id}: photoTime format`);
+    ok(typeof want.accepted==='boolean',`${item.id}: accepted flag`);
+    if(want.accepted)ok(Number.isFinite(want.latitude)&&Number.isFinite(want.longitude),`${item.id}: GPS for accepted case`);
+    ok(Number.isFinite(new Date(item.receivedAt).getTime()),`${item.id}: receivedAt`);
   }
 });
 
@@ -38,47 +155,176 @@ const openAIModel=process.env.MALIPANG_OPENAI_MODEL||'';
 const selectedIds=new Set(String(process.env.MALIPANG_CLOCK_CASES||'').split(',').map(value=>value.trim()).filter(Boolean));
 const selectedCases=selectedIds.size?cases.filter(item=>selectedIds.has(item.id)):cases;
 
+// Live: needs an explicitly provided, authorised test endpoint. No default URL exists.
 test('live vision enforces white timestamp, GPS, and shop-clock evidence',async t=>{
-  assert.ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
-  assert.ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
-  assert.ok(fixtureImagesPresent,'all seven clock fixture images are required');
-  assert.equal(selectedCases.length,cases.length,'all seven clock cases must be selected');
-  assert.ok(['pipeline','openai','workers-ai'].includes(provider));
-  const adminToken=(await readFile(tokenFile,'utf8')).trim();
-  assert.ok(adminToken.length>=32,'admin token is missing or too short');
+  ok(loaded.ok,`private manifest rejected: ${loaded.ok?'':loaded.code}`);
+  ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
+  ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
+  ok(cases.length===7&&cases.every(item=>item.image),'all seven clock fixture images are required');
+  ok(selectedCases.length===cases.length,'all seven clock cases must be selected');
+  ok(['pipeline','openai','workers-ai'].includes(provider),'provider must be pipeline, openai, or workers-ai');
+  let adminToken='';
+  try{adminToken=(await readFile(tokenFile,'utf8')).trim();}catch{ok(false,'admin token file is unreadable');}
+  ok(adminToken.length>=32,'admin token is missing or too short');
 
   for(const item of selectedCases){
     await t.test(item.id,async t=>{
-      const index=cases.findIndex(candidate=>candidate.id===item.id);
-      const image=fixtureImages[index];
-      assert.ok(image,`${item.id}: local fixture is missing`);
       const modelQuery=openAIModel?`&model=${encodeURIComponent(openAIModel)}`:'';
       const url=`${baseUrl}/admin/vision/evaluate?provider=${encodeURIComponent(provider)}&receivedAt=${encodeURIComponent(item.receivedAt)}${modelQuery}`;
-      const response=await fetch(url,{
-        method:'POST',
-        headers:{authorization:`Bearer ${adminToken}`,'content-type':'image/jpeg'},
-        body:image
-      });
-      const result=await response.json();
-      assert.equal(response.ok,true,`${item.id}: HTTP ${response.status} ${result.error||''}`);
-      assert.equal(result.ok,true,`${item.id}: endpoint failed`);
-      assert.equal(result.reading.kind,item.expected.kind);
-      assert.equal(result.reading.photoDate,item.expected.photoDate);
-      assert.equal(result.reading.photoTime,item.expected.photoTime);
-      assert.equal(result.reading.clockPresent,true);
-      assert.equal(result.reading.overlayPresent,true);
-      assert.equal(result.reading.overlayTextWhite,true);
-      if(item.expected.latitude==null){assert.equal(result.reading.latitude,null);assert.equal(result.reading.longitude,null);}else{assert.ok(Math.abs(result.reading.latitude-item.expected.latitude)<0.00001);assert.ok(Math.abs(result.reading.longitude-item.expected.longitude)<0.00001);}
-      assert.equal(result.validation.ok,item.expected.accepted,`${item.id}: ${result.validation.validationCode}`);
-      assert.equal(result.validation.validationCode,item.expected.validationCode);
-      t.diagnostic(JSON.stringify({
-        provider:result.reading.provider,
-        photoTimestamp:`${result.reading.photoDate} ${result.reading.photoTime}`,
-        gps:[result.reading.latitude,result.reading.longitude],
-        clockPresent:result.reading.clockPresent,
-        overlayConfidence:result.reading.overlayConfidence,
-        validation:result.validation.validationCode
-      }));
+      let response,result;
+      try{response=await fetch(url,{method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'image/jpeg'},body:item.image});}
+      catch{ok(false,`${item.id}: evaluation request failed`);}
+      try{result=await response.json();}catch{ok(false,`${item.id}: HTTP ${response.status} non-JSON response`);}
+      ok(response.ok===true,`${item.id}: HTTP ${response.status}`);
+      ok(result&&result.ok===true,`${item.id}: endpoint failed`);
+      if(item.mode==='private')checkPrivateReading(item,result);else checkLegacyReading(item,result);
+      t.diagnostic(JSON.stringify(diagnosticFor(item,result)));
     });
   }
 });
+
+// ---- Synthetic, local only: no photos, no network, no provider. These are NOT live results. ----
+const syntheticRules={storeLat:13,storeLng:100,allowedRadiusM:120,maxPhotoAgeMin:3,overlayMinConfidence:0.9,clockMinConfidence:0.7};
+const syntheticReading=overrides=>({kind:'CLOCK',clockPresent:true,clockConfidence:0.99,overlayPresent:true,overlayTextWhite:true,overlayConfidence:0.99,photoDate:'2000-01-02',photoTime:'03:04:05',latitude:13,longitude:100,locationText:'synthetic place',note:'',...overrides});
+const syntheticReceived='2000-01-01T20:04:10.000Z'; // 03:04:10 at +07:00, 5 s after the synthetic photo
+
+test('synthetic validator order: reading without date/time never reaches GPS_MISSING',()=>{
+  const noFields={photoDate:null,photoTime:null,latitude:null,longitude:null};
+  const steps=[
+    [{kind:'OTHER'},'NOT_CLOCK'],
+    [{clockPresent:false},'CLOCK_NOT_CONFIRMED'],
+    [{clockConfidence:0.1},'CLOCK_NOT_CONFIRMED'],
+    [{overlayPresent:false,...noFields},'TIMESTAMP_MISSING'],
+    [{overlayTextWhite:false,...noFields},'TIMESTAMP_NOT_WHITE'],
+    [noFields,'TIMESTAMP_FIELDS_MISSING'],
+    [{photoDate:'',photoTime:'',latitude:null,longitude:null},'TIMESTAMP_FIELDS_MISSING']
+  ];
+  for(const [overrides,expected] of steps){
+    const result=validateAttendancePhoto(syntheticReading(overrides),syntheticReceived,syntheticRules);
+    ok(result.ok===false&&result.validationCode===expected,'synthetic: first failing check follows documented order');
+    ok(result.validationCode!=='GPS_MISSING','synthetic: GPS_MISSING must not precede timestamp checks');
+    ok(PRE_GPS_CODES.includes(result.validationCode),'synthetic: code belongs to pre-GPS group');
+  }
+});
+
+test('synthetic validator: GPS_MISSING only when date and time are present',()=>{
+  const missingGps=validateAttendancePhoto(syntheticReading({latitude:null,longitude:null}),syntheticReceived,syntheticRules);
+  ok(missingGps.ok===false&&missingGps.validationCode==='GPS_MISSING','synthetic: timestamp present, GPS absent');
+  ok(!PRE_GPS_CODES.includes(missingGps.validationCode),'synthetic: GPS_MISSING is outside the pre-GPS group');
+  const complete=validateAttendancePhoto(syntheticReading({}),syntheticReceived,syntheticRules);
+  ok(complete.ok===true&&complete.validationCode==='OK','synthetic: complete reading accepted');
+});
+
+test('synthetic private-case checkers: reject case rules and sanitized failures',()=>{
+  const rejectItem={id:'photo-06',ownerExpected:'reject'};
+  checkPrivateReading(rejectItem,{reading:{photoDate:null,photoTime:'',latitude:null,longitude:null},validation:{ok:false,validationCode:'TIMESTAMP_MISSING'}});
+  const marker='SECRET-2000-01-02 03:04:05 13.123456,100.654321 /private/path';
+  const bad=[
+    {reading:{photoDate:marker,photoTime:marker,latitude:13.123456,longitude:100.654321},validation:{ok:false,validationCode:'GPS_MISSING'}},
+    {reading:{photoDate:null,photoTime:null,latitude:13.123456,longitude:100.654321},validation:{ok:false,validationCode:'TIMESTAMP_MISSING'}},
+    {reading:{photoDate:null,photoTime:null,latitude:null,longitude:null},validation:{ok:false,validationCode:'GPS_MISSING'}},
+    {reading:{photoDate:null,photoTime:null,latitude:null,longitude:null},validation:{ok:true,validationCode:'OK'}}
+  ];
+  for(const result of bad){
+    let error;try{checkPrivateReading(rejectItem,result);}catch(caught){error=caught;}
+    ok(error instanceof assert.AssertionError,'synthetic: bad reject case must fail');
+    ok(!String(error.message).includes('SECRET')&&!String(error.stack).includes('SECRET'),'synthetic: failure text must not carry reading values');
+    ok(error.actual===false&&error.expected===true,'synthetic: failure carries booleans only');
+  }
+  const passItem={id:'photo-01',ownerExpected:'pass',readingVerified:true,expectedReading:{photoDate:'2000-01-02',photoTime:'03:04:05',latitude:13,longitude:100}};
+  const passResult={reading:{kind:'CLOCK',clockPresent:true,overlayPresent:true,overlayTextWhite:true,photoDate:marker,photoTime:'03:04:05',latitude:13,longitude:100},validation:{ok:true,validationCode:'OK'}};
+  let error;try{checkPrivateReading(passItem,passResult);}catch(caught){error=caught;}
+  ok(error instanceof assert.AssertionError&&!String(error.message).includes('SECRET')&&error.actual===false&&error.expected===true,'synthetic: mismatch of a verified value is sanitized');
+  // An unverified (provisional) reading is not compared with provider output.
+  checkPrivateReading({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09'}});
+});
+
+test('synthetic diagnostics carry only allowlisted non-identifying fields',()=>{
+  const marker='SECRET-2000-01-02 03:04:05 13.123456,100.654321';
+  const out=diagnosticFor({id:'photo-01'},{reading:{provider:'openai',clockPresent:true,overlayPresent:true,photoDate:marker,photoTime:marker,latitude:13.123456,longitude:100.654321,locationText:marker,overlayRawText:marker},validation:{ok:true,validationCode:'OK'}});
+  const text=JSON.stringify(out);
+  ok(!text.includes('SECRET')&&!/\d{4}-\d{2}-\d{2}/.test(text)&&!/\d+\.\d{4,}/.test(text),'synthetic: diagnostics contain no date, time or GPS');
+  ok(JSON.stringify(Object.keys(out).sort())===JSON.stringify(['accepted','clockPresent','gpsPresent','id','overlayPresent','provider','timestampPresent','validationCode']),'synthetic: diagnostics keys are allowlisted');
+  ok(diagnosticFor({id:'photo-01'},{reading:{provider:marker},validation:{validationCode:marker}}).validationCode==='UNRECOGNISED','synthetic: unrecognised code is masked');
+});
+
+// Builds a synthetic manifest (fake JPEG bytes only) under root/SECRETDIR; the marker in the
+// directory name lets tests prove that paths never appear in output.
+async function syntheticManifest(root,{mutate,omitImage}={}){
+  const dir=path.join(root,'SECRETDIR');await mkdir(dir,{recursive:true});
+  const entries=[];
+  for(const id of Object.keys(OWNER_EXPECTED)){
+    const image=Buffer.concat([Buffer.from([0xff,0xd8,0xff]),Buffer.from(`synthetic-${id}`)]);
+    const file=`${id}.jpg`;
+    if(omitImage!==id)await writeFile(path.join(dir,file),image);
+    entries.push({id,file,sha256:sha256(image),receivedAt:'2000-01-01T20:04:10.000Z',ownerExpected:OWNER_EXPECTED[id]});
+  }
+  const manifest={cases:entries};
+  if(mutate)mutate(manifest);
+  const manifestPath=path.join(dir,'manifest.json');
+  await writeFile(manifestPath,JSON.stringify(manifest));
+  return manifestPath;
+}
+
+test('synthetic private manifest: valid manifest loads, every defect fails closed without cases.json fallback',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'clock-fixture-'));
+  try{
+    const sub=name=>path.join(root,name);
+    const valid=await loadPrivateManifest(await syntheticManifest(sub('a')));
+    ok(valid.ok&&valid.cases.length===7,'synthetic: valid manifest loads');
+    const overwrite=async(name,content)=>{const p=await syntheticManifest(sub(name));await writeFile(p,content);return p;};
+    const defects=[
+      ['MANIFEST_PATH_EMPTY',async()=>''],
+      ['MANIFEST_UNREADABLE',async()=>path.join(root,'SECRETDIR','missing.json')],
+      ['MANIFEST_NOT_JSON',()=>overwrite('b','{SECRET not json')],
+      ['MANIFEST_SHAPE_INVALID',()=>overwrite('c','{"cases":"x"}')],
+      ['MANIFEST_CASE_COUNT',()=>syntheticManifest(sub('d'),{mutate:m=>m.cases.pop()})],
+      ['MANIFEST_IDS_INVALID',()=>syntheticManifest(sub('e'),{mutate:m=>{m.cases[1].id=m.cases[0].id;}})],
+      ['MANIFEST_OWNER_EXPECTED_MISMATCH',()=>syntheticManifest(sub('f'),{mutate:m=>{m.cases[5].ownerExpected='pass';}})],
+      ['MANIFEST_RECEIVED_AT_INVALID',()=>syntheticManifest(sub('g'),{mutate:m=>{m.cases[0].receivedAt='2000-01-01 03:04:10';}})],
+      ['MANIFEST_IMAGE_PATH_INVALID',()=>syntheticManifest(sub('h'),{mutate:m=>{m.cases[0].file='../escape.jpg';}})],
+      ['MANIFEST_REJECT_HAS_READING',()=>syntheticManifest(sub('i'),{mutate:m=>{m.cases[6].expectedReading={photoDate:'2000-01-02'};}})],
+      ['MANIFEST_EXPECTED_READING_INVALID',()=>syntheticManifest(sub('j'),{mutate:m=>{m.cases[0].readingVerified=true;}})],
+      ['IMAGE_UNREADABLE',()=>syntheticManifest(sub('k'),{omitImage:'photo-03'})],
+      ['IMAGE_HASH_MISMATCH',()=>syntheticManifest(sub('l'),{mutate:m=>{m.cases[2].sha256='0'.repeat(64);}})],
+      ['MANIFEST_HASH_INVALID',()=>syntheticManifest(sub('m'),{mutate:m=>{m.cases[2].sha256='xyz';}})]
+    ];
+    for(const [code,build] of defects){
+      const result=await loadPrivateManifest(await build());
+      ok(result.ok===false&&result.code===code,`synthetic: defect ${code} must fail closed`);
+      ok(!('cases' in result),`synthetic: defect ${code} returns no cases`);
+    }
+    const notJpeg=await syntheticManifest(sub('n'));
+    await writeFile(path.join(path.dirname(notJpeg),'photo-02.jpg'),Buffer.from('plain'));
+    ok((await loadPrivateManifest(notJpeg)).code==='IMAGE_NOT_JPEG','synthetic: non-JPEG fails');
+  }finally{await rm(root,{recursive:true,force:true});}
+});
+
+// Child-process checks: the real file is run with synthetic input, no network variables and a
+// marker inside the path, proving neither success nor failure output reveals paths or errors.
+function runChild(env){
+  const clean={PATH:process.env.PATH,CLOCK_FIXTURE_CHILD:'1',...env};
+  const run=spawnSync(process.execPath,['--test','--test-reporter=tap',selfPath],{env:clean,encoding:'utf8',timeout:60000});
+  return{status:run.status,output:`${run.stdout||''}\n${run.stderr||''}`};
+}
+if(!isChild){
+  test('synthetic end-to-end output: failing and passing private runs leak no path or private values',async()=>{
+    const root=await mkdtemp(path.join(os.tmpdir(),'clock-fixture-'));
+    try{
+      const missing=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:path.join(root,'SECRETDIR','missing.json')});
+      ok(missing.status!==0,'synthetic: missing manifest must fail the run');
+      ok(!missing.output.includes('SECRET')&&!missing.output.includes(root),'synthetic: failure output contains no path');
+      ok(/MANIFEST_UNREADABLE/.test(missing.output),'synthetic: failure states a fixed reason code');
+      ok(!/^ok \d+ - clock photo fixture contract/m.test(missing.output),'synthetic: missing manifest cannot pass the contract');
+
+      const manifestPath=await syntheticManifest(path.join(root,'valid'));
+      const passing=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:manifestPath});
+      ok(passing.status!==0,'synthetic: live prerequisites missing must still fail the run');
+      ok(/^ok \d+ - clock photo fixture contract/m.test(passing.output),'synthetic: valid manifest passes the local contract');
+      ok(/^not ok \d+ - live vision/m.test(passing.output),'synthetic: live case fails, never skips, without an endpoint');
+      ok(!/ # SKIP/.test(passing.output),'synthetic: nothing is skipped');
+      ok(/MALIPANG_VISION_BASE_URL is required/.test(passing.output),'synthetic: live failure names the missing prerequisite');
+      ok(!passing.output.includes('SECRET')&&!passing.output.includes(root),'synthetic: passing-contract output contains no path');
+    }finally{await rm(root,{recursive:true,force:true});}
+  });
+}

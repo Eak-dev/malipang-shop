@@ -44,7 +44,13 @@ npm run test:clock-photos
 
 Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 MiB ต้องใช้ Admin Token และไม่บันทึกรูปลง R2
 
-กติกาใหม่คาดว่า Photo 1–5 ผ่านเพราะมี Timestamp และ GPS ครบ ส่วน Photo 6–7 ต้องไม่ผ่านด้วย `GPS_MISSING` เพราะมี Timestamp แต่ไม่มีพิกัดบนภาพ ต้องรัน Live baseline ใหม่หลัง Deploy
+กติกาใหม่คาดว่า Photo 1–5 ผ่านเพราะมี Timestamp และ GPS ครบ ส่วน Photo 6–7 ต้องไม่ผ่านด้วย `GPS_MISSING` เพราะมี Timestamp แต่ไม่มีพิกัดบนภาพ ต้องรัน Live baseline ใหม่หลัง Deploy (ข้อนี้ใช้กับชุด `cases.json` เดิมเท่านั้น)
+
+### ชุดรูปส่วนตัวใหม่ (manifest นอก Git)
+
+ตั้ง `MALIPANG_CLOCK_PRIVATE_MANIFEST` เป็น path ของ manifest ส่วนตัวนอก repository เพื่อให้ `tests/clock-photo-fixtures.test.mjs` ใช้ชุดนั้นแทน `cases.json` ทั้งชุด; ไม่ตั้งค่า = ใช้ `cases.json` เดิมตามเดิม และเมื่อตั้งค่าแล้วจะไม่ถอยกลับไป `cases.json` เงียบ ๆ. manifest ต้องมีเจ็ดเคส (`photo-01` ถึง `photo-07`) ต่อเคสมี `file` (path สัมพัทธ์ภายในโฟลเดอร์ manifest), `sha256`, `receivedAt` ย้อนหลังที่มี time zone และ `ownerExpected`. expected ของเจ้าของถูกกำหนดในโค้ดทดสอบ: 01–05 `pass`, 06–07 `reject`; manifest ที่ไม่ตรงถูกปฏิเสธ จึงไม่ปรับตามผลของระบบ. ค่าวัน เวลา และพิกัดของเคส `pass` ใส่ใน `expectedReading` ได้ แต่ใช้เทียบก็ต่อเมื่อ `readingVerified` เป็น `true` หลังผู้ตรวจอิสระเทียบกับภาพแล้ว; เคส `reject` ห้ามมีค่าเหล่านี้. ขาด manifest, ภาพ, sha256 ไม่ตรงหรือรูปแบบผิด จะล้มด้วยรหัสเหตุคงที่ ไม่ข้าม.
+
+เคส 06–07 ต้อง `validation.ok=false`, ไม่มีวันเวลาและพิกัดที่ถูกสร้างขึ้น และรหัสต้องสอดคล้องกับลำดับตรวจใน `src/domain/attendance.ts` (ก่อน `GPS_MISSING`: `NOT_CLOCK`, `CLOCK_NOT_CONFIRMED`, `TIMESTAMP_MISSING`, `TIMESTAMP_NOT_WHITE`, `TIMESTAMP_FIELDS_MISSING`) โดยไม่กำหนด `GPS_MISSING` ล่วงหน้า. ข้อความ assertion และ diagnostics ไม่พิมพ์เวลา พิกัด ที่อยู่ path หรือข้อผิดพลาดจากการอ่านไฟล์; diagnostics มีเฉพาะรหัสเคส ผลรับ/ปฏิเสธ รหัส validation และค่า present/absent. test แบบ `synthetic` ในไฟล์เดียวกันใช้ข้อมูลสังเคราะห์ในเครื่อง ไม่ใช้รูปจริงหรือ network และไม่ใช่ผลทดสอบ live. Live ยังต้องมี `MALIPANG_VISION_BASE_URL` ที่ได้รับอนุญาตและ `MALIPANG_ADMIN_TOKEN_FILE`; ไม่มีค่าเริ่มต้น และขาดแล้วล้ม. flow ของระบบไม่เปลี่ยน เปลี่ยนเฉพาะชุดทดสอบและเอกสารนี้.
 
 ## Regression test สลิปธนาคารและวอลเล็ต
 

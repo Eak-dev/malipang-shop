@@ -144,3 +144,17 @@ test('missing currency and legacy malformed evidence never open the completion f
     assert.equal(row(h,id).expense_id,null);assert.equal(count(h,'expense_events'),0);
   }finally{h.close();}
 });
+test('unmarked held slip from an older reader needs the submitter to attest currency before promotion',async()=>{
+  const h=expenseSqlite();try{
+    const id=await receive(h,slip({paidAmountBaht:null}));
+    h.sqlite.prepare('UPDATE expense_documents SET normalized_json=NULL WHERE document_id=?').run(id);
+    await answer(h,id,'ยอดจ่ายจริง','25');assert.equal(row(h,id).expense_id,null);
+    await answer(h,id,'สกุลเงิน','USD');await answer(h,id,'ยอดจ่ายจริง','25');
+    assert.equal(row(h,id).expense_id,null);
+    await answer(h,id,'สกุลเงิน','บาท','other-user');assert.equal(row(h,id).normalized_json,null);
+    await answer(h,id,'สกุลเงิน','บาท');
+    assert.equal(JSON.parse(row(h,id).normalized_json).slipCurrencyEvidence,'user');
+    await answer(h,id,'ยอดจ่ายจริง','25');
+    assert.equal(row(h,id).status,'WAITING_CONFIRM');assert.equal(count(h,'sync_jobs'),0);
+  }finally{h.close();}
+});

@@ -3,7 +3,9 @@ import type {BankSlipDocument,Env} from "../types";
 import {bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip} from "./bank-slip";
 import {bankSlipReviewState,documentWithReviewState} from "./review-state";
 
+type ReviewedSlip=BankSlipDocument & {slipCurrencyEvidence?:"read"|"user"};
 const prompts = {
+  currency: ["สกุลเงิน", "กรอก THB หรือ บาท เฉพาะเมื่อสลิปแสดงว่าจ่ายเป็นบาท"],
   paidAmountBaht: ["ยอดจ่ายจริง", "จำนวนบาท เช่น 120.50"],
   paymentDate: ["วันที่ชำระ", "วันที่ ค.ศ. เช่น 2026-11-23"],
   paymentTime: ["เวลาชำระ", "เวลา เช่น 09:15"],
@@ -24,6 +26,13 @@ export function missingSlipFields(document:BankSlipDocument):Field[]{
   const {missing}=validationForSlip(document);
   if(missing.some(reason=>!Object.hasOwn(fieldsByIssue,reason)))return [];
   return [...new Set(missing.map(reason=>fieldsByIssue[reason]!))];
+}
+
+export function heldSlipFields(doc:ReviewedSlip):Field[]{
+  const missing=missingSlipFields(doc);
+  // Older readers substituted THB for an empty currency. Ask for evidence before promoting their held rows.
+  if(missing.length&&doc.slipCurrencyEvidence!=="read"&&doc.slipCurrencyEvidence!=="user")return ["currency"];
+  return missing;
 }
 
 export function slipAnswerPrefix(id:string,field:Field){
@@ -56,11 +65,11 @@ export async function readSlip(env:Env,id:string,user:string){
     WHERE document_id=? AND line_user_id=? AND document_type='BANK_SLIP'`).bind(id,user).first<SlipRecord>();
 }
 
-export function slipDocument(row:SlipRecord):BankSlipDocument|null {
+export function slipDocument(row:SlipRecord):ReviewedSlip|null {
   try{
     const doc=JSON.parse(row.normalized_json||row.ai_json);
     if(doc?.documentType!=="BANK_SLIP"||!["BANK","G_WALLET"].includes(doc.channel)||
-       !["referenceId","recipient","merchant","institution","currency","paymentDate","paymentTime","suggestedDescription","suggestedCategory"]
+       !["note","referenceId","recipient","merchant","institution","currency","paymentDate","paymentTime","suggestedDescription","suggestedCategory"]
          .every(key=>typeof doc[key]==="string"))return null;
     return doc;
   }catch{return null;}
@@ -69,9 +78,12 @@ export function slipDocument(row:SlipRecord):BankSlipDocument|null {
 export async function applySlipAnswer(env:Env,row:SlipRecord,user:string,answer:NonNullable<ReturnType<typeof parseSlipAnswer>>,
   actor:{employeeId:string|null;branchId:string|null},traceId:string):Promise<string|null>{
   const doc=slipDocument(row);
-  if(row.status!=="WAITING_REVIEW"||row.expense_id||!doc||!missingSlipFields(doc).includes(answer.field))return null;
+  if(row.status!=="WAITING_REVIEW"||row.expense_id||!doc||!heldSlipFields(doc).includes(answer.field))return null;
   const field=answer.field;
-  if(field==="paidAmountBaht"){
+  if(field==="currency"){
+    if(!["THB","บาท","฿"].includes(answer.value.toUpperCase()))return prompts.currency[1];
+    doc.slipCurrencyEvidence="user";
+  }else if(field==="paidAmountBaht"){
     if(!/^\d{1,12}(?:\.\d{1,2})?$/.test(answer.value))return prompts[field][1];
     doc.paidAmountBaht=Number(answer.value);
   }else{

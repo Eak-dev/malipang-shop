@@ -7,7 +7,7 @@ import {
   buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentConfirmationFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
   buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,buildExpenseDuplicateReviewFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
-import {applySlipAnswer,missingSlipFields,parseSlipAnswer,readSlip,slipAnswerPrefix,slipDocument,slipInputCard} from "./slip-completion";
+import {applySlipAnswer,heldSlipFields,missingSlipFields,parseSlipAnswer,readSlip,slipAnswerPrefix,slipDocument,slipInputCard} from "./slip-completion";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
 import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,onlineOrderEvidenceReviewText,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
@@ -237,7 +237,7 @@ async function showSlipCompletion(env:Env,event:LineEvent,id:string,traceId:stri
   }
   const document=slipDocument(row);
   if(!document||row.status!=="WAITING_REVIEW")return false;
-  const missing=missingSlipFields(document);
+  const missing=heldSlipFields(document);
   if(!missing.length)return false;
   await respondFlex(env,event,slipInputCard(id,missing,hint),traceId,timing);
   return true;
@@ -269,12 +269,12 @@ export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,a
 }
 
 function satangOrNull(value:number|null|undefined):number|null{return value==null||!Number.isFinite(value)?null:Math.round(value*100);}
-function documentInsert(env:Env,args:unknown[]){return env.DB.prepare(`INSERT INTO expense_documents(
+function documentInsert(env:Env,args:unknown[],normalizedSlip?:string){return env.DB.prepare(`INSERT INTO expense_documents(
   document_id,message_id,line_user_id,document_type,image_key,status,ai_json,trace_id,created_at,
   channel,institution,transaction_type,transaction_status,payment_date,payment_time,reference_id,reference_key,
   sender,sender_account_masked,recipient,recipient_account_masked,merchant,gross_amount_satang,discount_amount_satang,
-  paid_amount_satang,suggested_description,suggested_category,confidence,needs_review,review_note,image_hash,expense_id
-) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...args);}
+  paid_amount_satang,suggested_description,suggested_category,confidence,needs_review,review_note,image_hash,expense_id,normalized_json
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).bind(...args,normalizedSlip??null);}
 async function findDuplicateDocument(env:Env,referenceKey:string,imageHash:string):Promise<ExpenseRow|null>{
   if(referenceKey)return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE reference_key=? OR image_hash=? LIMIT 1`).bind(referenceKey,imageHash).first<ExpenseRow>();
   return env.DB.prepare(`SELECT document_id,expense_id,status FROM expense_documents WHERE image_hash=? LIMIT 1`).bind(imageHash).first<ExpenseRow>();
@@ -495,9 +495,10 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
   }
   const validation=validateBankSlip(reading),ownership=actorValues(actor),documentArgs=[documentId,messageId,to,"BANK_SLIP",imageKey,validation.ok?"WAITING_CONFIRM":"WAITING_REVIEW",JSON.stringify(document),traceId,now,document.channel,document.institution,document.transactionType,document.transactionStatus,document.paymentDate,document.paymentTime,document.referenceId,referenceKey,document.sender,document.senderAccountMasked,document.recipient,document.recipientAccountMasked,document.merchant,satangOrNull(document.grossAmountBaht),satangOrNull(document.discountAmountBaht),satangOrNull(document.paidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,validation.review?1:0,validation.note,imageHash,null];
   if(!validation.ok){
-    try{await documentInsert(env,documentArgs).run();}
-    catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
     const missing=missingSlipFields(document);
+    const normalized=missing.length?JSON.stringify({...document,slipCurrencyEvidence:"read"}):undefined;
+    try{await documentInsert(env,documentArgs,normalized).run();}
+    catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
     if(missing.length){await respondFlex(env,event,slipInputCard(documentId,missing),traceId,timing);return;}
     await respondText(env,event,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId,timing);return;
   }
@@ -518,7 +519,7 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   if(action==="slip_input"){
     const held=await readSlip(env,id,to);
     const document=held&&slipDocument(held);
-    const field=document&&missingSlipFields(document).find(key=>key===q.get("field"));
+    const field=document&&heldSlipFields(document).find(key=>key===q.get("field"));
     if(held?.status==="WAITING_REVIEW"&&field){
       await respondText(env,event,"พิมพ์ข้อมูลต่อท้ายข้อความนี้ แล้วกดส่ง\n"+slipAnswerPrefix(id,field),traceId);
     }else if(!await showSlipCompletion(env,event,id,traceId))await respondText(env,event,"ไม่พบสลิปที่รอข้อมูล",traceId);

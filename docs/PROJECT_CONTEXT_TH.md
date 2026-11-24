@@ -6,6 +6,8 @@
 
 ทุกงานให้อ่าน [แผนผังระบบและคิวรายงาน](system-flow/README.md) ก่อนเริ่ม พร้อมอัปเดตส่วนที่เปลี่ยนใน PR เดียวกัน
 
+ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง
+
 ## ภาพรวมระบบ
 
 ตัวรันคิวค่าใช้จ่ายมีโหมด [RUN_SERIAL](ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) สำหรับส่งงานหลัง cutover ทีละรายการโดยตรวจแถวเดิมและหลักฐาน D1 ก่อนจองงานถัดไป ดู [แผนผัง](system-flow/serial-expense.svg)

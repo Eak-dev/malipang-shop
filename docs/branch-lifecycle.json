@@ -7698,6 +7698,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-24T09:43:44Z",
       "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-transfer-rehearsal",
+      "branch": "codex/issue348-r2-rehearsal",
+      "source_sha": "2964477961bef19e4b4825c332c2697a348ab70b",
+      "issues": [348],
+      "pull_requests": [350],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T11:59:57Z",
+      "reason": "Supporting evidence for draft PR #350. The branch-only workflow exercises synthetic files without Production access. Carry the run evidence into Issue #348; merging the rehearsal workflow is unnecessary. This snapshot precedes the registry commit."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

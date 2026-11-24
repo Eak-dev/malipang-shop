@@ -8,11 +8,11 @@
   "work_items": [
     {
       "issue": 348,
-      "mode": "MIGRATION_PENDING",
+      "mode": "MANAGED",
       "primary_branch": "codex/issue348-queue-regression-20261124",
       "target_branch": "main",
       "coordination_chat": "Issue 348 serial handover continuation",
-      "reason": "Local integration candidate starts at synchronized main; preserved draft and fixture branch remain pending audit and integration verification. No push, PR, deletion or release is implied."
+      "reason": "Primary branch and draft PR #350 observed on canonical GitHub; preserved draft and fixture branch remain pending audit and integration verification. Draft PR does not authorize merge or release."
     },
     {
       "issue": 285,
@@ -83,12 +83,23 @@
       "scope": "local",
       "source": "issue348-queue-regression",
       "branch": "codex/issue348-queue-regression-20261124",
-      "source_sha": "1df000b365a8359d64eb893928e55b299e8eb325",
+      "source_sha": "e5519dffe2705f0a9e40b890ea51227247428713",
       "issues": [348],
-      "pull_requests": [],
+      "pull_requests": [350],
       "status": "ACTIVE",
-      "observed_at": "2026-11-24T07:11:33Z",
-      "reason": "Local integration candidate observed before this registry commit; includes selected fixture commits. Verify integration and checks before push; snapshot is not a live ref."
+      "observed_at": "2026-11-24T07:25:26Z",
+      "reason": "Primary local branch observed before this registry commit; draft PR #350 is open. Snapshot is not a live ref."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-queue-regression-20261124",
+      "source_sha": "e5519dffe2705f0a9e40b890ea51227247428713",
+      "issues": [348],
+      "pull_requests": [350],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-24T07:25:26Z",
+      "reason": "Canonical remote ref and draft PR #350 observed before this registry commit; no release is implied."
     },
     {
       "scope": "local",
@@ -116,14 +127,14 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/fix-serial-expense-handover",
-      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "source_sha": "07c619c3ad589b3a05b5e8250426d6bc5a1b20d3",
       "issues": [
         348
       ],
-      "pull_requests": [],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-22T02:21:31.958766+00:00",
-      "reason": "Verified new remote work branch at canonical main before committing changes."
+      "pull_requests": [349],
+      "status": "NEEDS_AUDIT",
+      "observed_at": "2026-11-24T07:26:20Z",
+      "reason": "PR #349 is merged and the remote ref remains; preserve it pending separate dependency, writer and deletion audit."
     },
     {
       "scope": "local",

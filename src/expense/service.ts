@@ -7,6 +7,7 @@ import {
   buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpensePaymentConfirmationFlex,buildExpensePaymentFlex,buildExpenseSavedFlex,
   buildExpenseItemFlex,buildExpenseSourceFlex,buildExpenseSummaryFlex,buildExpenseDuplicateReviewFlex,paymentForWallet,paymentWallet,type ExpenseFlexRecord
 } from "./flex";
+import {applySlipAnswer,missingSlipFields,parseSlipAnswer,readSlip,slipAnswerPrefix,slipDocument,slipInputCard} from "./slip-completion";
 import { bankSlipExpenseDraft,bankSlipReferenceKey,validateBankSlip } from "./bank-slip";
 import { documentItemStatements,expenseCategories,expensePayments,expenseWallets,onlineOrderEvidenceReviewText,paymentOptionForPair,purchaseDraftMissingReasons,purchaseExpenseDraft,sellerDocumentCases,toSatang } from "./document";
 import { exactDocumentMatch,relationForIncomingDocument,type ExistingExpenseDocument } from "./linking";
@@ -102,6 +103,10 @@ function confirmationIssues(expense:ExpenseFlexRecord):ConfirmationField[]{
   if(!paymentOptionForPair(expense.paymentKey,expense.sourceWallet))issues.push("payment");
   const order:ConfirmationField[]=["payment","description","category","date","amount"];
   const combined=new Set<ConfirmationField>([...issues,...unresolvedReviewFields(reviewStateForExpense(expense))]);
+  if(expense.documentType==="BANK_SLIP"){
+    if(expense.paymentKey==="transfer"&&expense.sourceWallet==="SHOP_BANK")combined.delete("payment");
+    else combined.add("payment");
+  }
   return order.filter(field=>combined.has(field));
 }
 function withConfirmationIssues(expense:ExpenseFlexRecord):ExpenseFlexRecord{
@@ -168,7 +173,7 @@ async function applyPaymentSelection(env:Env,event:LineEvent,expense:LoadedExpen
 async function showOrFinalizeCurrent(env:Env,event:LineEvent,id:string,to:string,traceId:string,actor:ExpenseActor|undefined):Promise<void>{
   const current=await findExpense(env,id,to);if(!current){await respondText(env,event,"This item was not found or has expired.",traceId);return;}
   if(current.status!=="WAITING_CONFIRM"){await showCurrent(env,event,current,traceId);return;}
-  if(!confirmationIssues(current).length&&await confirmExpense(env,event,current,to,traceId,actor))return;
+  if(current.documentType!=="BANK_SLIP"&&!confirmationIssues(current).length&&await confirmExpense(env,event,current,to,traceId,actor))return;
   const refreshed=await findExpense(env,id,to);if(refreshed)await showCurrent(env,event,refreshed,traceId);else await respondText(env,event,"This item was not found or has expired.",traceId);
 }
 
@@ -221,7 +226,34 @@ async function handlePendingExpenseEdit(env:Env,event:LineEvent,traceId:string,a
   const current=await findExpense(env,expense.expenseId,to);return current?.status==="CONFIRMED"?"CONFIRMED":"WAITING_CONFIRM";
 }
 
+async function showSlipCompletion(env:Env,event:LineEvent,id:string,traceId:string,timing?:ExpenseResponseTiming,hint?:string):Promise<boolean>{
+  const user=event.source.userId||"",row=await readSlip(env,id,user);
+  if(!row)return false;
+  if(row.expense_id){
+    const expense=await findExpense(env,row.expense_id,user);
+    if(!expense)return false;
+    await showCurrent(env,event,expense,traceId);
+    return true;
+  }
+  const document=slipDocument(row);
+  if(!document||row.status!=="WAITING_REVIEW")return false;
+  const missing=missingSlipFields(document);
+  if(!missing.length)return false;
+  await respondFlex(env,event,slipInputCard(id,missing,hint),traceId,timing);
+  return true;
+}
+
 export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,actor?:ExpenseActor):Promise<ExpenseTextOutcome>{
+  if(/^\/เติมสลิป(?:\s|$)/u.test((event.message?.text||"").trim())){
+    const answer=parseSlipAnswer(event.message?.text||""),user=event.source.userId||"";
+    const row=answer?await readSlip(env,answer.id,user):null;
+    if(answer&&row){
+      const hint=await applySlipAnswer(env,row,user,answer,actorValues(actor),traceId);
+      if(await showSlipCompletion(env,event,answer.id,traceId,undefined,hint||undefined))return "WAITING_CONFIRM";
+    }
+    await respondText(env,event,"กรุณาเลือกช่องจากสลิปของคุณ แล้วพิมพ์คำตอบต่อท้ายข้อความ",traceId);
+    return "REJECTED";
+  }
   const pending=await handlePendingExpenseEdit(env,event,traceId,actor);if(pending)return pending;
   const to=event.source.userId||"",messageId=event.message?.id||"",parsed=parseExpenseText(event.message?.text||"");
   if(!parsed){await respondText(env,event,["Invalid expense format. ❌","","Examples:","• Egg change 375","• Electricity transfer 1200","• Boxes kbank 350","• 28/01 Egg change 375"].join("\n"),traceId);return"REJECTED";}
@@ -252,6 +284,7 @@ async function pushDuplicateDocument(env:Env,event:LineEvent,duplicate:ExpenseRo
 }
 async function resumeDuplicateConfirmation(env:Env,event:LineEvent,duplicate:ExpenseRow|null,traceId:string,timing?:ExpenseResponseTiming):Promise<boolean>{
   const to=event.source.userId||"";
+  if(duplicate?.status==="WAITING_REVIEW"&&duplicate.document_id&&await showSlipCompletion(env,event,String(duplicate.document_id),traceId,timing))return true;
   if(String(duplicate?.status||"")!=="WAITING_CONFIRM"||!duplicate?.expense_id)return false;
   const expense=await findExpense(env,String(duplicate.expense_id),to);
   if(!expense||expense.status!=="WAITING_CONFIRM")return false;
@@ -463,7 +496,9 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
   const validation=validateBankSlip(reading),ownership=actorValues(actor),documentArgs=[documentId,messageId,to,"BANK_SLIP",imageKey,validation.ok?"WAITING_CONFIRM":"WAITING_REVIEW",JSON.stringify(document),traceId,now,document.channel,document.institution,document.transactionType,document.transactionStatus,document.paymentDate,document.paymentTime,document.referenceId,referenceKey,document.sender,document.senderAccountMasked,document.recipient,document.recipientAccountMasked,document.merchant,satangOrNull(document.grossAmountBaht),satangOrNull(document.discountAmountBaht),satangOrNull(document.paidAmountBaht),document.suggestedDescription,document.suggestedCategory,document.confidence,validation.review?1:0,validation.note,imageHash,null];
   if(!validation.ok){
     try{await documentInsert(env,documentArgs).run();}
-    catch(error){if(String(error).includes("UNIQUE")){await pushDuplicateDocument(env,event,await findDuplicateDocument(env,referenceKey,imageHash),traceId,timing);return;}throw error;}
+    catch(error){if(String(error).includes("UNIQUE")){const existing=await findDuplicateDocument(env,referenceKey,imageHash);if(await resumeDuplicateConfirmation(env,event,existing,traceId,timing))return;await pushDuplicateDocument(env,event,existing,traceId,timing);return;}throw error;}
+    const missing=missingSlipFields(document);
+    if(missing.length){await respondFlex(env,event,slipInputCard(documentId,missing),traceId,timing);return;}
     await respondText(env,event,`Bank or wallet receipt not saved. ❌\nReason: ${validation.note}\nReview queue ID: ${documentId}\nAction: Send a clear full receipt showing successful status, date, reference ID, recipient or merchant, and final paid amount.\nCode: ${validation.code}`,traceId,timing);return;
   }
   const expenseId=randomId("exp"),draft=bankSlipExpenseDraft(document),reviewState=bankSlipReviewState(document,draft,validation.review);documentArgs[31]=expenseId;
@@ -480,6 +515,15 @@ export async function handleExpenseImage(env:Env,event:LineEvent,reading:VisionR
 export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employee,accessActor?:ExpenseActor):Promise<void>{
   const q=new URLSearchParams(event.postback?.data||""),action=q.get("a")||"",id=q.get("id")||"",to=event.source.userId||"",traceId=`postback_${id||"unknown"}`;
   if(!actor.canSubmitExpense){await respondText(env,event,"You are not authorized to manage expenses.",traceId);return;}
+  if(action==="slip_input"){
+    const held=await readSlip(env,id,to);
+    const document=held&&slipDocument(held);
+    const field=document&&missingSlipFields(document).find(key=>key===q.get("field"));
+    if(held?.status==="WAITING_REVIEW"&&field){
+      await respondText(env,event,"พิมพ์ข้อมูลต่อท้ายข้อความนี้ แล้วกดส่ง\n"+slipAnswerPrefix(id,field),traceId);
+    }else if(!await showSlipCompletion(env,event,id,traceId))await respondText(env,event,"ไม่พบสลิปที่รอข้อมูล",traceId);
+    return;
+  }
   const expense=id?await findExpense(env,id,to):null;if(!expense){await respondText(env,event,"Item not found, or this menu has expired.",traceId);return;}
   if(accessActor&&"role" in accessActor&&accessActor.role==="OWNER")await clearOwnerReviewInput(env,{employeeId:actor.employeeId,lineUserId:to});
 
@@ -511,6 +555,12 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
   if(action==="expense_payment_menu"){if(!confirmationIssues(expense).includes("payment")||expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,isPaymentOnlyUnresolved(expense)?buildExpensePaymentConfirmationFlex(expense):buildExpensePaymentFlex(expense),traceId);return;}
   if(action==="expense_source_menu"){if(!confirmationIssues(expense).includes("payment")||expense.documentType==="BANK_SLIP")await showCurrent(env,event,expense,traceId);else await respondFlex(env,event,buildExpenseSourceFlex(expense),traceId);return;}
   if(action==="expense_item_menu"){if(!confirmationIssues(expense).includes("description")){await showCurrent(env,event,expense,traceId);return;}await respondFlex(env,event,buildExpenseItemFlex(expense),traceId);return;}
+  if(action==="expense_accept_slip_amount"&&expense.documentType==="BANK_SLIP"){
+    if(confirmationIssues(expense).includes("amount")&&Number.isSafeInteger(expense.amountSatang)&&expense.amountSatang>0){
+      await confirmStoredReviewField(env,expense,"amount");
+    }
+    await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;
+  }
   if(action==="expense_accept_description"){
     if(!confirmationIssues(expense).includes("description")){await showCurrent(env,event,expense,traceId);return;}
     if(!await confirmStoredReviewField(env,expense,"description")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}

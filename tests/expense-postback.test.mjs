@@ -314,9 +314,9 @@ test('Cancel from the payment chooser leaves no finalized Expense',async()=>{
   assert.equal(h.state.queue.length,0);
 });
 
-test('guided item correction is scoped to one draft, then the final category selection finalizes once',async()=>{
+test('guided item correction is scoped to one bank slip and the user explicitly saves after the last choice',async()=>{
   const document={document_id:'doc_1',document_type:'BANK_SLIP',review_note:'Please confirm the item and category before saving.',needs_review:1,normalized_json:JSON.stringify({expenseReview:{requiredFields:['description','category'],confirmedFields:[]}})};
-  const h=harness('WAITING_CONFIRM',{description:'Transfer to SOMJAI YINGCHAROEN',category:'general',document});
+  const h=harness('WAITING_CONFIRM',{payment_key:'transfer',source_wallet:'SHOP_BANK',description:'Transfer to SOMJAI YINGCHAROEN',category:'general',document});
   await handleExpensePostback(h.env,h.event('a=expense_edit_description&id=exp_1'),h.actor);
   assert.deepEqual(h.state.pending&&{expenseId:h.state.pending.expense_id,field:h.state.pending.field},{expenseId:'exp_1',field:'description'});
   await handleExpenseText(h.env,{source:{type:'user',userId:'U_TEST'},message:{id:'edit_message_1',type:'text',text:'ค่าวัตถุดิบตลาดสด'}},'trace_edit',{employeeId:'EMP001',branchId:'B001'});
@@ -326,6 +326,9 @@ test('guided item correction is scoped to one draft, then the final category sel
   const review=JSON.parse(h.state.document.normalized_json).expenseReview;
   assert.deepEqual(review.confirmedFields,['description']);
   await handleExpensePostback(h.env,h.event('a=expense_set_category&id=exp_1&category=ingredients'),h.actor,{employeeId:'EMP001',branchId:'B001'});
+  assert.equal(h.state.row.status,'WAITING_CONFIRM');
+  assert.equal(h.state.queue.length,0);
+  await handleExpensePostback(h.env,h.event('a=expense_confirm&id=exp_1'),h.actor,{employeeId:'EMP001',branchId:'B001'});
   assert.equal(h.state.row.status,'CONFIRMED');
   assert.equal(h.state.queue.length,1);
 });

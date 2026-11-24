@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {liveSkip} from './helpers/live-opt-in.mjs';
 import assert from 'node:assert/strict';
 import {readFile,mkdtemp,mkdir,writeFile,rm,realpath,symlink} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
@@ -232,7 +233,7 @@ const selectedIds=new Set(String(process.env.MALIPANG_CLOCK_CASES||'').split(','
 const selectedCases=selectedIds.size?cases.filter(item=>selectedIds.has(item.id)):cases;
 
 // Live: needs an explicitly provided, authorised test endpoint. No default URL exists.
-test('live vision enforces white timestamp, GPS, and shop-clock evidence',async t=>{
+test('live vision enforces white timestamp, GPS, and shop-clock evidence',{skip:liveSkip('clock-photos')},async t=>{
   ok(loaded.ok,`private manifest rejected: ${loaded.ok?'':loaded.code}`);
   ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
   ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');
@@ -596,13 +597,19 @@ if(!isChild){
       ok(!/^ok \d+ - clock photo fixture contract/m.test(missing.output),'synthetic: missing manifest cannot pass the contract');
 
       const manifestPath=await syntheticManifest(path.join(root,'valid'));
-      const passing=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:manifestPath});
-      ok(passing.status!==0,'synthetic: live prerequisites missing must still fail the run');
-      ok(/^ok \d+ - clock photo fixture contract/m.test(passing.output),'synthetic: valid manifest passes the local contract');
-      ok(/^not ok \d+ - live vision/m.test(passing.output),'synthetic: live case fails, never skips, without an endpoint');
-      ok(!/ # SKIP/.test(passing.output),'synthetic: nothing is skipped');
+      const local=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:manifestPath});
+      ok(local.status===0,'synthetic: without the live opt-in the local contract run passes');
+      ok(/^ok \d+ - clock photo fixture contract/m.test(local.output),'synthetic: valid manifest passes the local contract');
+      ok(/^ok \d+ - live vision.* # SKIP live suite not selected \(set MALIPANG_LIVE_TESTS=clock-photos\)/m.test(local.output),'synthetic: unselected live case states why it is skipped');
+      ok((local.output.match(/ # SKIP/g)||[]).length===1,'synthetic: only the live case is skipped');
+
+      const passing=runChild({MALIPANG_CLOCK_PRIVATE_MANIFEST:manifestPath,MALIPANG_LIVE_TESTS:'clock-photos'});
+      ok(passing.status!==0,'synthetic: selected live suite without prerequisites must fail the run');
+      ok(/^ok \d+ - clock photo fixture contract/m.test(passing.output),'synthetic: valid manifest passes the local contract when live is selected');
+      ok(/^not ok \d+ - live vision/m.test(passing.output),'synthetic: selected live case fails, never skips, without an endpoint');
+      ok(!/ # SKIP/.test(passing.output),'synthetic: nothing is skipped once live is selected');
       ok(/MALIPANG_VISION_BASE_URL is required/.test(passing.output),'synthetic: live failure names the missing prerequisite');
-      ok(!passing.output.includes('SECRET')&&!passing.output.includes(root),'synthetic: passing-contract output contains no path');
+      ok(!passing.output.includes('SECRET')&&!passing.output.includes(root)&&!local.output.includes(root),'synthetic: passing-contract output contains no path');
     }finally{await rm(root,{recursive:true,force:true});}
   });
 }

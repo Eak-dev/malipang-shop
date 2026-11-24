@@ -31,11 +31,18 @@ query group ตาม `legal_vendor_name,document_number` ภายใต้ pre
 และ forward-fix; ห้ามลบ/เปลี่ยนหลักฐานเพื่อบังคับ rollback schema. Old Worker จะไม่สร้าง
 ยอดใหม่ให้ exact order เดิม แต่อาจกลับไปปฏิเสธเอกสารชนิดใหม่ จึงต้องแจ้งข้อจำกัดนี้.
 
+## Live test แบบเลือกเปิด
+
+CI สาธารณะและ `npm test` รันเฉพาะ regression และ fixture contract ในเครื่อง ไม่ใช้ไฟล์ส่วนตัวหรือคีย์ Production ส่วน live test ที่เรียก Worker จริงหรือใช้ภาพส่วนตัวจะรันเฉพาะเมื่อตั้ง `MALIPANG_LIVE_TESTS` เป็นชื่อชุดที่ต้องการ (คั่นด้วย comma): `clock-photos`, `bank-slips`, `expense-text`, `online-order-images` หรือ `all` ชุดที่ไม่ได้เลือกจะแสดง SKIP พร้อมเหตุผล ชุดที่เลือกแล้วแต่ขาด URL, token หรือ manifest ต้อง fail ไม่ skip ส่วนชื่อชุดที่พิมพ์ผิดจะทำให้ไฟล์ทดสอบล้ม
+
+`all` ไม่รวม `online-order-images` เพราะเจ้าของเลื่อนการทดสอบภาพคำสั่งซื้อทั้ง 3 กรณีไว้ ต้องระบุชื่อชุดนี้ตรงๆ เท่านั้น ผล SKIP ของ live test นำไปอ้างว่าผ่านไม่ได้
+
 ## Regression test รูปนาฬิกาจริง
 
 รูปมาตรฐานและคำตอบที่คาดหวังอยู่ใน `tests/fixtures/clock-photos` โดยใช้ Timestamp และพิกัดจาก Overlay ตัวหนังสือสีขาวเป็นข้อมูลหลัก ส่วนนาฬิกาประจำร้านใช้เป็นหลักฐานสถานที่เท่านั้น ไฟล์ `.jpg` ถูก Git ignore เพราะมีข้อมูลสถานที่จริง แต่ `cases.json` สามารถเก็บใน Git ได้
 
 ```bash
+MALIPANG_LIVE_TESTS=clock-photos \
 MALIPANG_VISION_BASE_URL=<ปลายทางทดสอบที่ได้รับอนุญาต> \
 MALIPANG_ADMIN_TOKEN_FILE=<path ไฟล์ token ของปลายทางนั้น> \
 MALIPANG_VISION_PROVIDER=openai \
@@ -56,7 +63,7 @@ Endpoint ทดสอบรับเฉพาะ JPEG ไม่เกิน 5 Mi
 
 ## Regression test สลิปธนาคารและวอลเล็ต
 
-`npm run test:bank-slips` ตรวจ KBank/K+, SCB และเป๋าตัง/G-Wallet สำหรับภาพเดิม ใช้ `tests/fixtures/bank-slip-cases.json` กับ `MALIPANG_BANK_SLIP_IMAGE_MAP` ส่วนภาพชุดใหม่ให้ตั้ง `MALIPANG_BANK_SLIP_PRIVATE_MANIFEST` ชี้ manifest ที่เก็บส่วนตัวนอก Git และใช้ปลายทาง UAT ที่ยืนยันแล้วตามเงื่อนไขในส่วนรูปลงเวลา เลือกเพียงวิธีเดียว
+`MALIPANG_LIVE_TESTS=bank-slips npm run test:bank-slips` ตรวจ KBank/K+, SCB และเป๋าตัง/G-Wallet สำหรับภาพเดิม ใช้ `tests/fixtures/bank-slip-cases.json` กับ `MALIPANG_BANK_SLIP_IMAGE_MAP` ส่วนภาพชุดใหม่ให้ตั้ง `MALIPANG_BANK_SLIP_PRIVATE_MANIFEST` ชี้ manifest ที่เก็บส่วนตัวนอก Git และใช้ปลายทาง UAT ที่ยืนยันแล้วตามเงื่อนไขในส่วนรูปลงเวลา เลือกเพียงวิธีเดียว
 
 Manifest ใช้ `cases` สามรายการตาม `id` เดิม แต่ละรายการระบุชื่อ JPEG ที่อยู่ข้าง manifest, `sha256`, `readingVerified: true` หลังตรวจจากภาพโดยอิสระ และ `expected` ที่ตรงภาพ ได้แก่ `channel`, `paymentDate`, `paymentTime`, `paidAmountBaht` และ `allowedCategories` สำหรับเป๋าตังให้ระบุ `grossAmountBaht` กับ `discountAmountBaht` ด้วย ชุดทดสอบปฏิเสธ JPEG ที่ hash ไม่ตรงหรือซ้ำกัน และรายงานความคลาดเคลื่อนเป็นชื่อฟิลด์โดยไม่เผยค่าจากสลิป
 

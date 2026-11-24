@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {liveSkip} from './helpers/live-opt-in.mjs';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {mkdtemp,readFile,realpath,rm,writeFile} from 'node:fs/promises';
@@ -126,7 +127,7 @@ test('private slip contract binds independently reviewed expectations to each di
   }finally{await rm(root,{recursive:true,force:true});}
 });
 
-test('live OpenAI evaluator extracts every supplied bank slip',async t=>{
+test('live OpenAI evaluator extracts every supplied bank slip',{skip:liveSkip('bank-slips')},async t=>{
   const privateMode=usesPrivateManifest(manifest,legacyImageMap);
   assert.ok(baseUrl,'MALIPANG_VISION_BASE_URL is required');
   assert.ok(tokenFile,'MALIPANG_ADMIN_TOKEN_FILE is required');

@@ -1,5 +1,5 @@
 import test from 'node:test';
-import {liveSkip} from './helpers/live-opt-in.mjs';
+import {liveSelected,liveSkip} from './helpers/live-opt-in.mjs';
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {ownerOrderFixture} from './helpers/owner-order-review.mjs';
@@ -8,7 +8,8 @@ import {handleExpensePostback} from '../dist/expense/service.js';
 // Only a deidentified, private live-extraction manifest is accepted. Actual
 // images, identities, evidence keys and provider payloads never enter Git.
 const manifest=process.env.ONLINE_ORDER_PRIVATE_FIXTURES;
-const fixtures=manifest?JSON.parse(readFileSync(manifest,'utf8')).cases:[];
+// Read the private manifest only for a run that selected this suite.
+const fixtures=manifest&&liveSelected('online-order-images')?JSON.parse(readFileSync(manifest,'utf8')).cases:[];
 for(const [index,expected] of [62200,46200,51900].entries()){
  test(`approved real image ${index+1}: extraction through final confirmation, repeat and reply recovery`,{skip:liveSkip('online-order-images')},async()=>{
   assert.ok(manifest,'ONLINE_ORDER_PRIVATE_FIXTURES is required');

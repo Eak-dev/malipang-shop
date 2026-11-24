@@ -1,18 +1,22 @@
 import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+
+const require=createRequire(import.meta.url);
 
 // Local synthetic D1 only (Issue #348 regression for advanceAttestedHeldPilot).
 // Every "fault" below is DIRECT SQL fault injection into the isolated fixture
 // database. Whether the same state is reachable through the runtime is UNKNOWN;
 // these tests only prove whether the handoff re-checks the predicate that
 // holdReservedPilot enforced. They never touch a real barrier or provider.
-export const FAULTS=['projection-inflight','projection-review','projection-verified','row-index','failed-job','attempt-count'];
+export const FAULTS=['projection-inflight','projection-review','projection-verified','row-index','failed-job','dlq-producer','attempt-count'];
 export const BPRED_MODES=['bpred-positive','bpred-ack-before','bpred-ack-after',...['t1','t2'].flatMap(t=>FAULTS.map(f=>`bpred-${t}-${f}`))];
 // Not covered (FK or insert-trigger preconditions make a synthetic row non-trivial):
 // stable_expense_cancellation_writes, continuous_publication_intents, continuous_normal_notice_handoffs.
 // continuous_notice_dispatches: its insert trigger (0046:18) requires a notice handoff and a claim in
 // phase END_NOTICE_PENDING, which cannot coexist with the held PILOT_RESERVED claim in this fixture.
 
-async function inject(db,fault,bExpense,pilotId){
+async function inject(env,fault,bExpense,pilotId){
+ const db=env.DB;
  const run=(sql,...args)=>db.prepare(sql).bind(...args).run();
  if(fault.startsWith('projection-')){
   // 0034 rejects rows that do not target the active continuous sheet, so use its ids.
@@ -22,6 +26,16 @@ async function inject(db,fault,bExpense,pilotId){
  }
  if(fault==='row-index')return run("INSERT INTO sheet_row_index(sheet_name,entity_key,row_number) VALUES('fault-sheet',?,2)",bExpense);
  if(fault==='failed-job')return run("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('fault-failed','malipang-jobs','fault-trace',?,'{}','FAULT','OPEN',1,'now','now')",'EXPENSE:'+bExpense+':1');
+ if(fault==='dlq-producer'){
+  // Reachable producer path: src/index.ts DLQ consumer calls createFailedJob without
+  // reading sync_jobs.status, so a late SHEETS_SYNC message for held B is recorded.
+  const {createFailedJob}=require('../../dist/db/repositories.js');
+  const b=await db.prepare('SELECT trace_id,entity_version FROM sync_jobs WHERE job_id=?').bind(pilotId).first();
+  const outcome=await createFailedJob(env,'malipang-jobs',b.trace_id,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:bExpense,entityVersion:b.entity_version,traceId:b.trace_id},'DEAD_LETTER_MAX_RETRIES');
+  assert.equal(outcome,'RECORDED');
+  assert.equal((await db.prepare('SELECT count(*) n FROM failed_jobs WHERE job_key=?').bind('EXPENSE:'+bExpense+':'+b.entity_version).first()).n,1,'producer wrote the failed job');
+  return;
+ }
  if(fault==='attempt-count')return run("UPDATE sync_jobs SET attempt_count=1 WHERE job_id=?",pilotId);
  throw Error('unknown fault '+fault);
 }
@@ -43,15 +57,17 @@ async function assertNotAdvanced(db,{pilotId,successorId,snapshot,claimToken}){
 
 /** Runs one scenario inside the existing handoff fixture. Mode names are
  * bpred-positive | bpred-ack-before | bpred-ack-after | bpred-<t1|t2>-<fault>. */
-export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,pilotId,successorId}){
+export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,readContext,roundId,version,pilotId,successorId}){
  const db=env.DB,scenario=mode.slice('bpred-'.length);
  const bExpense=(await one(db,'SELECT entity_key FROM sync_jobs WHERE job_id=?',pilotId)).entity_key;
  const claimToken=(await one(db,"SELECT operation_token t FROM stable_workbook_claims WHERE spreadsheet_id='book'")).t;
  const ctx={pilotId,successorId,snapshot,claimToken};
  const original=db.batch;
  const withBatch=async(wrapper,fn)=>{db.batch=wrapper;try{return await fn();}finally{db.batch=original;}};
- let batchError;
- const call=async()=>{if(!process.env.BPRED_TRACE)return advance(env,att,key,()=>true);const inner=db.batch;db.batch=async x=>{try{return await inner.call(db,x);}catch(error){batchError=error.message;throw error;}};try{return await advance(env,att,key,()=>true);}finally{db.batch=inner;}};
+ let batchError,batchCalls=0;
+ // Counts db.batch submissions per call so a lost/uncertain answer can never be
+ // followed by an automatic resend inside advanceAttestedHeldPilot.
+ const call=async()=>{batchCalls=0;const inner=db.batch;db.batch=async x=>{batchCalls++;try{return await inner.call(db,x);}catch(error){batchError=error.message;if(process.env.BPRED_TRACE)console.log('BPRED_BATCH_ERROR',mode,batchError);throw error;}};try{return await advance(env,att,key,()=>true);}finally{db.batch=inner;}};
 
  if(scenario==='positive'){
   const result=await call();assert.equal(result.outcome,'RESERVED',JSON.stringify(result));
@@ -59,7 +75,9 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,p
   assert.equal((await one(db,'SELECT state FROM stable_recovery_epochs WHERE epoch_id=?',snapshot.context.predecessorEpochId)).state,'CLOSED');
   assert.equal((await one(db,"SELECT count(*) n FROM stable_recovery_epochs e JOIN sync_jobs j ON j.entity_key=e.target_key WHERE j.job_id=? AND e.epoch_id LIKE 'normal_pilot296_%' AND e.state='ARMED'",successorId)).n,1);
   assert.equal((await one(db,'SELECT count(*) n FROM admin_audit WHERE id=?','issue296:serial:'+pilotId)).n,1);
+  assert.equal(batchCalls,1,'first call submits once');
   assert.equal((await call()).outcome,'RESERVATION_RECORDED','replay never resubmits');
+  assert.equal(batchCalls,0,'replay submits no batch');
   assert.equal((await one(db,'SELECT count(*) n FROM serial_pilot_attested_handoffs')).n,1);
   return;
  }
@@ -67,6 +85,7 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,p
   // Throw after submitted=true but before the real batch: nothing committed.
   const result=await withBatch(async()=>{throw Error('SYNTHETIC_ACK_LOST_BEFORE_BATCH');},call);
   assert.equal(result.outcome,'UNCERTAIN',JSON.stringify(result));
+  assert.equal(batchCalls,1,'no resend after an unknown answer');
   await assertNotAdvanced(db,ctx);
   const retry=await call();assert.equal(retry.outcome,'RESERVED',JSON.stringify(retry));
   assert.equal((await one(db,'SELECT count(*) n FROM serial_pilot_attested_handoffs')).n,1);
@@ -76,26 +95,34 @@ export async function runBPredicateScenario(mode,{env,att,key,snapshot,advance,p
   // Real batch commits, then the acknowledgement is lost.
   const result=await withBatch(async statements=>{await original.call(db,statements);throw Error('SYNTHETIC_ACK_LOST_AFTER_COMMIT');},call);
   assert.equal(result.outcome,'RESERVATION_RECORDED',JSON.stringify(result));
+  assert.equal(batchCalls,1,'no resend after an unknown answer');
   assert.equal((await one(db,'SELECT count(*) n FROM serial_pilot_attested_handoffs')).n,1);
   assert.equal((await call()).outcome,'RESERVATION_RECORDED');
+  assert.equal(batchCalls,0,'replay submits no batch');
   assert.equal((await one(db,'SELECT count(*) n FROM serial_pilot_attested_handoffs')).n,1);
   assert.equal((await one(db,'SELECT count(*) n FROM admin_audit WHERE id=?','issue296:serial:'+pilotId)).n,1);
   return;
  }
  const [timing,...rest]=scenario.split('-'),fault=rest.join('-');
  assert.ok(['t1','t2'].includes(timing)&&FAULTS.includes(fault),'unknown scenario '+scenario);
- // Desired behaviour: a B-side row that holdReservedPilot would have refused must
- // also stop the handoff. t1 = before the call (pre-read can see it, outcome HELD
- // if the fix lives there, UNCERTAIN if only in the batch); t2 = injected inside
- // the wrapped db.batch, after the pre-read and signature check (always UNCERTAIN
- // because the batch throws after submitted=true).
+ // A B-side row that holdReservedPilot refuses must also stop the handoff.
+ // t1 = before the call: the pre-read must see it (context null) and the call
+ // returns HELD without ever submitting a batch. t2 = injected inside db.batch,
+ // after the pre-read and signature check: the guarded INSERT must reject it, the
+ // whole batch rolls back (UNCERTAIN, one submission, nothing committed).
  let result;
- if(timing==='t1'){await inject(db,fault,bExpense,pilotId);result=await call();assert.ok(['HELD','UNCERTAIN'].includes(result.outcome),'t1 outcome '+JSON.stringify(result));}
- else{
-  let injectError;
-  result=await withBatch(async statements=>{try{await inject(db,fault,bExpense,pilotId);}catch(error){injectError=error;throw error;}return original.call(db,statements);},call);
+ if(timing==='t1'){
+  await inject(env,fault,bExpense,pilotId);
+  assert.equal(await readContext(env,roundId,pilotId,successorId,version,()=>true),null,'pre-read context must be null');
+  result=await call();assert.equal(result.outcome,'HELD','t1 outcome '+JSON.stringify(result));
+  assert.equal(batchCalls,0,'t1 submits no batch');
+ }else{
+  let injectError,injecting=false;
+  // createFailedJob may itself use db.batch; let that nested call reach the real one.
+  result=await withBatch(async statements=>{if(injecting)return original.call(db,statements);injecting=true;try{await inject(env,fault,bExpense,pilotId);}catch(error){injectError=error;throw error;}finally{injecting=false;}return original.call(db,statements);},call);
   assert.equal(injectError,undefined,'FIXTURE_INJECTION_FAILED: '+injectError?.message);
   assert.equal(result.outcome,'UNCERTAIN','t2 outcome '+JSON.stringify(result));
+  assert.equal(batchCalls,1,'t2 submits once and never resends');
  }
  if(process.env.BPRED_TRACE)console.log('BPRED_TRACE',mode,JSON.stringify(result),batchError??'');
  await assertNotAdvanced(db,ctx);

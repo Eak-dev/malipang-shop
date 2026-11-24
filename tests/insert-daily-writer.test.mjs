@@ -1437,7 +1437,7 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
     const signer=await crypto.subtle.generateKey('Ed25519',true,['sign','verify']),key=new Uint8Array(await crypto.subtle.exportKey('raw',signer.publicKey));
     att={...snapshot.context,domain:'MALIPANG_SERIAL_QUIESCENCE_V1',nonce:'55555555-1111-2222-3333-444444444444',issuedAt:new Date(Date.now()-10000).toISOString(),expiresAt:new Date(Date.now()+120000).toISOString(),signature:''};
     att.signature=Buffer.from(await crypto.subtle.sign('Ed25519',signer.privateKey,quiescencePayload(att))).toString('base64url');
-    if(BPRED_MODES.includes(roundMode)){await runBPredicateScenario(roundMode,{env:h.env,att,key,snapshot,advance:advanceAttestedHeldPilot,pilotId,successorId});return;}
+    if(BPRED_MODES.includes(roundMode)){await runBPredicateScenario(roundMode,{env:h.env,att,key,snapshot,advance:advanceAttestedHeldPilot,readContext:readAttestedHandoffContext,roundId,version,pilotId,successorId});return;}
     assert.equal((await advanceAttestedHeldPilot(h.env,{...att,signature:'A'.repeat(86)},key,()=>true)).outcome,'HELD');
     const expired={...att,nonce:'66666666-1111-2222-3333-444444444444',issuedAt:new Date(Date.now()-180000).toISOString(),expiresAt:new Date(Date.now()-1000).toISOString()};
     expired.signature=Buffer.from(await crypto.subtle.sign('Ed25519',signer.privateKey,quiescencePayload(expired))).toString('base64url');

@@ -7,6 +7,21 @@ import {stableSourceIntegrity} from '../sheets/stable-source-cutover';
 // separate CAS below can reserve C only when all draft barriers are removed in
 // a synthetic fixture. Neither function proves external provider quiescence.
 // Never return the raw snapshot: it contains claim/operation tokens.
+// B-side absence predicates that holdReservedPilot enforced at hold time (two
+// NOT EXISTS blocks of <=4 compound arms: D1 caps compound SELECT terms and
+// SQLite caps expression depth at 100, which the guarded INSERT nears). They are repeated here (pre-read and guarded INSERT, alias j = held predecessor B)
+// so later rows or an attempt cannot be handed to C. Local mock only; no barrier,
+// lease/generation, claim or fence rule is changed by this fragment.
+const heldPredecessorUntouched=`NOT EXISTS(
+    SELECT 1 WHERE j.attempt_count<>0
+    UNION ALL SELECT 1 FROM stable_projection_writes bp WHERE bp.entity_type='EXPENSE' AND (bp.entity_id=j.entity_key OR substr(bp.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')
+    UNION ALL SELECT 1 FROM stable_expense_cancellation_writes bx WHERE bx.entity_type='EXPENSE' AND (bx.entity_id=j.entity_key OR substr(bx.entity_id,1,length(j.entity_key)+1)=j.entity_key||'|')
+    UNION ALL SELECT 1 FROM sheet_row_index brx WHERE brx.entity_key=j.entity_key OR substr(brx.entity_key,1,length(j.entity_key)+1)=j.entity_key||'|')
+    AND NOT EXISTS(
+    SELECT 1 FROM continuous_publication_intents bn WHERE bn.entity_id=j.entity_key
+    UNION ALL SELECT 1 FROM continuous_normal_notice_handoffs bh WHERE bh.expense_id=j.entity_key
+    UNION ALL SELECT 1 FROM continuous_notice_dispatches bd WHERE bd.expense_id=j.entity_key
+    UNION ALL SELECT 1 FROM failed_jobs bf WHERE bf.job_key='EXPENSE:'||j.entity_key||':1')`;
 type Raw={book:string;old_token:string;claim_token:string;preimage:string;audit_id:string;before_json:string;after_json:string;
  round_id:string;b_job:string;b_epoch:string;b_namespace:string;fingerprint:string;held_at:string;b_ordinal:number;c_job:string;c_ordinal:number;
  b_source:string;c_source:string;c_date:string;c_version:number;revision:number;fence_digest:string;fence_generation:number};
@@ -38,6 +53,7 @@ export async function readAttestedHandoffContext(env:ParkedPilotEnv,roundId:stri
    JOIN serial_pilot_oracle_fence oracle ON oracle.spreadsheet_id=w.spreadsheet_id
    WHERE a.action=? AND a.entity_key=? AND json_extract(a.after_json,'$.roundId')=? AND json_extract(a.after_json,'$.version')=? AND w.spreadsheet_id=?
     AND ci.job_id=? AND ep.state='ARMED' AND j.status='REVIEW' AND j.last_error='SERIAL_PILOT_B_REVIEW' AND j.lease_token IS NULL AND j.lease_until IS NULL AND j.serial_provenance_version=1 AND j.serial_lease_generation=0 AND ${stableSourceIntegrity}
+    AND ${heldPredecessorUntouched}
     AND NOT EXISTS(SELECT 1 FROM serial_pilot_oracle_revocations v WHERE v.spreadsheet_id=oracle.spreadsheet_id AND v.fence_digest=oracle.fence_digest AND v.fence_generation=oracle.generation)
     AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_pilot_oracle_revoke_not_ready')
     AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_pilot_oracle_revoke_insert','serial_pilot_oracle_revoke_no_update','serial_pilot_oracle_revoke_no_delete'))=3
@@ -116,6 +132,7 @@ export async function advanceAttestedHeldPilot(env:ParkedPilotEnv,att:Quiescence
        AND json_array(ce.expense_id,ce.version,ce.status,ce.transaction_date,ce.description,ce.amount_satang,ce.payment_key,ce.source_wallet,ce.category,ce.branch_id,ce.updated_at,ce.serial_source_namespace)=?
        AND length(ce.transaction_date)=10 AND date(ce.transaction_date,'+0 days')=ce.transaction_date AND substr(ce.transaction_date,1,7)=strftime('%Y-%m','now','+7 hours')
        AND NOT EXISTS(SELECT 1 FROM stable_recovery_operations op WHERE op.epoch_id=ep.epoch_id)
+       AND ${heldPredecessorUntouched}
        AND NOT EXISTS(SELECT 1 FROM stable_projection_writes p WHERE p.entity_type='EXPENSE' AND (p.entity_id=next.entity_key OR substr(p.entity_id,1,length(next.entity_key)+1)=next.entity_key||'|'))
        AND NOT EXISTS(SELECT 1 FROM stable_expense_cancellation_writes p WHERE p.entity_type='EXPENSE' AND (p.entity_id=next.entity_key OR substr(p.entity_id,1,length(next.entity_key)+1)=next.entity_key||'|'))
        AND NOT EXISTS(SELECT 1 FROM sheet_row_index i WHERE i.entity_key=next.entity_key OR substr(i.entity_key,1,length(next.entity_key)+1)=next.entity_key||'|')

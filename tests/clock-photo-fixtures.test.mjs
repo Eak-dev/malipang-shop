@@ -70,9 +70,10 @@ const DIAGNOSTIC_PROVIDERS=['openai','workers-ai','pipeline','none','openai-erro
 // MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE (private mode, live only); absent or invalid = live blocked.
 // The test never guesses a default. The value is an operator attestation, not something verified here.
 function parseClockMin(text){
-  if(typeof text!=='string'||!/^(?:0\.\d+|1(?:\.0+)?)$/.test(text.trim()))return null;
+  // Same closed range as src/shared/env.ts (0 <= value <= 1, 0 and 1 included), in plain decimal form only.
+  if(typeof text!=='string'||!/^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(text.trim()))return null;
   const value=Number(text.trim());
-  return value>0&&value<=1?value:null;
+  return value>=0&&value<=1?value:null;
 }
 const endpointClockMin=parseClockMin(process.env.MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE);
 // The single code src/domain/attendance.ts:51-55 returns for a reading that has no date/time.
@@ -173,7 +174,7 @@ function checkPrivateReading(item,result,clockMin){
     // Without date/time the validator stops at or before TIMESTAMP_FIELDS_MISSING, so GPS_MISSING would contradict the reading.
     ok(PRE_GPS_CODES.includes(code),`${item.id}: rejection code consistent with validation order`);
     // The code must be exactly the first failing predicate of this reading, not merely a pre-GPS code.
-    ok(Number.isFinite(clockMin)&&clockMin>0&&clockMin<=1,`${item.id}: effective clock confidence threshold must be stated`);
+    ok(Number.isFinite(clockMin)&&clockMin>=0&&clockMin<=1,`${item.id}: effective clock confidence threshold must be stated`);
     ok(code===expectedRejectCode(reading,clockMin),`${item.id}: rejection code matches first failing check of the reading`);
   }
 }
@@ -361,18 +362,25 @@ test('synthetic pass-case checker: verified values compared, provisional values 
   const marker='SECRET-2000-01-02 03:04:05 13.123456,100.654321 /private/path';
   const passItem={id:'photo-01',ownerExpected:'pass',readingVerified:true,expectedReading:{photoDate:'2000-01-02',photoTime:'03:04:05',latitude:13,longitude:100}};
   const passResult={reading:{provider:'openai',kind:'CLOCK',clockPresent:true,overlayPresent:true,overlayTextWhite:true,photoDate:marker,photoTime:'03:04:05',latitude:13,longitude:100},validation:{ok:true,validationCode:'OK'}};
-  failsSanitized(passItem,passResult,'synthetic: mismatch of a verified value must fail');
+  failsSanitized(passItem,passResult,'synthetic: malformed value must fail');
+  // Verified values are compared exactly: well-formed but different values must fail, one field at a time.
+  const wellFormed={...passResult.reading,photoDate:'2000-01-02'};
+  checkPrivateReading(passItem,{...passResult,reading:wellFormed},0.7);
+  const differences=[{photoDate:'2000-01-03'},{photoTime:'03:04:06'},{photoTime:'03:04'},{latitude:13.0001},{longitude:100.0001},{latitude:-13},{longitude:-100}];
+  for(const change of differences)failsSanitized(passItem,{...passResult,reading:{...wellFormed,...change}},'synthetic: valid but different verified value must fail');
+  // Within the 0.00001 degree tolerance still passes.
+  checkPrivateReading(passItem,{...passResult,reading:{...wellFormed,latitude:13.000005,longitude:100.000005}},0.7);
   // An unverified (provisional) reading is not compared with provider output.
   checkPrivateReading({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09'}},0.7);
   failsSanitized({...passItem,readingVerified:false,expectedReading:null},{...passResult,reading:{...passResult.reading,photoDate:'2000-01-09',provider:'none'}},'synthetic: failed provider must not pass a pass case');
 });
 
-test('synthetic effective threshold: oracle follows the stated clock confidence threshold (0.70 and 0.80), never a guess',async()=>{
+test('synthetic effective threshold: oracle follows the stated clock confidence threshold (0, 0.70, 0.80 and 1), never a guess',async()=>{
   const validateAttendancePhoto=await loadValidator();
   const rejectItem={id:'photo-06',ownerExpected:'reject'};
-  for(const clockMin of [0.7,0.8]){
+  for(const clockMin of [0,0.7,0.8,1]){
     const rules={...syntheticRules,clockMinConfidence:clockMin};
-    for(const clockConfidence of [0.65,0.75,0.85]){
+    for(const clockConfidence of [0,0.65,0.75,0.85,1]){
       const reading=rejectReading({clockConfidence});
       const real=validateAttendancePhoto({...reading,overlayConfidence:0.99,locationText:'synthetic place',note:''},syntheticReceived,rules);
       const expected=clockConfidence<clockMin?'CLOCK_NOT_CONFIRMED':'TIMESTAMP_MISSING';
@@ -389,12 +397,16 @@ test('synthetic effective threshold: oracle follows the stated clock confidence 
   checkPrivateReading(rejectItem,atSeventy,0.7);
   failsSanitized(rejectItem,atSeventy,'synthetic: a 0.70 result is refused if 0.80 is stated',0.8);
   // No stated threshold: refused, never defaulted.
-  for(const missing of [null,NaN,0,1.5])failsSanitized(rejectItem,atSeventy,'synthetic: missing or invalid threshold must fail',missing);
+  for(const missing of [null,NaN,-0.1,1.0001,1.5])failsSanitized(rejectItem,atSeventy,'synthetic: missing or invalid threshold must fail',missing);
+  // Boundary values 0 and 1 are valid configuration (src/shared/env.ts), so they are accepted when stated.
+  checkPrivateReading(rejectItem,{reading:rejectReading({clockConfidence:0}),validation:{ok:false,validationCode:'TIMESTAMP_MISSING'}},0);
+  failsSanitized(rejectItem,{reading:rejectReading({clockConfidence:0}),validation:{ok:false,validationCode:'CLOCK_NOT_CONFIRMED'}},'synthetic: threshold 0 never rejects on confidence alone',0);
+  checkPrivateReading(rejectItem,{reading:rejectReading({clockConfidence:0.99}),validation:{ok:false,validationCode:'CLOCK_NOT_CONFIRMED'}},1);
   // undefined is called directly: failsSanitized would substitute its own default for it.
   let undefinedError;try{checkPrivateReading(rejectItem,atSeventy,undefined);}catch(caught){undefinedError=caught;}
   ok(undefinedError instanceof assert.AssertionError,'synthetic: undefined threshold must fail');
-  ok(parseClockMin('0.7')===0.7&&parseClockMin('0.80')===0.8&&parseClockMin(' 1 ')===1,'synthetic: valid thresholds parse');
-  for(const bad of [undefined,'',' ','0','abc','-0.5','1.5','0.7x','.7','NaN','Infinity'])ok(parseClockMin(bad)===null,'synthetic: invalid threshold text is refused');
+  ok(parseClockMin('0')===0&&parseClockMin('0.0')===0&&parseClockMin('0.7')===0.7&&parseClockMin('0.80')===0.8&&parseClockMin(' 1 ')===1&&parseClockMin('1.0')===1,'synthetic: valid thresholds including 0 and 1 parse');
+  for(const bad of [undefined,'',' ','abc','-0.5','-0','1.5','1.0001','2','0.7x','.7','NaN','Infinity','1e-1'])ok(parseClockMin(bad)===null,'synthetic: invalid threshold text is refused');
 });
 
 test('synthetic pass cases: well-formed values are required even when the reading is provisional',()=>{

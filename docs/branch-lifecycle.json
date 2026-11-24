@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MIGRATION_PENDING",
-      "primary_branch": "codex/issue348-serial-handover",
+      "primary_branch": "codex/issue348-queue-regression-20261124",
       "target_branch": "main",
       "coordination_chat": "Issue 348 serial handover continuation",
-      "reason": "Continuation after PR #349 merged; new primary starts at synchronized main. Previous branch retained pending live audit; no deletion authority."
+      "reason": "Local integration candidate starts at synchronized main; preserved draft and fixture branch remain pending audit and integration verification. No push, PR, deletion or release is implied."
     },
     {
       "issue": 285,
@@ -81,14 +81,36 @@
   "branches": [
     {
       "scope": "local",
-      "source": "issue348-work",
-      "branch": "codex/issue348-serial-handover",
-      "source_sha": "d95608e43aad2b0f835c660577ad6318ccef93c8",
+      "source": "issue348-queue-regression",
+      "branch": "codex/issue348-queue-regression-20261124",
+      "source_sha": "1df000b365a8359d64eb893928e55b299e8eb325",
       "issues": [348],
       "pull_requests": [],
       "status": "ACTIVE",
-      "observed_at": "2026-11-22T03:55:34.463Z",
-      "reason": "Continuation branch based on synchronized canonical main after PR #349; observed SHA precedes implementation. Remote registration follows push."
+      "observed_at": "2026-11-24T07:11:33Z",
+      "reason": "Local integration candidate observed before this registry commit; includes selected fixture commits. Verify integration and checks before push; snapshot is not a live ref."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-work",
+      "branch": "codex/issue348-fixture-contract-20261124",
+      "source_sha": "90bcb62c2cab662a7799e5a4699787f61fda9ae7",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T07:11:33Z",
+      "reason": "Fixture support branch; commits selected for the local integration candidate, pending content comparison and final checks. Preserve branch."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-work",
+      "branch": "codex/issue348-serial-handover",
+      "source_sha": "0ec5ed24f4f60f767e2b66a78f054d86cc15974e",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "NEEDS_AUDIT",
+      "observed_at": "2026-11-24T07:11:33Z",
+      "reason": "Preserved draft; selected commits were replayed into a local integration candidate. Verify content and dependencies before changing disposition."
     },
     {
       "scope": "remote",

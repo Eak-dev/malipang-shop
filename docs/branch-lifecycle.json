@@ -124,6 +124,19 @@
       "reason": "Preserved draft; selected commits were replayed into a local integration candidate. Verify content and dependencies before changing disposition."
     },
     {
+      "scope": "local",
+      "source": "issue348-slip-completion",
+      "branch": "codex/issue348-slip-completion",
+      "source_sha": "f12117f435a739efb6480611cb3bb694357659ec",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T13:48:00.495978+00:00",
+      "reason": "DEV_OWNED local bank-slip completion follow-up in the Issue 348 coordination chat. Starts from synchronized canonical main and targets main after local tests and independent review. Keep the existing serial-queue primary branch and release authority separate."
+    },
+    {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/fix-serial-expense-handover",

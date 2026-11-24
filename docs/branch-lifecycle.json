@@ -7668,6 +7668,36 @@
       "status": "ACTIVE",
       "observed_at": "2026-11-22T02:11:09.483063+00:00",
       "reason": "Observed the new remote task branch at the audited base before committing documentation."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-prod-expense-workflow",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/prod-expense-text-workflow",
+      "source_sha": "bddb3209e36497537d1d63033ba57f7b21ded54a",
+      "issues": [
+        348
+      ],
+      "pull_requests": [
+        351
+      ],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T09:43:44Z",
+      "reason": "Supporting PR #351 adds the protected synthetic expense text workflow to main separately from #350; snapshot precedes this registry commit. Production dispatch stays gated."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

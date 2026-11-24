@@ -52,6 +52,12 @@ contract อยู่ใน `tests/fixtures/bank-slip-cases.json` และค�
 
 ผล baseline วันที่ 22 กรกฎาคม 2026 ผ่าน `3/3`: ทั้งหมดเป็น `BANK_SLIP` และ validation ผ่าน KBank แปลงปีสองหลัก `26` เป็น `2026`, SCB ใช้ยอด 50 บาท และเป๋าตังแยกยอด 40 บาท/ส่วนลด 24 บาท/ยอดจ่ายจริง 16 บาทถูกต้อง
 
+## ทดสอบตัวประเมินข้อความค่าใช้จ่ายบน Production
+
+หลังรวม workflow `Production expense text evaluation` ให้รันจาก GitHub Actions บน `main` ด้วย SHA เต็มของ `main` ที่ตรวจแล้วในช่อง `expected_main_sha` จากนั้นให้ผู้อนุมัติของ environment `production` ตรวจและอนุมัติงานตามปกติ Workflow ใช้คีย์ Admin เดิมใน environment นั้นและส่งเฉพาะข้อความจำลอง 151 กรณีไปยัง `/admin/expense/evaluate` ระบบประเมินข้อความและคืนผลโดยไม่สร้างค่าใช้จ่าย รายงานผลรวมของชุดทดสอบเท่านั้น โดยตัวนับ Node รวม parent test เป็น 152 ข้อ
+
+ผลจาก workflow อ้างอิง Worker ที่ให้บริการขณะรัน ให้บันทึก Worker version จาก Cloudflare ก่อนและหลังการทดสอบแยกจาก SHA ของ workflow งานนี้ครอบคลุมการแปลข้อความ ส่วนภาพ การส่งคิว และการเขียนรายงานให้ตรวจตามขั้นตอนของงานนั้น
+
 ## UAT ขั้นต่ำ
 
 ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test

@@ -85,7 +85,7 @@
       "branch": "claude/issue348-timestamp-integrity-20261125",
       "source_sha": "ccd9c738bea85aadff5a0975da803632c9ba7d8b",
       "issues": [348],
-      "pull_requests": [],
+      "pull_requests": [358],
       "status": "ACTIVE",
       "observed_at": "2026-11-25T07:30:35Z",
       "reason": "Primary #348 branch for attendance timestamp integrity (approach A, DEV_OWNED, base main ccd9c73); remote head observed before this registry commit. No dependency on open branches; independent review then merge. No release is implied."

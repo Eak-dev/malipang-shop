@@ -13,7 +13,7 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {verifyStage} from '../scripts/pr247-stage-guard.mjs';
 import {verifyReleasePre,verifyReleasePost,ATTENDANCE_ACCEPT} from '../scripts/issue248-nonfinancial-release-guard.mjs';
-import {canarySourceSql,RESULT_COLUMNS} from '../scripts/issue248-canary-source-digest.mjs';
+import {canarySourceSql,RESULT_COLUMNS,EXPENSE_COLUMNS} from '../scripts/issue248-canary-source-digest.mjs';
 
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const jqProbe=spawnSync(process.env.MP248_JQ_PATH||'jq',['--version'],{encoding:'utf8'});
@@ -42,7 +42,7 @@ function sourceDb(file,{mutate=()=>{},revision=86}={}){
  const db=migratedCanary(file);try{mutate(db);const bump=db.prepare('UPDATE expense_events SET updated_at=updated_at WHERE expense_id=?');while(revisionOf(db)<revision)bump.run(TARGET);return revisionOf(db);}finally{db.close()}
 }
 // G7 digest = Worker formula on the stored row (tests/issue248-g7-canary-worker-parity.test.mjs pins the SQL to the compiled Worker).
-const G7_DIGEST=(()=>{const db=migratedCanary(':memory:');try{return h(JSON.stringify({expense:db.prepare(`SELECT e.* FROM expense_events e WHERE expense_id='${TARGET}'`).get(),links:[],documents:[],items:[]}))}finally{db.close()}})();
+const G7_DIGEST=(()=>{const db=migratedCanary(':memory:');try{return h(JSON.stringify({expense:db.prepare(`SELECT ${EXPENSE_COLUMNS.join(',')} FROM expense_events WHERE expense_id='${TARGET}'`).get(),links:[],documents:[],items:[]}))}finally{db.close()}})();
 const linkedDocument=db=>db.exec(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,expense_id) VALUES('doc_synthetic','m_doc_synthetic','U_doc_synthetic','RECEIPT','CONFIRMED','2026-11-10T00:00:00.000Z','${TARGET}')`);
 
 function runSnapshot({mode='B_POST',stripped=true,exception=true,canaryRaw=null,db={},epochPatch={}}={}){

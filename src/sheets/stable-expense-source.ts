@@ -68,7 +68,10 @@ async function readSource(env:Env,job:SheetsSyncJob,claim:string,mode:{kind:'lea
   if(!Number.isSafeInteger(revision)||Number(revision)<0||links.length>500||documents.length>500||items.length>500)return null;
   const primary=links.filter(x=>x.relation_type==='PRIMARY_PURCHASE_DOCUMENT');if(primary.length>1||primary.some(x=>!documents.some(d=>d.document_id===x.document_id)))return null;
   if(!primary.length&&documents.filter(d=>d.expense_id===job.entityKey).length>1)return null;
-  const fingerprint=JSON.stringify({expense,links,documents,items});if(new TextEncoder().encode(fingerprint).byteLength>256000)return null;
+  // Version 1 source hashes predate migration 0070. Its provenance namespace is
+  // checked separately and must not change an existing provider/source digest.
+  const {serial_source_namespace: _namespace, ...digestExpense}=expense;
+  const fingerprint=JSON.stringify({expense:digestExpense,links,documents,items});if(new TextEncoder().encode(fingerprint).byteLength>256000)return null;
   const digest=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(fingerprint))),v=>v.toString(16).padStart(2,'0')).join('');
   return {expense,links,documents,items,revision:Number(revision),fingerprint,digest};
  }catch{return null;}

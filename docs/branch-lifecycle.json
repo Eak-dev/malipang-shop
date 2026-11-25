@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "codex/fix-serial-expense-handover",
+      "primary_branch": "codex/issue348-queue-regression-20261124",
       "target_branch": "main",
-      "coordination_chat": "MaliPang queue serial handover",
-      "reason": "Implement resumable sequential expense processing after reconciling the parked job."
+      "coordination_chat": "Issue 348 serial handover continuation",
+      "reason": "Primary branch and draft PR #350 observed on canonical GitHub; preserved draft and fixture branch remain pending audit and integration verification. Draft PR does not authorize merge or release."
     },
     {
       "issue": 285,
@@ -81,6 +81,50 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue348-queue-regression",
+      "branch": "codex/issue348-queue-regression-20261124",
+      "source_sha": "e5519dffe2705f0a9e40b890ea51227247428713",
+      "issues": [348],
+      "pull_requests": [350],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-24T07:25:26Z",
+      "reason": "Primary local branch observed before this registry commit; draft PR #350 is open. Snapshot is not a live ref."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-queue-regression-20261124",
+      "source_sha": "e5519dffe2705f0a9e40b890ea51227247428713",
+      "issues": [348],
+      "pull_requests": [350],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-24T07:25:26Z",
+      "reason": "Canonical remote ref and draft PR #350 observed before this registry commit; no release is implied."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-work",
+      "branch": "codex/issue348-fixture-contract-20261124",
+      "source_sha": "90bcb62c2cab662a7799e5a4699787f61fda9ae7",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-24T07:11:33Z",
+      "reason": "Fixture support branch; commits selected for the local integration candidate, pending content comparison and final checks. Preserve branch."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-work",
+      "branch": "codex/issue348-serial-handover",
+      "source_sha": "0ec5ed24f4f60f767e2b66a78f054d86cc15974e",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "NEEDS_AUDIT",
+      "observed_at": "2026-11-24T07:11:33Z",
+      "reason": "Preserved draft; selected commits were replayed into a local integration candidate. Verify content and dependencies before changing disposition."
+    },
+    {
+      "scope": "local",
       "source": "issue348-slip-completion",
       "branch": "codex/issue348-slip-completion",
       "source_sha": "f12117f435a739efb6480611cb3bb694357659ec",
@@ -96,14 +140,14 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/fix-serial-expense-handover",
-      "source_sha": "05fd3ebd3a0b04ab62e2eee85cfa8f4179315537",
+      "source_sha": "07c619c3ad589b3a05b5e8250426d6bc5a1b20d3",
       "issues": [
         348
       ],
-      "pull_requests": [],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-22T02:21:31.958766+00:00",
-      "reason": "Verified new remote work branch at canonical main before committing changes."
+      "pull_requests": [349],
+      "status": "NEEDS_AUDIT",
+      "observed_at": "2026-11-24T07:26:20Z",
+      "reason": "PR #349 is merged and the remote ref remains; preserve it pending separate dependency, writer and deletion audit."
     },
     {
       "scope": "local",

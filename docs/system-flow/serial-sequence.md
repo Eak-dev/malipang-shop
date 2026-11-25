@@ -118,7 +118,7 @@ sequenceDiagram
     end
 ```
 
-`FINISH_STATUS` ตรวจทันทีและรออีกได้ไม่เกิน 15 ครั้ง ห่างกันครั้งละหนึ่งนาทีเมื่อยังเป็น `IN_PROGRESS` ตัวรันนับ B ว่ายืนยันแล้วหลังอ่าน DAILY ตรงและได้ proof เดิมซ้ำ ส่วนการเลือก C ต้องผ่านการตรวจอีกชั้นที่ Worker ภายในธุรกรรม D1 มีสิทธิ์สร้างการส่งมอบได้เพียงหนึ่งครั้งต่อ B การจอง C ปลุกเส้นทางในภาพที่ 3 เมื่อคิวเข้าเกณฑ์. [ตัวติดตาม](../../scripts/prod-normal-queue-pilot.mjs) · [อ่านแถวแบบระบุงาน](../../src/admin/normal-pilot-readback.ts) · [การจองต่อแบบอะตอมมิก](../../src/admin/serial-expense-handover.ts)
+โหมดเดิมตรวจ `FINISH_STATUS` ได้สูงสุด 15 ครั้ง ห่างกันครั้งละหนึ่งนาที; โหมดรอบทดลองใช้ progress ของชุดหลักฐานต่อเวลารอเมื่อมีความคืบหน้า โดยมีเพดานเวลารวมและห้ามใช้ progress ให้สิทธิ์เขียน ตัวรันนับ B ว่ายืนยันแล้วหลังอ่าน DAILY ตรงและได้ proof เดิมซ้ำ ส่วนการเลือก C ต้องผ่านการตรวจอีกชั้นที่ Worker ภายในธุรกรรม D1 มีสิทธิ์สร้างการส่งมอบได้เพียงหนึ่งครั้งต่อ B การจอง C ปลุกเส้นทางในภาพที่ 3 เมื่อคิวเข้าเกณฑ์. [ตัวติดตาม](../../scripts/prod-normal-queue-pilot.mjs) · [อ่านแถวแบบระบุงาน](../../src/admin/normal-pilot-readback.ts) · [การจองต่อแบบอะตอมมิก](../../src/admin/serial-expense-handover.ts)
 
 ## 5. รับช่วงเมื่อรอบหยุด
 
@@ -137,3 +137,57 @@ sequenceDiagram
 **คำที่ใช้ตามเหตุ** `sync_jobs` เก็บสถานะของงาน • `lease` คือสิทธิ์ทำงานชั่วคราวเฉพาะงาน • `claim` คือสิทธิ์เขียนไฟล์ร่วม • `epoch` คือรอบที่อนุญาตเป้าหมาย • `fingerprint` ผูกสายกับหลักฐานของ A • `proof` ผูกผลจบกับหลักฐานของงานที่กำลังตรวจ
 
 **ตรวจซ้ำในเครื่อง** ใช้ชุดทดสอบตัวรันสำหรับการเลือกชุดงานและคำตอบหาย และชุดทดสอบ Worker สำหรับ A คง REVIEW, B และ C ปิดครบ, การจองแข่งกัน และแถวที่ไม่ตรงกับ D1. [ทดสอบตัวรัน](../../tests/prod-normal-queue-pilot.test.mjs) · [ทดสอบ Worker และคิว](../../tests/insert-daily-writer.test.mjs)
+
+
+## 6. รอบจำลอง #348: พัก B, จอง C และบันทึกผล
+
+ภาพนี้เป็น local mock เท่านั้น; barrier ปิดโดยปริยาย และยังไม่มีหลักฐาน external fence ตาม #296. ตัวรัน local test ฉีด coordinator ที่เรียก helper สำหรับ oracle/ลงนาม/โอน C; CLI ปกติไม่มี coordinator และไม่มี route สำหรับลงนามหรือโอนจริง; `CLOSE_MOCK_ROUND` จำกัด localhost และ Worker `APP_ENV=test` ไม่ใช่การสั่ง Production.
+
+```mermaid
+sequenceDiagram
+    participant R as ตัวรันทดสอบ
+    participant T as Fixture ในเครื่อง
+    participant W as Worker จำลอง
+    participant D as D1 ในเครื่อง
+    participant O as Oracle จำลอง
+    participant S as Sheets จำลอง
+    R->>W: เปิด round และผนึกสมาชิก
+    W->>D: ผนึก snapshot แล้วจอง B ในคำสั่งถัดไป
+    R->>W: HOLD_RESERVED เมื่อพิสูจน์เงื่อนไขได้
+    W->>D: แข่ง lease แล้วให้ B REVIEW และคง claim/epoch
+    R->>T: เรียก coordinator ที่ฉีดเฉพาะ local test
+    T->>D: อ่านซ้ำว่า B ไม่เคยลองทำและไม่มีหลักฐานผลข้างเคียง
+    alt พบหลักฐานขัดกับเงื่อนไขของ hold
+        D-->>T: context เป็น null
+        T-->>R: หยุดก่อนเซ็นและงดเรียกจอง C
+    else การอ่านผ่าน
+        T->>O: ขอ attestation จำลองที่ผูก B, C, epoch, nonce และ fence
+        O-->>T: ลงนามตามบริบทเดิม
+        T->>D: helper อ่าน context ซ้ำหลังเซ็นก่อนส่ง batch
+        alt หลักฐานขัดกันก่อนส่ง batch
+            T-->>R: HELD คง claim เดิมและงดส่ง batch
+        else การอ่านซ้ำผ่าน
+            T->>D: ส่ง batch ตรวจ B และจอง C
+            alt หลักฐาน B เปลี่ยนหลังอ่านและถูกพบใน batch
+                D-->>T: ย้อนทั้ง batch และเก็บ claim เดิม
+                T-->>R: UNCERTAIN หยุดจอง ตรวจหลักฐานเดิม ห้ามส่งซ้ำ
+            else batch ผ่านและจอง C
+                W->>S: C ทำ DAILY, RAW และ DETAIL แต่ละรายการ
+                W->>D: เก็บ intent, postimage และผล FINAL ตามขั้น
+                alt คำขอหรือผลตอบกลับของ C ไม่ชัด
+                    W->>D: เก็บ claim และหลักฐาน REVIEW โดยไม่ส่งซ้ำ
+                else หลักฐานพอสำหรับปิดรอบจำลอง
+                    R->>W: CLOSE_MOCK_PARKED
+                    W->>D: ตรวจ v2 proof และชุดรายการซ้ำ แล้วปิดรอบ
+                    D-->>R: VERIFIED / PARKED / NOT_STARTED / RECONCILE
+                end
+            end
+        end
+    end
+    Note over R,D: identity local ก่อน SETTLE/OPEN เมื่อ restart ให้หยุด ไม่ส่งซ้ำ
+    Note over R,S: READ_HISTORICAL / READ_ROUND อ่านย้อนหลัง ไม่ให้สิทธิ์เขียน
+```
+
+การอ่านก่อนเซ็นและการอ่านซ้ำของ helper ต้องพบว่า B ยังมี attempt เป็น 0 และไม่มี projection, cancellation, row index, intent, notice handoff, notice dispatch หรือ failed job ตามคีย์ที่กำหนด ถ้าการอ่านก่อนเซ็นคืน context เป็น null ให้หยุดโดยงดเซ็นและงดเรียกจอง C ถ้าการอ่านซ้ำหลังเซ็นไม่ผ่าน ให้ helper คืน HELD โดยงดส่ง batch ถ้าหลักฐาน B ทำให้ batch ไม่ผ่าน ให้ย้อนทั้ง batch และเก็บ claim เดิม เมื่อได้ UNCERTAIN ให้หยุดจอง ตรวจหลักฐานเดิม และห้ามส่งซ้ำ หาก lease ของ C หมดและ intent ค้างตรงสาย ให้พัก C เป็น REVIEW พร้อมเก็บ claim และ intent แม้ Worker เปลี่ยนรุ่น
+
+PARKED หมายถึง B ถูกพักและมี mock handoff ที่บันทึกไว้ ไม่ยืนยันว่า C สำเร็จ; VERIFIED เป็นผลที่ Worker บันทึก ณ เวลาตรวจ ไม่ยืนยันสถานะชีตปัจจุบัน. NOT_STARTED ต้องมี positive birth/lease provenance และไม่มี intent ที่เกี่ยวข้อง; legacy หรือข้อมูลขัดกันเป็น RECONCILE. การปล่อยจริงและเขียน Google/D1 จริงต้องผ่าน authority และ external-writer fence ของ #296 แยกต่างหาก. [Acceptance audit](../ISSUE348_ACCEPTANCE_AUDIT_TH.md) · [ตรวจและโอนสิทธิ์จำลอง](../../src/admin/serial-attested-handoff.ts) · [ทดสอบหลักฐาน B](../../tests/helpers/serial-handoff-b-predicates.mjs) · [รหัสปิดรอบ](../../src/admin/serial-expense-handover.ts)

@@ -5,11 +5,12 @@ class Statement{
   constructor(db,sql){this.db=db;this.sql=sql;this.args=[];}
   bind(...args){this.args=args;return this;}
   async first(){return this.db.sqlite.prepare(this.sql).get(...this.args)??null;}
-  async all(){return{results:this.db.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
+  async all(){return{success:true,results:this.db.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
   runSync(){
     const statement=this.db.sqlite.prepare(this.sql);
-    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{results:statement.all(...this.args),meta:{changes:0}};
-    return{meta:{changes:Number(statement.run(...this.args).changes)}};
+    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{success:true,results:statement.all(...this.args),meta:{changes:0}};
+    if(/\bRETURNING\b/i.test(this.sql)){const results=statement.all(...this.args);return{success:true,results,meta:{changes:results.length}};}
+    return{success:true,meta:{changes:Number(statement.run(...this.args).changes)}};
   }
   async run(){this.db.runs.push(this);return this.runSync();}
 }

@@ -73,6 +73,9 @@ jobs:
           unset ADMIN
           export MALIPANG_CLOCK_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/clock/manifest.json"
           export MALIPANG_BANK_SLIP_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/slip/manifest.json"
+          # The reviewed-tests pin predates the live opt-in, so this has no effect until the pin moves
+          # past it; the pass-count gate below still requires every live case to run.
+          export MALIPANG_LIVE_TESTS=clock-photos,bank-slips
           result=0
           node --import ./scripts/issue348-guard-photo-fetch.mjs --test --test-concurrency=1 \
             --test-name-pattern='^live vision enforces|^live OpenAI evaluator' \

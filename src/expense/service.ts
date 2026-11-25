@@ -257,13 +257,39 @@ export async function handleExpenseText(env:Env,event:LineEvent,traceId:string,a
   const pending=await handlePendingExpenseEdit(env,event,traceId,actor);if(pending)return pending;
   const to=event.source.userId||"",messageId=event.message?.id||"",parsed=parseExpenseText(event.message?.text||"");
   if(!parsed){await respondText(env,event,["Invalid expense format. ❌","","Examples:","• Egg change 375","• Electricity transfer 1200","• Boxes kbank 350","• 28/01 Egg change 375"].join("\n"),traceId);return"REJECTED";}
-  const id=randomId("exp"),status=parsed.quickSave?"CONFIRMED":"WAITING_CONFIRM",now=new Date().toISOString();
+  const status=parsed.quickSave?"CONFIRMED":"WAITING_CONFIRM",now=new Date().toISOString();
+  const sourceDraft=env.SERIAL_SOURCE_PROVENANCE_ENABLED==='true'&&status==='WAITING_CONFIRM';
+  const scopeDb=env.DB,scopeBook=env.GOOGLE_SPREADSHEET_ID,scopeFlag=env.SERIAL_SOURCE_PROVENANCE_ENABLED;
+  const stable=()=>env.DB===scopeDb&&env.GOOGLE_SPREADSHEET_ID===scopeBook&&env.SERIAL_SOURCE_PROVENANCE_ENABLED===scopeFlag;
+  let id=randomId("exp"),namespace='';
+  if(sourceDraft){
+    const marker=await scopeDb.prepare("SELECT namespace FROM serial_source_provenance_activation WHERE singleton=1 AND spreadsheet_id=? AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_source_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_source_provenance_no_update','serial_source_provenance_no_delete','serial_source_provenance_no_replace','serial_source_provenance_namespace_guard','serial_source_provenance_insert_guard','serial_source_provenance_update_guard','serial_source_provenance_delete_guard'))=7").bind(scopeBook||'').first<{namespace:string}>();
+    if(!stable()||!marker||!/^[a-f0-9]{32}$/.test(marker.namespace))throw Error('SERIAL_SOURCE_PROVENANCE_NOT_READY');
+    namespace=marker.namespace;id=`exp_${namespace}_${crypto.randomUUID()}`;
+  }
   const ownership=actorValues(actor);
-  const inserted=await env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId).run();
+  let insertedCount:number;
+  if(sourceDraft){
+    const insert=scopeDb.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id,serial_source_namespace)
+     SELECT ?,?,?,?,?,?,?,?,?,?,?,?,?,?,? WHERE CASE WHEN EXISTS(SELECT 1 FROM serial_source_provenance_activation WHERE singleton=1 AND spreadsheet_id=? AND namespace=?) AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_source_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_source_provenance_no_update','serial_source_provenance_no_delete','serial_source_provenance_no_replace','serial_source_provenance_namespace_guard','serial_source_provenance_insert_guard','serial_source_provenance_update_guard','serial_source_provenance_delete_guard'))=7 THEN NOT EXISTS(SELECT 1 FROM expense_events WHERE message_id=?) ELSE json_extract('invalid','$') END RETURNING expense_id`)
+     .bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId,namespace,scopeBook||'',namespace,messageId);
+    const auditId=randomId('exp_audit'),audit=scopeDb.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,document_id,branch_id,reason,before_json,after_json,created_at)
+     SELECT ?,?,'CREATE_DRAFT',?,NULL,?,'',NULL,?,? WHERE changes()=1 RETURNING audit_id`)
+     .bind(auditId,ownership.employeeId,id,ownership.branchId,JSON.stringify({source:'TEXT',status}),now);
+    if(!stable())throw Error('SERIAL_SOURCE_PROVENANCE_UNCERTAIN');
+    const results=await scopeDb.batch<{expense_id?:string;audit_id?:string}>([insert,audit]);
+    const result=results[0],record=results[1];
+    if(!stable()||results.length!==2||result?.success!==true||record?.success!==true||!Array.isArray(result.results)||!Array.isArray(record.results)||result.results.length>1||record.results.length!==result.results.length||result.results.length===1&&(result.results[0]?.expense_id!==id||record.results[0]?.audit_id!==auditId))throw Error('SERIAL_SOURCE_PROVENANCE_UNCERTAIN');
+    insertedCount=result.results.length;
+  }else{
+    const inserted=await env.DB.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,submitted_by_employee_id,branch_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(message_id) DO NOTHING`).bind(id,messageId,to,parsed.description,parsed.amountSatang,parsed.paymentKey,parsed.sourceWallet,parsed.category,parsed.transactionDate,status,traceId,now,ownership.employeeId,ownership.branchId).run();
+    insertedCount=Number(inserted.meta.changes||0);
+  }
   let expense:ExpenseFlexRecord={expenseId:id,description:parsed.description,amountSatang:parsed.amountSatang,paymentKey:parsed.paymentKey,sourceWallet:parsed.sourceWallet,category:parsed.category,transactionDate:parsed.transactionDate,status};
-  if(Number(inserted.meta.changes||0)===0){const existing=await findExpenseByMessage(env,messageId,to);if(!existing)throw new Error("Expense message conflict without an existing row");expense=existing;}
-  if(Number(inserted.meta.changes||0)===1)await expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId:id,after:{source:"TEXT",status}}).run();
+  if(insertedCount===0){const existing=await findExpenseByMessage(env,messageId,to);if(sourceDraft&&!stable())throw Error('SERIAL_SOURCE_PROVENANCE_UNCERTAIN');if(!existing)throw new Error("Expense message conflict without an existing row");expense=existing;}
+  if(insertedCount===1&&!sourceDraft)await expenseAudit(env,{actor,action:"CREATE_DRAFT",expenseId:id,after:{source:"TEXT",status}}).run();
   if(expense.status==="CONFIRMED")await enqueueSheetSync(env,{kind:"SHEETS_SYNC",entityType:"EXPENSE",entityKey:expense.expenseId,entityVersion:1,traceId});
+  if(sourceDraft&&!stable())throw Error('SERIAL_SOURCE_PROVENANCE_UNCERTAIN');
   await showCurrent(env,event,expense,traceId);
   return expense.status==="CONFIRMED"?"CONFIRMED":expense.status==="WAITING_CONFIRM"?"WAITING_CONFIRM":"REJECTED";
 }

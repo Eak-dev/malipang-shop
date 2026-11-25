@@ -9,6 +9,13 @@ import {expensePaymentOptions} from '../dist/expense/document.js';
 const expense={expenseId:'exp_test_001',description:'Electricity',amountSatang:120050,paymentKey:'transfer',sourceWallet:'SHOP_BANK',category:'utilities',transactionDate:'2026-07-22',status:'WAITING_CONFIRM'};
 const builders=[buildExpenseSummaryFlex,buildExpensePaymentFlex,buildExpenseSourceFlex,buildExpenseCategoryFlex,buildExpenseDateFlex,buildExpenseItemFlex,buildExpenseSavedFlex,buildExpensePaymentConfirmationFlex];
 
+test('namespaced expense identity survives the Flex postback payload',()=>{
+ const id='exp_'+'a'.repeat(32)+'_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+ const message=buildExpenseSummaryFlex({...expense,expenseId:id});const actions=[];
+ const visit=value=>{if(!value||typeof value!=='object')return;if(value.type==='postback'&&typeof value.data==='string')actions.push(value.data);for(const child of Object.values(value))visit(child);};
+ visit(message);assert.ok(actions.some(data=>new URLSearchParams(data).get('id')===id));assert.ok(actions.every(data=>data.length<=300));
+});
+
 test('expense Flex cards satisfy the LINE action-label contract',()=>{
   for(const build of builders){
     const message=build(expense);

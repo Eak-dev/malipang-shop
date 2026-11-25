@@ -70,6 +70,7 @@ jobs:
 
           export MALIPANG_EXPENSE_BASE_URL="$origin"
           export MALIPANG_ADMIN_TOKEN_FILE="$scratch/token"
+          export MALIPANG_LIVE_TESTS=expense-text
           result=0
           node --import "$scratch/restrict-fetch.mjs" --test \
             --test-name-pattern='^live Worker expense evaluator' \

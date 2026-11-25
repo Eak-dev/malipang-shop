@@ -39,3 +39,9 @@ test('pilot authorizes the pinned Worker and exposes only the enrollment outcome
     assert.deepEqual(await response.json(),{ok:true,outcome:'RESERVED',servedVersion:version});assert.equal(calls,1);
   } finally {pilot.operateParkedPilot=original;}
 });
+
+test('verified receipt action requires exact round, proof, supervision and fence',()=>{
+ const value={action:'RECORD_VERIFIED',jobId,fingerprint:'b'.repeat(64),roundId:'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',proof:'c'.repeat(64),ownerSupervising:true,externalWritersFenced:true};
+ assert.deepEqual(pilot.parseParkedPilot(value),value);
+ for(const invalid of [{...value,ownerSupervising:false},{...value,externalWritersFenced:false},{...value,roundId:'bad'},{...value,proof:'bad'},{...value,extra:true}])assert.equal(pilot.parseParkedPilot(invalid),null);
+});

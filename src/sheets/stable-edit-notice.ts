@@ -58,6 +58,13 @@ async function claim(env:Env,token:string):Promise<{notice_stamp:string|null;not
 
 /** Read-only provider readiness; never grants permission to write. */
 export async function stableNoticeReady(env:Env):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env),status=text(x.cells[0]),time=text(x.cells[1]);return env.DB===db&&scope(env)===initial&&(status===null&&time===null||status==='พร้อมแก้ไข'||status==='พร้อมแก้ไข • มีรายการรอตรวจ'||status==='พร้อมแก้ไข • กำลังซิงก์'||status==='พร้อมแก้ไข • กำลังซิงก์ • มีรายการรอตรวจ'||syncingReady(status));}catch{return false;}}
+/** Read the paused notice without relying on a prior D1 snapshot. The caller
+ * must bind these values to its current claim after this provider read. */
+export async function readStablePausedNotice(env:Env,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease):Promise<{stamp:string;identity:string}|null>{
+ try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease),time=text(x.cells[1]);
+  return env.DB===db&&scope(env)===initial&&text(x.cells[0])==='พักแก้ไฟล์'&&typeof time==='string'&&time.length>0?{stamp:time,identity:identity(x)}:null;
+ }catch{return null;}
+}
 export async function stableNoticePaused(env:Env,stampValue:string,identityValue:string,budget?:ReviewRequestBudget,oauthLease?:GoogleOAuthLease,strict=false):Promise<boolean>{try{const db=env.DB,initial=scope(env),x=await snapshot(env,budget,oauthLease);return env.DB===db&&scope(env)===initial&&identity(x)===identityValue&&text(x.cells[0])==='พักแก้ไฟล์'&&text(x.cells[1])===stampValue;}catch(error){if(strict)throw error;return false;}}
 async function noticeStyleDigest(x:Snapshot):Promise<string>{
  const styles=x.cells.map(c=>[c.format,c.note,c.validation,c.textRuns,c.chips]);
@@ -88,10 +95,17 @@ export async function beginStableNotice(env:Env,token:string,wait:(ms:number)=>P
  await wait(15000);
  if(!stable()||!(await claim(env,token))||!await stableNoticePaused(env,time,identity(after),budget)||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
 }
-export async function endStableNotice(env:Env,token:string,boundedMutation=false,beforeReady?:()=>Promise<void>,expectedStyle?:string):Promise<void>{
+export async function endStableNotice(env:Env,token:string,boundedMutation=false,beforeReady?:()=>Promise<void>,expectedStyle?:string,capturePostimage=false):Promise<{postimageDigest:string;observedAt:string}|void>{
  const db=env.DB,initial=scope(env),stable=()=>env.DB===db&&scope(env)===initial,current=await claim(env,token);if(!current?.notice_stamp||!current.notice_identity||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  const reviews=await db.prepare("SELECT count(*) AS n FROM sync_jobs WHERE status='REVIEW'").first<{n:number}>();if(!reviews||!Number.isSafeInteger(reviews.n)||reviews.n<0||!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
  // As in beginStableNotice, the paused pre-image is read inside the fence.
  const ready=reviews.n?'พร้อมแก้ไข • มีรายการรอตรวจ':'พร้อมแก้ไข',time=stamp(),seen:{before?:Snapshot}={};await (boundedMutation?batchWriteContinuousNoticeValues:batchWriteValues)(env,[{range:names[0],values:[[ready]]},{range:names[1],values:[[time]]}],async()=>{const latest=await snapshot(env),again=await claim(env,token);if(!stable()||!again||again.notice_stamp!==current.notice_stamp||again.notice_identity!==current.notice_identity||identity(latest)!==current.notice_identity||text(latest.cells[0])!=='พักแก้ไฟล์'||text(latest.cells[1])!==current.notice_stamp)throw Error('STABLE_NOTICE_CHANGED');if(expectedStyle&&(latest.ranges[0].sheetId!==1815870717||latest.ranges[0].row!==0||latest.ranges[0].column!==1||latest.ranges[1].row!==0||latest.ranges[1].column!==2||await noticeStyleDigest(latest)!==expectedStyle))throw Error('PILOT_NOTICE_STYLE_CHANGED');if(beforeReady)await beforeReady();seen.before=latest;});
  const before=seen.before,after=await snapshot(env);if(!before||!stable()||!unchanged(before,after)||text(after.cells[0])!==ready||text(after.cells[1])!==time)throw Error('STABLE_NOTICE_UNVERIFIED');
+ if(!capturePostimage)return;
+ const observedAt=new Date().toISOString();
+ // Digest the complete validated readback without exposing its content. It is
+ // an observation, not proof of a continuing external writer fence.
+ const bytes=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(['MALIPANG_NOTICE_POSTIMAGE_V1',after])));
+ if(!stable())throw Error('STABLE_NOTICE_UNVERIFIED');
+ return {postimageDigest:[...new Uint8Array(bytes)].map(x=>x.toString(16).padStart(2,'0')).join(''),observedAt};
 }

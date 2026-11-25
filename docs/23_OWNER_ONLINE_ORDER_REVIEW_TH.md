@@ -52,10 +52,10 @@ Automated suites: `owner-online-order-review.test.mjs`, `owner-online-order-rout
 ภาพจริงเก็บนอก Git ใช้ manifest deidentified จาก read-only live OpenAI extraction ผ่านคีย์เดิม โดย Production DB ถูกแทนด้วย in-memory usage/metrics adapter ใน test endpoint จากนั้น replay ขั้นตอน LINE กับ SQLite และ mock LINE/Sheets จนจบ ไม่ส่งข้อความหรือสร้างธุรกรรมจริงในการทดสอบนี้:
 
 ```bash
-ONLINE_ORDER_PRIVATE_FIXTURES=/absolute/private/real-image-fixtures.private.json npm run test:online-order-images
+MALIPANG_LIVE_TESTS=online-order-images ONLINE_ORDER_PRIVATE_FIXTURES=/absolute/private/real-image-fixtures.private.json npm run test:online-order-images
 ```
 
-ถ้าไม่มี manifest ชุดภาพจริงจะ skip โดยชัดเจน; ห้ามอ้างว่าผ่านจากการ skip
+ถ้าไม่ได้ตั้ง `MALIPANG_LIVE_TESTS=online-order-images` ชุดภาพจริงจะแสดง SKIP พร้อมเหตุผล ถ้าตั้งแล้วแต่ไม่มี manifest ต้อง fail ห้ามอ้างว่าผ่านจากการ skip ชุดนี้ไม่รวมอยู่ใน `all` เพราะเจ้าของเลื่อนการทดสอบไว้
 
 ผลทดสอบ 27/10/2026: ภาพ 622/462 บาทอ่านยอดจาก footer รวมส่วนลดได้ ไม่หัก VIP ซ้ำ วันชำระจากภาพยังตรง; ภาพ 519 บาทอ่านยอดได้แต่ไม่เห็นวันชำระ จึงค้างจนเจ้าของยืนยันวัน 25/10/2569 แล้วทำต่อได้ ภาพจริงทั้งสามผ่าน end-to-end 3/3 รวม resend และ simulated Reply 503 เฉพาะกรณี held; การอ่านใช้ 3 API calls, Production business/LINE/Sheets writes = 0, scoped records ก่อน/หลังตรงกัน, temporary override ถูกถอดแล้ว (health 200/admin unauthorized 401/removed endpoint 404)
 

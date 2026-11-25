@@ -89,10 +89,60 @@ for(const [provider,read] of Object.entries(providers)){
     await check('23 Nov 2026 21:12 Amphoe','OK','21:12','a place name starting with "Am" after 21:12 is not AM');
     await check('23 Nov 2026 9:12 PM','OK','21:12','9:12 PM is 21:12');
     await check('23 Nov 2026 9:12 PM 21:12','OK','21:12','9:12 PM and 21:12 are the same time');
-    await check('23 Nov 2026 9:12 P.M.','TIMESTAMP_FIELDS_MISSING',null,'a malformed marker is not read as PM and gives no evening time');
+    await check('23 Nov 2026 9:12 P.M.','TIMESTAMP_FIELDS_MISSING',null,'an unsupported marker gives no timestamp');
     await check('23 Nov 2026 21:12 PM','TIMESTAMP_FIELDS_MISSING',null,'21 with PM is not a time');
     await check('23 Nov 2026 09:12 and 9:12 PM','TIMESTAMP_FIELDS_MISSING',null,'09:12 and 9:12 PM conflict');
     await check('23 Nov 2026 21:12\n22 Nov 2026 21:12','TIMESTAMP_FIELDS_MISSING',null,'two different dates at 21:12 are still rejected');
+  });
+  test(`${provider}: an unsupported AM/PM-like marker is rejected, not dropped`,async()=>{
+    // Review P2: "12:30 A.M." read as 24-hour 12:30 was noon, so a noon LINE time passed photo age.
+    const at=t=>new Date(`2026-11-23T${t}+07:00`).toISOString();
+    const check=async(overlay,line,model,want,time,label)=>{
+      const reading=await read({...base,...gps,photoDate:model?'2026-11-23':null,photoTime:model,overlayRawText:`${overlay}\n${GPS}\n${ADDRESS}`});
+      const v=validateAttendancePhoto(reading,at(line),rules);
+      assert.equal(code(v),want,`${provider}: ${label}`);
+      if(time){assert.equal(v.officialTime,time,`${provider}: ${label} official time`);assert.equal(v.workDate,'2026-11-23',`${provider}: ${label} work date`);}
+    };
+    await check('23 Nov 2026 12:30 A.M.','12:30:30','12:30','TIMESTAMP_FIELDS_MISSING',null,'12:30 A.M. with a noon LINE time and model 12:30');
+    await check('23 Nov 2026 12:30 A.M.','12:30:30',null,'TIMESTAMP_FIELDS_MISSING',null,'12:30 A.M. with a noon LINE time and empty model fields');
+    await check('23 Nov 2026 12:30 A.M.','00:30:30','00:30','TIMESTAMP_FIELDS_MISSING',null,'12:30 A.M. after midnight');
+    await check('23 Nov 2026 12:00 A.M.','00:00:30',null,'TIMESTAMP_FIELDS_MISSING',null,'12:00 A.M. at midnight');
+    await check('23 Nov 2026 12:00 P.M.','12:00:30',null,'TIMESTAMP_FIELDS_MISSING',null,'12:00 P.M. at noon');
+    await check('23 Nov 2026 12:30 P.M.','12:30:30','12:30','TIMESTAMP_FIELDS_MISSING',null,'12:30 P.M. at noon');
+    for(const [overlay,label] of [['23 Nov 2026 12:30 a.m','lower-case a.m'],['23 Nov 2026 12:30 P M','spaced P M'],['23 Nov 2026 12:30a','single letter glued to the time']])
+      await check(overlay,'12:30:30',null,'TIMESTAMP_FIELDS_MISSING',null,label);
+    // Supported markers and place names keep their meaning
+    await check('23 Nov 2026 12:30 AM','00:30:30',null,'OK','00:30','12:30 AM is 00:30');
+    await check('23 Nov 2026 12:00 AM','00:00:30',null,'OK','00:00','12:00 AM is midnight on the overlay date');
+    await check('23 Nov 2026 12:30 PM','12:30:30','12:30','OK','12:30','12:30 PM is 12:30');
+    await check('23 Nov 2026 9:12 PM','21:12:30',null,'OK','21:12','9:12 PM is 21:12');
+    await check('23 Nov 2026 12:30 Amphoe','12:30:30',null,'OK','12:30','a place name starting with "Am" is not a marker');
+    // Every parser shape, CE/BE/two-digit years and mixed precision keep the contract with the guard
+    for(const [overlay,secs] of [['23 Nov BE 2569 at 12:30 AM',''],['November 23, 2026 12:30:15 AM',':15'],['2026/11/23 12:30 AM',''],['2569-11-23 12:30 AM',''],
+      ['23/11/2569 12:30 AM',''],['23-11-26 12:30 AM',''],['23 Nov 2026 00:30:15\n12:30:15 AM',':15'],['23 Nov 2026 12:30 AM\n00:30:15',':15']]){
+      await check(overlay,'00:30:30',null,'OK','00:30',`${overlay} reads 00:30${secs}`);
+      await check(overlay.replace('AM','A.M.'),'00:30:30',null,'TIMESTAMP_FIELDS_MISSING',null,`${overlay} with A.M. is rejected`);
+    }
+  });
+  test(`${provider}: photo age is measured from :00 when the overlay shows no seconds`,async()=>{
+    // Same validator and threshold; the model's own seconds (:45) are not used.
+    const check=async(overlay,model,line,want,workDate,time)=>{
+      const [d,t]=model;
+      const reading=await read({...base,...gps,photoDate:d,photoTime:t,overlayRawText:`${overlay}\n${GPS}\n${ADDRESS}`});
+      const v=validateAttendancePhoto(reading,new Date(`${line}+07:00`).toISOString(),rules);
+      assert.equal(code(v),want,`${provider}: ${overlay} received ${line}`);
+      if(want==='OK'){assert.equal(v.workDate,workDate);assert.equal(v.officialTime,time);assert.equal(v.photoDateTime,`${workDate}T${time}:00+07:00`);}
+    };
+    const morning=['2026-11-23','09:12:45'];
+    await check('23 Nov 2026 09:12',morning,'2026-11-23T09:15:29','OK','2026-11-23','09:12');
+    await check('23 Nov 2026 09:12',morning,'2026-11-23T09:15:30','PHOTO_TIME_TOO_OLD');
+    await check('23 Nov 2026 09:12',morning,'2026-11-23T09:08:31','OK','2026-11-23','09:12');
+    await check('23 Nov 2026 09:12',morning,'2026-11-23T09:08:30','PHOTO_TIME_TOO_OLD');
+    // Across midnight the work date and official time stay those of the overlay
+    await check('23 Nov 2026 23:58',['2026-11-23','23:58:45'],'2026-11-24T00:01:20','OK','2026-11-23','23:58');
+    await check('23 Nov 2026 23:58',['2026-11-23','23:58:45'],'2026-11-24T00:01:30','PHOTO_TIME_TOO_OLD');
+    await check('24 Nov 2026 00:01',['2026-11-24','00:01:45'],'2026-11-23T23:57:40','OK','2026-11-24','00:01');
+    await check('24 Nov 2026 00:01',['2026-11-24','00:01:45'],'2026-11-23T23:57:30','PHOTO_TIME_TOO_OLD');
   });
 }
 
@@ -148,7 +198,10 @@ test('evidencedOverlayTimestamp gives a fixed reason and no timestamp whenever e
     assert.equal(t(text,null,null).evidence,'NO_OVERLAY_TIMESTAMP',`${text}: hour outside 1-12 with a marker`);
   assert.deepEqual(t('23 Nov 2026 12:30 AM',null,null),{photoDate:'2026-11-23',photoTime:'00:30',evidence:'EVIDENCED'},'12 AM is 00');
   assert.deepEqual(t('23 Nov 2026 12:30 PM',null,null),{photoDate:'2026-11-23',photoTime:'12:30',evidence:'EVIDENCED'},'12 PM is 12');
-  assert.deepEqual(t('23 Nov 2026 9:12 P.M.',null,null),{photoDate:'2026-11-23',photoTime:'09:12',evidence:'EVIDENCED'},'boundary: a malformed marker is not a marker (photo age and model agreement still apply)');
+  for(const text of ['23 Nov 2026 9:12 P.M.','23 Nov 2026 12:30 A.M.','23 Nov 2026 12:30 a.m','23 Nov 2026 12:30 P M','23 Nov 2026 12:30a','23 Nov 2026 12:30 p.','23 Nov 2026 09:12 and 10:00 a.m.'])
+    assert.deepEqual(t(text,null,null),{photoDate:null,photoTime:null,evidence:'UNSUPPORTED_TIME_MARKER'},`${text}: an unsupported marker is not guessed`);
+  for(const text of ['23 Nov 2026 12:30 Amphoe','23 Nov 2026 12:30 AMPHOE MUEANG','23 Nov 2026 12:30 and','23 Nov 2026 12:30 A1 Building'])
+    assert.equal(t(text,null,null).evidence,'EVIDENCED',`${text}: a word that only starts with a or p is not a marker`);
   assert.deepEqual(t(`${STAMP}\n09:12`,null,null),{photoDate:'2026-11-23',photoTime:'09:12:02',evidence:'EVIDENCED'},'HH:mm:ss and HH:mm of one minute agree');
   assert.deepEqual(t('23 Nov 2026 09:12\n09:12:02','2026-11-23','09:12:02'),{photoDate:'2026-11-23',photoTime:'09:12:02',evidence:'EVIDENCED'},'seconds come from the token that shows them');
   assert.equal(t('23 Nov 2026 09:12\n09:12:02','2026-11-23','09:12:40').evidence,'MODEL_TIME_DIFFERS','model seconds must match the seconds shown');

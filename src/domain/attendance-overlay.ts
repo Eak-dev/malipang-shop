@@ -35,7 +35,7 @@ export function parseAttendanceOverlay(rawText:string):ParsedAttendanceOverlay{
   return{photoDate,photoTime,latitude,longitude};
 }
 
-export type OverlayTimestampEvidence="EVIDENCED"|"NO_OVERLAY_TIMESTAMP"|"AMBIGUOUS_OVERLAY_TIMES"|"AMBIGUOUS_OVERLAY_DATES"|"MODEL_DATE_DIFFERS"|"MODEL_TIME_DIFFERS";
+export type OverlayTimestampEvidence="EVIDENCED"|"NO_OVERLAY_TIMESTAMP"|"UNSUPPORTED_TIME_MARKER"|"AMBIGUOUS_OVERLAY_TIMES"|"AMBIGUOUS_OVERLAY_DATES"|"MODEL_DATE_DIFFERS"|"MODEL_TIME_DIFFERS";
 
 /**
  * The attendance timestamp is the white camera overlay's date and time. A vision model
@@ -51,6 +51,9 @@ export function evidencedOverlayTimestamp(rawText:string,modelDate:string|null,m
   if(!parsed.photoDate||!parsed.photoTime)return none("NO_OVERLAY_TIMESTAMP");
   const text=String(rawText||"").replace(/\s+/g," ");
   const tokens=[...text.matchAll(/(?<![\d:])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/gi)];
+  // An AM/PM-like marker the parser does not read ("A.M.", "p.m", "P M", "12:30a") must not be dropped:
+  // read as 24-hour, "12:30 A.M." would be noon instead of 00:30. A word such as "Amphoe" is not a marker.
+  if(tokens.some(t=>t[4]===undefined&&/^\s*[ap](?![a-z0-9_])/i.test(text.slice(t.index!+t[0].length))))return none("UNSUPPORTED_TIME_MARKER");
   // Compare in 24-hour form so "09:12" and "9:12 PM" conflict; an impossible time stays a distinct value.
   // The same minute may be written with and without seconds, but every seconds value shown must agree.
   const minutes=new Set(tokens.map(t=>timeValue(Number(t[1]),Number(t[2]),Number(t[3]||0),t[4]||"")?.slice(0,5)??t[0]));

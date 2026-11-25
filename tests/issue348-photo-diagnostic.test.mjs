@@ -1,0 +1,59 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+import {spawnSync} from 'node:child_process';
+import os from 'node:os';
+import path from 'node:path';
+import {fileURLToPath} from 'node:url';
+import {summarize} from '../scripts/issue348-photo-diagnostic-summary.mjs';
+
+const guard=fileURLToPath(new URL('../scripts/issue348-guard-photo-fetch.mjs',import.meta.url));
+const line=fields=>`    # ${JSON.stringify({id:'photo-07',provider:'openai',accepted:false,validationCode:'TIMESTAMP_FIELDS_MISSING',clockPresent:true,overlayPresent:true,timestampPresent:false,gpsPresent:false,...fields})}`;
+
+test('summary prints only an exact allowlisted diagnostic of the named case',()=>{
+  const tap=['TAP version 13','# Subtest: photo-07','    # photoDate=2000-01-02 SECRETPLACE',line({}),'    not ok 1 - photo-07'].join('\n');
+  assert.equal(summarize(tap,'photo-07'),'photo-07 provider=openai validationCode=TIMESTAMP_FIELDS_MISSING accepted=false clockPresent=true overlayPresent=true timestampPresent=false gpsPresent=false');
+  assert.equal(summarize(tap,'photo-01'),null,'another case has no diagnostic');
+  assert.equal(summarize(tap,'../x'),null,'case id is validated');
+});
+
+test('summary refuses extra keys, wrong types, unlisted values or duplicates',()=>{
+  const bad=[
+    line({photoDate:'2000-01-02'}),
+    line({timestampPresent:'true'}),
+    line({validationCode:'gps missing'}),
+    line({provider:'SECRET-host'}),
+    [line({}),line({})].join('\n'),
+    '    # {not json}',
+    '',
+  ];
+  for(const tap of bad)assert.equal(summarize(tap,'photo-07'),null,tap.slice(0,80));
+  const reordered=`    # ${JSON.stringify({provider:'openai',id:'photo-07',accepted:false,validationCode:'OK',clockPresent:true,overlayPresent:true,timestampPresent:false,gpsPresent:false})}`;
+  assert.equal(summarize(reordered,'photo-07'),null,'key order is part of the shape');
+});
+
+test('fetch guard limited to one case rejects every other image before any request',async()=>{
+  const root=await mkdtemp(path.join(os.tmpdir(),'photo-guard-'));
+  try{
+    const bytes=id=>Buffer.from(`synthetic-${id}`);
+    const sha=value=>createHash('sha256').update(value).digest('hex');
+    const clock={cases:['photo-01','photo-07'].map(id=>({id,sha256:sha(bytes(id)),receivedAt:'2000-01-01T00:00:00.000Z'}))};
+    const slips={cases:[{id:'kbank-kplus',sha256:sha(bytes('kbank-kplus'))}]};
+    await writeFile(path.join(root,'clock.json'),JSON.stringify(clock));
+    await writeFile(path.join(root,'slip.json'),JSON.stringify(slips));
+    const run=(only,id)=>spawnSync(process.execPath,['--import',guard,'-e',
+      `fetch('https://malipang-backend-v5-2.eakkachai-dev.workers.dev/admin/vision/evaluate?provider=openai&model=gpt-4.1-mini',{method:'POST',body:Buffer.from(${JSON.stringify(`synthetic-${id}`)})}).then(()=>process.exit(3),e=>{console.log(e.message);process.exit(2);})`],
+      {env:{PATH:process.env.PATH,MALIPANG_CLOCK_PRIVATE_MANIFEST:path.join(root,'clock.json'),MALIPANG_BANK_SLIP_PRIVATE_MANIFEST:path.join(root,'slip.json'),...(only===undefined?{}:{ISSUE348_ONLY_CASE:only})},encoding:'utf8',timeout:20000});
+    for(const id of ['photo-01','kbank-kplus']){
+      const r=run('photo-07',id);
+      assert.equal(r.status,2,id);
+      assert.match(r.stdout,/outside approved scope/,id);
+    }
+    for(const only of ['photo-99','','kbank-kplus']){
+      const r=run(only,'photo-07');
+      assert.notEqual(r.status,0,`ISSUE348_ONLY_CASE=${JSON.stringify(only)}`);
+      assert.match(r.stderr,/not a known clock case/);
+    }
+  }finally{await rm(root,{recursive:true,force:true});}
+});

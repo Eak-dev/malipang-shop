@@ -1,0 +1,93 @@
+name: Production photo-07 diagnostic (one image)
+# Manual only, behind the production environment approval. Sends exactly one
+# attendance photo (photo-07) to the Production evaluator and prints only an
+# allowlisted summary: validation code, provider and five booleans. No image,
+# reading, timestamp, GPS, address or raw TAP leaves the runner.
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Reviewed main commit containing this workflow
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: issue348-production-private-photo-evaluation
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: github.repository == 'Eak-dev/malipang-shop' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Load the tested private transport
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 440e22061cf27ed76b0188bfc3f15bde63e20f88
+          path: reviewed-transfer
+          persist-credentials: false
+          sparse-checkout: scripts
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Fetch and validate the approved files
+        shell: bash
+        env:
+          SCOPED_READER: ${{ secrets.ISSUE348_R2_READER }}
+          PHOTO_CONTROL: ${{ secrets.ISSUE348_PHOTO_CONTROL }}
+          R2_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/issue348.XXXXXX")
+          export ISSUE348_SCRATCH="$scratch"
+          printf 'ISSUE348_SCRATCH=%s\n' "$scratch" >> "$GITHUB_ENV"
+          node scripts/issue348-stage-private-photos.mjs
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$scratch/clock/manifest.json"
+          node --test --test-name-pattern='^clock photo fixture contract' \
+            tests/clock-photo-fixtures.test.mjs > "$scratch/contracts.tap" 2>&1
+          grep -qx '# pass 1' "$scratch/contracts.tap"
+      - name: Send photo-07 only and print the allowlisted summary
+        shell: bash
+        env:
+          ADMIN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_VISION_BASE_URL: ${{ vars.MALIPANG_WORKER_URL }}
+          MALIPANG_OPENAI_MODEL: gpt-4.1-mini
+          MALIPANG_VISION_PROVIDER: openai
+          MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE: '0.70'
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ "$MALIPANG_VISION_BASE_URL" == 'https://malipang-backend-v5-2.eakkachai-dev.workers.dev' && ${#ADMIN} -ge 32 ]]
+          export MALIPANG_ADMIN_TOKEN_FILE="$ISSUE348_SCRATCH/token"
+          printf '%s' "$ADMIN" > "$MALIPANG_ADMIN_TOKEN_FILE"
+          unset ADMIN
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/clock/manifest.json"
+          export MALIPANG_BANK_SLIP_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/slip/manifest.json"
+          export MALIPANG_LIVE_TESTS=clock-photos
+          export MALIPANG_CLOCK_DIAGNOSTIC_CASE=photo-07
+          export ISSUE348_ONLY_CASE=photo-07
+          result=0
+          node --import ./scripts/issue348-guard-photo-fetch.mjs --test --test-concurrency=1 \
+            --test-name-pattern='^live vision enforces' tests/clock-photo-fixtures.test.mjs \
+            > "$ISSUE348_SCRATCH/live.tap" 2>&1 || result=$?
+          if grep -q 'ISSUE348_TRANSPORT_OUTCOME_UNKNOWN' "$ISSUE348_SCRATCH/live.tap"; then
+            echo 'The submission has an unknown outcome. Reconcile before a new dispatch.'
+            exit 1
+          fi
+          # Status of the single case; raw TAP stays on the runner.
+          sed -nE 's/^[[:space:]]*(not ok|ok) [0-9]+ - (photo-07)$/\1 \2/p' "$ISSUE348_SCRATCH/live.tap"
+          node scripts/issue348-photo-diagnostic-summary.mjs "$ISSUE348_SCRATCH/live.tap" photo-07
+          echo "test exit code: $result"
+      - name: Remove transient files
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${ISSUE348_SCRATCH:-}" == "$RUNNER_TEMP"/issue348.* ]]; then
+            rm -rf -- "$ISSUE348_SCRATCH"
+          fi

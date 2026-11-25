@@ -7803,7 +7803,7 @@
       "branch": "claude/issue296-handover-observable-20261125",
       "source_sha": "ac8450068d4e3f0db5bf9ff296867dd027b23d54",
       "issues": [296],
-      "pull_requests": [],
+      "pull_requests": [357],
       "status": "ACTIVE",
       "observed_at": "2026-11-25T03:59:32Z",
       "reason": "Phase B runtime change for #296 (HANDOVER_ONE stops before reserving when FINISH_STATUS cannot answer); stacked on claude/issue348-n1-no-migration-20261125 (PR #356). Remote head observed before this registry commit. Integration plan: after PR #356 merges, retarget to main, review, then merge. No release or flag change is implied."

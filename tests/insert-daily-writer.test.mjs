@@ -1368,15 +1368,18 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   }
   const operate=value=>operateParkedPilot(h.env,value,version);
   if(releaseSchemaOnly&&!roundMode){
-   // Release schema (0067): INSPECT, PROBE and SETTLE above ran on Miniflare D1.
-   // KNOWN GAP (#296 phase B, not released): FINISH_STATUS reads serial tables and stays UNVERIFIED,
-   // yet HANDOVER still reserves the pilot (claim HELD, epoch ARMED). The route is unreachable while
-   // CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED is unset and the recovery gate is false. A separate runtime
-   // change must make HANDOVER refuse here before phase B; it will flip these assertions.
+   // Release schema (0067): INSPECT, PROBE and SETTLE above ran on Miniflare D1. FINISH_STATUS reads
+   // serial tables and cannot answer, so HANDOVER_ONE stops before reserving: claim, epoch, jobs and
+   // audit stay exactly as they were, and a retry gives the same answer.
+   const snapshot=async()=>JSON.stringify({claims:(await db.prepare('SELECT * FROM stable_workbook_claims').all()).results,
+    epochs:(await db.prepare('SELECT * FROM stable_recovery_epochs').all()).results,jobs:(await db.prepare('SELECT * FROM sync_jobs ORDER BY job_id').all()).results,
+    audit:(await db.prepare('SELECT action,entity_key FROM admin_audit ORDER BY id').all()).results});
    assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
-   assert.deepEqual(await operate(action),{ok:true,outcome:'RESERVED'});
-   assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
-   assert.equal((await db.prepare("SELECT count(*) n FROM stable_workbook_claims WHERE state='HELD' AND phase='PILOT_RESERVED'").first()).n,1);
+   const before=await snapshot();
+   assert.deepEqual(await operate(action),{ok:false,outcome:'HELD'});
+   assert.deepEqual(await operate(action),{ok:false,outcome:'HELD'},'a retry gives the same answer');
+   assert.equal(await snapshot(),before,'nothing changed');
+   assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims WHERE operation_token='claim-token-recovery'").first()).state,'REVIEW');
    return;
   }
   if(!whole){

@@ -83,6 +83,22 @@ workflow `Production private photo evaluation` รับเฉพาะ main ท
 
 สำหรับ fixture รูปลงเวลาของ #348 รูป 07 ต้องถูกปฏิเสธเพราะไม่มีวันและเวลาถ่ายที่ใช้ลงเวลาได้ ตรวจค่าที่อ่านและเหตุผลการปฏิเสธตามลำดับ validation ของ Worker ผลที่คาดหวังนี้ไม่ได้อ้างผลจากรัน Production
 
+### วินิจฉัยรูป 07 แบบรูปเดียว (manual)
+
+workflow `Production photo-07 diagnostic (one image)` ใช้ R2 ส่วนตัว, secret และ environment reviewer ชุดเดียวกับข้างบน และใช้ concurrency group เดียวกัน runner ดึงและตรวจแพ็กเกจทั้งสิบไฟล์เหมือนรอบเต็ม แต่ guard (`ISSUE348_ONLY_CASE=photo-07`) และโหมดวินิจฉัย (`MALIPANG_CLOCK_DIAGNOSTIC_CASE=photo-07`) ส่ง**เฉพาะรูป 07**ไปยังตัวประเมิน Worker จึงเรียก OpenAI ได้ไม่เกินจำนวนที่การประเมินรูปเดียวใช้ log แสดงเพียงสถานะของรูปและบรรทัดสรุปหนึ่งบรรทัด (`provider`, `validationCode`, `accepted`, `clockPresent`, `overlayPresent`, `timestampPresent`, `gpsPresent`) ไม่มีค่าที่อ่านจากภาพ
+
+job ผ่านเฉพาะเมื่อ live test จบด้วย exit 0 **และ** ได้ `accepted=false`, `validationCode=TIMESTAMP_FIELDS_MISSING`, `timestampPresent=false` กรณีอื่นจะพิมพ์ `verdict: FAIL <เหตุ>` แล้วล้ม:
+
+| ผลที่เห็น | ความหมายตามลำดับใน `src/domain/attendance.ts` | ผ่านเกณฑ์? |
+|---|---|---|
+| `TIMESTAMP_FIELDS_MISSING` | ตัวอ่านเห็น overlay สีขาว (ที่อยู่) แต่ไม่พบวันที่หรือเวลาใน overlay ตรงกับต้นฉบับรูป 07 | ผ่าน |
+| `TIMESTAMP_MISSING` | ตัวอ่านตอบว่าไม่พบ overlay เลย validator จึงหยุดก่อนตรวจช่องวันเวลา ยังเป็นการปฏิเสธเพราะไม่มีเวลาถ่าย แต่อ่านภาพผิดไปจากต้นฉบับที่มี overlay ที่อยู่ | ไม่ผ่าน (`FAIL OTHER_REJECTION_CODE`) รายงานให้ตัดสินแยก |
+| `GPS_MISSING` หรือรหัสหลังจากนั้น และ `timestampPresent=true` | ตัวอ่านใส่วันเวลาที่ไม่มีใน overlay (สมมติฐาน: คัดจากหน้าปัดนาฬิกา) | ไม่ผ่าน (`FAIL TIMESTAMP_PRESENT`) |
+| `accepted=true` | ระบบรับรูปที่ต้องปฏิเสธ | ไม่ผ่าน (`FAIL ACCEPTED`) |
+| ไม่มีบรรทัดสรุป หรือ `ISSUE348_TRANSPORT_OUTCOME_UNKNOWN` | endpoint ไม่ตอบสำเร็จ หรือผลการส่งไม่แน่ชัด **ไม่ใช่การปฏิเสธภาพ** ต้องกระทบยอดก่อนสั่งใหม่ | ไม่ผ่าน |
+
+workflow นี้ไม่เปลี่ยนกติกาลงเวลาหรือ runtime ของ Worker
+
 ## UAT ขั้นต่ำ
 
 ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test

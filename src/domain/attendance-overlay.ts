@@ -34,3 +34,32 @@ export function parseAttendanceOverlay(rawText:string):ParsedAttendanceOverlay{
   else if(cardinal){latitude=Number(cardinal[1])*(cardinal[2]!.toUpperCase()==="S"?-1:1);longitude=Number(cardinal[3])*(cardinal[4]!.toUpperCase()==="W"?-1:1);}
   return{photoDate,photoTime,latitude,longitude};
 }
+
+export type OverlayTimestampEvidence="EVIDENCED"|"NO_OVERLAY_TIMESTAMP"|"AMBIGUOUS_OVERLAY_TIMES"|"MODEL_DATE_DIFFERS"|"MODEL_TIME_DIFFERS";
+
+/**
+ * The attendance timestamp is the white camera overlay's date and time. A vision model
+ * may report photoDate/photoTime it did not read from that overlay (for example the shop
+ * wall clock), so the timestamp is taken only from the transcribed overlay text: it must
+ * parse, hold a single time, and agree with any date/time the model also reported.
+ * Residual risk: if the same model fabricates the overlay text and the fields together,
+ * this check cannot tell (it has no independent view of the image).
+ */
+export function evidencedOverlayTimestamp(rawText:string,modelDate:string|null,modelTime:string|null):{photoDate:string|null;photoTime:string|null;evidence:OverlayTimestampEvidence}{
+  const none=(evidence:OverlayTimestampEvidence)=>({photoDate:null,photoTime:null,evidence});
+  const parsed=parseAttendanceOverlay(rawText);
+  if(!parsed.photoDate||!parsed.photoTime)return none("NO_OVERLAY_TIMESTAMP");
+  const text=String(rawText||"").replace(/\s+/g," ");
+  const tokens=[...text.matchAll(/(?<![\d:])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])/g)];
+  const distinct=new Set(tokens.map(t=>`${t[1]!.padStart(2,"0")}:${t[2]}${t[3]===undefined?"":`:${t[3]}`}`));
+  if(distinct.size!==1)return none("AMBIGUOUS_OVERLAY_TIMES");
+  const overlayHasSeconds=tokens[0]![3]!==undefined,overlayTime=overlayHasSeconds?parsed.photoTime:parsed.photoTime.slice(0,5);
+  if(modelDate&&modelDate!==parsed.photoDate)return none("MODEL_DATE_DIFFERS");
+  if(modelTime){
+    const model=/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(modelTime.trim());
+    if(!model)return none("MODEL_TIME_DIFFERS");
+    const hhmm=`${model[1]!.padStart(2,"0")}:${model[2]}`;
+    if(hhmm!==parsed.photoTime.slice(0,5)||(overlayHasSeconds&&model[3]!==undefined&&model[3]!==parsed.photoTime.slice(6)))return none("MODEL_TIME_DIFFERS");
+  }
+  return{photoDate:parsed.photoDate,photoTime:overlayTime,evidence:"EVIDENCED"};
+}

@@ -99,6 +99,12 @@ job ผ่านเฉพาะเมื่อ live test จบด้วย exit
 
 workflow นี้ไม่เปลี่ยนกติกาลงเวลาหรือ runtime ของ Worker
 
+### หลักฐานวันเวลาจาก overlay
+
+Worker ใช้วันเวลาลงเวลาเฉพาะที่อ่านได้จากข้อความ overlay สีขาวที่ตัวอ่านถอดมา (`evidencedOverlayTimestamp` ใน `src/domain/attendance-overlay.ts` ใช้ทั้ง OpenAI และ Workers AI) ข้อความต้องเข้ารูปแบบที่ parser รองรับ มีเวลาเพียงชุดเดียว และถ้าตัวอ่านรายงาน `photoDate`/`photoTime` ด้วย ต้องตรงทั้งวันที่และ HH:mm (และตรงวินาทีเมื่อ overlay แสดงวินาที) ไม่เช่นนั้นถือว่าไม่มีวันเวลา (`TIMESTAMP_FIELDS_MISSING`) ระบบไม่เดาวันเวลาจากนาฬิการ้านหรือจากรูปแบบที่ parser ไม่รองรับ เวลาลงเวลายังเป็น HH:mm ของ overlay เหมือนเดิม ส่วนวินาทีใน `photo_datetime` มาจาก overlay (ถ้า overlay ไม่แสดงวินาทีจะเป็น `:00`)
+
+ความเสี่ยงที่ยังเหลือ: ถ้าตัวอ่านแต่งทั้งข้อความ overlay และช่องวันเวลาให้ตรงกันและใกล้เวลาจริง การตรวจนี้แยกไม่ออก เพราะไม่มีมุมมองอิสระต่อภาพ (ดู #348)
+
 ## UAT ขั้นต่ำ
 
 ผล baseline ข้อความค่าใช้จ่ายวันที่ 22 กรกฎาคม 2026: accepted/quick-save/confirm/reject และ Wallet mapping ผ่าน Worker จริง `44/44`; Quick Save สร้าง `CONFIRMED` และ Sheets job, รายการปกติสร้าง `WAITING_CONFIRM`, ข้อความผิดไม่เขียน D1 ใน integration test

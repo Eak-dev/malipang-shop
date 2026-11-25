@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "codex/issue348-queue-regression-20261124",
+      "primary_branch": "claude/issue348-photo07-diagnostic-20261125",
       "target_branch": "main",
       "coordination_chat": "Issue 348 serial handover continuation",
-      "reason": "Primary branch and draft PR #350 observed on canonical GitHub; preserved draft and fixture branch remain pending audit and integration verification. Draft PR does not authorize merge or release."
+      "reason": "Former primary codex/issue348-queue-regression-20261124 was squash-merged into main as 0b426d3 (PR #350). Current primary is the photo-07 diagnostic branch and draft PR #355; preserved draft and fixture branches remain pending audit and integration verification. A PR does not authorize merge or release."
     },
     {
       "issue": 285,
@@ -80,6 +80,17 @@
   ],
   "branches": [
     {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "claude/issue348-photo07-diagnostic-20261125",
+      "source_sha": "e8997de5bc12cd066f85132e5b2b884c3e2ca1da",
+      "issues": [348],
+      "pull_requests": [355],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-25T03:45:17Z",
+      "reason": "Primary #348 branch for the one-image photo-07 diagnostic (PR #355, base main 0b426d3); remote head observed before this registry commit. No dependency on other open branches; integration plan: review, then merge PR #355 into main. No release is implied."
+    },
+    {
       "scope": "local",
       "source": "issue348-queue-regression",
       "branch": "codex/issue348-queue-regression-20261124",
@@ -97,9 +108,9 @@
       "source_sha": "e5519dffe2705f0a9e40b890ea51227247428713",
       "issues": [348],
       "pull_requests": [350],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-24T07:25:26Z",
-      "reason": "Canonical remote ref and draft PR #350 observed before this registry commit; no release is implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-25T00:00:00Z",
+      "reason": "PR #350 (reviewed head 7c13954) squash-merged into main as 0b426d3 on 25 Nov 2026; the remote ref was then removed after a separate check. Recorded SHA is the earlier observation; this record carries no deletion readiness. No release is implied."
     },
     {
       "scope": "local",

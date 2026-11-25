@@ -6,9 +6,10 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {forwardFixSql,alteredColumns,SUPPORTED} from '../scripts/migration-forward-fix.mjs';
+import {migrationFiles,RELEASE_DIR,DRAFT_DIR} from './helpers/migration-files.mjs';
 
-const dir=new URL('../migrations/',import.meta.url);
-const names=readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
+// Release files (what Production applies) followed by the local-only draft files.
+const files=migrationFiles({draft:true}),names=files.map(f=>f.name),urls=new Map(files.map(f=>[f.name,f.url]));
 const INCIDENT_MIGRATION='0062_views_incident_recovery.sql';
 const CANARY_INCIDENT_MIGRATION='0063_canary_unwritten_recovery.sql';
 const NOTICE_PREFIX_MIGRATION='0064_notice_status_prefix.sql';
@@ -16,7 +17,7 @@ const COMPLETED_CANARY_MIGRATION='0065_canary_completed_recovery.sql';
 const SCOPED_HOLD_MIGRATION='0066_scoped_hold_incident.sql';
 const MONTHLY_REPORT_MIGRATION='0067_monthly_report_journal.sql';
 const baselineNames=names.filter(n=>Number(n.slice(0,4))<=61);
-const read=n=>readFileSync(new URL(n,dir),'utf8');
+const read=n=>readFileSync(urls.get(n),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
 // the other migration files byte for byte, and the schema all files produced.
 const OTHERS_SHA256='04e039d567183e3f17454361b6eee507835939ce3de70bb4ab8bb617d69b0e17';
@@ -78,6 +79,10 @@ test('issue296 incident migrations are append-only and preserve trigger names on
  const incident=[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION];
  assert.deepEqual(names.slice(baselineNames.length,baselineNames.length+incident.length),incident);
  assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
+ // The release inventory ends at 0067; the twelve serial drafts never sit where wrangler applies migrations.
+ const sql=dir=>readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
+ assert.equal(sql(RELEASE_DIR).at(-1),MONTHLY_REPORT_MIGRATION);
+ assert.deepEqual(sql(DRAFT_DIR).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);

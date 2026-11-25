@@ -1,5 +1,6 @@
 import {DatabaseSync} from 'node:sqlite';
-import {readFileSync,readdirSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
+import {migrationFiles} from './migration-files.mjs';
 
 class Statement{
   constructor(db,sql){this.db=db;this.sql=sql;this.args=[];}
@@ -16,8 +17,7 @@ class Statement{
 }
 export function expenseSqlite(){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const directory=new URL('../../migrations/',import.meta.url);
-  for(const name of readdirSync(directory).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,directory),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const DB={sqlite,runs:[],batches:[],failAt:null,failAfterCommit:false,
     prepare(sql){return new Statement(this,sql);},
     async batch(statements){

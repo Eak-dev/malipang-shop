@@ -7796,6 +7796,17 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-24T13:08:18+00:00",
       "reason": "Supporting PR #352 targets main for the protected image workflow; #350 remains the primary draft. Snapshot observed before this registry commit. Owner merge and environment review remain separate."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "claude/issue348-n1-no-migration-20261125",
+      "source_sha": "b23d6fefb090cda5f4afd129813c58ac0ca01b9e",
+      "issues": [296, 354],
+      "pull_requests": [356],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-25T03:47:05Z",
+      "reason": "Release-path branch for #354 under #296 (N1: serial drafts kept out of migrations/, PR #356, base main 0b426d3); remote head observed before this registry commit. A phase B runtime PR is stacked on it. Integration plan: review, then merge PR #356 into main before the release candidate is chosen. No release is implied."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

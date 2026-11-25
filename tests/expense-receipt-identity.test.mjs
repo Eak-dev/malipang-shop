@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync,readdirSync} from 'node:fs';
 import {receiptReferenceKey,receiptFactsFromDocument,storedReceiptFacts,inspectReceiptCandidates} from '../dist/expense/receipt-identity.js';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 const item=(overrides={})=>({quantity:1,unitPriceSatang:10000,discountSatang:0,lineTotalSatang:10000,vatSatang:0,...overrides});
 const facts=(overrides={})=>({vendor:'Fixture Store',legalVendorName:'',documentNumber:'INV-120',documentDate:'2026-10-01',paymentDate:'2026-10-01',amountSatang:10000,items:[item()],...overrides});
 function harness(){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const dir=new URL('../migrations/',import.meta.url);
-  for(const name of readdirSync(dir).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,dir),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const queries=[];
   const DB={prepare(sql){
     queries.push(sql);assert.doesNotMatch(sql,/\bai_json\b/i,'receipt identity never reads raw OCR evidence');

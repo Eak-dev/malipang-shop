@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-const sql=readFileSync(new URL('../migrations/0072_serial_attested_handoff_draft.sql',import.meta.url),'utf8');
+const sql=readFileSync(new URL('../migrations-draft/0072_serial_attested_handoff_draft.sql',import.meta.url),'utf8');
 test('oracle fence and attested edge remain disabled and immutable in the local model',()=>{
  const db=new DatabaseSync(':memory:');try{
   db.exec(sql);const fence=()=>db.prepare("INSERT INTO serial_pilot_oracle_fence VALUES('book',?,1,'now')").run('a'.repeat(64));
@@ -16,7 +16,7 @@ test('oracle fence and attested edge remain disabled and immutable in the local 
 
 test('mock notice release receipt is blocked by default and immutable',()=>{
  const db=new DatabaseSync(':memory:');try{
-  db.exec(readFileSync(new URL('../migrations/0073_serial_notice_release_draft.sql',import.meta.url),'utf8'));
+  db.exec(readFileSync(new URL('../migrations-draft/0073_serial_notice_release_draft.sql',import.meta.url),'utf8'));
   const add=(token,nonce)=>db.prepare("INSERT INTO serial_pilot_notice_release_receipts VALUES(?, 'book','round','b','c','epoch',?,'worker',1,?,1,'expires','SHA256_MALIPANG_NOTICE_POSTIMAGE_V1',?,'observed','released')").run(token,nonce,'a'.repeat(64),'b'.repeat(64));
   assert.throws(()=>add('token','nonce'));db.exec('DROP TRIGGER serial_pilot_notice_release_not_ready');add('token','nonce');
   assert.throws(()=>add('token','other'));assert.throws(()=>add('other','nonce'));
@@ -26,7 +26,7 @@ test('mock notice release receipt is blocked by default and immutable',()=>{
 
 test('mock revocation is disabled by default and retained once recorded',()=>{
  const db=new DatabaseSync(':memory:');try{
-  db.exec(sql);db.exec(readFileSync(new URL('../migrations/0073_serial_notice_release_draft.sql',import.meta.url),'utf8'));
+  db.exec(sql);db.exec(readFileSync(new URL('../migrations-draft/0073_serial_notice_release_draft.sql',import.meta.url),'utf8'));
   db.exec('DROP TRIGGER serial_pilot_oracle_fence_not_ready');
   db.prepare("INSERT INTO serial_pilot_oracle_fence VALUES('book',?,1,'now')").run('a'.repeat(64));
   const revoke=()=>db.prepare("INSERT INTO serial_pilot_oracle_revocations VALUES('book',?,1,'now')").run('a'.repeat(64));
@@ -40,7 +40,7 @@ test('mock revocation is disabled by default and retained once recorded',()=>{
 
 test('ledger receipts default closed and retain unique operation and item evidence',()=>{
  const db=new DatabaseSync(':memory:');try{
-  db.exec(readFileSync(new URL('../migrations/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));
+  db.exec(readFileSync(new URL('../migrations-draft/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));
   const add=(token,entity,projection)=>db.prepare("INSERT INTO serial_pilot_ledger_stage_receipts VALUES(?,'epoch','book','job',?,?,1,'source',1,2,'sheet','before','payload','marker','worker','nonce','SHA256_MALIPANG_NOTICE_POSTIMAGE_V1',?,'observed','recorded')").run(token,entity,projection,'a'.repeat(64));
   assert.throws(()=>add('first','job','EXPENSE_RAW'));db.exec('DROP TRIGGER serial_ledger_stage_not_ready');add('first','job','EXPENSE_RAW');
   assert.throws(()=>add('first','job|one','DETAIL'));assert.throws(()=>add('second','job','EXPENSE_RAW'));
@@ -50,7 +50,7 @@ test('ledger receipts default closed and retain unique operation and item eviden
 
 test('final receipts remain disabled and immutable in the local model',()=>{
  const db=new DatabaseSync(':memory:');try{
-  db.exec(readFileSync(new URL('../migrations/0076_serial_final_receipt_draft.sql',import.meta.url),'utf8'));
+  db.exec(readFileSync(new URL('../migrations-draft/0076_serial_final_receipt_draft.sql',import.meta.url),'utf8'));
   const add=(token,epoch)=>db.prepare("INSERT INTO serial_pilot_final_receipts VALUES(?,?,'book','job','nonce','worker',1,'source','SHA256_MALIPANG_PROJECTION_SNAPSHOT_V1',?,'SHA256_MALIPANG_NOTICE_POSTIMAGE_V1',?,'provider','notice','recorded')").run(token,epoch,'a'.repeat(64),'b'.repeat(64));
   assert.throws(()=>add('first','epoch'));db.exec('DROP TRIGGER serial_final_receipt_not_ready');add('first','epoch');
   assert.throws(()=>add('first','other'));assert.throws(()=>add('other','epoch'));

@@ -1,4 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {createRequire} from 'node:module';import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {releaseSchemaOnly} from './helpers/migration-files.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),auth=require('../dist/sheets/google-auth.js'),notice=require('../dist/sheets/stable-edit-notice.js'),{withStableWorkbookClaim}=require('../dist/sheets/stable-workbook-claim.js');
 function fixture(pilot=false){
  const sheetId=pilot?1815870717:9,first=pilot?1:23;let format;
@@ -96,7 +97,7 @@ test('legacy and partial serial table shapes fail closed where required',async()
 test('legacy ownership reports its additional D1 read budget',async()=>{
  const h=fixture(),{stableWorkbookClaimOwned}=require('../dist/sheets/stable-workbook-claim.js'),prepare=h.DB.prepare;let reads=0;try{
   h.DB.prepare=function(sql){if(sql.startsWith('SELECT'))reads++;return prepare.call(this,sql);};
-  await withStableWorkbookClaim(h.env,async token=>{reads=0;assert.equal(await stableWorkbookClaimOwned(h.env,token),true);assert.equal(reads,1,'one claim read after the paused provider snapshot');});
+  await withStableWorkbookClaim(h.env,async token=>{reads=0;assert.equal(await stableWorkbookClaimOwned(h.env,token),true);assert.equal(reads,releaseSchemaOnly?2:1,'one claim read after the paused provider snapshot (two on the release schema: the serial-table read fails and is retried without it)');});
  }finally{h.close();}
 });
 test('notice shows a pause before the operation and verifies ready before unlock',async()=>{const h=fixture();try{await withStableWorkbookClaim(h.env,async()=>{assert.equal(h.status,'พักแก้ไฟล์');assert.equal(h.waited,15000);});assert.equal(h.status,'พร้อมแก้ไข');assert.equal(h.writes,2);assert.equal(h.sqlite.prepare('SELECT count(*) n FROM stable_workbook_claims').get().n,0);}finally{h.close();}});

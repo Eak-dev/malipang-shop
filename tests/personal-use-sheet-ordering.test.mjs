@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
 import {DatabaseSync} from 'node:sqlite';
 import {readdirSync,readFileSync} from 'node:fs';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 const require=createRequire(import.meta.url);
 const sheetsClient=require('../dist/sheets/client.js');
@@ -13,8 +14,6 @@ const {recoverPendingSheetJobs}=require('../dist/db/repositories.js');
 const {OperationTimeoutError}=require('../dist/shared/async.js');
 const googleAuth=require('../dist/sheets/google-auth.js');
 const worker=require('../dist/index.js').default;
-const migration=name=>readFileSync(new URL(`../migrations/${name}`,import.meta.url),'utf8');
-const migrationNames=readdirSync(new URL('../migrations/',import.meta.url)).filter(name=>/^\d+.*\.sql$/.test(name)).sort();
 const plain=value=>JSON.parse(JSON.stringify(value));
 
 class SqliteD1Statement{
@@ -47,7 +46,7 @@ function deferred(){
 
 function harness(){
   const sqlite=new DatabaseSync(':memory:');
-  for(const name of migrationNames)sqlite.exec(migration(name));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const id='personal_ordering_fixture',now='2026-09-06T00:00:00.000Z';
   sqlite.prepare(`INSERT INTO owner_personal_transactions(personal_use_id,message_id,line_user_id,transaction_type,description,amount_satang,source_wallet,transaction_date,status,trace_id,submitted_by_employee_id,branch_id,reviewed_by_employee_id,approved_at,created_at,updated_at,version) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(id,'message_ordering_fixture','line_owner','PERSONAL_USE','sanitized ordering fixture',100,'SHOP_BANK','2026-09-06','CONFIRMED','trace_ordering','OWN001','B001','OWN001',now,now,now,2);
   sqlite.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`).run('sync_ordering_v2','PERSONAL_USE',id,2,'trace_ordering_v2',now,now);

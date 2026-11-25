@@ -2,6 +2,7 @@
 import ctypes
 import ctypes.util
 import json
+import os
 import pathlib
 import sys
 
@@ -20,7 +21,10 @@ db = ptr()
 if lib.sqlite3_open(b':memory:', ctypes.byref(db)):
     raise RuntimeError('sqlite open failed')
 try:
-    for migration in sorted((pathlib.Path(__file__).resolve().parents[2] / 'migrations').glob('*.sql')):
+    root = pathlib.Path(__file__).resolve().parents[2]
+    # Same schema as tests/helpers/migration-files.mjs: release files, then local-only drafts.
+    dirs = ['migrations'] if os.environ.get('MALIPANG_TEST_SCHEMA') == 'release' else ['migrations', 'migrations-draft']
+    for migration in sorted((path for d in dirs for path in (root / d).glob('*.sql')), key=lambda path: path.name):
         if lib.sqlite3_exec(db, migration.read_bytes(), None, None, None):
             raise RuntimeError('migration failed: ' + migration.name)
     # SQLITE_LIMIT_EXPR_DEPTH = 3. D1 rejects expression trees deeper than 100.

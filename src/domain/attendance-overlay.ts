@@ -20,10 +20,10 @@ function timeValue(hour:number,minute:number,second:number,meridiem=""):string|n
 
 export function parseAttendanceOverlay(rawText:string):ParsedAttendanceOverlay{
   const text=String(rawText||"").replace(/\s+/g," ").trim();let photoDate:string|null=null,photoTime:string|null=null;
-  const dayFirst=/(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:BE\s*)?(\d{2,4})\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i.exec(text);
-  const monthFirst=/(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i.exec(text);
-  const yearFirst=/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i.exec(text);
-  const numericDayFirst=/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM)?/i.exec(text);
+  const dayFirst=/(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:BE\s*)?(\d{2,4})\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
+  const monthFirst=/(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
+  const yearFirst=/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
+  const numericDayFirst=/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
   if(dayFirst){const yearText=dayFirst[3]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,months[dayFirst[2]!.toLowerCase()]||0,Number(dayFirst[1]));photoTime=timeValue(Number(dayFirst[4]),Number(dayFirst[5]),Number(dayFirst[6]||0),dayFirst[7]);}
   else if(monthFirst){const yearText=monthFirst[3]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,months[monthFirst[1]!.toLowerCase()]||0,Number(monthFirst[2]));photoTime=timeValue(Number(monthFirst[4]),Number(monthFirst[5]),Number(monthFirst[6]||0),monthFirst[7]);}
   else if(yearFirst){const yearText=yearFirst[1]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,Number(yearFirst[2]),Number(yearFirst[3]));photoTime=timeValue(Number(yearFirst[4]),Number(yearFirst[5]),Number(yearFirst[6]||0),yearFirst[7]);}

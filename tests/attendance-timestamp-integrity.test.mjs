@@ -65,6 +65,20 @@ for(const [provider,read] of Object.entries(providers)){
     const w=validateAttendancePhoto(noSeconds,receivedAt,rules);
     assert.equal(w.ok,true,'seconds the overlay does not show are not taken from the model');assert.equal(w.officialTime,'09:12');assert.equal(w.photoDateTime,'2026-11-23T09:12:00+07:00');
   });
+  test(`${provider}: AM/PM is read only as a real time marker`,async()=>{
+    const evening='2026-11-23T14:12:30.000Z'; // 21:12:30 Bangkok
+    const check=async(overlay,want,time,label)=>{
+      const reading=await read({...base,...gps,photoDate:'2026-11-23',photoTime:'21:12',overlayRawText:`${overlay}\n${GPS}\n${ADDRESS}`});
+      const v=validateAttendancePhoto(reading,evening,rules);
+      assert.equal(code(v),want,`${provider}: ${label}`);
+      if(time)assert.equal(v.officialTime,time,`${provider}: ${label} official time`);
+    };
+    await check('23 Nov 2026 21:12 Amphoe','OK','21:12','a place name starting with "Am" after 21:12 is not AM');
+    await check('23 Nov 2026 9:12 PM','OK','21:12','9:12 PM is 21:12');
+    await check('23 Nov 2026 9:12 PM 21:12','OK','21:12','9:12 PM and 21:12 are the same time');
+    await check('23 Nov 2026 09:12 and 9:12 PM','TIMESTAMP_FIELDS_MISSING',null,'09:12 and 9:12 PM conflict');
+    await check('23 Nov 2026 21:12\n22 Nov 2026 21:12','TIMESTAMP_FIELDS_MISSING',null,'two different dates at 21:12 are still rejected');
+  });
 }
 
 test('evidencedOverlayTimestamp reads every supported overlay shape, CE and BE years, and AM/PM',()=>{
@@ -76,6 +90,13 @@ test('evidencedOverlayTimestamp reads every supported overlay shape, CE and BE y
     ['2569-11-23 09:12','2026-11-23','09:12'],
     ['23/11/2569 09:12:02','2026-11-23','09:12:02'],
     ['23-11-26 09:12','2026-11-23','09:12'],
+    // AM/PM only when it is a whole word: a place name after the time is not a marker, in every parser path
+    ['23 Nov 2026 21:12 Amphoe','2026-11-23','21:12'],
+    ['November 23, 2026 21:12 Amphoe Mueang','2026-11-23','21:12'],
+    ['2026/11/23 21:12 Amphoe','2026-11-23','21:12'],
+    ['23/11/2026 21:12 Amphoe','2026-11-23','21:12'],
+    ['23 Nov 2026 9:12 PM','2026-11-23','21:12'],
+    ['23 Nov 2026 9:12PM Amphoe','2026-11-23','21:12'],
   ];
   for(const [text,date,time] of cases){
     assert.deepEqual(evidencedOverlayTimestamp(`${text}\n${GPS}`,null,null),{photoDate:date,photoTime:time,evidence:'EVIDENCED'},text);

@@ -7796,6 +7796,17 @@
       "status": "ACTIVE",
       "observed_at": "2026-11-25T03:47:05Z",
       "reason": "Release-path branch for #354 under #296 (N1: serial drafts kept out of migrations/, PR #356, base main 0b426d3); remote head observed before this registry commit. A phase B runtime PR is stacked on it. Integration plan: review, then merge PR #356 into main before the release candidate is chosen. No release is implied."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "claude/issue296-handover-observable-20261125",
+      "source_sha": "ac8450068d4e3f0db5bf9ff296867dd027b23d54",
+      "issues": [296],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-25T03:59:32Z",
+      "reason": "Phase B runtime change for #296 (HANDOVER_ONE stops before reserving when FINISH_STATUS cannot answer); stacked on claude/issue348-n1-no-migration-20261125 (PR #356). Remote head observed before this registry commit. Integration plan: after PR #356 merges, retarget to main, review, then merge. No release or flag change is implied."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

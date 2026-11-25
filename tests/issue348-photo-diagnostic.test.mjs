@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
+import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import os from 'node:os';
@@ -56,4 +57,19 @@ test('fetch guard limited to one case rejects every other image before any reque
       assert.match(r.stderr,/not a known clock case/);
     }
   }finally{await rm(root,{recursive:true,force:true});}
+});
+
+test('the photo-07 workflow cannot run from a pull request and prints no raw TAP',()=>{
+  const wf=readFileSync(new URL('../.github/workflows/issue348-photo07-diagnostic.yml',import.meta.url),'utf8');
+  const on=wf.slice(wf.indexOf('\non:'),wf.indexOf('\npermissions:'));
+  assert.match(on,/^\non:\n  workflow_dispatch:\n/,'manual dispatch only');
+  assert.doesNotMatch(on,/pull_request|push:|schedule|workflow_run/,'no automatic trigger');
+  assert.match(wf,/if: github\.repository == 'Eak-dev\/malipang-shop' && github\.ref == 'refs\/heads\/main' && github\.sha == inputs\.expected_main_sha && github\.run_attempt == 1/);
+  assert.match(wf,/environment: production/);
+  assert.match(wf,/ISSUE348_ONLY_CASE=photo-07/);assert.match(wf,/MALIPANG_CLOCK_DIAGNOSTIC_CASE=photo-07/);
+  // The slip manifest path is exported only because the fetch guard reads it; no slip test runs.
+  assert.doesNotMatch(wf,/bank-slip-photo-fixtures|clock-photos,bank-slips/,'no slip evaluation');
+  // Raw TAP stays on the runner: it is only filtered by sed to the case status or by the summary script.
+  for(const line of wf.split('\n').filter(l=>l.includes('.tap')))assert.match(line,/> "\$(ISSUE348_SCRATCH|scratch)\/[a-z]+\.tap"|grep -q|sed -nE 's\/\^\[\[:space:\]\]\*\(not ok\|ok\) \[0-9\]\+ - \(photo-07\)\$\/\\1 \\2\/p'|issue348-photo-diagnostic-summary\.mjs/,line.trim());
+  assert.doesNotMatch(wf,/\bcat\b|actions\/upload-artifact|tee /,'no dump or artifact');
 });

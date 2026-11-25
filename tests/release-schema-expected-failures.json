@@ -1,10 +1,9 @@
 {
- "about": "Tests that fail when only migrations/ (the release schema, 0067) is loaded. Reviewed one by one; scripts/release-schema-check.mjs fails on any other failure or on a listed test that passes.",
+ "about": "Tests that fail only because they need the local-only serial draft schema (migrations-draft/) when MALIPANG_TEST_SCHEMA=release loads migrations/ alone. Runtime differences on the release schema are asserted explicitly in their tests, never listed here. scripts/release-schema-check.mjs fails on any other failure or on a listed test that passes.",
  "failures": {
   "draft provenance confirm records only positive cohort and aborts on barrier drift": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "draft provenance retains one confirmed job after an acknowledgement is lost": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "scope drift after confirmation commit is reported uncertain without replay": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
-  "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received": "Phase B (#296 HANDOVER/READBACK): the observation SQL joins serial tables added in #350, so it fails closed (UNVERIFIED) on the release schema. Out of N1 scope; needs its own change.",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence worker-mock close verified-single": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence worker-mock close verified-two": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
@@ -76,11 +75,8 @@
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence bpred-t2-dlq-producer close": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence bpred-t2-dlq-guarded close": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is received with round evidence bpred-t2-attempt-count close": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
-  "Miniflare exact DAILY settlement preserves both holds when the commit ACK is lost": "Phase B (#296 HANDOVER/READBACK): the observation SQL joins serial tables added in #350, so it fails closed (UNVERIFIED) on the release schema. Out of N1 scope; needs its own change.",
   "Miniflare exact DAILY settlement preserves both holds when the commit ACK is lost with round evidence": "Serial round-evidence variant; needs the migrations-draft schema (0068+).",
-  "normal-pilot readback independently checks the D1 source and effective Google row without disclosing values": "Phase B (#296 HANDOVER/READBACK): the observation SQL joins serial tables added in #350, so it fails closed (UNVERIFIED) on the release schema. Out of N1 scope; needs its own change.",
   "round opening pins settled A and rejects candidate drift before the atomic snapshot": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
-  "PUBLISH exercises real OAuth, notice and Sheets client against synthetic HTTP at budget boundary": "Legacy claim fallback: on the release schema the serial-table query fails and is retried without it, so D1 reads rise (PUBLISH 11->17 calls); the Google HTTP budget is unchanged.",
   "round membership seals before processing; each result and the close are immutable": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
   "mock mixed close refuses a separately committed VERIFIED label": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
   "local D1 fences both reservation/close orderings and rolls back failed batches": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
@@ -109,7 +105,6 @@
   "an inconsistent handoff with a legacy phase never grants ownership": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "handoff appearing during notice read fails the final ownership recheck": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "serial schema changing during notice read fails the ownership recheck": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
-  "legacy and partial serial table shapes fail closed where required": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
-  "legacy ownership reports its additional D1 read budget": "Legacy claim fallback: on the release schema the serial-table query fails and is retried without it, so D1 reads rise (PUBLISH 11->17 calls); the Google HTTP budget is unchanged."
+  "legacy and partial serial table shapes fail closed where required": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag)."
  }
 }

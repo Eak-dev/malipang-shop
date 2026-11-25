@@ -3,6 +3,7 @@ import test from 'node:test';import assert from 'node:assert/strict';import {cre
 import {spawnSync} from 'node:child_process';import {fileURLToPath} from 'node:url';
 import {readFileSync,writeFileSync,openSync,fsyncSync,closeSync} from 'node:fs';
 import {BPRED_MODES,runBPredicateScenario} from './helpers/serial-handoff-b-predicates.mjs';
+import {releaseSchemaOnly} from './helpers/migration-files.mjs';
 const require=createRequire(import.meta.url),client=require('../dist/sheets/client.js'),route=require('../dist/sheets/continuous-daily-route.js'),claimApi=require('../dist/sheets/stable-workbook-claim.js'),coverage=require('../dist/sheets/legacy-daily-coverage.js'),insertWriter=require('../dist/sheets/insert-daily-writer.js');
 const {continuousDailyCutoverStatements}=require('../dist/sheets/continuous-daily-cutover.js'),{readStableExpenseSource}=require('../dist/sheets/stable-expense-source.js'),{continuousDailyHelperFormulas}=require('../dist/sheets/continuous-daily-plan.js'),{decodeAtomicDailyPayload}=require('../dist/sheets/atomic-daily-template.js'),{insertDailyExpenseUnderClaim}=require('../dist/sheets/insert-daily-writer.js');
 const realStableClaimOwned=claimApi.stableWorkbookClaimOwned;
@@ -1366,6 +1367,18 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   Object.assign(h.env,{CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED:'true',SHEETS_SYNC_ENABLED:'true',UNWRITTEN_EXPENSE_AUTO_CANCEL_ENABLED:'false'});
   }
   const operate=value=>operateParkedPilot(h.env,value,version);
+  if(releaseSchemaOnly&&!roundMode){
+   // Release schema (0067): INSPECT, PROBE and SETTLE above ran on Miniflare D1.
+   // KNOWN GAP (#296 phase B, not released): FINISH_STATUS reads serial tables and stays UNVERIFIED,
+   // yet HANDOVER still reserves the pilot (claim HELD, epoch ARMED). The route is unreachable while
+   // CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED is unset and the recovery gate is false. A separate runtime
+   // change must make HANDOVER refuse here before phase B; it will flip these assertions.
+   assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
+   assert.deepEqual(await operate(action),{ok:true,outcome:'RESERVED'});
+   assert.deepEqual(await operate(finish),{ok:false,outcome:'UNVERIFIED'});
+   assert.equal((await db.prepare("SELECT count(*) n FROM stable_workbook_claims WHERE state='HELD' AND phase='PILOT_RESERVED'").first()).n,1);
+   return;
+  }
   if(!whole){
   assert.deepEqual(await operate(finish),{ok:true,outcome:'NOT_STARTED'});
   assert.deepEqual(await operate(check),{ok:true,outcome:'ABSENT'});
@@ -2376,6 +2389,8 @@ test('normal-pilot readback independently checks the D1 source and effective Goo
   await read(true,identity);
   const missingHistorical=await handleAdmin(new Request('https://example.test/admin/stable-sync/normal-pilot-readback',{method:'POST',headers:{authorization:'Bearer '+token,'x-malipang-expected-worker-version':version},body:JSON.stringify({action:'READ_HISTORICAL',...identity})}),h.env,{});
   assert.equal((await missingHistorical.json()).outcome,'UNVERIFIED');
+  // Release schema (0067): the live readback above passed; the historical snapshot below needs serial tables.
+  if(releaseSchemaOnly)return;
   // Synthetic snapshot fixture: the production trigger's provenance remains a
   // separate review gate; this test exercises historical read-only semantics.
   const roundId='cccccccc-cccc-4ccc-8ccc-cccccccccccc',newVersion='dddddddd-dddd-4ddd-8ddd-dddddddddddd';

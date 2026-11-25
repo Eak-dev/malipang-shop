@@ -35,13 +35,13 @@ export function parseAttendanceOverlay(rawText:string):ParsedAttendanceOverlay{
   return{photoDate,photoTime,latitude,longitude};
 }
 
-export type OverlayTimestampEvidence="EVIDENCED"|"NO_OVERLAY_TIMESTAMP"|"AMBIGUOUS_OVERLAY_TIMES"|"MODEL_DATE_DIFFERS"|"MODEL_TIME_DIFFERS";
+export type OverlayTimestampEvidence="EVIDENCED"|"NO_OVERLAY_TIMESTAMP"|"AMBIGUOUS_OVERLAY_TIMES"|"AMBIGUOUS_OVERLAY_DATES"|"MODEL_DATE_DIFFERS"|"MODEL_TIME_DIFFERS";
 
 /**
  * The attendance timestamp is the white camera overlay's date and time. A vision model
  * may report photoDate/photoTime it did not read from that overlay (for example the shop
  * wall clock), so the timestamp is taken only from the transcribed overlay text: it must
- * parse, hold a single time, and agree with any date/time the model also reported.
+ * parse, hold a single time and a single date, and agree with any date/time the model also reported.
  * Residual risk: if the same model fabricates the overlay text and the fields together,
  * this check cannot tell (it has no independent view of the image).
  */
@@ -53,6 +53,10 @@ export function evidencedOverlayTimestamp(rawText:string,modelDate:string|null,m
   const tokens=[...text.matchAll(/(?<![\d:])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])/g)];
   const distinct=new Set(tokens.map(t=>`${t[1]!.padStart(2,"0")}:${t[2]}${t[3]===undefined?"":`:${t[3]}`}`));
   if(distinct.size!==1)return none("AMBIGUOUS_OVERLAY_TIMES");
+  // The time may repeat, but the date written before each occurrence must be the parsed date
+  // (the parser takes the first match by format, so a second, different date would be dropped silently).
+  let from=0;
+  for(const token of tokens){const end=token.index!+token[0].length,date=parseAttendanceOverlay(text.slice(from,end)).photoDate;from=end;if(date&&date!==parsed.photoDate)return none("AMBIGUOUS_OVERLAY_DATES");}
   const overlayHasSeconds=tokens[0]![3]!==undefined,overlayTime=overlayHasSeconds?parsed.photoTime:parsed.photoTime.slice(0,5);
   if(modelDate&&modelDate!==parsed.photoDate)return none("MODEL_DATE_DIFFERS");
   if(modelTime){

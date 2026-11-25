@@ -34,6 +34,9 @@ const scenarios=[
   ['model date differs from the overlay date',{...base,...gps,photoDate:'2026-11-22',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
   ['model seconds differ from overlay seconds',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:40',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
   ['overlay holds two different times',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n09:13\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['overlay holds two dates at the same time, model agrees with the first',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n22 Nov BE 2569 at 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['overlay holds two dates in different formats, model fields empty',{...base,...gps,overlayRawText:`2026/11/22 09:12:02\n${STAMP}\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['the same overlay timestamp written twice is accepted',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${STAMP}\n${GPS}\n${ADDRESS}`},'OK'],
   ['wrong time agreed by text and fields is caught by photo age',{...base,...gps,photoDate:'2026-11-23',photoTime:'08:40:00',overlayRawText:`23 Nov BE 2569 at 08:40:00\n${GPS}\n${ADDRESS}`},'PHOTO_TIME_TOO_OLD'],
   ['wrong day with right HH:mm is caught by photo age',{...base,...gps,photoDate:'2026-11-22',photoTime:'09:12:02',overlayRawText:`22 Nov BE 2569 at 09:12:02\n${GPS}\n${ADDRESS}`},'PHOTO_TIME_TOO_OLD'],
   ['wrong BE year is caught by photo age',{...base,...gps,photoDate:'2025-11-23',photoTime:'09:12:02',overlayRawText:`23 Nov BE 2568 at 09:12:02\n${GPS}\n${ADDRESS}`},'PHOTO_TIME_TOO_OLD'],
@@ -86,6 +89,11 @@ test('evidencedOverlayTimestamp gives a fixed reason and no timestamp whenever e
   assert.equal(t('10:12 11 23',null,null).evidence,'NO_OVERLAY_TIMESTAMP','wall-clock digits without a year do not parse');
   assert.equal(t(`${STAMP} 10:12`,null,null).evidence,'AMBIGUOUS_OVERLAY_TIMES');
   assert.equal(t(`${STAMP} 9:12:02`,null,null).evidence,'EVIDENCED','the same time written twice is not ambiguous');
+  assert.equal(t(`${STAMP}\n22 Nov BE 2569 at 09:12:02`,null,null).evidence,'AMBIGUOUS_OVERLAY_DATES','a second date at the same time is not dropped');
+  assert.equal(t(`22 Nov BE 2569 at 09:12:02\n${STAMP}`,'2026-11-22','09:12:02').evidence,'AMBIGUOUS_OVERLAY_DATES','model agreeing with one of two dates is not enough');
+  assert.equal(t(`2026/11/22 09:12:02\n${STAMP}`,null,null).evidence,'AMBIGUOUS_OVERLAY_DATES','the parser format priority does not hide a date in another format');
+  assert.equal(t(`${STAMP}\n2569-11-23 9:12:02`,null,null).evidence,'EVIDENCED','the same date and time in another format is not ambiguous');
+  assert.equal(t(`${STAMP}\nPrinted 22 Nov 2569`,null,null).evidence,'EVIDENCED','boundary: a date without its own time is not a second timestamp');
   assert.equal(t(STAMP,'2026-11-24','09:12:02').evidence,'MODEL_DATE_DIFFERS');
   assert.equal(t(STAMP,'2026-11-23','09:20').evidence,'MODEL_TIME_DIFFERS');
   assert.equal(t(STAMP,'2026-11-23','09:12:03').evidence,'MODEL_TIME_DIFFERS');

@@ -74,6 +74,11 @@ export async function operateParkedPilot(env:ParkedPilotEnv,action:Action,versio
  if(!valid()||!book)return held();
  try{
   if(action.action==='INSPECT_HANDOVER'){const outcome=await inspect(env,action);return valid()?{ok:true,outcome}:held();}
+  // HANDOVER_ONE may change the claim only when its outcome can be observed afterwards: if
+  // FINISH_STATUS cannot answer now (for example the schema lacks its tables), stop before any write.
+  let observable:Awaited<ReturnType<typeof finishStatus>>='UNVERIFIED';
+  try{observable=await finishStatus(env,action,version);}catch{/* Evidence unavailable. */}
+  if(observable==='UNVERIFIED'||!valid())return held();
   const e=await readFailedDailyIncidentEvidence(env,action.fingerprint);
   if(!e||e.projection_state!=='VERIFIED'||!valid())return held();
   const guard=verifiedHeldDailyGuard(e,action.preimageDigest);

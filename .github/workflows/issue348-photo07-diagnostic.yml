@@ -2,7 +2,10 @@ name: Production photo-07 diagnostic (one image)
 # Manual only, behind the production environment approval. Sends exactly one
 # attendance photo (photo-07) to the Production evaluator and prints only an
 # allowlisted summary: validation code, provider and five booleans. No image,
-# reading, timestamp, GPS, address or raw TAP leaves the runner.
+# reading, timestamp, GPS, address or raw TAP leaves the runner. The runner
+# fetches and checks the whole approved pack (ten files) from private R2, as the
+# full evaluation does; only photo-07 is sent to the evaluator. The job passes
+# only when that run rejects photo-07 for missing overlay date and time.
 on:
   workflow_dispatch:
     inputs:
@@ -82,8 +85,10 @@ jobs:
           fi
           # Status of the single case; raw TAP stays on the runner.
           sed -nE 's/^[[:space:]]*(not ok|ok) [0-9]+ - (photo-07)$/\1 \2/p' "$ISSUE348_SCRATCH/live.tap"
-          node scripts/issue348-photo-diagnostic-summary.mjs "$ISSUE348_SCRATCH/live.tap" photo-07
           echo "test exit code: $result"
+          # Prints the allowlisted summary, then passes only for test exit 0 with accepted=false,
+          # validationCode=TIMESTAMP_FIELDS_MISSING and timestampPresent=false.
+          node scripts/issue348-photo-diagnostic-summary.mjs "$ISSUE348_SCRATCH/live.tap" photo-07 --test-exit "$result"
       - name: Remove transient files
         if: always()
         shell: bash

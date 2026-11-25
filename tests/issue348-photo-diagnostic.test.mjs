@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtemp,writeFile,rm} from 'node:fs/promises';
-import {readFileSync} from 'node:fs';
+import fs,{readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
 import {spawnSync} from 'node:child_process';
 import os from 'node:os';
@@ -72,4 +72,29 @@ test('the photo-07 workflow cannot run from a pull request and prints no raw TAP
   // Raw TAP stays on the runner: it is only filtered by sed to the case status or by the summary script.
   for(const line of wf.split('\n').filter(l=>l.includes('.tap')))assert.match(line,/> "\$(ISSUE348_SCRATCH|scratch)\/[a-z]+\.tap"|grep -q|sed -nE 's\/\^\[\[:space:\]\]\*\(not ok\|ok\) \[0-9\]\+ - \(photo-07\)\$\/\\1 \\2\/p'|issue348-photo-diagnostic-summary\.mjs/,line.trim());
   assert.doesNotMatch(wf,/\bcat\b|actions\/upload-artifact|tee /,'no dump or artifact');
+});
+
+test('verdict passes only a clean run that rejected photo-07 for missing overlay date and time',async()=>{
+  const {verdict}=await import('../scripts/issue348-photo-diagnostic-summary.mjs');
+  const expected=line({});
+  assert.equal(verdict(expected,'photo-07',0),'PASS EXPECTED_REJECTION');
+  assert.equal(verdict(expected,'photo-07',1),'FAIL TEST_FAILED');
+  assert.equal(verdict(expected,'photo-07',-1),'FAIL TEST_FAILED','an unreadable exit code never passes');
+  assert.equal(verdict(expected+'\nISSUE348_TRANSPORT_OUTCOME_UNKNOWN','photo-07',0),'FAIL TRANSPORT_OUTCOME_UNKNOWN','an unknown transport outcome is never a rejection');
+  assert.equal(verdict('','photo-07',0),'FAIL DIAGNOSTIC_UNAVAILABLE');
+  assert.equal(verdict(line({accepted:true,validationCode:'OK'}),'photo-07',0),'FAIL ACCEPTED');
+  assert.equal(verdict(line({timestampPresent:true,validationCode:'GPS_MISSING'}),'photo-07',1),'FAIL TIMESTAMP_PRESENT');
+  assert.equal(verdict(line({validationCode:'TIMESTAMP_MISSING',overlayPresent:false}),'photo-07',0),'FAIL OTHER_REJECTION_CODE','a no-overlay rejection is reported, not passed');
+});
+
+test('summary CLI exits non-zero unless the verdict passes',()=>{
+  const cli=fileURLToPath(new URL('../scripts/issue348-photo-diagnostic-summary.mjs',import.meta.url));
+  const dir=fs.mkdtempSync(path.join(os.tmpdir(),'photo-verdict-'));
+  try{
+    const run=(tap,exit)=>{const f=path.join(dir,'live.tap');fs.writeFileSync(f,tap);return spawnSync(process.execPath,[cli,f,'photo-07','--test-exit',exit],{encoding:'utf8'});};
+    let r=run(line({}),'0');assert.equal(r.status,0);assert.match(r.stdout,/verdict: PASS EXPECTED_REJECTION/);
+    r=run(line({}),'1');assert.equal(r.status,1);assert.match(r.stdout,/verdict: FAIL TEST_FAILED/);
+    r=run(line({accepted:true,validationCode:'OK'}),'0');assert.equal(r.status,1);
+    r=run('nothing here','0');assert.equal(r.status,1);assert.match(r.stdout,/diagnostic unavailable\nverdict: FAIL DIAGNOSTIC_UNAVAILABLE/);
+  }finally{fs.rmSync(dir,{recursive:true,force:true});}
 });

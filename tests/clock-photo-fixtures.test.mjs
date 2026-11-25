@@ -258,8 +258,9 @@ test('live vision enforces white timestamp, GPS, and shop-clock evidence',{skip:
       try{response=await fetch(url,{method:'POST',headers:{authorization:`Bearer ${adminToken}`,'content-type':'image/jpeg'},body:item.image});}
       catch{ok(false,`${item.id}: evaluation request failed`);}
       try{result=await response.json();}catch{ok(false,`${item.id}: HTTP ${response.status} non-JSON response`);}
-      // Emit the allowlisted diagnostic before any check, so a failing case still explains itself.
-      if(result&&typeof result==='object')t.diagnostic(JSON.stringify(diagnosticFor(item,result)));
+      // Only an endpoint that answered successfully produces a diagnostic; it is emitted before the
+      // reading checks so a wrong reading still explains itself.
+      if(response?.ok===true&&result?.ok===true)t.diagnostic(JSON.stringify(diagnosticFor(item,result)));
       ok(response.ok===true,`${item.id}: HTTP ${response.status}`);
       ok(result&&result.ok===true,`${item.id}: endpoint failed`);
       if(item.mode==='private')checkPrivateReading(item,result,endpointClockMin);else checkLegacyReading(item,result);
@@ -621,22 +622,34 @@ if(!isChild){
 }
 
 // Rehearsal of the photo-07 diagnostic workflow against a local synthetic endpoint: no photo,
-// no Production. The endpoint answers like a reader that copied the shop clock into the timestamp.
+// no Production. Each scenario runs the real live test in a child, then the workflow verdict.
 if(!isChild){
-  test('synthetic diagnostic rehearsal: one case is sent and a failing case reports allowlisted fields only',async()=>{
+  test('synthetic diagnostic rehearsal: one case is sent, and only an expected rejection passes the verdict',async()=>{
     const {createServer}=await import('node:http');
     const {spawn}=await import('node:child_process');
-    const {summarize}=await import('../scripts/issue348-photo-diagnostic-summary.mjs');
+    const {summarize,verdict}=await import('../scripts/issue348-photo-diagnostic-summary.mjs');
     const root=await mkdtemp(path.join(os.tmpdir(),'clock-diagnostic-'));
-    const seen=[],invented='2000-01-02';
+    const invented='2000-01-02';
+    const base={kind:'CLOCK',provider:'openai',clockPresent:true,clockConfidence:0.95,overlayPresent:true,overlayTextWhite:true,overlayConfidence:0.95,photoDate:null,photoTime:null,latitude:null,longitude:null,locationText:'SECRETPLACE'};
+    // mode -> how the synthetic endpoint answers
+    const scenarios={
+      'expected-rejection':{reply:{ok:true,reading:base,validation:{ok:false,validationCode:'TIMESTAMP_FIELDS_MISSING'}},testPasses:true,verdict:'PASS EXPECTED_REJECTION'},
+      'no-overlay-rejection':{reply:{ok:true,reading:{...base,overlayPresent:false,overlayTextWhite:false},validation:{ok:false,validationCode:'TIMESTAMP_MISSING'}},testPasses:true,verdict:'FAIL OTHER_REJECTION_CODE'},
+      'wrong-reason':{reply:{ok:true,reading:{...base,photoDate:invented,photoTime:'04:10'},validation:{ok:false,validationCode:'GPS_MISSING'}},testPasses:false,verdict:'FAIL TIMESTAMP_PRESENT'},
+      'accepted':{reply:{ok:true,reading:{...base,photoDate:invented,photoTime:'04:10',latitude:13.5,longitude:100.5},validation:{ok:true,validationCode:'OK'}},testPasses:false,verdict:'FAIL ACCEPTED'},
+      'http-error':{status:500,reply:{ok:false,error:'synthetic'},testPasses:false,verdict:'FAIL DIAGNOSTIC_UNAVAILABLE'},
+      'transport-failure':{destroy:true,testPasses:false,verdict:'FAIL DIAGNOSTIC_UNAVAILABLE'},
+    };
+    let current,seen=[];
     const server=createServer((req,res)=>{const chunks=[];req.on('data',c=>chunks.push(c));req.on('end',()=>{
-      seen.push(sha256(Buffer.concat(chunks)));res.setHeader('content-type','application/json');
-      res.end(JSON.stringify({ok:true,reading:{kind:'CLOCK',provider:'openai',clockPresent:true,clockConfidence:0.95,overlayPresent:true,overlayTextWhite:true,photoDate:invented,photoTime:'04:10',latitude:null,longitude:null,locationText:'SECRETPLACE'},validation:{ok:false,validationCode:'GPS_MISSING'}}));
+      seen.push(sha256(Buffer.concat(chunks)));
+      if(current.destroy){req.socket.destroy();return;}
+      res.statusCode=current.status??200;res.setHeader('content-type','application/json');res.end(JSON.stringify(current.reply));
     });});
     await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
-    const runDiagnostic=async diagnosticCase=>{
-      const manifestPath=await syntheticManifest(path.join(root,diagnosticCase));
-      const tokenPath=path.join(root,`${diagnosticCase}.token`);await writeFile(tokenPath,'t'.repeat(40));
+    const runDiagnostic=async(diagnosticCase,label)=>{
+      const manifestPath=await syntheticManifest(path.join(root,label));
+      const tokenPath=path.join(root,`${label}.token`);await writeFile(tokenPath,'t'.repeat(40));
       const env={PATH:process.env.PATH,CLOCK_FIXTURE_CHILD:'1',MALIPANG_CLOCK_PRIVATE_MANIFEST:manifestPath,MALIPANG_LIVE_TESTS:'clock-photos',
         MALIPANG_CLOCK_DIAGNOSTIC_CASE:diagnosticCase,MALIPANG_VISION_BASE_URL:`http://127.0.0.1:${server.address().port}`,
         MALIPANG_ADMIN_TOKEN_FILE:tokenPath,MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE:'0.70',MALIPANG_VISION_PROVIDER:'openai'};
@@ -645,18 +658,20 @@ if(!isChild){
       const status=await new Promise(resolve=>child.on('close',resolve));
       return{status,output};
     };
+    const photo07=sha256(Buffer.concat([Buffer.from([0xff,0xd8,0xff]),Buffer.from('synthetic-photo-07')]));
     try{
-      const run=await runDiagnostic('photo-07');
-      ok(run.status!==0,'synthetic: an invented timestamp fails the case');
-      ok(seen.length===1,'synthetic: exactly one image is sent');
-      ok(seen[0]===sha256(Buffer.concat([Buffer.from([0xff,0xd8,0xff]),Buffer.from('synthetic-photo-07')])),'synthetic: the one image is photo-07');
-      ok(/^\s*not ok \d+ - photo-07$/m.test(run.output),'synthetic: the case status is reported');
-      const summary=summarize(run.output,'photo-07');
-      ok(summary==='photo-07 provider=openai validationCode=GPS_MISSING accepted=false clockPresent=true overlayPresent=true timestampPresent=true gpsPresent=false','synthetic: a failing case still yields the allowlisted summary');
-      ok(!summary.includes(invented)&&!summary.includes('SECRET')&&!summary.includes(root),'synthetic: the summary carries no reading, place or path');
-
-      seen.length=0;
-      const unknown=await runDiagnostic('photo-99');
+      for(const [label,scenario] of Object.entries(scenarios)){
+        current=scenario;seen=[];
+        const run=await runDiagnostic('photo-07',label);
+        ok(seen.length===1&&seen[0]===photo07,`${label}: exactly one image, photo-07, is sent`);
+        ok((run.status===0)===scenario.testPasses,`${label}: live test exit ${run.status}`);
+        ok(verdict(run.output,'photo-07',run.status)===scenario.verdict,`${label}: verdict ${verdict(run.output,'photo-07',run.status)}`);
+        const summary=summarize(run.output,'photo-07');
+        ok(scenario.verdict.endsWith('DIAGNOSTIC_UNAVAILABLE')?summary===null:typeof summary==='string',`${label}: summary only after a successful endpoint answer`);
+        for(const value of [invented,'SECRETPLACE',root,'13.5'])ok(!String(summary).includes(value),`${label}: summary carries no reading, place or path`);
+      }
+      current=scenarios['expected-rejection'];seen=[];
+      const unknown=await runDiagnostic('photo-99','unknown');
       ok(unknown.status!==0&&/not a known case/.test(unknown.output),'synthetic: an unknown diagnostic case stops the run');
       ok(seen.length===0,'synthetic: an unknown diagnostic case sends nothing');
     }finally{server.close();await rm(root,{recursive:true,force:true});}

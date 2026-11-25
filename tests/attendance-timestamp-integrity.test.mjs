@@ -45,6 +45,17 @@ const scenarios=[
   ['GPS outside the store radius still rejected',{...base,latitude:13.95,longitude:100.6,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n+13.950000,+100.600000\n${ADDRESS}`},'OUTSIDE_STORE_RADIUS'],
   ['low clock confidence still rejected first',{...base,...gps,clockConfidence:0.5,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`},'CLOCK_NOT_CONFIRMED'],
   ['low overlay confidence still rejected',{...base,...gps,overlayConfidence:0.5,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`},'TIMESTAMP_LOW_CONFIDENCE'],
+  // Independent review of 05f3aee: no number or month may be the tail of a longer token
+  ['digit glued before the day is not a date (day-first)',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`123 Nov 2026 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['month name inside a word is not a month (month-first)',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`Xnov 23, 2026 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['year inside a longer number is not a year (year-first)',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`12026/11/23 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['digit glued before the day is not a date (numeric day-first)',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`123/11/2026 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['minutes followed by a digit are not a time',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`23 Nov 2026 09:123\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  ['a date is not taken from a malformed time',{...base,...gps,photoDate:'2026-11-22',photoTime:'09:12:02',overlayRawText:`22 Nov 2026 09:123 23 Nov 2026 09:12:02\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
+  // The same minute with and without seconds agrees; two different seconds values do not
+  ['same minute as HH:mm:ss and HH:mm is accepted',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n09:12\n${GPS}\n${ADDRESS}`},'OK'],
+  ['stamp without seconds plus the same minute with seconds is accepted',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`23 Nov 2026 09:12\n09:12:02\n${GPS}\n${ADDRESS}`},'OK'],
+  ['two different seconds in the same minute are rejected',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n09:12:40\n${GPS}\n${ADDRESS}`},'TIMESTAMP_FIELDS_MISSING'],
   // RESIDUAL RISK (S1, not fixed): if the model fabricates both the overlay text and the fields
   // consistently and close to the real time, this deterministic check cannot detect it.
   ['S1 residual: fabricated but consistent overlay text and fields',{...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`},'OK'],
@@ -61,6 +72,8 @@ for(const [provider,read] of Object.entries(providers)){
     const reading=await read({...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`${STAMP}\n${GPS}\n${ADDRESS}`});
     const v=validateAttendancePhoto(reading,receivedAt,rules);
     assert.equal(v.ok,true);assert.equal(v.workDate,'2026-11-23');assert.equal(v.officialTime,'09:12');assert.equal(v.photoDateTime,'2026-11-23T09:12:02+07:00');
+    const mixed=await read({...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:02',overlayRawText:`23 Nov 2026 09:12\n09:12:02\n${GPS}\n${ADDRESS}`});
+    assert.equal(validateAttendancePhoto(mixed,receivedAt,rules).photoDateTime,'2026-11-23T09:12:02+07:00','seconds come from the overlay token that shows them');
     const noSeconds=await read({...base,...gps,photoDate:'2026-11-23',photoTime:'09:12:45',overlayRawText:`23 Nov 2026 9:12\n${GPS}\n${ADDRESS}`});
     const w=validateAttendancePhoto(noSeconds,receivedAt,rules);
     assert.equal(w.ok,true,'seconds the overlay does not show are not taken from the model');assert.equal(w.officialTime,'09:12');assert.equal(w.photoDateTime,'2026-11-23T09:12:00+07:00');
@@ -76,6 +89,8 @@ for(const [provider,read] of Object.entries(providers)){
     await check('23 Nov 2026 21:12 Amphoe','OK','21:12','a place name starting with "Am" after 21:12 is not AM');
     await check('23 Nov 2026 9:12 PM','OK','21:12','9:12 PM is 21:12');
     await check('23 Nov 2026 9:12 PM 21:12','OK','21:12','9:12 PM and 21:12 are the same time');
+    await check('23 Nov 2026 9:12 P.M.','TIMESTAMP_FIELDS_MISSING',null,'a malformed marker is not read as PM and gives no evening time');
+    await check('23 Nov 2026 21:12 PM','TIMESTAMP_FIELDS_MISSING',null,'21 with PM is not a time');
     await check('23 Nov 2026 09:12 and 9:12 PM','TIMESTAMP_FIELDS_MISSING',null,'09:12 and 9:12 PM conflict');
     await check('23 Nov 2026 21:12\n22 Nov 2026 21:12','TIMESTAMP_FIELDS_MISSING',null,'two different dates at 21:12 are still rejected');
   });
@@ -127,4 +142,15 @@ test('evidencedOverlayTimestamp gives a fixed reason and no timestamp whenever e
   assert.equal(t(STAMP,'2026-11-23','9:12').evidence,'EVIDENCED','HH:mm agreement without seconds is enough');
   assert.equal(t(STAMP,'2026-11-23','not a time').evidence,'MODEL_TIME_DIFFERS');
   assert.equal(t('31 Feb 2026 09:12',null,null).evidence,'NO_OVERLAY_TIMESTAMP','an impossible date is not repaired');
+  for(const text of ['123 Nov 2026 09:12','Xnov 23, 2026 09:12','12026/11/23 09:12','123/11/2026 09:12','23 Nov 2026 09:123','23 Nov 2026 09:12:345','2026/11/234 09:12'])
+    assert.equal(t(text,null,null).evidence,'NO_OVERLAY_TIMESTAMP',`${text}: part of a longer token is not a date or time`);
+  for(const text of ['23 Nov 2026 0:30 AM','23 Nov 2026 00:30 AM','23 Nov 2026 13:00 PM','23 Nov 2026 21:12 AM','23 Nov 2026 21:12 PM'])
+    assert.equal(t(text,null,null).evidence,'NO_OVERLAY_TIMESTAMP',`${text}: hour outside 1-12 with a marker`);
+  assert.deepEqual(t('23 Nov 2026 12:30 AM',null,null),{photoDate:'2026-11-23',photoTime:'00:30',evidence:'EVIDENCED'},'12 AM is 00');
+  assert.deepEqual(t('23 Nov 2026 12:30 PM',null,null),{photoDate:'2026-11-23',photoTime:'12:30',evidence:'EVIDENCED'},'12 PM is 12');
+  assert.deepEqual(t('23 Nov 2026 9:12 P.M.',null,null),{photoDate:'2026-11-23',photoTime:'09:12',evidence:'EVIDENCED'},'boundary: a malformed marker is not a marker (photo age and model agreement still apply)');
+  assert.deepEqual(t(`${STAMP}\n09:12`,null,null),{photoDate:'2026-11-23',photoTime:'09:12:02',evidence:'EVIDENCED'},'HH:mm:ss and HH:mm of one minute agree');
+  assert.deepEqual(t('23 Nov 2026 09:12\n09:12:02','2026-11-23','09:12:02'),{photoDate:'2026-11-23',photoTime:'09:12:02',evidence:'EVIDENCED'},'seconds come from the token that shows them');
+  assert.equal(t('23 Nov 2026 09:12\n09:12:02','2026-11-23','09:12:40').evidence,'MODEL_TIME_DIFFERS','model seconds must match the seconds shown');
+  assert.equal(t(`${STAMP}\n09:12:40`,null,null).evidence,'AMBIGUOUS_OVERLAY_TIMES','two different seconds values are ambiguous');
 });

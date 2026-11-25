@@ -20,10 +20,10 @@ function timeValue(hour:number,minute:number,second:number,meridiem=""):string|n
 
 export function parseAttendanceOverlay(rawText:string):ParsedAttendanceOverlay{
   const text=String(rawText||"").replace(/\s+/g," ").trim();let photoDate:string|null=null,photoTime:string|null=null;
-  const dayFirst=/(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:BE\s*)?(\d{2,4})\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
-  const monthFirst=/(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
-  const yearFirst=/(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
-  const numericDayFirst=/(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?:\s*(AM|PM)\b)?/i.exec(text);
+  const dayFirst=/(?<!\d)(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(?:BE\s*)?(\d{2,4})\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/i.exec(text);
+  const monthFirst=/(?<![A-Za-z])(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s+(\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/i.exec(text);
+  const yearFirst=/(?<!\d)(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/i.exec(text);
+  const numericDayFirst=/(?<!\d)(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})\s+(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/i.exec(text);
   if(dayFirst){const yearText=dayFirst[3]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,months[dayFirst[2]!.toLowerCase()]||0,Number(dayFirst[1]));photoTime=timeValue(Number(dayFirst[4]),Number(dayFirst[5]),Number(dayFirst[6]||0),dayFirst[7]);}
   else if(monthFirst){const yearText=monthFirst[3]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,months[monthFirst[1]!.toLowerCase()]||0,Number(monthFirst[2]));photoTime=timeValue(Number(monthFirst[4]),Number(monthFirst[5]),Number(monthFirst[6]||0),monthFirst[7]);}
   else if(yearFirst){const yearText=yearFirst[1]!,year=normalizeYear(Number(yearText),yearText.length);photoDate=dateValue(year,Number(yearFirst[2]),Number(yearFirst[3]));photoTime=timeValue(Number(yearFirst[4]),Number(yearFirst[5]),Number(yearFirst[6]||0),yearFirst[7]);}
@@ -52,19 +52,21 @@ export function evidencedOverlayTimestamp(rawText:string,modelDate:string|null,m
   const text=String(rawText||"").replace(/\s+/g," ");
   const tokens=[...text.matchAll(/(?<![\d:])(\d{1,2}):(\d{2})(?::(\d{2}))?(?![\d:])(?:\s*(AM|PM)\b)?/gi)];
   // Compare in 24-hour form so "09:12" and "9:12 PM" conflict; an impossible time stays a distinct value.
-  const distinct=new Set(tokens.map(t=>timeValue(Number(t[1]),Number(t[2]),Number(t[3]||0),t[4]||"")?.slice(0,t[3]===undefined?5:8)??t[0]));
-  if(distinct.size!==1)return none("AMBIGUOUS_OVERLAY_TIMES");
+  // The same minute may be written with and without seconds, but every seconds value shown must agree.
+  const minutes=new Set(tokens.map(t=>timeValue(Number(t[1]),Number(t[2]),Number(t[3]||0),t[4]||"")?.slice(0,5)??t[0]));
+  const seconds=[...new Set(tokens.flatMap(t=>t[3]===undefined?[]:[t[3]]))];
+  if(minutes.size!==1||!minutes.has(parsed.photoTime.slice(0,5))||seconds.length>1)return none("AMBIGUOUS_OVERLAY_TIMES");
   // The time may repeat, but the date written before each occurrence must be the parsed date
   // (the parser takes the first match by format, so a second, different date would be dropped silently).
   let from=0;
   for(const token of tokens){const end=token.index!+token[0].length,date=parseAttendanceOverlay(text.slice(from,end)).photoDate;from=end;if(date&&date!==parsed.photoDate)return none("AMBIGUOUS_OVERLAY_DATES");}
-  const overlayHasSeconds=tokens[0]![3]!==undefined,overlayTime=overlayHasSeconds?parsed.photoTime:parsed.photoTime.slice(0,5);
+  const overlaySeconds=seconds[0],overlayTime=parsed.photoTime.slice(0,5)+(overlaySeconds===undefined?"":`:${overlaySeconds}`);
   if(modelDate&&modelDate!==parsed.photoDate)return none("MODEL_DATE_DIFFERS");
   if(modelTime){
     const model=/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/.exec(modelTime.trim());
     if(!model)return none("MODEL_TIME_DIFFERS");
     const hhmm=`${model[1]!.padStart(2,"0")}:${model[2]}`;
-    if(hhmm!==parsed.photoTime.slice(0,5)||(overlayHasSeconds&&model[3]!==undefined&&model[3]!==parsed.photoTime.slice(6)))return none("MODEL_TIME_DIFFERS");
+    if(hhmm!==parsed.photoTime.slice(0,5)||(overlaySeconds!==undefined&&model[3]!==undefined&&model[3]!==overlaySeconds))return none("MODEL_TIME_DIFFERS");
   }
   return{photoDate:parsed.photoDate,photoTime:overlayTime,evidence:"EVIDENCED"};
 }

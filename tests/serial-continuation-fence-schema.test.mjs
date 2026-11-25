@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
-const sql=readFileSync(new URL('../migrations/0074_serial_continuation_fence_draft.sql',import.meta.url),'utf8');
+const sql=readFileSync(new URL('../migrations-draft/0074_serial_continuation_fence_draft.sql',import.meta.url),'utf8');
 function model(includeLedgerMigration=true){
  const db=new DatabaseSync(':memory:');
  db.exec(`CREATE TABLE stable_workbook_claims(spreadsheet_id TEXT PRIMARY KEY,operation_token TEXT UNIQUE,state TEXT,phase TEXT);
@@ -22,7 +22,7 @@ function model(includeLedgerMigration=true){
  CREATE TABLE continuous_ledger_write_evidence(spreadsheet_id TEXT,entity_id TEXT,projection TEXT,operation_kind TEXT,sheet_id INTEGER,sheet_name TEXT,source_version INTEGER,operation_token TEXT,marker TEXT,before_digest TEXT,payload_digest TEXT);
  CREATE TABLE atomic_daily_marker_reservations(spreadsheet_id TEXT,sheet_id INTEGER,entity_id TEXT,source_version INTEGER,operation_token TEXT,marker TEXT);
  CREATE TABLE continuous_daily_write_evidence(spreadsheet_id TEXT,entity_id TEXT,sheet_id INTEGER,sheet_name TEXT,source_version INTEGER,source_digest TEXT,operation_token TEXT,marker TEXT);
- CREATE TABLE stable_expense_projection_preimages(spreadsheet_id TEXT,entity_type TEXT,entity_id TEXT,source_version INTEGER,projection TEXT,sheet_id INTEGER,sheet_name TEXT,source_digest TEXT);`);db.exec(sql);if(includeLedgerMigration)db.exec(readFileSync(new URL('../migrations/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));return db;
+ CREATE TABLE stable_expense_projection_preimages(spreadsheet_id TEXT,entity_type TEXT,entity_id TEXT,source_version INTEGER,projection TEXT,sheet_id INTEGER,sheet_name TEXT,source_digest TEXT);`);db.exec(sql);if(includeLedgerMigration)db.exec(readFileSync(new URL('../migrations-draft/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));return db;
 }
 test('0074 alone cannot accept a ledger receipt before the follow-on migration',()=>{
  const db=model(false);try{
@@ -31,7 +31,7 @@ test('0074 alone cannot accept a ledger receipt before the follow-on migration',
   const completion="INSERT INTO serial_pilot_final_completions VALUES('token','epoch','book','job','nonce','worker',1,'daily',2,'raw',3,'detail','provider','notice','p-time','n-time','done')";
   assert.throws(()=>db.exec(completion));db.exec('DROP TRIGGER serial_final_completion_not_ready');assert.throws(()=>db.exec(completion));
   assert.equal(db.prepare('SELECT count(*) n FROM serial_pilot_final_completions').get().n,0);
-  db.exec(readFileSync(new URL('../migrations/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));
+  db.exec(readFileSync(new URL('../migrations-draft/0075_serial_ledger_receipt_draft.sql',import.meta.url),'utf8'));
   assert.throws(()=>db.exec("INSERT INTO serial_pilot_ledger_stage_receipts VALUES('token','epoch','book','job','entity','EXPENSE_RAW',1,'source',1,2,'sheet','before','payload','marker','worker','nonce','SHA256_MALIPANG_NOTICE_POSTIMAGE_V1','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','observed','recorded')"));
  }finally{db.close();}
 });

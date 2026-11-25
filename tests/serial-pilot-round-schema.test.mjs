@@ -39,7 +39,7 @@ test('round membership seals before processing; each result and the close are im
 test('0068-only classification remains blocked when the initial barrier is removed',()=>{
  const d=new DatabaseSync(':memory:');try{
   d.exec('CREATE TABLE admin_audit(id TEXT, action TEXT, entity_key TEXT, reason TEXT, before_json TEXT, after_json TEXT)');
-  d.exec(readFileSync(new URL('../migrations/0068_serial_round_evidence.sql',import.meta.url),'utf8'));
+  d.exec(readFileSync(new URL('../migrations-draft/0068_serial_round_evidence.sql',import.meta.url),'utf8'));
   const sql="INSERT INTO serial_pilot_classification_evidence VALUES('round','job','PARKED','MOCK_ATTESTED_HANDOFF','next','namespace',1,'"+'a'.repeat(64)+"',1,'nonce','worker')";
   assert.throws(()=>d.exec(sql),/classification (not ready|not implemented)/);d.exec('DROP TRIGGER serial_classification_not_ready');assert.throws(()=>d.exec(sql),/classification not implemented/);
   assert.equal(d.prepare('SELECT count(*) n FROM serial_pilot_classification_evidence').get().n,0);
@@ -47,7 +47,7 @@ test('0068-only classification remains blocked when the initial barrier is remov
 });
 
 test('classifier predicates match the migration guards including every placeholder',()=>{
- const migration=readFileSync(new URL('../migrations/0078_serial_classification_draft.sql',import.meta.url),'utf8');
+ const migration=readFileSync(new URL('../migrations-draft/0078_serial_classification_draft.sql',import.meta.url),'utf8');
  const generated=readFileSync(new URL('../src/admin/serial-classification-predicates.ts',import.meta.url),'utf8');
  for(const [guard,exportName] of [['serial_classification_parked_guard','parkedClassificationPredicate'],['serial_classification_not_started_guard','notStartedClassificationPredicate']]){
   const begin=migration.indexOf(`CREATE TRIGGER ${guard} BEFORE INSERT`),start=migration.indexOf('AND NOT EXISTS(\n',begin)+'AND NOT EXISTS(\n'.length,end=migration.indexOf('\n) BEGIN SELECT RAISE',start);

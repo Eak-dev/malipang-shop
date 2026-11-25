@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {readFileSync,readdirSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {confirmExpenseAtomically} from '../dist/expense/confirm.js';
 import {undoConfirmedExpense} from '../dist/expense/undo.js';
 import {enqueueSheetSync,recoverPendingSheetJobs} from '../dist/db/repositories.js';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 class Statement{
   constructor(owner,sql){this.owner=owner;this.sql=sql;this.args=[];}
@@ -39,8 +40,7 @@ const created='2026-01-01T00:00:00.000Z';
 const reviewedJson=JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:['payment']}});
 function harness({version=1,existingVersions=[],syncEnabled=true,document=true,normalizedJson=reviewedJson,updatedAt=created}={}){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const dir=new URL('../migrations/',import.meta.url);
-  for(const name of readdirSync(dir).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,dir),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const snapshot={description:'sanitized fixture',amountSatang:100,transactionDate:'2026-01-01',paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',version};
   sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version)
     VALUES('exp_fixture','msg_fixture','line_fixture',?,?,?,?,?,?,'WAITING_CONFIRM','trace_fixture',?,?)`)

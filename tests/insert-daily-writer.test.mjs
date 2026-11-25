@@ -1050,7 +1050,7 @@ async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitin
     // The preceding control proves this exact positive close was valid before
     // the injected final failure. Each missing guard must independently abort
     // the same close, and D1 must roll back the DDL and leave the round OPEN.
-    const integritySql=readFileSync(new URL('../migrations/0079_serial_verified_close_draft.sql',import.meta.url),'utf8').split('CREATE TRIGGER serial_pilot_verified_close_guard')[0];
+    const integritySql=readFileSync(new URL('../migrations-draft/0079_serial_verified_close_draft.sql',import.meta.url),'utf8').split('CREATE TRIGGER serial_pilot_verified_close_guard')[0];
     const dependencyGroups=[...integritySql.matchAll(/name IN \(([\s\S]*?)\)\)<>(\d+)/g)];
     assert.equal(dependencyGroups.length,3);
     const dependencies=dependencyGroups.flatMap(([,list,count])=>{const names=[...list.matchAll(/'([a-z0-9_]+)'/g)].map(x=>x[1]);assert.equal(names.length,Number(count));return names;});
@@ -1636,7 +1636,7 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
        await db.prepare('DROP TRIGGER serial_continuation_permit_not_ready').run();
        await db.prepare('DROP TRIGGER serial_continuation_authorization_not_ready').run();
        await db.prepare('DROP TRIGGER serial_ledger_stage_not_ready').run();
-       const ddl=(await import('node:fs')).readFileSync(new URL('../migrations/0074_serial_continuation_fence_draft.sql',import.meta.url),'utf8');
+       const ddl=(await import('node:fs')).readFileSync(new URL('../migrations-draft/0074_serial_continuation_fence_draft.sql',import.meta.url),'utf8');
        await db.prepare('DROP TRIGGER serial_continuation_claim_insert').run();
        assert.equal(await releaseAttestedNoticeDraft(h.env,ticket,digest,()=>true),'UNVERIFIED');
        assert.equal((await db.prepare("SELECT state FROM stable_workbook_claims WHERE spreadsheet_id='book'").first()).state,'HELD');

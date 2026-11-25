@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {createRequire} from 'node:module';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
-const migration=readFileSync(new URL('../migrations/0070_serial_source_provenance_draft.sql',import.meta.url),'utf8');
+const migration=readFileSync(new URL('../migrations-draft/0070_serial_source_provenance_draft.sql',import.meta.url),'utf8');
 function setup(){const db=new DatabaseSync(':memory:');db.exec("CREATE TABLE expense_events(expense_id TEXT PRIMARY KEY,message_id TEXT UNIQUE,status TEXT,version INTEGER); CREATE TABLE sync_jobs(entity_type TEXT,entity_key TEXT)");db.exec(migration);return db;}
 const namespace='a'.repeat(32),id=`exp_${namespace}_aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`;
 test('source namespace stays disabled and legacy inserts remain unchanged',()=>{const db=setup();try{

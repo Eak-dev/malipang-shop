@@ -15,7 +15,16 @@ jobs:
         run: npm run typecheck
       - name: Unit tests
         run: npm test
+      - name: Release schema (migrations/ only, what Production applies)
+        run: npm run test:release-schema
       - name: Local D1 migrations
         run: npx wrangler d1 migrations apply malipang-v5-2 --local --persist-to /tmp/malipang-ci
+      - name: Local D1 ledger ends at the last release file
+        run: |
+          last=$(basename "$(ls migrations/*.sql | sort | tail -1)")
+          npx wrangler d1 execute malipang-v5-2 --local --persist-to /tmp/malipang-ci --json --command "SELECT max(name) AS n FROM d1_migrations" > "$RUNNER_TEMP/ledger.json"
+          LAST="$last" node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1]));const n=r[0].results[0].n;if(n!==process.env.LAST){console.error(`ledger ${n} != ${process.env.LAST}`);process.exit(1)}console.log(`ledger head ${n}`)' "$RUNNER_TEMP/ledger.json"
+      - name: Local D1 draft schema on top (local only, never applied by wrangler migrations)
+        run: for f in $(ls migrations-draft/*.sql | sort); do npx wrangler d1 execute malipang-v5-2 --local --persist-to /tmp/malipang-ci --file "$f"; done
       - name: Wrangler dry run
         run: npx wrangler deploy --dry-run

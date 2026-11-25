@@ -87,6 +87,7 @@ import {mkdtempSync,mkdirSync,writeFileSync,rmSync,existsSync,symlinkSync,copyFi
 import {DatabaseSync} from 'node:sqlite';
 import os from 'node:os';
 import path from 'node:path';
+import {migrationFiles} from './helpers/migration-files.mjs';
 // Body of a step's `run: |` block exactly as GitHub hands it to bash.
 const runBlock=raw=>{const lines=raw.split('\n'),i=lines.indexOf('        run: |');assert.ok(i>=0,'run block');return lines.slice(i+1).filter(l=>l===''||l.startsWith('          ')).map(l=>l.slice(10)).join('\n')+'\n';};
 const SUMMARY=steps.find(s=>/^Incident containment summary/.test(s.name));
@@ -160,7 +161,7 @@ test('real precheck, real guard, provider-side SQL on a synthetic D1: payroll RE
   // Synthetic D1 from the real migrations; markers sit in every job field that could leave it.
   const MARKERS=['EMP_SYNTHETIC_PRIVATE','TRACE_SYNTHETIC_PRIVATE','LEASE_SYNTHETIC_PRIVATE','ERROR_SYNTHETIC_PRIVATE'];
   const db=new DatabaseSync(path.join(dir,'d1.db'));
-  try{for(const n of readdirSync('migrations').filter(n=>n.endsWith('.sql')).sort())db.exec(readFileSync(path.join('migrations',n),'utf8'));
+  try{for(const {url} of migrationFiles())db.exec(readFileSync(url,'utf8'));
    const ins=db.prepare('INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,last_error,updated_at,lease_until,lease_token) VALUES(?,?,?,?,?,?,?,?,?,?,?)');
    ins.run('job_payroll_review','DAILY_PAYROLL','EMP_SYNTHETIC_PRIVATE|2026-11-10',1,'TRACE_SYNTHETIC_PRIVATE','REVIEW',3,'ERROR_SYNTHETIC_PRIVATE','2026-11-10T00:00:00.000Z',null,null);
    ins.run('job_payroll_expired','DAILY_PAYROLL','EMP_SYNTHETIC_PRIVATE|2026-11-09',1,'TRACE_SYNTHETIC_PRIVATE_2','PROCESSING',1,'ERROR_SYNTHETIC_PRIVATE','2026-11-01T00:00:00.000Z','2026-11-02T00:00:00.000Z','LEASE_SYNTHETIC_PRIVATE');

@@ -9,11 +9,11 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Miniflare} from 'miniflare';
 import {expenseSqlite} from './helpers/expense-sqlite.mjs';
+import {migrationFiles} from './helpers/migration-files.mjs';
 const {openSerialRound,closeSerialRound,closeUnverifiedSerialRound,readSerialRound}=createRequire(import.meta.url)('../dist/admin/serial-round-store.js');
 async function localD1BeforeMigration(lastMigration){
  const dir=mkdtempSync(join(tmpdir(),'serial-partial-d1-')),fixture=join(dir,'source.sqlite'),source=new DatabaseSync(':memory:');
- const migrations=new URL('../migrations/',import.meta.url);
- for(const name of readdirSync(migrations).filter(x=>x.endsWith('.sql')&&Number(x.slice(0,4))<=lastMigration).sort())source.exec(readFileSync(new URL(name,migrations),'utf8'));
+ for(const {name,url} of migrationFiles({draft:true}).filter(x=>Number(x.name.slice(0,4))<=lastMigration))source.exec(readFileSync(url,'utf8'));
  source.exec(`VACUUM INTO '${fixture.replaceAll("'","''")}'`);source.close();
  const options={modules:true,compatibilityDate:'2026-07-20',d1Databases:{DB:'test-db'},d1Persist:dir,script:'export default {async fetch(_r,e){await e.DB.prepare("SELECT 1").first();return new Response("ok")}}'};
  let mf=new Miniflare(options);await mf.dispatchFetch('http://local/');await mf.dispose();
@@ -29,7 +29,7 @@ for(const item of [
 ])test(`local D1 partial migration ${item.version} rolls back a failed batch and rejects naive rerun`,async()=>{
  const h=await localD1BeforeMigration(item.version-1),db=h.db;
  try{
-  const sql=readFileSync(new URL('../migrations/'+item.migration,import.meta.url),'utf8');
+  const sql=readFileSync(new URL('../migrations-draft/'+item.migration,import.meta.url),'utf8');
   const alter=sql.match(new RegExp(`ALTER TABLE ${item.table} ADD COLUMN ${item.column}[^;]+;`))?.[0];assert.ok(alter);
   const column=()=>db.prepare(`SELECT count(*) n FROM pragma_table_info('${item.table}') WHERE name=?`).bind(item.column).first();
   assert.equal((await column()).n,0);

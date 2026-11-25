@@ -14,6 +14,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {verifyStage} from '../scripts/pr247-stage-guard.mjs';
 import {verifyReleasePre,verifyReleasePost,ATTENDANCE_ACCEPT} from '../scripts/issue248-nonfinancial-release-guard.mjs';
 import {canarySourceSql,RESULT_COLUMNS,EXPENSE_COLUMNS} from '../scripts/issue248-canary-source-digest.mjs';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const jqProbe=spawnSync(process.env.MP248_JQ_PATH||'jq',['--version'],{encoding:'utf8'});
@@ -32,7 +33,7 @@ const ok=results=>({success:true,meta:{changed_db:false,rows_written:0},results}
 const revisionOf=db=>db.prepare('SELECT revision AS r FROM stable_source_revision WHERE singleton=1').get().r;
 function migratedCanary(file){
  const db=new DatabaseSync(file);
- for(const name of readdirSync(path.join(root,'migrations')).filter(n=>n.endsWith('.sql')).sort())db.exec(readFileSync(path.join(root,'migrations',name),'utf8'));
+ for(const {url} of migrationFiles())db.exec(readFileSync(url,'utf8'));
  const cols=Object.keys(canaryRow);db.prepare(`INSERT INTO expense_events(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')})`).run(...Object.values(canaryRow));
  return db;
 }

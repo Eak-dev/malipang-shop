@@ -1,0 +1,63 @@
+name: Production photo pack staging diagnostic (no evaluation)
+# Manual only, behind the production environment approval. Fetches the approved private pack once with the
+# existing reader and control, repeats every staging check, and prints one allowlisted line naming the failed
+# stage. The job receives only the staging reader/control/account secrets: no Worker URL, admin token or model
+# settings, so it cannot submit anything for evaluation. run_attempt == 1 stops a re-run attempt of the same
+# run from executing; it does not stop a new dispatch (one-time use is enforced by the operator's claim).
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Reviewed main commit containing this workflow
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: issue348-production-private-photo-evaluation
+  cancel-in-progress: false
+jobs:
+  stage:
+    if: github.repository == 'Eak-dev/malipang-shop' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Check the vendored transport is the reviewed one
+        shell: bash
+        run: |
+          set -euo pipefail
+          # git blob of scripts/issue348-transfer-rehearsal.mjs at 440e22061cf27ed76b0188bfc3f15bde63e20f88
+          [[ "$(git hash-object scripts/issue348-transfer-rehearsal.mjs)" == fc44009eef4e368082051644d648ac005a5e992c ]]
+      - name: Staging diagnostic (one fetch, no retry, no evaluation)
+        shell: bash
+        env:
+          SCOPED_READER: ${{ secrets.ISSUE348_R2_READER }}
+          PHOTO_CONTROL: ${{ secrets.ISSUE348_PHOTO_CONTROL }}
+          R2_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/issue348.XXXXXX")
+          printf 'ISSUE348_SCRATCH=%s\n' "$scratch" >> "$GITHUB_ENV"
+          echo "node $(node --version)"
+          ISSUE348_SCRATCH="$scratch" node scripts/issue348-stage-diagnostic.mjs | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Remove transient files and report the result
+        if: always()
+        shell: bash
+        run: |
+          if [[ -z "${ISSUE348_SCRATCH:-}" ]]; then
+            echo 'ISSUE348_CLEANUP=NOT_CREATED'
+          elif [[ "$ISSUE348_SCRATCH" == "$RUNNER_TEMP"/issue348.* ]]; then
+            rm -rf -- "$ISSUE348_SCRATCH"
+            if [[ -e "$ISSUE348_SCRATCH" ]]; then echo 'ISSUE348_CLEANUP=FAILED'; exit 1; fi
+            echo 'ISSUE348_CLEANUP=REMOVED'
+          else
+            echo 'ISSUE348_CLEANUP=UNEXPECTED_PATH'; exit 1
+          fi

@@ -8,7 +8,7 @@
 
 ชุด migration ที่ปล่อยจริงคือ `migrations/` (จบที่ 0067) ส่วน schema serial ทดลอง 0068–0079 อยู่ที่ `migrations-draft/` สำหรับ local และเทสต์เท่านั้น ดู [README ข้อ 15](../README.md#draft-schema-local-only) และ [#356](https://github.com/Eak-dev/malipang-shop/pull/356)
 
-ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง การวินิจฉัยรูป 07 แบบรูปเดียวและเกณฑ์ผ่านอยู่ในหัวข้อ[วินิจฉัยรูป 07](03_TEST_AND_CUTOVER_TH.md#วินิจฉัยรูป-07-แบบรูปเดียว-manual) ([#355](https://github.com/Eak-dev/malipang-shop/pull/355))
+ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง วันเวลาลงเวลาใช้เฉพาะที่อ่านได้จากข้อความ overlay สีขาวและตรงกับที่ตัวอ่านรายงาน ดู[หลักฐานวันเวลาจาก overlay](03_TEST_AND_CUTOVER_TH.md#หลักฐานวันเวลาจาก-overlay) การวินิจฉัยรูป 07 แบบรูปเดียวและเกณฑ์ผ่านอยู่ในหัวข้อ[วินิจฉัยรูป 07](03_TEST_AND_CUTOVER_TH.md#วินิจฉัยรูป-07-แบบรูปเดียว-manual) ([#355](https://github.com/Eak-dev/malipang-shop/pull/355))
 
 งานต่อของ #348 ในเครื่องทดสอบให้ผู้ใช้เติมข้อมูลที่ขาดในเอกสารสลิปเดิมเมื่อยืนยันการจ่ายได้ จากนั้นตรวจรายการและหมวดใน draft แล้วกด Save เอง หากหลักฐานการจ่ายไม่ผ่าน ระบบพักรายการโดยไม่บันทึกค่าใช้จ่าย ดู [ขั้นตอนใน LINE](05_LINE_FLEX_FLOW_TH.md#รูปภาพ) และ [แผนผังหน้า 2](system-flow/system-map.html#p2)
 

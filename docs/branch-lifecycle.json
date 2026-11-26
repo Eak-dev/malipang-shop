@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "claude/issue348-photo07-diagnostic-20261125",
+      "primary_branch": "claude/issue348-timestamp-integrity-20261125",
       "target_branch": "main",
       "coordination_chat": "Issue 348 serial handover continuation",
-      "reason": "Former primary codex/issue348-queue-regression-20261124 was squash-merged into main as 0b426d3 (PR #350). Current primary is the photo-07 diagnostic branch and draft PR #355; preserved draft and fixture branches remain pending audit and integration verification. A PR does not authorize merge or release."
+      "reason": "Former primaries were squash-merged into main: codex/issue348-queue-regression-20261124 as 0b426d3 (PR #350) and claude/issue348-photo07-diagnostic-20261125 as a6acf4b (PR #355). Current primary is the attendance timestamp integrity branch (draft PR). Preserved draft and fixture branches remain pending audit and integration verification. A PR does not authorize merge or release."
     },
     {
       "issue": 285,
@@ -82,13 +82,24 @@
     {
       "scope": "remote",
       "source": "canonical-github",
+      "branch": "claude/issue348-timestamp-integrity-20261125",
+      "source_sha": "ccd9c738bea85aadff5a0975da803632c9ba7d8b",
+      "issues": [348],
+      "pull_requests": [358],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-25T07:30:35Z",
+      "reason": "Primary #348 branch for attendance timestamp integrity (approach A, DEV_OWNED, base main ccd9c73); remote head observed before this registry commit. No dependency on open branches; independent review then merge. No release is implied."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
       "branch": "claude/issue348-photo07-diagnostic-20261125",
       "source_sha": "e8997de5bc12cd066f85132e5b2b884c3e2ca1da",
       "issues": [348],
       "pull_requests": [355],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-25T03:45:17Z",
-      "reason": "Primary #348 branch for the one-image photo-07 diagnostic (PR #355, base main 0b426d3); remote head observed before this registry commit. No dependency on other open branches; integration plan: review, then merge PR #355 into main. No release is implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-25T07:30:35Z",
+      "reason": "PR #355 (reviewed head b44879c) squash-merged into main as a6acf4b on 25 Nov 2026. Recorded SHA is the earlier observation; this record carries no deletion readiness. No release is implied."
     },
     {
       "scope": "local",

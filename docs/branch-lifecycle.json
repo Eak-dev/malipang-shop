@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "claude/issue348-timestamp-integrity-20261125",
+      "primary_branch": "claude/issue348-photo07-staging-diagnostic-20261126",
       "target_branch": "main",
-      "coordination_chat": "Issue 348 serial handover continuation",
-      "reason": "Former primaries were squash-merged into main: codex/issue348-queue-regression-20261124 as 0b426d3 (PR #350) and claude/issue348-photo07-diagnostic-20261125 as a6acf4b (PR #355). Current primary is the attendance timestamp integrity branch (draft PR). Preserved draft and fixture branches remain pending audit and integration verification. A PR does not authorize merge or release."
+      "coordination_chat": "MP348 release e1f0dd4 (Claude Code executor, ChatGPT root reviewer)",
+      "reason": "Former primaries were squash-merged into main: codex/issue348-queue-regression-20261124 as 0b426d3 (PR #350), claude/issue348-photo07-diagnostic-20261125 as a6acf4b (PR #355) and claude/issue348-timestamp-integrity-20261125 as e1f0dd4 (PR #358). Current primary is the staging-only photo pack diagnostic branch (draft PR #360). Preserved draft and fixture branches remain pending audit and integration verification. A PR does not authorize merge or release."
     },
     {
       "issue": 285,
@@ -82,13 +82,24 @@
     {
       "scope": "remote",
       "source": "canonical-github",
+      "branch": "claude/issue348-photo07-staging-diagnostic-20261126",
+      "source_sha": "3d7db6dc0dcecc48a5c4c9d7f7d416a3e7dad469",
+      "issues": [348],
+      "pull_requests": [360],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-26T13:20:20Z",
+      "reason": "Primary #348 branch for the staging-only photo pack diagnostic (draft PR #360, base main e1f0dd4); remote head observed before this registry commit. No dependency on other open branches; integration plan: review, then merge PR #360 into main only with separate Owner approval. No release or diagnostic run is implied."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
       "branch": "claude/issue348-timestamp-integrity-20261125",
-      "source_sha": "ccd9c738bea85aadff5a0975da803632c9ba7d8b",
+      "source_sha": "984e86d6aacf6033aa47a381c89536d22b81b681",
       "issues": [348],
       "pull_requests": [358],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-25T07:30:35Z",
-      "reason": "Primary #348 branch for attendance timestamp integrity (approach A, DEV_OWNED, base main ccd9c73); remote head observed before this registry commit. No dependency on open branches; independent review then merge. No release is implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-26T13:20:20Z",
+      "reason": "PR #358 (reviewed head 984e86d) squash-merged into main as e1f0dd4 on 26 Nov 2026 per the GitHub PR record; the remote ref still exists at 984e86d. This record carries no deletion readiness. Deployment of e1f0dd4 is recorded in the Production Change, not implied by this record."
     },
     {
       "scope": "remote",

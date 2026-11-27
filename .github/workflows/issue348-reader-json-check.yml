@@ -1,0 +1,35 @@
+# Manual classification only; each run requires separate owner authorization and environment approval.
+name: Issue 348 reader JSON classification (no image)
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Approved exact main SHA
+        required: true
+        type: string
+permissions: {}
+concurrency:
+  group: issue348-production-private-photo-evaluation
+  cancel-in-progress: false
+jobs:
+  classify:
+    if: github.repository == 'Eak-dev/malipang-shop' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Classify reader JSON without disclosing value
+        shell: bash
+        env:
+          SCOPED_READER: ${{ secrets.ISSUE348_R2_READER }}
+        run: |
+          node <<'NODE'
+          const value = process.env.SCOPED_READER;
+          let result;
+          if (value === undefined || value.length === 0) result = 'EMPTY';
+          else {
+            try { JSON.parse(value); result = 'VALID_JSON'; }
+            catch { result = 'INVALID_JSON'; }
+          }
+          process.stdout.write(`ISSUE348_READER_JSON=${result}\n`);
+          NODE

@@ -80,6 +80,17 @@
   ],
   "branches": [
     {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-reader-json-diagnostic",
+      "source_sha": "e6a7632f4ccf558d8363cae567894511155194fc",
+      "issues": [348],
+      "pull_requests": [361],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-27T05:51:46Z",
+      "reason": "Draft PR #361 observed at this head; later commits require fresh verification. No merge or run authorization implied."
+    },
+    {
       "scope": "local",
       "source": "issue348-reader-json-work",
       "branch": "codex/issue348-reader-json-diagnostic",

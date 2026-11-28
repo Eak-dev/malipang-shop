@@ -6,7 +6,7 @@
 
 ทุกงานให้อ่าน [แผนผังระบบและคิวรายงาน](system-flow/README.md) ก่อนเริ่ม พร้อมอัปเดตส่วนที่เปลี่ยนใน PR เดียวกัน
 
-ชุด migration ที่ปล่อยจริงคือ `migrations/` (จบที่ 0067) ส่วน schema serial ทดลอง 0068–0079 อยู่ที่ `migrations-draft/` สำหรับ local และเทสต์เท่านั้น ดู [README ข้อ 15](../README.md#draft-schema-local-only) และ [#356](https://github.com/Eak-dev/malipang-shop/pull/356)
+ชุด migration ที่ปล่อยจริงคือ `migrations/` (จบที่ `0068_issue296_historical_daily_audit.sql`) ส่วน schema serial ทดลอง 0068–0079 อยู่ที่ `migrations-draft/` สำหรับ local และเทสต์เท่านั้น ดู [README ข้อ 15](../README.md#draft-schema-local-only) และ [#356](https://github.com/Eak-dev/malipang-shop/pull/356)
 
 ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง วันเวลาลงเวลาใช้เฉพาะที่อ่านได้จากข้อความ overlay สีขาวและตรงกับที่ตัวอ่านรายงาน ดู[หลักฐานวันเวลาจาก overlay](03_TEST_AND_CUTOVER_TH.md#หลักฐานวันเวลาจาก-overlay) การวินิจฉัยรูป 07 แบบรูปเดียวและเกณฑ์ผ่านอยู่ในหัวข้อ[วินิจฉัยรูป 07](03_TEST_AND_CUTOVER_TH.md#วินิจฉัยรูป-07-แบบรูปเดียว-manual) ([#355](https://github.com/Eak-dev/malipang-shop/pull/355)) workflow วินิจฉัยแบบ staging-only (manual) ดึงแพ็กเดิมหนึ่งครั้งเพื่อบอกว่าการ staging ล้มที่ขั้นใด โดยไม่ส่งภาพให้ตัวประเมิน ดูหัวข้อ[วินิจฉัย staging แพ็กรูปส่วนตัว](03_TEST_AND_CUTOVER_TH.md#วินิจฉัย-staging-แพ็กรูปส่วนตัว-manual) ([#360](https://github.com/Eak-dev/malipang-shop/pull/360)) การมี workflow ไม่ได้แปลว่ารันแล้ว ผลต้องอ้าง run id
 
@@ -16,7 +16,7 @@
 
 งานต่อของ #348 ในเครื่องทดสอบให้ผู้ใช้เติมข้อมูลที่ขาดในเอกสารสลิปเดิมเมื่อยืนยันการจ่ายได้ จากนั้นตรวจรายการและหมวดใน draft ผู้ใช้ยืนยันหมวด General ที่ระบบเสนอได้ด้วยการเลือกหมวดนั้น แล้วกด Save เอง หากหลักฐานการจ่ายไม่ผ่าน ระบบพักรายการโดยไม่บันทึกค่าใช้จ่าย ดู [ขั้นตอนใน LINE](05_LINE_FLEX_FLOW_TH.md#รูปภาพ) และ [แผนผังหน้า 2](system-flow/system-map.html#p2)
 
-ทางตรวจ [DAILY เดิมของ #296](ISSUE296_EXACT_HELD_DAILY_TH.md#probe-แบบอ่านอย่างเดียวด้วยสำเนาหลังเหตุ) ผูกหลักฐานสำเนาหลังเหตุกับกริดหลักและรุ่น Worker. เมื่อปิด operator และมีเพียง pin อ่านจะใช้ PROBE. ทางบันทึกผลย้อนหลังต้องมี pin แยกและ trigger จาก draft `0081` จึงบันทึก DAILY, preimage และ audit ใน D1 พร้อมกันโดยคง claim เดิม. ผลตรวจสดต้องอ้างรันจาก Environment production.
+ทางตรวจ [DAILY เดิมของ #296](ISSUE296_EXACT_HELD_DAILY_TH.md#probe-แบบอ่านอย่างเดียวด้วยสำเนาหลังเหตุ) ผูกหลักฐานสำเนาหลังเหตุกับกริดหลักและรุ่น Worker. เมื่อปิด operator และมีเพียง pin อ่านจะใช้ PROBE. ทางบันทึกผลย้อนหลังต้องมี pin แยกและ trigger จาก release migration `0068_issue296_historical_daily_audit.sql` จึงบันทึก DAILY, preimage และ audit ใน D1 พร้อมกันโดยคง claim เดิม. ผลตรวจสดต้องอ้างรันจาก Environment production.
 
 ## ภาพรวมระบบ
 

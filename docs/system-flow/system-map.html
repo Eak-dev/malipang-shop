@@ -195,7 +195,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <div class="notes">
 <div><h4>เมื่อ SETTLE ตอบสำเร็จ</h4><p>Worker อ่านผลที่บันทึกก่อนตอบ ตัวรันตรวจลายนิ้วมือและค่าตรวจจากคำตอบก่อนจบรอบ หากคำตอบผิดปกติจึงอ่าน INSPECT ซ้ำ</p></div>
 <div><h4>เมื่อยืนยันแถวได้แล้ว</h4><p>ปิดเฉพาะการตรวจ DAILY ส่วน sync job เดิมคง REVIEW และ failed job เดิมคง OPEN จึงยังนับรายการนี้เป็นงานพัก</p></div></div>
-<aside class="alert"><b>ใบรับเฉพาะเหตุ #296</b> PROBE จบที่ MATCHED คง DAILY ใน IN_FLIGHT และคง claim เดิม ร่าง SETTLE_HISTORICAL ต้องมี pin แยกและ trigger draft 0081 เพื่อบันทึก DAILY, preimage และ audit ใน D1 เมื่อคำตอบหายให้ใช้ INSPECT_HISTORICAL โดยคง claim เดิมและงดจอง B</aside>
+<aside class="alert"><b>ใบรับเฉพาะเหตุ #296</b> PROBE จบที่ MATCHED คง DAILY ใน IN_FLIGHT และคง claim เดิม SETTLE_HISTORICAL ยังปิดอยู่ ต้องมี pin แยกและ trigger release 0068 เพื่อบันทึก DAILY, preimage และ audit ใน D1 เมื่อคำตอบหายให้ใช้ INSPECT_HISTORICAL โดยคง claim เดิมและงดจอง B</aside>
 <footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/exact-daily-settlement.ts">การพิสูจน์และอ่านผล DAILY</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/parked-expense-handover.ts">การส่งมอบล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/scripts/prod-normal-queue-pilot.mjs">คำสั่งผู้ดูแล</a></span><span>5 / 8</span></footer>
 </section>
 <section id="p6" class="page">

@@ -120,11 +120,16 @@ export async function preflight({run,api,sha,confirmation,local,config,runId,say
   if(config?.name!==WORKER)stop('CONFIG_WORKER_NAME_MISMATCH');
   const applied=readLedger(run),pending=pendingMigrations(applied,local);
   say(`- ledger_head: ${applied.at(-1)??'none'}`);say(`- pending_migrations: ${pending.length?pending.length>9?'10+':'1-9':'0'}`);
-  if(probeOnly)verifyProbeLedger(applied,local);
+  // The audit-only rollout must preserve the existing read pin and settings.
+  // Only preflight may see this exact single pending release file.
+  const auditPending=probeOnly&&local.at(-2)==='0067_monthly_report_journal.sql'&&
+    pending.length===1&&pending[0]==='0068_issue296_historical_daily_audit.sql'&&local.at(-1)===pending[0]&&
+    applied.length===local.length-1&&applied.every((name,i)=>name===local[i]);
+  if(probeOnly&&!auditPending)verifyProbeLedger(applied,local);
   if(pending.length)say(`- expected_migrate_confirmation: MIGRATE ${s} FROM ${(applied.at(-1)??'0000').slice(0,4)} TO ${local.at(-1).slice(0,4)}`);
   const live=liveVersion(run);say('- worker_status: SINGLE_VERSION_100');say(`- live_version_sha256: ${sha256Hex(live)}`);
   const changes=varChanges(await liveVars(api),config.vars);say(`- config_changes: ${changes.join(',')||'NONE'}`);
-  if(probeOnly&&changes.some(name=>name!==HISTORICAL_DAILY_PIN))stop('HISTORICAL_PROBE_CONFIG_DRIFT');
+  if(probeOnly&&(auditPending?changes.length!==0:changes.some(name=>name!==HISTORICAL_DAILY_PIN)))stop('HISTORICAL_PROBE_CONFIG_DRIFT');
   try{run(['deploy','--dry-run']);}catch{stop('DRY_RUN_FAILED');}
   say('- dry_run: PASS');
   putRecord(run,`preflight-${runId}`,{probe:true,sha});

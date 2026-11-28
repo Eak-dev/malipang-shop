@@ -16,6 +16,7 @@ const NOTICE_PREFIX_MIGRATION='0064_notice_status_prefix.sql';
 const COMPLETED_CANARY_MIGRATION='0065_canary_completed_recovery.sql';
 const SCOPED_HOLD_MIGRATION='0066_scoped_hold_incident.sql';
 const MONTHLY_REPORT_MIGRATION='0067_monthly_report_journal.sql';
+const HISTORICAL_AUDIT_MIGRATION='0068_issue296_historical_daily_audit.sql';
 const baselineNames=names.filter(n=>Number(n.slice(0,4))<=61);
 const read=n=>readFileSync(urls.get(n),'utf8');
 // Pinned from main b9c3e00 (before this change) so CI needs no git history:
@@ -76,22 +77,45 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
 });
 
 test('issue296 incident migrations are append-only and preserve trigger names on rerun',()=>{
- const incident=[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION];
+ const incident=[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION,HISTORICAL_AUDIT_MIGRATION];
  assert.deepEqual(names.slice(baselineNames.length,baselineNames.length+incident.length),incident);
- assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),[...Array.from({length:12},(_,i)=>68+i),81]);
- // The release inventory ends at 0067; the serial and historical audit drafts stay outside the Wrangler migration directory.
+ assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
+ // The released audit and the serial draft may share a number; Wrangler sees only the release directory.
  const sql=dir=>readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
- assert.equal(sql(RELEASE_DIR).at(-1),MONTHLY_REPORT_MIGRATION);
- assert.deepEqual(sql(DRAFT_DIR).map(n=>Number(n.slice(0,4))),[...Array.from({length:12},(_,i)=>68+i),81]);
+ assert.equal(sql(RELEASE_DIR).at(-1),HISTORICAL_AUDIT_MIGRATION);
+ assert.deepEqual(sql(DRAFT_DIR).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM continuous_views_incident_recovery").get().n,0);
  const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));db.exec(read(COMPLETED_CANARY_MIGRATION));db.exec(read(SCOPED_HOLD_MIGRATION));db.exec(read(MONTHLY_REPORT_MIGRATION));
- db.exec(read('0081_issue296_historical_daily_audit_draft.sql'));assert.deepEqual(schema(db),before);
+ db.exec(read(HISTORICAL_AUDIT_MIGRATION));assert.deepEqual(schema(db),before);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='admin_audit' AND name GLOB 'issue296_historical_daily_audit_*'").get().n,3);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('monthly_report_runs','monthly_report_intents','monthly_report_receipts')").get().n,12);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='scoped_hold_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='canary_unwritten_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM canary_unwritten_recovery").get().n,0);
+});
+
+test('the historical audit migration adds only three guards and preserves existing audit rows',()=>{
+ const db=build(read,names.indexOf(HISTORICAL_AUDIT_MIGRATION));
+ assert.equal(names[names.indexOf(HISTORICAL_AUDIT_MIGRATION)-1],MONTHLY_REPORT_MIGRATION);
+ const insert=db.prepare("INSERT INTO admin_audit(id,action,entity_key,reason,created_at) VALUES(?,'fixture','fixture','fixture','now')");
+ insert.run('issue296:historical-daily:synthetic');insert.run('unrelated');
+ const snapshots=()=>db.prepare('SELECT * FROM admin_audit ORDER BY id').all();
+ const rows=snapshots(),initial=schema(db);
+ db.exec(read(HISTORICAL_AUDIT_MIGRATION));
+ const applied=schema(db),added=applied.filter(entry=>!initial.some(before=>before.name===entry.name));
+ assert.deepEqual(applied.filter(entry=>!added.includes(entry)),initial);
+ assert.deepEqual(added.map(({type,tbl_name,name})=>[type,tbl_name,name]),['no_delete','no_replace','no_update']
+  .map(suffix=>['trigger','admin_audit','issue296_historical_daily_audit_'+suffix]));
+ assert.deepEqual(snapshots(),rows);
+ db.exec(read(HISTORICAL_AUDIT_MIGRATION));
+ assert.deepEqual(schema(db),applied);
+ assert.deepEqual(snapshots(),rows);
+ assert.equal(db.prepare('PRAGMA integrity_check').get().integrity_check,'ok');
+ assert.deepEqual(db.prepare('PRAGMA foreign_key_check').all(),[]);
+ const remove=db.prepare('DELETE FROM admin_audit WHERE id=?');
+ assert.throws(()=>remove.run('issue296:historical-daily:synthetic'),/historical daily audit is immutable/);
+ assert.equal(remove.run('unrelated').changes,1);
 });

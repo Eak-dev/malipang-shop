@@ -271,13 +271,26 @@ export async function closeAllVerifiedRound(env:ParkedPilotEnv,roundId:string,ve
 
 export async function advancePilot(env:ParkedPilotEnv,action:AdvancePilot,version:string,valid:()=>boolean){
  const held=()=>({ok:false,outcome:'HELD'}), db=env.DB;
+ // A sealed handover must leave a successor edge that READ can reconcile.
+ const receiptPredicate=action.roundId?` AND EXISTS(
+  SELECT 1 FROM serial_pilot_verified_evidence receipt
+  JOIN serial_pilot_rounds round ON round.round_id=receipt.round_id AND round.state='OPEN'
+  JOIN serial_pilot_round_bindings binding ON binding.round_id=receipt.round_id
+  WHERE receipt.round_id=? AND receipt.job_id=? AND receipt.worker_version=? AND receipt.proof=?
+   AND binding.spreadsheet_id=? AND binding.fingerprint=?
+   AND receipt.proof_algorithm='pilot-finish-v2' AND receipt.audit_id=t.audit_id
+   AND receipt.epoch_id=t.epoch_id AND receipt.source_revision=t.revision
+   AND receipt.proof_inputs=t.proof_inputs)`:'';
+ const receiptArgs=action.roundId?
+  [action.roundId,action.jobId,version,action.proof,env.GOOGLE_SPREADSHEET_ID,action.fingerprint]:[];
  let submitted=false;
  try{
   if(!valid())return held();
   const first=await finishStatus(env,action,version);
   if(typeof first==='string'||first.proof!==action.proof||!valid())return held();
   if(!await verifyNormalPilotRow(env,action)||!valid())return held();
-  const result=await db.prepare(observation+' SELECT * FROM observed WHERE '+complete).bind(...bindings(env,action,version)).all<Observation>();
+  const result=await db.prepare(observation+' SELECT * FROM observed t WHERE '+complete+receiptPredicate)
+   .bind(...bindings(env,action,version),...receiptArgs).all<Observation>();
   const row=result.results?.[0];
   if(result.success!==true||result.results?.length!==1||!row||!row.epoch_id||
      await completionProof(version,action,row)!==action.proof||!valid())return held();
@@ -290,10 +303,10 @@ export async function advancePilot(env:ParkedPilotEnv,action:AdvancePilot,versio
    FROM observed t JOIN admin_audit a ON a.id=t.audit_id
    WHERE ${complete} AND t.epoch_id=? AND t.revision=? AND t.proof_inputs=?
      AND NOT EXISTS(SELECT 1 FROM admin_audit child WHERE child.id=?)
-     AND NOT EXISTS(SELECT 1 FROM admin_audit existing WHERE existing.action IN (?,?) AND existing.entity_key=?)`);
+     AND NOT EXISTS(SELECT 1 FROM admin_audit existing WHERE existing.action IN (?,?) AND existing.entity_key=?)${receiptPredicate}`);
   const auditId='issue296:serial:'+action.jobId;
   const insert=audit.bind(...bindings(env,action,version),auditId,serialAuditAction,action.nextJobId,action.fingerprint,
-   action.jobId,action.proof,epoch,version,...(action.roundId?[action.roundId]:[]),now,row.epoch_id,row.revision,row.proof_inputs,auditId,parkedAuditAction,serialAuditAction,action.nextJobId);
+   action.jobId,action.proof,epoch,version,...(action.roundId?[action.roundId]:[]),now,row.epoch_id,row.revision,row.proof_inputs,auditId,parkedAuditAction,serialAuditAction,action.nextJobId,...receiptArgs);
   const [arm,admit]=normalExpenseEpochStatements(env,epoch,now,action.nextJobId,row.epoch_id);
   const changed=db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid','$') END AS ok");
   if(!arm||!admit||!valid())return held();

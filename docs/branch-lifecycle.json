@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "codex/issue348-sheets-ack-recovery",
+      "primary_branch": "codex/issue348-sealed-advance-receipt",
       "target_branch": "main",
       "coordination_chat": "MaliPang #348 Sheets acknowledgement recovery (Codex)",
-      "reason": "PR #365 is the selected DEV_OWNED branch for read-only round recovery. Merge requires independent review, CI and verification of the preceding #296 deployment. Production activation is separate."
+      "reason": "Main contains PR #365 for read-only interrupted recovery. The active follow-up verifies a v2 predecessor receipt for sealed reservations, with separate QA and CI. Code-only scope; Production activation is separate."
     },
     {
       "issue": 285,
@@ -82,13 +82,26 @@
     {
       "scope": "remote",
       "source": "canonical-github",
+      "branch": "codex/issue348-sealed-advance-receipt",
+      "source_sha": "d75cd59a173df5ec4bafa6e77e18a9425c768574",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T13:32:39Z",
+      "reason": "Observed implementation head before the registry commit. Target main from the identical tested #365 merge tree. Code-only follow-up."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
       "branch": "codex/issue348-sheets-ack-recovery",
-      "source_sha": "8f7187f21a792fd709b41ce7cc92487a621d7c81",
+      "source_sha": "a218c11b4e28141ad2f803ede37b75d7ae3fab31",
       "issues": [348],
       "pull_requests": [365],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-28T13:17:36Z",
-      "reason": "Observed PR #365 head before the merge of main 00ae0ceb767a5510742c32981b01d29d8f2591c3 into the candidate. Read-only round recovery and local fault-injection evidence."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T13:32:39Z",
+      "reason": "PR #365 merged to d01aee31561cef8f1ea0f21d2b39f2f0f67d7c9c. Final live head verified; branch retained for dependency and lifecycle review."
     },
     {
       "scope": "remote",
@@ -115,6 +128,19 @@
       "status": "PENDING_INTEGRATION",
       "observed_at": "2026-11-28T12:53:26Z",
       "reason": "Verified branch start on canonical main for #296 historical DAILY settlement. AUTO_RELEASE is limited to a dormant code-only Worker deployment after review and CI."
+    },
+    {
+      "scope": "local",
+      "source": "issue348-sealed-advance-receipt",
+      "branch": "codex/issue348-sealed-advance-receipt",
+      "source_sha": "b47114af3b1c90c3db6a642cfb07c897bfe014ad",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T12:58:22Z",
+      "reason": "Follow-up to #365. Makes sealed successor reservations observable after a lost reply. Integrate on main after #365 and refresh all validation. No Production release or activation."
     },
     {
       "scope": "local",

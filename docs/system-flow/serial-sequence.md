@@ -106,11 +106,15 @@ sequenceDiagram
     R->>W: FINISH_STATUS ของ B ซ้ำ
     W-->>R: JOB_COMPLETE พร้อม proof เดิม
     opt ยังมี C ในชุดและมีเวลาส่งต่อ
+        opt รอบทดลองที่ผนึกรายการ
+            R->>W: RECORD_VERIFIED บันทึกหลักฐาน v2 ของ B ใน D1
+        end
         R->>W: ADVANCE_ONE ระบุ B, proof และ C
         W->>S: อ่าน DAILY ของ B อิสระอีกครั้ง
+        Note over W,D: รอบผนึกตรวจหลักฐาน v2 ก่อนส่งธุรกรรมและในธุรกรรมจอง
         W->>D: ตรวจหลักฐานเดิมและจอง C แบบอะตอมมิก
         alt ได้รับคำตอบ
-            W-->>R: RESERVED แล้วเริ่มติดตาม C
+            W-->>R: RESERVED แล้วติดตาม C หรือ HELD หากหลักฐานไม่ครบ
         else คำตอบหาย
             R->>D: อ่าน audit หาคู่ B ไป C และ proof เดิม
             Note over R,D: คู่ตรงทุกค่า จึงติดตาม C ต่อ หากพิสูจน์ไม่ได้ให้จบรอบ

@@ -1102,6 +1102,10 @@ async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitin
     return;
    }
   }
+  if(two){
+   const beforeReservation=await call('serial-round-recovery',{action:'READ',roundId});
+   assert.deepEqual(beforeReservation.reservationChain,{status:'OBSERVED',jobIds:[finish.jobId],workerVersion:version});
+  }
   const oldAmount=valueRow[7];
   valueRow[7]=999;
   assert.equal((await operate(advance)).ok,false,'D1 completion alone cannot admit C');
@@ -1132,6 +1136,35 @@ async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitin
    assert.equal((await operate(advance)).ok,false);
    assert.equal(await countAdvances(),1);
   }finally{env.DB.batch=batch;}
+  if(two){
+   const nextVersion='99999999-1111-2222-3333-444444444444';
+   env.CF_VERSION_METADATA={id:nextVersion};
+   const readHistorical=async()=>{const response=await handleAdmin(new Request('https://example.test/admin/stable-sync/serial-round-recovery',{
+    method:'POST',headers:{authorization:'Bearer '+secret,'x-malipang-expected-worker-version':nextVersion},
+    body:JSON.stringify({action:'READ',roundId})
+   }),env,{});assert.equal(response.status,200);return response.json();};
+   const readback=await readHistorical();
+   assert.equal(readback.outcome,'OPEN');
+   assert.deepEqual(readback.reservationChain,{status:'OBSERVED',jobIds:[finish.jobId,successorId],workerVersion:version});
+   const prepare=env.DB.prepare;
+   try{
+    for(const fault of ['historical snapshot absent','optional lookup unavailable']){
+     env.DB.prepare=function(sql){
+      if(sql.includes('JOIN serial_pilot_reservation_snapshots saved')){
+       if(fault==='optional lookup unavailable')throw Error('synthetic unavailable lookup');
+       // Model reservations made before the snapshot migration, which were never backfilled.
+       sql=sql.replace('JOIN serial_pilot_reservation_snapshots saved','JOIN (SELECT * FROM serial_pilot_reservation_snapshots WHERE 0) saved');
+      }
+      return prepare.call(this,sql);
+     };
+     const incomplete=await readHistorical();
+     assert.equal(incomplete.outcome,'OPEN');assert.deepEqual(incomplete.reservationChain,{status:'UNKNOWN'});
+     assert.equal(incomplete.observations.length,2);
+    }
+   }finally{env.DB.prepare=prepare;}
+   assert.equal(await countAdvances(),1);
+   env.CF_VERSION_METADATA={id:version};
+  }
   const competing=await Promise.all([operate(advance),operate({...advance,nextJobId:waitingId})]);
   assert.equal(competing[1].ok,false,'stale B request cannot admit another child');
   assert.equal(await countAdvances(),1);
@@ -2119,6 +2152,16 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
          try{await assert.rejects(runNormalPilot(runner,fetcher,async()=>{},coordinator,{claim:async()=>({state:'EXISTING',roundId})}),/PILOT_ROUND_IDENTITY_NEEDS_RECONCILIATION/);}finally{readback.verifyNormalPilotRow=oldRead;}
          assert.equal(actions.filter(x=>x==='RECORD_VERIFIED'||x==='CLOSE_MOCK_PARKED').length,0,'restart must not resend potentially in-flight transitions');assert.equal(actions.at(-1),'READ');
          assert.equal((await db.prepare('SELECT state FROM serial_pilot_rounds WHERE round_id=?').bind(roundId).first()).state,'OPEN');
+         const recovery={...runner,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId};
+         const beforeRecovery=actions.length,writesBefore=h.writes();
+         await assert.rejects(runNormalPilot(recovery,fetcher),error=>{
+          assert.equal(error.message,'PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION');
+          assert.deepEqual(error.serialProgress.reservationChain,{jobIds:[pilotId,successorId],workerVersion:version});
+          assert.equal(error.serialProgress.jobs[0].successorJobId,successorId);
+          return true;
+         });
+         assert.deepEqual(actions.slice(beforeRecovery),['READ']);
+         assert.equal(h.writes(),writesBefore);
          const mockClose={...runner,PILOT_PHASE:'CLOSE_MOCK_ROUND',PILOT_ROUND_ID:roundId};
          for(const change of [p=>({...p,nonce:'cccccccc-cccc-4ccc-8ccc-cccccccccccc'}),p=>({...p,fenceDigest:'e'.repeat(64)}),p=>({...p,fenceGeneration:p.fenceGeneration+1})]){
           const wrong={...coordinator,proveQuiescence:async ctx=>change(await coordinator.proveQuiescence(ctx))};
@@ -2129,6 +2172,10 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
          // A separate mock oracle now asserts quiescence. The runner binds it
          // to D1 before a single close; the injected lost ACK is read back.
          const closed=await runNormalPilot(mockClose,fetcher,async()=>{},coordinator);
+         const afterClose=actions.length;
+         assert.deepEqual(await runNormalPilot(recovery,fetcher),closed);
+         assert.deepEqual(actions.slice(afterClose),['READ']);
+         assert.equal(h.writes(),writesBefore);
          assert.equal(closed.outcome,'PILOT_MOCK_ROUND_RECORDED');assert.deepEqual(closed.jobs.map(x=>x.category),['PARKED','VERIFIED']);
          assert.equal(actions.filter(x=>x==='RECORD_VERIFIED').length,0);assert.equal(actions.filter(x=>x==='CLOSE_MOCK_PARKED').length,1);assert.equal(actions.at(-1),'READ');
          assert.equal((await db.prepare('SELECT state FROM serial_pilot_rounds WHERE round_id=?').bind(roundId).first()).state,'CLOSED');

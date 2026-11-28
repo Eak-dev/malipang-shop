@@ -64,6 +64,63 @@ export async function readSerialRound(db:Env['DB'],roundId:string){
  return snapshot(db,roundId);
 }
 
+type ReservationAudit={
+ audit_id:string;job_id:string;action:string;old_token:string|null;predecessor:string|null;proof:string|null;
+ nonce:string|null;token:string|null;version:string;epoch:string;bound:number
+};
+type ReservationChain={status:'OBSERVED';jobIds:string[];workerVersion:string|null}|{status:'UNKNOWN'};
+
+/** Observe committed reservations. A missing audit never rules out an in-flight
+ * handover. The recorded version belongs to the writer, not the reader. */
+export async function readRoundReservations(db:Env['DB'],roundId:string,snap:NonNullable<Awaited<ReturnType<typeof readSerialRound>>>):Promise<ReservationChain>{
+ const unknown={status:'UNKNOWN'} as const;
+ if(!snap.binding||snap.items.length!==snap.round.selected_count||snap.items.some((item,n)=>item.ordinal!==n))return unknown;
+ const edges=await db.prepare(`SELECT a.id audit_id,a.action,a.entity_key job_id,json_extract(a.before_json,'$.oldToken') old_token,
+   json_extract(a.before_json,'$.predecessorJobId') predecessor,json_extract(a.before_json,'$.proof') proof,
+   json_extract(a.after_json,'$.attestationNonce') nonce,json_extract(a.after_json,'$.token') token,
+   json_extract(a.after_json,'$.version') version,ep.epoch_id epoch,
+   (a.reason=b.fingerprint AND json_extract(a.before_json,'$.book')=b.spreadsheet_id AND ad.epoch_id IS NOT NULL AND saved.audit_id IS NOT NULL) bound
+  FROM admin_audit a JOIN serial_pilot_round_bindings b ON b.round_id=json_extract(a.after_json,'$.roundId')
+  LEFT JOIN serial_pilot_round_items i ON i.round_id=b.round_id AND i.job_id=a.entity_key
+  LEFT JOIN sync_jobs j ON j.job_id=i.job_id AND j.entity_type='EXPENSE' AND j.entity_version=1
+  LEFT JOIN stable_recovery_epochs ep ON ep.epoch_id=json_extract(a.after_json,'$.epoch') AND ep.spreadsheet_id=b.spreadsheet_id
+   AND ep.target_type=j.entity_type AND ep.target_key=j.entity_key AND ep.target_version=j.entity_version
+  LEFT JOIN continuous_normal_recovery_admissions ad ON ad.epoch_id=ep.epoch_id AND ad.spreadsheet_id=b.spreadsheet_id
+   AND ad.expense_id=ep.target_key AND ad.source_version=ep.target_version
+  LEFT JOIN serial_pilot_reservation_snapshots saved ON saved.audit_id=a.id AND saved.round_id=b.round_id
+   AND saved.job_id=i.job_id AND saved.epoch_id=ep.epoch_id AND saved.spreadsheet_id=b.spreadsheet_id
+   AND saved.worker_version=json_extract(a.after_json,'$.version')
+  WHERE b.round_id=? AND b.spreadsheet_id=? AND a.action IN ('ISSUE296_PAUSED_NOTICE_HANDOVER','ISSUE296_SERIAL_EXPENSE_HANDOVER')
+  ORDER BY i.ordinal,a.id LIMIT 101`).bind(roundId,snap.binding.spreadsheet_id).all<ReservationAudit>();
+ if(edges.success!==true||!edges.results||edges.results.length>snap.items.length)return unknown;
+ const rows=edges.results,first=rows[0];
+ const versionId=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+ for(const [n,edge] of rows.entries()){
+  if(edge.bound!==1||edge.job_id!==snap.items[n]?.job_id||!first||!versionId.test(edge.version)||edge.version!==first.version||
+   !edge.epoch?.startsWith('normal_pilot296_')||!edge.old_token||edge.old_token!==first.old_token)return unknown;
+  if(n===0){
+   if(edge.action!=='ISSUE296_PAUSED_NOTICE_HANDOVER'||edge.audit_id!=='issue296:parked:'+edge.old_token||edge.predecessor!==null||edge.nonce!==null)return unknown;
+   continue;
+  }
+  const prior=rows[n-1]!;
+  if(edge.action!=='ISSUE296_SERIAL_EXPENSE_HANDOVER'||edge.audit_id!=='issue296:serial:'+prior.job_id||
+    edge.predecessor!==prior.job_id||!edge.proof||!/^[a-f0-9]{64}$/.test(edge.proof))return unknown;
+  if(edge.nonce===null){
+   const receipt=snap.verifiedEvidence.find(r=>r.job_id===prior.job_id);
+   if(!receipt||receipt.proof_algorithm!=='pilot-finish-v2'||receipt.proof!==edge.proof||receipt.worker_version!==edge.version||
+     receipt.audit_id!==prior.audit_id||receipt.epoch_id!==prior.epoch)return unknown;
+  }else{
+   // A parked predecessor uses a retained handoff instead of a completion receipt.
+   const handoff=await db.prepare(`SELECT 1 matched FROM serial_pilot_attested_handoffs WHERE round_id=? AND spreadsheet_id=?
+    AND predecessor_job_id=? AND successor_job_id=? AND predecessor_epoch_id=? AND successor_epoch_id=?
+    AND worker_version=? AND nonce=? AND payload_digest=? AND claim_token=?`)
+    .bind(roundId,snap.binding.spreadsheet_id,prior.job_id,edge.job_id,prior.epoch,edge.epoch,edge.version,edge.nonce,edge.proof,edge.token).first();
+   if(!handoff)return unknown;
+  }
+ }
+ return {status:'OBSERVED',jobIds:rows.map(x=>x.job_id),workerVersion:first?.version??null};
+}
+
 /** Read current D1 observations without converting them to a success proof. */
 export async function observeSerialRound(db:Env['DB'],roundId:string){
  if(!id.test(roundId))return null;

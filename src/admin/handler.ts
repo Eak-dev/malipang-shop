@@ -1,5 +1,5 @@
 import {verifyNormalPilotRow} from './normal-pilot-readback';
-import {closeUnverifiedSerialRound,findOpenSerialRounds,findRecentSerialRounds,observeSerialRound,openSerialRound,readSerialRound,serialSelectionGuard} from './serial-round-store';
+import {closeUnverifiedSerialRound,findOpenSerialRounds,findRecentSerialRounds,observeSerialRound,openSerialRound,readRoundReservations,readSerialRound,serialSelectionGuard} from './serial-round-store';
 import {parseParkedPilot,operateParkedPilot} from './parked-expense-handover';
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
@@ -218,7 +218,10 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
         const mock=observation.round.reason==='MOCK_CLASSIFIED'&&observation.results.filter(x=>x.category==='PARKED'&&x.evidence==='MOCK_ATTESTED_HANDOFF').length===1&&observation.results.every(x=>x.category==='PARKED'&&x.evidence==='MOCK_ATTESTED_HANDOFF'||x.category==='NOT_STARTED'&&x.evidence==='MOCK_NEVER_STARTED'||x.category==='VERIFIED'&&x.evidence==='VERIFIED_RECEIPT'||x.category==='RECONCILE'&&x.evidence==='UNVERIFIED');
         if(observation.results.length!==observation.round.selected_count||!allVerified&&!held&&!mock)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
       }
-      return Response.json({ok:true,outcome:observation.round.state,selected:observation.round.selected_count,fingerprint:observation.binding.fingerprint,
+      const reservationChain=body.action==='READ'&&observation.round.state==='OPEN'
+        ? await readRoundReservations(db,body.roundId,observation).catch(()=>({status:'UNKNOWN' as const})) : undefined;
+      if(!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      return Response.json({ok:true,outcome:observation.round.state,selected:observation.round.selected_count,fingerprint:observation.binding.fingerprint,reservationChain,
         mockOracleAndFenceOnly:observation.round.reason==='MOCK_CLASSIFIED',
         members:observation.items.map(x=>x.job_id),
         receipts:observation.verifiedEvidence.map(x=>({jobId:x.job_id,proof:x.proof,proofAlgorithm:x.proof_algorithm,workerVersion:x.worker_version,verifiedAt:x.verified_at})),

@@ -260,16 +260,37 @@ test('round recovery reads the durable close without issuing a new write',async(
 
 test('open round recovery reports expired provider uncertainty without dispatch',async()=>{
  const roundId='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',base=provider(),actions=[];
- let holdReason='SERIAL_EXPIRED_PROVIDER_UNCERTAIN';
+ let holdReason='SERIAL_EXPIRED_PROVIDER_UNCERTAIN',reservationChain;
  const request=async(url,opts)=>{
   if(!String(url).endsWith('/serial-round-recovery'))return base.request(url,opts);
   const body=JSON.parse(opts.body);actions.push(body.action);
-  const observed={jobState:'REVIEW',holdReason,provenanceVersion:1,leaseGeneration:2,epochState:'ARMED',workbookClaimStateGlobal:'HELD',workbookClaimPhaseGlobal:'SERIAL_CONTINUATION',workbookClaimReasonGlobal:null,claimRelationship:'EXACT_EPOCH_OPERATION',admittedOperations:1,verifiedStages:1,unresolvedStages:1,reservations:1};
-  return Response.json({ok:true,outcome:'OPEN',selected:2,members:[jobId,nextId],observationsAreProof:false,observationsAtomicWithRound:false,observedAt:'2026-11-22T00:00:00.000Z',observations:[{...observed,jobId,holdReason:'SERIAL_PILOT_B_REVIEW'},{...observed,jobId:nextId}],servedVersion:version});
+  const observed={jobState:'REVIEW',holdReason,provenanceVersion:1,leaseGeneration:2,epochState:'ARMED',workbookClaimStateGlobal:'HELD',workbookClaimPhaseGlobal:'SERIAL_CONTINUATION',workbookClaimReasonGlobal:null,claimRelationship:'EXACT_EPOCH_OPERATION',admittedOperations:1,verifiedStages:1,unresolvedStages:1,reservations:1,lastVerifiedStageCandidate:'DAILY',lastVerifiedStageMayTie:true,lastVerifiedAt:'2026-11-22T00:00:00.000Z'};
+  return Response.json({ok:true,outcome:'OPEN',selected:2,members:[jobId,nextId],reservationChain,observationsAreProof:false,observationsAtomicWithRound:false,observedAt:'2026-11-22T00:00:00.000Z',observations:[{...observed,jobId,holdReason:'SERIAL_PILOT_B_REVIEW'},{...observed,jobId:nextId}],servedVersion:version});
  };
  let progress;try{await runNormalPilot({...env,...gates,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId},request);assert.fail('OPEN must stop');}catch(error){assert.match(error.message,/PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION/);progress=error.serialProgress;}
  assert.equal(progress.jobs[1].holdReason,holdReason);assert.deepEqual(actions,['READ']);
  const dir=mkdtempSync(join(tmpdir(),'recover-open-summary-'));try{const path=join(dir,'summary');summarize('RECOVER_ROUND','PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION',progress,path);const output=readFileSync(path,'utf8');assert.match(output,/SERIAL_EXPIRED_PROVIDER_UNCERTAIN/);assert.match(output,/ผล provider ยังไม่ชัด/);assert.match(output,/ห้ามส่งซ้ำ/);assert.match(output,/ยังไม่ตรวจสายการจอง/);assert.doesNotMatch(output,/ยังไม่พบการจองถัดไป/);}finally{rmSync(dir,{recursive:true,force:true});}
+ const recovery={...env,...gates,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId};
+ reservationChain={status:'OBSERVED',workerVersion:version,jobIds:[jobId,nextId]};
+ await assert.rejects(runNormalPilot(recovery,request),error=>{
+  assert.match(error.message,/PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION/);
+  assert.equal(error.serialProgress.jobs[0].successorJobId,nextId);
+  const dir=mkdtempSync(join(tmpdir(),'recover-recorded-'));
+  try{
+   const path=join(dir,'summary');summarize('RECOVER_ROUND',error.message,error.serialProgress,path);
+   const summary=readFileSync(path,'utf8');assert.ok(summary.includes(jobId+' → '+nextId));assert.ok(summary.includes(version));
+   assert.match(summary,/DAILY 2026-11-22T00:00:00.000Z/);assert.match(summary,/หลายขั้นเวลาเดียวกัน/);
+   assert.match(summary,/ยังยืนยันการจองถัดไปไม่ได้/);
+  }finally{rmSync(dir,{recursive:true,force:true});}
+  return true;
+ });
+ assert.deepEqual(actions.splice(1),['READ']);
+ for(const invalid of [[nextId],[jobId,jobId]]){
+  reservationChain.jobIds=invalid;
+  await assert.rejects(runNormalPilot(recovery,request),/PILOT_ROUND_UNVERIFIED/);
+  assert.deepEqual(actions.splice(1),['READ']);
+ }
+ reservationChain={status:'UNKNOWN'};
  holdReason='private-unrecognized-reason';await assert.rejects(runNormalPilot({...env,...gates,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId},request),/PILOT_ROUND_UNVERIFIED/);
  assert.deepEqual(actions,['READ','READ']);
 });
@@ -307,22 +328,34 @@ test('closed verified round can be read across Worker versions without reservati
  const roundId='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',oldVersion='bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',base=provider(),actions=[];
  const phase={...env,PILOT_PHASE:'READ_ROUND',PILOT_ROUND_ID:roundId};
  assert.throws(()=>pilotInputs({...phase,PILOT_ROUND_ID:'invalid'}),/PILOT_INPUT_INVALID/);
- let unsafe=false,algorithm='pilot-finish-v2';
+ let unsafe=false,algorithm='pilot-finish-v2',members;
  const fetcher=async(url,opts)=>{
   if(!String(url).endsWith('/serial-round-recovery'))return base.request(url,opts);
   const body=JSON.parse(opts.body);actions.push(body.action);assert.equal(body.roundId,roundId);
-  return Response.json({ok:true,outcome:'CLOSED',selected:1,recordedResultsAreCurrentProviderProof:unsafe,readRevalidatesRecordedIntegrity:false,
+  return Response.json({ok:true,outcome:'CLOSED',selected:1,members,recordedResultsAreCurrentProviderProof:unsafe,readRevalidatesRecordedIntegrity:false,
    results:[{jobId,successorJobId:null,category:'VERIFIED',evidence:'VERIFIED_RECEIPT'}],
    receipts:[{jobId,proof:'f'.repeat(64),proofAlgorithm:algorithm,workerVersion:oldVersion,verifiedAt:'2026-11-22T00:00:00.000Z'}],servedVersion:version});
  };
  const result=await runNormalPilot(phase,fetcher);
  assert.equal(result.outcome,'PILOT_ROUND_RECORDED_READ_ONLY');assert.equal(result.jobs[0].workerVersion,oldVersion);
+ const recovery=await runNormalPilot({...phase,...gates,PILOT_PHASE:'RECOVER_ROUND'},fetcher);
+ assert.deepEqual(recovery,result,'recovering a lost close response reads the existing terminal result');
+ assert.deepEqual(actions.splice(1),['READ']);
+
  const dir=mkdtempSync(join(tmpdir(),'round-summary-'));try{
   const path=join(dir,'summary');summarize('READ_ROUND',result.outcome,result,path);
   const summary=readFileSync(path,'utf8');assert.match(summary,/2026-11-22T00:00:00.000Z/);assert.ok(summary.includes(oldVersion));
   assert.match(summary,/ไม่ได้ตรวจหลักฐานซ้ำ/);assert.doesNotMatch(summary,/undefined|job ไม่พบ|epoch ไม่พบ/);
  }finally{rmSync(dir,{recursive:true,force:true});}
  assert.deepEqual(actions,['READ']);
+ for(const [ids,valid] of [[[jobId],true],[[nextId],false]]){
+  members=ids;
+  const observed=runNormalPilot({...phase,...gates,PILOT_PHASE:'RECOVER_ROUND'},fetcher);
+  if(valid)assert.deepEqual(await observed,result);
+  else await assert.rejects(observed,/PILOT_ROUND_UNVERIFIED/);
+  assert.deepEqual(actions.splice(1),['READ']);
+ }
+ members=undefined;
  unsafe=true;await assert.rejects(runNormalPilot(phase,fetcher),/PILOT_ROUND_UNVERIFIED/);
  assert.deepEqual(actions,['READ','READ']);
  unsafe=false;algorithm='pilot-finish-v1';await assert.rejects(runNormalPilot(phase,fetcher),/PILOT_ROUND_UNVERIFIED/);
@@ -346,6 +379,8 @@ test('local mock close reports four outcomes and reads back after a lost respons
  };
  const coordinator={proveQuiescence:async ctx=>({...ctx,state:'QUIESCENT_FENCED',fenceDigest:'f'.repeat(64),fenceGeneration:1,nonce:'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb'})};
  const result=await runNormalPilot(phase,fetcher,undefined,coordinator);assert.equal(result.outcome,'PILOT_MOCK_ROUND_RECORDED');assert.deepEqual(result.jobs.map(x=>x.category),['PARKED','VERIFIED','NOT_STARTED','RECONCILE']);assert.deepEqual(actions,['READ','CLOSE_MOCK_PARKED','READ']);
+ assert.deepEqual(await runNormalPilot({...phase,PILOT_PHASE:'RECOVER_ROUND'},fetcher),result);
+ assert.deepEqual(actions.slice(3),['READ']);
  const dir=mkdtempSync(join(tmpdir(),'mock-round-summary-'));try{const path=join(dir,'summary');summarize('CLOSE_MOCK_ROUND',result.outcome,result,path);const summary=readFileSync(path,'utf8');assert.match(summary,/จำลอง/);assert.match(summary,/NOT_STARTED/);assert.doesNotMatch(summary,/undefined/);}finally{rmSync(dir,{recursive:true,force:true});}
  for(const change of [x=>({...x,members:[ids[1],ids[0],...ids.slice(2)]}),x=>({...x,receipts:[]}),x=>({...x,results:x.results.map((r,i)=>i===0?{...r,successorJobId:ids[2]}:r)})]){corrupt=change;await assert.rejects(runNormalPilot({...phase,PILOT_PHASE:'READ_ROUND'},fetcher),/PILOT_ROUND_UNVERIFIED/);}
 });

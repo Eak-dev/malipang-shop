@@ -81,6 +81,17 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue348-interrupted-round-readback",
+      "branch": "codex/issue348-interrupted-round-readback",
+      "source_sha": "ce3f77b3c59cb440e471ec18f60b3d71215ee55a",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T03:29:39Z",
+      "reason": "DEV_OWNED task branch from main for interrupted serial round recovery. Proposed for independent review into main after the attendance work."
+    },
+    {
+      "scope": "local",
       "source": "issue348-slip-category",
       "branch": "codex/issue348-slip-category-confirm",
       "source_sha": "b744af1010be5b4619000a03d4a9a281027f5bfb",

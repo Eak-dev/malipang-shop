@@ -20,6 +20,8 @@
 
 ตัวรันคิวค่าใช้จ่ายมีโหมด [RUN_SERIAL](ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) สำหรับส่งงานหลัง cutover ทีละรายการโดยตรวจแถวเดิมและหลักฐาน D1 ก่อนจองงานถัดไป ดู [แผนผัง](system-flow/serial-expense.svg)
 
+เมื่อกลับเข้ารอบ #348 หลังคำตอบการส่งต่อหรือปิดรอบหาย `RECOVER_ROUND` อ่านประวัติการจอง D1 ของรอบเดิม ให้ติดตาม C เมื่อมีสาย B → C ที่ตรวจได้ หรือพักไว้เมื่อผลยังไม่แน่ชัด รอบ CLOSED แสดงผลที่บันทึกไว้ได้ข้ามรุ่นด้วยคำสั่งอ่านครั้งเดียว ดู [คู่มือคิวทดลอง](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) และ [ลำดับรับช่วง](system-flow/serial-sequence.md#5-รับช่วงเมื่อรอบหยุด)
+
 ผลจบรอบของ [งานทดลองคิวปกติ #296](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) ตรวจหลักฐานการพักรายการเดิมและแถวเป้าหมายของงานใหม่ก่อนรายงานผล
 
 ร่าง [Issue #348: ตรวจเกณฑ์](ISSUE348_ACCEPTANCE_AUDIT_TH.md) มีการทดสอบ local `final-whole` ที่ให้ RUN_SERIAL เปิดรอบ พัก B ส่งสิทธิ์ C แบบจำลอง แล้วให้ Worker ทำ DAILY, RAW, สอง DETAIL และ FINAL ก่อนบันทึกผลจบรอบ; provider readback, notice, backup, oracle และ fence เป็น mock. round-mode ทดลองต้องฉีด local identity store และบันทึก marker ก่อน SETTLE/OPEN; marker เดิมหรือไม่ชัดต้องหยุด ไม่ถือ LIST_OPEN ว่างเป็นสิทธิ์เริ่มรอบใหม่. CLI/workflow ปกติไม่มี store จึง fail closed. ผล full check 2,565 ผ่าน, 0 ล้มเหลว, 6 ข้าม และ dry-run exit 0 เป็นผลก่อนเพิ่ม durable identity และต้องตรวจซ้ำ. **ยังไม่รับงาน #348**: หลักฐาน mock ไม่พิสูจน์สถานะ Production หรือการหยุด writer ภายนอก และการเขียน Google/D1 จริงหรือปล่อยรุ่นต้องมี authority และ gate แยกตาม #296; barriers ยังคงปิดโดยปริยาย.

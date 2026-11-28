@@ -7,6 +7,7 @@ import {requireVerifiedBackup} from './prod-monthly-report.mjs';
 const phases=['PROBE','SETTLE','HANDOVER_ONE','INSPECT_HANDOVER','READBACK','READ_HISTORICAL','FINISH_PILOT','RUN_SERIAL','RECOVER_ROUND','DISCOVER_ROUND','READ_ROUND','HOLD_RESERVED','CLOSE_MOCK_ROUND'];
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const digest=/^[a-f0-9]{64}$/;
+const recordedTime=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)&&Number.isFinite(Date.parse(value));
 const mutating=phase=>['SETTLE','HANDOVER_ONE','RUN_SERIAL','RECOVER_ROUND','HOLD_RESERVED','CLOSE_MOCK_ROUND'].includes(phase);
 function stop(code){throw Error(code);}
 export function pilotInputs(env){
@@ -139,12 +140,12 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
     const labels={PARKED:'MOCK_ATTESTED_HANDOFF',VERIFIED:'VERIFIED_RECEIPT',NOT_STARTED:'MOCK_NEVER_STARTED',RECONCILE:'UNVERIFIED'};
     if(result.mockOracleAndFenceOnly!==true||result.recordedResultsAreCurrentProviderProof!==false||result.readRevalidatesRecordedIntegrity!==false||
       !Number.isSafeInteger(result.selected)||result.selected<1||result.selected>100||!Array.isArray(result.results)||result.results.length!==result.selected||!Array.isArray(result.receipts)||!Array.isArray(result.members)||result.members.length!==result.selected||result.members.some(x=>!uuid.test(x))||new Set(result.members).size!==result.selected||
-      result.results.some(x=>!uuid.test(x.jobId)||labels[x.category]!==x.evidence||x.successorJobId!==null&&!uuid.test(x.successorJobId))||
+      result.results.some(x=>!x||!uuid.test(x.jobId)||!Object.hasOwn(labels,x.category)||labels[x.category]!==x.evidence||x.successorJobId!==null&&!uuid.test(x.successorJobId))||
       new Set(result.results.map(x=>x.jobId)).size!==result.selected)stop('PILOT_ROUND_UNVERIFIED');
     const members=new Set(result.results.map(x=>x.jobId));
     const parked=result.results.filter(x=>x.category==='PARKED'),verified=result.results.filter(x=>x.category==='VERIFIED');
-    if(result.members.some(x=>!members.has(x))||parked.length!==1||parked[0].jobId!==result.members[0]||parked[0].successorJobId!==result.members[1]||verified.length>1||verified.length===1&&verified[0].jobId!==result.members[1]||result.results.some(x=>x.category!=='PARKED'&&x.successorJobId!==null)||result.receipts.length!==verified.length||new Set(result.receipts.map(x=>x.jobId)).size!==result.receipts.length)stop('PILOT_ROUND_UNVERIFIED');
-    if(result.results.some(x=>x.category==='VERIFIED'&&result.receipts.filter(v=>v.jobId===x.jobId&&v.proofAlgorithm==='pilot-finish-v2'&&uuid.test(v.workerVersion||'')&&digest.test(v.proof||'')&&typeof v.verifiedAt==='string'&&Number.isFinite(Date.parse(v.verifiedAt))).length!==1))stop('PILOT_ROUND_UNVERIFIED');
+    if(result.members.some(x=>!members.has(x))||parked.length!==1||parked[0].jobId!==result.members[0]||parked[0].successorJobId!==result.members[1]||verified.length>1||verified.length===1&&verified[0].jobId!==result.members[1]||result.results.some(x=>x.category!=='PARKED'&&x.successorJobId!==null)||result.receipts.length!==verified.length||result.receipts.some(x=>!x||!uuid.test(x.jobId))||new Set(result.receipts.map(x=>x.jobId)).size!==result.receipts.length)stop('PILOT_ROUND_UNVERIFIED');
+    if(result.results.some(x=>x.category==='VERIFIED'&&result.receipts.filter(v=>v.jobId===x.jobId&&v.proofAlgorithm==='pilot-finish-v2'&&uuid.test(v.workerVersion||'')&&digest.test(v.proof||'')&&recordedTime(v.verifiedAt)).length!==1))stop('PILOT_ROUND_UNVERIFIED');
     return {outcome:'PILOT_MOCK_ROUND_RECORDED',selected:result.selected,jobs:result.results.map(x=>({jobId:x.jobId,category:x.category,successorJobId:x.successorJobId}))};
   };
   if(phase==='CLOSE_MOCK_ROUND'){
@@ -165,33 +166,45 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
     return mockRound(result);
     }catch(error){const failure=error instanceof Error?error:Error('PILOT_UNKNOWN_NO_RETRY');failure.serialProgress={roundId};throw failure;}
   }
-  if(phase==='READ_ROUND'){
-    const result=await request('serial-round-recovery',{action:'READ',roundId:env.PILOT_ROUND_ID},['CLOSED']);
+  const readRecordedRound=result=>{
     if(result.mockOracleAndFenceOnly===true)return mockRound(result);
     if(result.recordedResultsAreCurrentProviderProof!==false||result.readRevalidatesRecordedIntegrity!==false||
       !Number.isSafeInteger(result.selected)||result.selected<1||result.selected>100||!Array.isArray(result.results)||result.results.length!==result.selected||
       !Array.isArray(result.receipts)||result.receipts.length!==result.selected||
-      result.results.some(x=>!uuid.test(x.jobId)||x.category!=='VERIFIED'||x.evidence!=='VERIFIED_RECEIPT'||x.successorJobId!==null&&!uuid.test(x.successorJobId))||
-      result.receipts.some(x=>!uuid.test(x.jobId)||!uuid.test(x.workerVersion)||!digest.test(x.proof)||x.proofAlgorithm!=='pilot-finish-v2'||typeof x.verifiedAt!=='string'||!Number.isFinite(Date.parse(x.verifiedAt))))stop('PILOT_ROUND_UNVERIFIED');
+      result.results.some(x=>!x||!uuid.test(x.jobId)||x.category!=='VERIFIED'||x.evidence!=='VERIFIED_RECEIPT'||x.successorJobId!==null&&!uuid.test(x.successorJobId))||
+      result.receipts.some(x=>!x||!uuid.test(x.jobId)||!uuid.test(x.workerVersion)||!digest.test(x.proof)||x.proofAlgorithm!=='pilot-finish-v2'||!recordedTime(x.verifiedAt)))stop('PILOT_ROUND_UNVERIFIED');
     const receipts=new Map(result.receipts.map(x=>[x.jobId,x]));
-    if(receipts.size!==result.selected||new Set(result.results.map(x=>x.jobId)).size!==result.selected||result.results.some(x=>!receipts.has(x.jobId)))stop('PILOT_ROUND_UNVERIFIED');
+    if(receipts.size!==result.selected||new Set(result.results.map(x=>x.jobId)).size!==result.selected||result.results.some(x=>!receipts.has(x.jobId)||x.successorJobId!==null&&(x.successorJobId===x.jobId||!receipts.has(x.successorJobId))))stop('PILOT_ROUND_UNVERIFIED');
+    if(result.members!==undefined){
+      if(!Array.isArray(result.members)||result.members.length!==result.selected||new Set(result.members).size!==result.selected||
+        result.members.some(id=>!receipts.has(id)))stop('PILOT_ROUND_UNVERIFIED');
+      const links=new Map(result.results.map(x=>[x.jobId,x.successorJobId]));
+      if(result.members.some((id,i)=>links.get(id)!==(result.members[i+1]??null)))stop('PILOT_ROUND_UNVERIFIED');
+    }
     return {outcome:'PILOT_ROUND_RECORDED_READ_ONLY',recordedResultsAreCurrentProviderProof:false,readRevalidatesRecordedIntegrity:false,
       jobs:result.results.map(x=>({jobId:x.jobId,successorJobId:x.successorJobId,verifiedAt:receipts.get(x.jobId).verifiedAt,workerVersion:receipts.get(x.jobId).workerVersion}))};
+  };
+  if(phase==='READ_ROUND'){
+    const result=await request('serial-round-recovery',{action:'READ',roundId:env.PILOT_ROUND_ID},['CLOSED']);
+    return readRecordedRound(result);
   }
   if(phase==='RECOVER_ROUND'){
     const roundId=env.PILOT_ROUND_ID;
     // A prior close may still be in flight. A new invocation reads the same
     // durable round but cannot infer quiescence from one OPEN observation.
     const result=await request('serial-round-recovery',{action:'READ',roundId},['OPEN','CLOSED']);
+    if(result.outcome==='CLOSED'&&(result.mockOracleAndFenceOnly===true||Array.isArray(result.results)&&result.results.some(x=>x?.category==='VERIFIED'))){
+      return readRecordedRound(result);
+    }
     if(result.outcome==='OPEN'&&(!Array.isArray(result.members)||!Array.isArray(result.observations))){
       const error=Error('PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION');error.serialProgress={roundId};throw error;
     }
     const items=result.outcome==='OPEN'?result.members.map(jobId=>({jobId,successorJobId:null,category:'RECONCILE',evidence:'UNVERIFIED'})):result.results;
-    if(!Number.isSafeInteger(result.selected)||result.selected<0||!Array.isArray(items)||items.length!==result.selected||
-      items.some(x=>x.category!=='RECONCILE'||x.evidence!=='UNVERIFIED'||!uuid.test(x.jobId)||
+    if(!Number.isSafeInteger(result.selected)||result.selected<0||result.selected>100||!Array.isArray(items)||items.length!==result.selected||
+      items.some(x=>!x||x.category!=='RECONCILE'||x.evidence!=='UNVERIFIED'||!uuid.test(x.jobId)||
         x.successorJobId!==null&&!uuid.test(x.successorJobId)))stop('PILOT_ROUND_UNVERIFIED');
-    if(result.observationsAreProof!==false||result.observationsAtomicWithRound!==false||typeof result.observedAt!=='string'||!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(result.observedAt)||!Array.isArray(result.observations)||result.observations.length!==result.selected||
-      result.observations.some(x=>!uuid.test(x.jobId)||![null,'PENDING','PROCESSING','COMPLETED','FAILED','REVIEW'].includes(x.jobState)||
+    if(result.observationsAreProof!==false||result.observationsAtomicWithRound!==false||!recordedTime(result.observedAt)||!Array.isArray(result.observations)||result.observations.length!==result.selected||
+      result.observations.some(x=>!x||!uuid.test(x.jobId)||![null,'PENDING','PROCESSING','COMPLETED','FAILED','REVIEW'].includes(x.jobState)||
         ![null,'SERIAL_PILOT_B_REVIEW','SERIAL_EXPIRED_PROVIDER_UNCERTAIN'].includes(x.holdReason)||
         ![null,0,1].includes(x.provenanceVersion)||(x.provenanceVersion===null?x.leaseGeneration!==null:!Number.isSafeInteger(x.leaseGeneration)||x.leaseGeneration<0)||
         ![null,'ARMED','COMPLETE','REVIEW','CLOSED'].includes(x.epochState)||![null,'HELD','REVIEW'].includes(x.workbookClaimStateGlobal)||
@@ -200,9 +213,33 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
         !Number.isSafeInteger(x.verifiedStages)||x.verifiedStages<0||!Number.isSafeInteger(x.unresolvedStages)||x.unresolvedStages<0))stop('PILOT_ROUND_UNVERIFIED');
     const observations=new Map(result.observations.map(x=>[x.jobId,x]));
     if(observations.size!==result.selected||new Set(items.map(x=>x.jobId)).size!==result.selected||items.some(x=>!observations.has(x.jobId)))stop('PILOT_ROUND_UNVERIFIED');
+    if(result.outcome==='CLOSED'&&result.members!==undefined){
+      if(!Array.isArray(result.members)||result.members.length!==result.selected||new Set(result.members).size!==result.selected||
+        result.members.some(id=>!observations.has(id))||items.some(x=>x.successorJobId!==null&&x.successorJobId!==result.members[result.members.indexOf(x.jobId)+1]))stop('PILOT_ROUND_UNVERIFIED');
+    }
     const progress={roundId,selected:result.selected,observedAt:result.observedAt,
       jobs:items.map(x=>{const o=observations.get(x.jobId);return {jobId:x.jobId,successorJobId:x.successorJobId,jobState:o.jobState,holdReason:o.holdReason,provenanceVersion:o.provenanceVersion,leaseGeneration:o.leaseGeneration,epochState:o.epochState,workbookClaimStateGlobal:o.workbookClaimStateGlobal,workbookClaimPhaseGlobal:o.workbookClaimPhaseGlobal??null,workbookClaimReasonGlobal:o.workbookClaimReasonGlobal??null,claimRelationship:o.claimRelationship,admittedOperations:o.admittedOperations,verifiedStages:o.verifiedStages,unresolvedStages:o.unresolvedStages};})};
-    if(result.outcome==='OPEN'){const error=Error('PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION');error.serialProgress={...progress,openRound:true};throw error;}
+    if(result.outcome==='OPEN'){
+      const chain=result.reservationChain;
+      if(chain!==undefined&&chain?.status!=='UNKNOWN'){
+        if(chain?.status!=='OBSERVED'||!Array.isArray(chain.jobIds)||chain.jobIds.length>items.length||
+          chain.jobIds.some((id,i)=>id!==items[i].jobId)||
+          (chain.jobIds.length===0?chain.workerVersion!==null:!uuid.test(chain.workerVersion)))stop('PILOT_ROUND_UNVERIFIED');
+        progress.reservationChain={jobIds:chain.jobIds,workerVersion:chain.workerVersion};
+        for(const [i,id] of chain.jobIds.entries()){
+          const job=progress.jobs[i],obs=observations.get(id);
+          job.successorJobId=chain.jobIds[i+1]??null;
+          if(['DAILY','EXPENSE_RAW','DETAIL'].includes(obs.lastVerifiedStageCandidate)&&obs.lastVerifiedStageMayTie===true&&
+            recordedTime(obs.lastVerifiedAt)){
+            job.lastVerifiedStageCandidate=obs.lastVerifiedStageCandidate;
+            job.lastVerifiedAt=obs.lastVerifiedAt;
+          }
+        }
+      }
+      const error=Error('PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION');
+      error.serialProgress={...progress,openRound:true};
+      throw error;
+    }
     return {outcome:result.selected===0?'PILOT_ROUND_EMPTY':'PILOT_ROUND_RECONCILIATION_REQUIRED',selected:progress.selected,observedAt:progress.observedAt,jobs:progress.jobs};
   }
   const finish=async(jobId,fingerprint,serial=false,progressAware=false)=>{
@@ -544,9 +581,13 @@ export function summarize(phase,label,progress,path){
       (['RUN_SERIAL','RECOVER_ROUND','CLOSE_MOCK_ROUND'].includes(phase)&&uuid.test(progress?.roundId||'')&&!(phase==='RUN_SERIAL'&&uuid.test(progress?.jobId||'')&&uuid.test(progress?.successorJobId||''))?`\nรอบ ${progress.roundId} · อ่านหลักฐานเดิมและอย่าส่งซ้ำจนกระทบยอด\n`:'')+
       (phase==='RUN_SERIAL'&&uuid.test(progress?.roundId||'')&&uuid.test(progress?.jobId||'')&&uuid.test(progress?.successorJobId||'')?`\nรอบ ${progress.roundId} · B ${progress.jobId} · C ${progress.successorJobId}\nอ่านรอบเดิมและตรวจ hold, handoff, claim และ journal ก่อนทำต่อ; ห้ามจองหรือส่งซ้ำเมื่อผลไม่ชัด\n`:'')+
       (progress&&Number.isSafeInteger(progress.verified)&&Number.isSafeInteger(progress.remaining)?`\nยืนยันในรอบนี้ ${progress.verified} รายการ · ในชุดที่เลือกยังยืนยันไม่ครบ ${progress.remaining} รายการ\n`:'')+
+      (progress?.openRound&&progress.reservationChain?(
+        progress.reservationChain.jobIds.length
+          ? `\nประวัติจองใน D1 (Worker ${progress.reservationChain.workerVersion}): ${progress.reservationChain.jobIds.join(' → ')} ติดตามงานปลายสายด้วยการอ่านหลักฐานเดิม\n`
+          : '\nยังไม่พบประวัติจองที่ตรงกับรอบนี้ คำขอเดิมอาจยังดำเนินอยู่\n'):'')+
       (progress?.jobs&&label==='PILOT_MOCK_ROUND_RECORDED'?`\nผลจำลอง: ${progress.jobs.map(x=>`${x.jobId}: ${x.category} → ${x.successorJobId??'ไม่มีรายการถัดไป'}`).join(', ')}\n`:
        progress?.jobs&&label==='PILOT_ROUND_RECORDED_READ_ONLY'?`\nผลที่บันทึกไว้: ${progress.jobs.map(x=>`${x.jobId} → ${x.successorJobId??'ไม่มีรายการถัดไป'} (เวลาตรวจ ${x.verifiedAt}, Worker ${x.workerVersion})`).join(', ')}\n`:
-       progress?.jobs?`\nรายการที่ต้องตรวจ: ${progress.jobs.map(x=>`${x.jobId} → ${progress.openRound?'ยังไม่ตรวจสายการจอง':x.successorJobId??'ยังไม่พบการจองถัดไป'} (job ${x.jobState??'ไม่พบ'}, เหตุพัก ${x.holdReason??'ไม่ระบุ'}, ประวัติ lease ${x.provenanceVersion===1?`generation ${x.leaseGeneration}`:'UNKNOWN'}, epoch ${x.epochState??'ไม่พบ'}, claim ทั้งไฟล์ ${x.workbookClaimStateGlobal??'ไม่พบ'} / phase ${x.workbookClaimPhaseGlobal??'ไม่พบ'} / เหตุ ${x.workbookClaimReasonGlobal??'ไม่พบ'}, ความสัมพันธ์ claim ${x.claimRelationship}, operation ที่ยังไม่ยืนยัน ${x.admittedOperations}, ขั้น VERIFIED ${x.verifiedStages}, ขั้นไม่ชัด ${x.unresolvedStages})`).join(', ')}\nข้อมูลอ่านเมื่อ ${progress.observedAt} แยกจาก snapshot รอบและไม่ใช่ proof; version 1/generation ยังไม่ได้ตรวจ marker และ trigger; generation 0 และ NO_CLAIM ไม่พิสูจน์ว่าไม่เคยรับ lease หรือ provider สิ้นสุด และไม่ให้สิทธิ์ C ตรวจ journal ใน D1 ตามคู่มือก่อนดำเนินการต่อ\n`:'')+
+       progress?.jobs?`\nรายการที่ต้องตรวจ: ${progress.jobs.map(x=>`${x.jobId} → ${x.successorJobId??(progress.openRound?(progress.reservationChain?'ยังยืนยันการจองถัดไปไม่ได้':'ยังไม่ตรวจสายการจอง'):'ยังไม่พบการจองถัดไป')} (job ${x.jobState??'ไม่พบ'}, เหตุพัก ${x.holdReason??'ไม่ระบุ'}, ประวัติ lease ${x.provenanceVersion===1?`generation ${x.leaseGeneration}`:'UNKNOWN'}, epoch ${x.epochState??'ไม่พบ'}, claim ทั้งไฟล์ ${x.workbookClaimStateGlobal??'ไม่พบ'} / phase ${x.workbookClaimPhaseGlobal??'ไม่พบ'} / เหตุ ${x.workbookClaimReasonGlobal??'ไม่พบ'}, ความสัมพันธ์ claim ${x.claimRelationship}, operation ที่ยังไม่ยืนยัน ${x.admittedOperations}, ขั้น VERIFIED ${x.verifiedStages}${x.lastVerifiedStageCandidate?`, ขั้นที่พบ ณ เวลาล่าสุด ${x.lastVerifiedStageCandidate} ${x.lastVerifiedAt} (อาจมีหลายขั้นเวลาเดียวกัน)`:''}, ขั้นไม่ชัด ${x.unresolvedStages})`).join(', ')}\nข้อมูลอ่านเมื่อ ${progress.observedAt} แยกจาก snapshot รอบและไม่ใช่ proof; version 1/generation ยังไม่ได้ตรวจ marker และ trigger; generation 0 และ NO_CLAIM ไม่พิสูจน์ว่าไม่เคยรับ lease หรือ provider สิ้นสุด และไม่ให้สิทธิ์ C ตรวจ journal ใน D1 ตามคู่มือก่อนดำเนินการต่อ\n`:'')+
       (progress?.jobs?.some(x=>x.holdReason==='SERIAL_EXPIRED_PROVIDER_UNCERTAIN')?'\nผล provider ยังไม่ชัด ต้องกระทบยอด claim ทั้งไฟล์และ journal ก่อนทำต่อ ห้ามส่งซ้ำ\n':'')+
       (progress?.rounds?`\n${progress.rounds.length?progress.rounds.map(r=>`รอบ ${r.roundId}: ${r.state}, ${r.selected} รายการ`).join('\n'):'ไม่พบรอบล่าสุด'}\n`:''));
 }

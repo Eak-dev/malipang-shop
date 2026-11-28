@@ -129,9 +129,21 @@ async function confirmStoredReviewField(env:Env,expense:ExpenseFlexRecord,field:
   const changed=await env.DB.prepare(`UPDATE expense_documents SET normalized_json=?,updated_at=? WHERE document_id=? AND expense_id=? AND status='WAITING_CONFIRM' AND normalized_json IS ?`).bind(nextJson,new Date().toISOString(),stored.documentId,expense.expenseId,stored.raw||null).run();
   return Number(changed.meta.changes||0)===1;
 }
-// Commit the selected pair, its audit, and its review state together. The
-// guarded audit ID ties all writes to the exact draft and document we read.
-async function selectPaymentAtomically(env:Env,expense:LoadedExpense,to:string,paymentKey:string,sourceWallet:string,actor?:ExpenseActor):Promise<"selected"|"stale"|"invalid_document">{
+type DraftSelection = {category:string} | {paymentKey:string;sourceWallet:string};
+
+// Gate the whole batch on the audit insert. D1 counts revision-trigger writes
+// in expense update metadata even when only one draft was selected.
+async function selectDraftOptionAtomically(env:Env,expense:LoadedExpense,to:string,selection:DraftSelection,actor?:ExpenseActor):Promise<"selected"|"stale"|"invalid_document">{
+  const setting="category" in selection ? {
+    field:"category" as const, guard:"e.category=?", set:"category=?",
+    before:{category:expense.category}, oldValues:[expense.category], newValues:[selection.category],
+    reason:"Category selected from confirmation chooser"
+  } : {
+    field:"payment" as const, guard:"e.payment_key=? AND e.source_wallet=?", set:"payment_key=?,source_wallet=?",
+    before:{paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet},
+    oldValues:[expense.paymentKey,expense.sourceWallet], newValues:[selection.paymentKey,selection.sourceWallet],
+    reason:"Payment selected from confirmation chooser"
+  };
   const snapshot=expense.documentSnapshot;
   let nextJson:string|null=null;
   if(snapshot){
@@ -140,7 +152,7 @@ async function selectPaymentAtomically(env:Env,expense:LoadedExpense,to:string,p
       try{const value:unknown=JSON.parse(snapshot.normalizedJson);if(!value||typeof value!=="object"||Array.isArray(value))return "invalid_document";document=value as Record<string,unknown>;}
       catch{return "invalid_document";}
     }
-    nextJson=JSON.stringify(documentWithReviewState(document,confirmReviewField(reviewStateForExpense(expense),"payment")));
+    nextJson=JSON.stringify(documentWithReviewState(document,confirmReviewField(reviewStateForExpense(expense),setting.field)));
   }
   const now=new Date().toISOString(),auditId=randomId("exp_audit"),owner=actorValues(actor);
   const documentGuard=snapshot?`AND EXISTS(SELECT 1 FROM expense_documents d WHERE d.document_id=? AND d.expense_id=e.expense_id AND d.status='WAITING_CONFIRM' AND d.normalized_json IS ? AND d.updated_at IS ?) AND NOT EXISTS(SELECT 1 FROM expense_documents d WHERE d.expense_id=e.expense_id AND d.document_id<>?)`:`AND NOT EXISTS(SELECT 1 FROM expense_documents d WHERE d.expense_id=e.expense_id)`;
@@ -148,24 +160,26 @@ async function selectPaymentAtomically(env:Env,expense:LoadedExpense,to:string,p
   const statements=[
     env.DB.prepare(`INSERT INTO expense_audit_log(audit_id,actor_employee_id,action,expense_id,document_id,branch_id,reason,before_json,after_json,created_at)
       SELECT ?,?,'EDIT',e.expense_id,?,?,?, ?,?,? FROM expense_events e
-      WHERE e.expense_id=? AND e.line_user_id=? AND e.status='WAITING_CONFIRM' AND e.payment_key=? AND e.source_wallet=? ${documentGuard}`)
-      .bind(auditId,owner.employeeId,snapshot?.documentId??null,owner.branchId,"Payment selected from confirmation chooser",JSON.stringify({paymentKey:expense.paymentKey,sourceWallet:expense.sourceWallet}),JSON.stringify({paymentKey,sourceWallet}),now,expense.expenseId,to,expense.paymentKey,expense.sourceWallet,...bindings),
-    env.DB.prepare(`UPDATE expense_events SET payment_key=?,source_wallet=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=? AND expense_id=expense_events.expense_id)`)
-      .bind(paymentKey,sourceWallet,now,expense.expenseId,to,auditId)
+      WHERE e.expense_id=? AND e.line_user_id=? AND e.status='WAITING_CONFIRM' AND ${setting.guard} ${documentGuard}`)
+      .bind(auditId,owner.employeeId,snapshot?.documentId??null,owner.branchId,setting.reason,
+        JSON.stringify(setting.before),JSON.stringify(selection),now,expense.expenseId,to,...setting.oldValues,...bindings),
+    env.DB.prepare(`UPDATE expense_events SET ${setting.set},updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM' AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=? AND expense_id=expense_events.expense_id)`)
+      .bind(...setting.newValues,now,expense.expenseId,to,auditId)
   ];
   if(snapshot)statements.push(env.DB.prepare(`UPDATE expense_documents SET normalized_json=?,updated_at=? WHERE document_id=? AND expense_id=? AND status='WAITING_CONFIRM' AND EXISTS(SELECT 1 FROM expense_audit_log WHERE audit_id=? AND expense_id=expense_documents.expense_id)`)
     .bind(nextJson,now,snapshot.documentId,expense.expenseId,auditId));
   const results=await env.DB.batch(statements);
   return Number(results[0]?.meta.changes||0)===1?"selected":"stale";
 }
-async function applyPaymentSelection(env:Env,event:LineEvent,expense:LoadedExpense,to:string,paymentKey:string,sourceWallet:string,traceId:string,actor?:ExpenseActor):Promise<void>{
-  const result=await selectPaymentAtomically(env,expense,to,paymentKey,sourceWallet,actor);
-  if(result==="invalid_document"){await respondText(env,event,"ไม่สามารถยืนยันวิธีชำระได้ กรุณาให้เจ้าของตรวจข้อมูลเอกสารก่อน",traceId);return;}
+async function applyDraftSelection(env:Env,event:LineEvent,expense:LoadedExpense,to:string,selection:DraftSelection,traceId:string,actor?:ExpenseActor):Promise<void>{
+  const result=await selectDraftOptionAtomically(env,expense,to,selection,actor);
+  const label="category" in selection?"หมวดหมู่":"วิธีชำระ";
+  if(result==="invalid_document"){await respondText(env,event,`ไม่สามารถยืนยัน${label}ได้ กรุณาให้เจ้าของตรวจข้อมูลเอกสารก่อน`,traceId);return;}
   if(result==="stale"){
     const current=await findExpense(env,expense.expenseId,to);
     if(!current){await respondText(env,event,"This item was not found or has expired.",traceId);return;}
     const documents=await env.DB.prepare(`SELECT COUNT(*) AS total,SUM(CASE WHEN status='WAITING_CONFIRM' THEN 1 ELSE 0 END) AS waiting FROM expense_documents WHERE expense_id=?`).bind(expense.expenseId).first<ExpenseRow>();
-    if(current.status==="WAITING_CONFIRM"&&(Number(documents?.total||0)>1||(Number(documents?.total||0)===1&&Number(documents?.waiting||0)!==1))){await respondText(env,event,"ไม่สามารถยืนยันวิธีชำระได้ กรุณาให้เจ้าของตรวจสถานะเอกสารที่แนบก่อน",traceId);return;}
+    if(current.status==="WAITING_CONFIRM"&&(Number(documents?.total||0)>1||(Number(documents?.total||0)===1&&Number(documents?.waiting||0)!==1))){await respondText(env,event,`ไม่สามารถยืนยัน${label}ได้ กรุณาให้เจ้าของตรวจสถานะเอกสารที่แนบก่อน`,traceId);return;}
     await showCurrent(env,event,current,traceId);return;
   }
   await showOrFinalizeCurrent(env,event,expense.expenseId,to,traceId,actor);
@@ -607,23 +621,24 @@ export async function handleExpensePostback(env:Env,event:LineEvent,actor:Employ
     if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const payment=q.get("payment")||"",source=q.get("source")??paymentWallet(payment),choice=paymentOptionForPair(payment,source);
     if(!allowedPayments.has(payment)||!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
-    await applyPaymentSelection(env,event,expense,to,choice.paymentKey,choice.sourceWallet,traceId,accessActor||actor);return;
+    await applyDraftSelection(env,event,expense,to,{paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet},traceId,accessActor||actor);return;
   }
   if(action==="expense_resolve_payment"){
     if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const payment=q.get("payment")||"",source=q.get("source")||"",choice=paymentOptionForPair(payment,source);
     if(!choice){await respondText(env,event,"Invalid payment choice. Please choose a listed option.",traceId);return;}
-    await applyPaymentSelection(env,event,expense,to,choice.paymentKey,choice.sourceWallet,traceId,accessActor||actor);return;
+    await applyDraftSelection(env,event,expense,to,{paymentKey:choice.paymentKey,sourceWallet:choice.sourceWallet},traceId,accessActor||actor);return;
   }
   if(action==="expense_set_source"){
     if(expense.documentType==="BANK_SLIP"||!confirmationIssues(expense).includes("payment")){await showCurrent(env,event,expense,traceId);return;}
     const source=q.get("source")||"";if(!allowedSources.has(source))throw new Error("Invalid expense source");
-    await applyPaymentSelection(env,event,expense,to,paymentForWallet(source,expense.paymentKey),source,traceId,accessActor||actor);return;
+    await applyDraftSelection(env,event,expense,to,{paymentKey:paymentForWallet(source,expense.paymentKey),sourceWallet:source},traceId,accessActor||actor);return;
   }
   if(action==="expense_set_category"){
     if(!confirmationIssues(expense).includes("category")){await showCurrent(env,event,expense,traceId);return;}
-    const category=q.get("category")||"";if(!allowedCategories.has(category))throw new Error("Invalid expense category");expense.category=category;
-    const changed=await env.DB.prepare(`UPDATE expense_events SET category=?,updated_at=? WHERE expense_id=? AND line_user_id=? AND status='WAITING_CONFIRM'`).bind(category,new Date().toISOString(),id,to).run();if(Number(changed.meta.changes||0)===1){if(!await confirmStoredReviewField(env,expense,"category")){await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}await expenseAudit(env,{actor:accessActor||actor,action:"EDIT",expenseId:id,after:{category}}).run();await showOrFinalizeCurrent(env,event,id,to,traceId,accessActor||actor);return;}const current=await findExpense(env,id,to);if(current)await showCurrent(env,event,current,traceId);return;
+    const category=q.get("category")||"";if(!allowedCategories.has(category))throw new Error("Invalid expense category");
+    await applyDraftSelection(env,event,expense,to,{category},traceId,accessActor||actor);
+    return;
   }
   if(action==="expense_set_date_rel"){
     if(!confirmationIssues(expense).includes("date")){await showCurrent(env,event,expense,traceId);return;}

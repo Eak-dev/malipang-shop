@@ -80,6 +80,17 @@
   ],
   "branches": [
     {
+      "scope": "local",
+      "source": "issue348-slip-category",
+      "branch": "codex/issue348-slip-category-confirm",
+      "source_sha": "b744af1010be5b4619000a03d4a9a281027f5bfb",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T01:55:40Z",
+      "reason": "Branch start on verified main for the #348 LINE bank-slip category blocker. DEV_OWNED fix proposed separately from attendance and queue work for independent review into main."
+    },
+    {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/348-attendance-uat-selection",

@@ -18,6 +18,16 @@
 
 1. ให้ #296 ระบุ SHA บน `main`, ขอบเขตเหตุเดียว และสิทธิ์สำหรับแต่ละรัน. ใช้ workflow Production release เลือก `historical_daily_probe=true` ตอน `preflight` และ `deploy`. ตัวรันสร้างค่า `EXACT_DAILY_HISTORICAL_RECEIPT_SHA256` จากใบรับและส่งเฉพาะค่านี้ให้ Worker. เมื่อมี migration ค้างหรือค่า config อื่นต่างจาก Production จะหยุด. Rollback ใช้ `rollback_worker` กับ run ID ที่บันทึกรุ่นก่อนหน้า.
 2. เมื่อ Worker รุ่นที่อนุมัติรับทราฟฟิก 100% ให้รัน `prod-historical-daily-probe.yml` ผ่าน Environment `production` บน SHA เดิม โดยระบุ hash ของ Worker และยืนยันว่าหยุดผู้เขียนภายนอกกับมีเจ้าของเฝ้าดู. ตัวรันส่ง `PROBE` พร้อมใบรับหนึ่งครั้ง แล้วเทียบ fingerprint, receipt digest, preimage digest และรุ่น Worker. ตรวจ deployment ซ้ำก่อนรายงาน `MATCHED`.
-3. Worker ค้นเหตุเดิมใน D1 แล้วตรวจกริดหลัก, source, carrier, บัญชี, รายงาน, รูปแบบตัวเลขและ notice ซ้ำ. เมื่อกำหนด pin แล้ว endpoint รับเฉพาะ `PROBE` ที่มีใบรับตรงกัน. หากหลักฐานไม่ตรงหรือผลไม่ชัด ให้คง claim เดิมและหยุดเพื่อทบทวน. การบันทึกผลใช้คำอนุมัติแยก.
+3. Worker ค้นเหตุเดิมใน D1 แล้วตรวจกริดหลัก, source, carrier, บัญชี, รายงาน, รูปแบบตัวเลขและ notice ซ้ำ. เมื่อมีเพียง pin อ่านและปิด operator สำหรับ SETTLE, endpoint รับเฉพาะ `PROBE` ที่มีใบรับตรงกัน. หากหลักฐานไม่ตรงหรือผลไม่ชัด ให้คง claim เดิมและหยุดเพื่อทบทวน. การบันทึกผลใช้คำอนุมัติแยก.
 
 เมื่อผลยืนยันไม่ได้ log แสดง `PROBE_RESULT_UNVERIFIED` พร้อม HTTP status ถ้าได้รับคำตอบ. สำหรับ HTTP 409 ที่ Worker ตอบ `HELD` จะรายงานชื่อขั้นตรวจที่อยู่ในรายการอนุญาต เช่น `HTTP_409 STAGE_NOTICE`. ข้อมูลใน response ใช้ตรวจในหน่วยความจำ และคำขอคงส่งครั้งเดียว.
+
+## ร่างการบันทึกผลย้อนหลังใน D1
+
+`SETTLE_HISTORICAL` ใช้ `fingerprint`, `historicalReceipt`, `preimageDigest` และคำยืนยัน `externalWritersFenced` กับ `ownerSupervising` ของเหตุเดียว. Worker ต้องเป็นรุ่นที่ยืนยันแล้ว เปิด exact DAILY settlement กับ recovery gate และปิดตัวดำเนินการที่อาจแข่งกัน. Pin บันทึกแยกจาก pin อ่าน โดยผูก fingerprint, digest ของใบรับ และ preimage digest จาก PROBE.
+
+เมื่อเปิดใช้ใน fixture ที่มี trigger จาก draft `0081`, Worker เทียบกริดหลักและหลักฐานเดิมใหม่ก่อนส่ง D1 batch เดียว. Batch เปลี่ยน DAILY จาก `IN_FLIGHT` เป็น `VERIFIED` และเพิ่ม preimage กับ audit ที่แก้หรือลบด้วยคำสั่งปกติไม่ได้. claim, sync job, failed job และ epoch เดิมคงอยู่. ผลย้อนหลังยังใช้กับการจองปกติไม่ได้.
+
+ถ้าคำตอบหาย ให้ใช้ `INSPECT_HISTORICAL` กับ fingerprint เดิมและ Worker รุ่นที่รับทราฟฟิกทั้งหมดในขณะนั้น. ตรวจว่า `VERIFIED`, preimage และ digest ใน audit ตรงกับหลักฐานที่อนุมัติ. ถ้ายัง `IN_FLIGHT` หรือหลักฐานไม่ครบ ให้คง hold ไว้เพื่อกระทบยอดโดยไม่ส่ง SETTLE ซ้ำ.
+
+`0081` อยู่ใน `migrations-draft/` สำหรับทดสอบเท่านั้น. ชุด release ถึง `0067` ยังไม่มี trigger ของงานนี้. การปล่อยโค้ดด้วย config เดิมจึงยังคงทางอ่าน PROBE. ต้องอนุมัติการนำ schema มาใช้ การเปิด operator และการส่งคำสั่งจริงแยกกันใน #296.

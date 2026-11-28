@@ -55,6 +55,8 @@ export interface Env {
   EXACT_DAILY_SETTLEMENT_ENABLED?: string;
   /** Independently reviewed, incident-specific hash for the read-only historical PROBE. */
   EXACT_DAILY_HISTORICAL_RECEIPT_SHA256?: string;
+  /** Separate approval pin for an exact historical DAILY settlement. */
+  EXACT_DAILY_HISTORICAL_SETTLEMENT_SHA256?: string;
   /** Temporary, default-off one-item monthly report operator. */
   MONTHLY_REPORT_OPERATOR_ENABLED?: string;
   CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED?: string;

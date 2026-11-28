@@ -126,7 +126,8 @@ sequenceDiagram
 
 | สิ่งที่เห็น | หลักฐานที่ต้องเทียบ | การทำงานต่อ |
 | --- | --- | --- |
-| คำตอบ SETTLE ของ A หาย | INSPECT ต้องพบ VERIFIED พร้อม fingerprint และ preimage digest เดิม | ตรงจึงไปขั้นจอง B หากต่างให้พัก A พร้อมเหตุผล |
+| คำตอบ SETTLE ปกติของ A หาย | INSPECT ต้องพบ VERIFIED พร้อม fingerprint และ preimage digest เดิม | ตรงจึงตรวจเงื่อนไขจอง B หากหลักฐานเป็น HISTORICAL ให้คง claim เดิม |
+| คำตอบ SETTLE_HISTORICAL หาย (ร่าง) | INSPECT_HISTORICAL ตรวจ VERIFIED, preimage และ audit ของเหตุเดิม | คง claim เดิม งดส่ง SETTLE ซ้ำและงดจอง B |
 | คำตอบ HANDOVER_ONE หาย | audit การจองแรกต้องมีรายการเดียว ตรงทั้ง jobId ของ B และ fingerprint | ติดตาม B เมื่อพบตรง เก็บสถานะไม่แน่ชัดหากยืนยันไม่ได้ |
 | B เป็น JOB_REVIEW หรือ JOB_FAILED | ตัวรันพยายามอ่าน DAILY หนึ่งครั้งและรายงานผลควบคู่กับสถานะงาน | จบรอบก่อนจอง C แม้ DAILY เพียงขั้นเดียวจะตรง |
 | B ยัง IN_PROGRESS จนหมดเวลา หรือหลักฐานก่อน/หลังอ่านต่างกัน | ตรวจ job และ epoch ของ B รวมถึงแถว DAILY ของ B | ใช้ FINISH_PILOT ตรวจงานล่าสุดแบบอ่านอย่างเดียว งานในคิวอาจยังทำต่อได้ |

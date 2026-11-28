@@ -78,16 +78,18 @@ test('the forward-fix keeps missing columns and refuses unsupported or incomplet
 test('issue296 incident migrations are append-only and preserve trigger names on rerun',()=>{
  const incident=[INCIDENT_MIGRATION,CANARY_INCIDENT_MIGRATION,NOTICE_PREFIX_MIGRATION,COMPLETED_CANARY_MIGRATION,SCOPED_HOLD_MIGRATION,MONTHLY_REPORT_MIGRATION];
  assert.deepEqual(names.slice(baselineNames.length,baselineNames.length+incident.length),incident);
- assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
- // The release inventory ends at 0067; the twelve serial drafts never sit where wrangler applies migrations.
+ assert.deepEqual(names.slice(baselineNames.length+incident.length).map(n=>Number(n.slice(0,4))),[...Array.from({length:12},(_,i)=>68+i),81]);
+ // The release inventory ends at 0067; the serial and historical audit drafts stay outside the Wrangler migration directory.
  const sql=dir=>readdirSync(dir).filter(n=>n.endsWith('.sql')).sort();
  assert.equal(sql(RELEASE_DIR).at(-1),MONTHLY_REPORT_MIGRATION);
- assert.deepEqual(sql(DRAFT_DIR).map(n=>Number(n.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
+ assert.deepEqual(sql(DRAFT_DIR).map(n=>Number(n.slice(0,4))),[...Array.from({length:12},(_,i)=>68+i),81]);
  const db=build(read);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_cutover_operator'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='continuous_views_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM continuous_views_incident_recovery").get().n,0);
- const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));db.exec(read(COMPLETED_CANARY_MIGRATION));db.exec(read(SCOPED_HOLD_MIGRATION));db.exec(read(MONTHLY_REPORT_MIGRATION));assert.deepEqual(schema(db),before);
+ const before=schema(db);db.exec(read(CANARY_INCIDENT_MIGRATION));db.exec(read(NOTICE_PREFIX_MIGRATION));db.exec(read(COMPLETED_CANARY_MIGRATION));db.exec(read(SCOPED_HOLD_MIGRATION));db.exec(read(MONTHLY_REPORT_MIGRATION));
+ db.exec(read('0081_issue296_historical_daily_audit_draft.sql'));assert.deepEqual(schema(db),before);
+ assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='admin_audit' AND name GLOB 'issue296_historical_daily_audit_*'").get().n,3);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name IN ('monthly_report_runs','monthly_report_intents','monthly_report_receipts')").get().n,12);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='scoped_hold_incident_recovery'").get().n,4);
  assert.equal(db.prepare("SELECT count(*) n FROM sqlite_master WHERE type='trigger' AND tbl_name='canary_unwritten_recovery'").get().n,4);

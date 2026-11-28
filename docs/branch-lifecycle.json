@@ -2,17 +2,17 @@
   "version": 1,
   "mode": "report-only",
   "repository": "Eak-dev/malipang-shop",
-  "observed_at": "2026-11-14T12:25:14.938894+00:00",
-  "canonical_main_sha": "a4ca593996b3fe21f93ba8cc29b1d58b2c7baa89",
-  "coverage": "Remote heads at observation time plus issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
+  "observed_at": "2026-11-28T13:17:36Z",
+  "canonical_main_sha": "00ae0ceb767a5510742c32981b01d29d8f2591c3",
+  "coverage": "Scoped remote observations, older registry records, and issue248 heads in one separately observed handoff clone. Other clones and live writer state are not fully inventoried. Selected #248 staging primary and preserved/excluded source disposition recorded incrementally; observations do not certify writer quiescence. Registry refresh time is top-level observed_at; per-record timestamps preserve older observations for sources not re-audited in this task.",
   "work_items": [
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "codex/348-attendance-uat-selection",
+      "primary_branch": "codex/issue348-sheets-ack-recovery",
       "target_branch": "main",
-      "coordination_chat": "MaliPang #348 attendance-only UAT (Codex)",
-      "reason": "After #361 merged, the selected task branch adds an attendance-only UAT workflow from synchronized main. DEV_OWNED draft PR; separate owner approval for merge and live dispatch."
+      "coordination_chat": "MaliPang #348 Sheets acknowledgement recovery (Codex)",
+      "reason": "PR #365 is the selected DEV_OWNED branch for read-only round recovery. Merge requires independent review, CI and verification of the preceding #296 deployment. Production activation is separate."
     },
     {
       "issue": 285,
@@ -46,12 +46,11 @@
     {
       "issue": 296,
       "title": "Pre-deploy fixes R1-R7 for the continuous daily sync release",
-      "mode": "MIGRATION_PENDING",
-      "primary_branch": null,
-      "proposed_branch": "codex/issue296-historical-daily-probe",
+      "mode": "MANAGED",
+      "primary_branch": "codex/issue296-dormant-historical-settle",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
-      "reason": "Local proposal for one read-only historical DAILY probe from canonical main fc0b60a6d0bc20599cc77c5fa01b3d562017ed37. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
+      "reason": "Dormant historical DAILY settlement based on b47114af3b1c90c3db6a642cfb07c897bfe014ad. The read-only probe and diagnostics were integrated in #366 and #367. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
     },
     {
       "issue": 299,
@@ -84,12 +83,38 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue348-sheets-ack-recovery",
-      "source_sha": "394596712b7531398a4c6228b5910c2e20c84f59",
+      "source_sha": "8f7187f21a792fd709b41ce7cc92487a621d7c81",
       "issues": [348],
       "pull_requests": [365],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T13:17:36Z",
+      "reason": "Observed PR #365 head before the merge of main 00ae0ceb767a5510742c32981b01d29d8f2591c3 into the candidate. Read-only round recovery and local fault-injection evidence."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-dormant-historical-settle",
+      "source_sha": "2f8c3ca6b859f63e6f6194da2549cb7c5a53ddce",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T13:03:37Z",
+      "reason": "Observed implementation head before the registry commit. Canonical target main; activation and Production business writes remain separately scoped."
+    },
+    {
+      "scope": "local",
+      "source": "issue296-dormant-historical-settle",
+      "branch": "codex/issue296-dormant-historical-settle",
+      "source_sha": "b47114af3b1c90c3db6a642cfb07c897bfe014ad",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
       "status": "PENDING_INTEGRATION",
-      "observed_at": "2026-11-28T12:47:00Z",
-      "reason": "Draft PR #365 head verified against main b47114a. Read-only recovery integration awaits independent QA and CI. No Production activation."
+      "observed_at": "2026-11-28T12:53:26Z",
+      "reason": "Verified branch start on canonical main for #296 historical DAILY settlement. AUTO_RELEASE is limited to a dormant code-only Worker deployment after review and CI."
     },
     {
       "scope": "local",
@@ -117,12 +142,12 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/348-attendance-uat-selection",
-      "source_sha": "b744af1010be5b4619000a03d4a9a281027f5bfb",
+      "source_sha": "84968732f1ac81d1b828eba8532727dac05defe7",
       "issues": [348],
-      "pull_requests": [],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-28T01:48:57Z",
-      "reason": "Canonical remote branch observed at the reviewed main base before the attendance UAT commit. Target main after review; no live run or deletion authority."
+      "pull_requests": [363],
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T13:17:36Z",
+      "reason": "PR #363 merged to ce3f77b3c59cb440e471ec18f60b3d71215ee55a. Its head matches the live remote branch and main contains the merge. Retain the branch."
     },
     {
       "scope": "remote",
@@ -4760,7 +4785,7 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "main",
-      "source_sha": "6ba993eedd9fd13466b1f8169075ad76fb4e2176",
+      "source_sha": "00ae0ceb767a5510742c32981b01d29d8f2591c3",
       "issues": [],
       "pull_requests": [
         158,
@@ -4780,7 +4805,7 @@
       ],
       "status": "PROTECTED",
       "reason": "Canonical main; never deleted",
-      "observed_at": "2026-11-14T01:31:04.254750+00:00"
+      "observed_at": "2026-11-28T13:17:36Z"
     },
     {
       "scope": "remote",
@@ -7890,15 +7915,15 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "claude/issue348-n1-no-migration-20261125",
-      "source_sha": "b23d6fefb090cda5f4afd129813c58ac0ca01b9e",
+      "source_sha": "19fcae757e0e79d9464e3c606e20baf680424dab",
       "issues": [296, 354],
       "pull_requests": [356],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-25T03:47:05Z",
-      "reason": "Release-path branch for #354 under #296 (N1: serial drafts kept out of migrations/, PR #356, base main 0b426d3); remote head observed before this registry commit. A phase B runtime PR is stacked on it. Integration plan: review, then merge PR #356 into main before the release candidate is chosen. No release is implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T13:04:14Z",
+      "reason": "PR #356 merged to ccd9c738bea85aadff5a0975da803632c9ba7d8b. Its final head matches the live branch ref. Keep the ref for stacked dependencies and separate lifecycle review."
     }
   ],
-  "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",
+  "canonical_main_observed_at": "2026-11-28T13:17:36Z",
   "completed_work_items": [
     {
       "issue": 272,

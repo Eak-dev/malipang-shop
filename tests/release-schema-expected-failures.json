@@ -101,6 +101,8 @@
   "SIGKILL after model EXPENSE_RAW commit retains intent with new Worker and never repeats the write": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
   "SIGKILL after model DETAIL commit retains intent with same Worker and never repeats the write": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
   "SIGKILL after model DETAIL commit retains intent with new Worker and never repeats the write": "Serial draft feature test; needs the migrations-draft schema (0068-0079).",
+  "delayed RAW provider commit after Worker death preserves OPEN round when B has no successor yet": "The process fixture opens a round using the local-only serial draft schema (0068+).",
+  "delayed RAW provider commit after Worker death preserves OPEN round when C was already reserved": "The process fixture uses the local-only serial draft attested handoff and continuations schema (0068+).",
   "missing recovery tables with later serial claim triggers fails closed": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "an inconsistent handoff with a legacy phase never grants ownership": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",
   "handoff appearing during notice read fails the final ownership recheck": "Test fixture enables or builds the serial draft schema (drops a not_ready trigger, inserts serial rows or sets a SERIAL_* flag).",

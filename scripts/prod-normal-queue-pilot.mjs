@@ -8,7 +8,7 @@ const phases=['PROBE','SETTLE','HANDOVER_ONE','INSPECT_HANDOVER','READBACK','REA
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const digest=/^[a-f0-9]{64}$/;
 const recordedTime=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)&&Number.isFinite(Date.parse(value));
-const mutating=phase=>['SETTLE','HANDOVER_ONE','RUN_SERIAL','RECOVER_ROUND','HOLD_RESERVED','CLOSE_MOCK_ROUND'].includes(phase);
+const mutating=phase=>['SETTLE','HANDOVER_ONE','RUN_SERIAL','HOLD_RESERVED','CLOSE_MOCK_ROUND'].includes(phase);
 function stop(code){throw Error(code);}
 export function pilotInputs(env){
   const phase=env.PILOT_PHASE;
@@ -309,6 +309,7 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
   const inspectOriginal=async()=>{
     const state=await incident({action:'INSPECT'},'INSPECTED');
     if(!digest.test(state.fingerprint))stop('PILOT_INCIDENT_UNVERIFIED');
+    if(state.proofKind==='HISTORICAL')stop('PILOT_HISTORICAL_SETTLEMENT_REQUIRES_HANDOVER_APPROVAL');
     return state;
   };
   const settleOriginal=async(state,probeOnly)=>{
@@ -327,7 +328,7 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
       // INSPECT authenticates the exact original REVIEW job, OPEN failure and stored preimage.
       // Positive proof can close the run even if the SETTLE acknowledgment was lost.
       checkLocalAfterDispatch();const after=await incident({action:'INSPECT'},'INSPECTED');checkLocalAfterDispatch();
-      if(after.projectionState!=='VERIFIED'||after.fingerprint!==fingerprint||after.preimageDigest!==proof.preimageDigest)throw error;
+      if(after.proofKind==='HISTORICAL'||after.projectionState!=='VERIFIED'||after.fingerprint!==fingerprint||after.preimageDigest!==proof.preimageDigest)throw error;
     }
     return {label:'PILOT_ORIGINAL_SETTLED_JOB_HELD',preimageDigest:proof.preimageDigest};
   };

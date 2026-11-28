@@ -47,10 +47,10 @@
       "issue": 296,
       "title": "Pre-deploy fixes R1-R7 for the continuous daily sync release",
       "mode": "MANAGED",
-      "primary_branch": "codex/issue296-dormant-historical-settle",
+      "primary_branch": "codex/issue296-release-historical-audit",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
-      "reason": "Dormant historical DAILY settlement based on b47114af3b1c90c3db6a642cfb07c897bfe014ad. The read-only probe and diagnostics were integrated in #366 and #367. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
+      "reason": "PR #368 merged and shipped dormant. The active #296 follow-up adds only the historical audit guards and preserves the live release profile. AUTO_RELEASE covers backup, migration and dormant Worker deployment."
     },
     {
       "issue": 299,
@@ -79,6 +79,19 @@
     }
   ],
   "branches": [
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-release-historical-audit",
+      "source_sha": "f4a1d0b54c707db529b94506bf963994847023ad",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T14:07:14Z",
+      "reason": "Observed implementation head before registry commit, from canonical f718e642. Target main; audit-only migration and dormant release."
+    },
     {
       "scope": "local",
       "source": "issue296-release-historical-audit",
@@ -120,14 +133,14 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue296-dormant-historical-settle",
-      "source_sha": "2f8c3ca6b859f63e6f6194da2549cb7c5a53ddce",
+      "source_sha": "68425f403e5c7ee042d78d6eb7cd2ce7886d28bf",
       "issues": [
         296
       ],
-      "pull_requests": [],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-28T13:03:37Z",
-      "reason": "Observed implementation head before the registry commit. Canonical target main; activation and Production business writes remain separately scoped."
+      "pull_requests": [368],
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T14:07:14Z",
+      "reason": "PR #368 merged to 00ae0ceb767a5510742c32981b01d29d8f2591c3. Final ref verified; retained for audit and rollback provenance."
     },
     {
       "scope": "local",

@@ -82,6 +82,19 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue348-sealed-advance-receipt",
+      "branch": "codex/issue348-sealed-advance-receipt",
+      "source_sha": "b47114af3b1c90c3db6a642cfb07c897bfe014ad",
+      "issues": [
+        348
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T12:58:22Z",
+      "reason": "Follow-up to #365. Makes sealed successor reservations observable after a lost reply. Integrate on main after #365 and refresh all validation. No Production release or activation."
+    },
+    {
+      "scope": "local",
       "source": "issue348-interrupted-round-readback",
       "branch": "codex/issue348-interrupted-round-readback",
       "source_sha": "ce3f77b3c59cb440e471ec18f60b3d71215ee55a",

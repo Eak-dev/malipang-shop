@@ -1143,6 +1143,12 @@ async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitin
   const valueRow=h.effective().find(row=>row[23]==='MALIPANG_EXPENSE:exp_pilot');
   assert.ok(valueRow);
   if(roundId){
+   if(two){
+    const beforeReceipt=await operate(advance);
+    assert.equal(beforeReceipt.outcome,'HELD','a sealed successor requires the persisted predecessor receipt');
+    assert.equal(await countAdvances(),0);
+    assert.equal((await db.prepare('SELECT state FROM serial_pilot_rounds WHERE round_id=?').bind(roundId).first()).state,'OPEN');
+   }
    const record={...finish,action:'RECORD_VERIFIED',roundId,proof:completed.proof,externalWritersFenced:true,ownerSupervising:true};
    assert.equal((await operate(record)).outcome,'RECORDED');
    assert.equal((await operate(record)).outcome,'RECORDED');
@@ -1326,9 +1332,11 @@ async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitin
   const posted=h.effective().filter(row=>row[23]==='MALIPANG_EXPENSE:exp_serial');
   assert.equal(posted.length,1);
   assert.equal(posted[0][7],2.6);
-  if(two){
+  if(roundId){
    const recordC={...finishC,action:'RECORD_VERIFIED',roundId,proof:proofC.proof,externalWritersFenced:true,ownerSupervising:true};
    assert.equal((await operate(recordC)).outcome,'RECORDED');
+  }
+  if(two){
    assert.notEqual((await call('serial-round-recovery',{action:'CLOSE_VERIFIED',roundId,ownerSupervising:true,externalWritersFenced:true})).outcome,'CLOSED');
    // Local fixture only: remove the not-ready barrier after installing the guards.
    await db.prepare('DROP TRIGGER serial_pilot_verified_close_not_ready').run();

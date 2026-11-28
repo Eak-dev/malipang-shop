@@ -257,7 +257,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       }
       return Response.json({ok:false,error:'PILOT_INPUT_INVALID',servedVersion:served},{status:400,headers});
     }
-    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'){
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&
+      (env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'||env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256!==undefined)){
       const headers={'cache-control':'no-store'};
       const operation=parseExactDailyOperation(await request.json().catch(()=>null));
       if(!operation)return Response.json({ok:false,error:'INVALID_EXACT_DAILY_OPERATION'},{status:400,headers});

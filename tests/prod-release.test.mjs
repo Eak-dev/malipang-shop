@@ -5,6 +5,7 @@ import assert from 'node:assert/strict';
 import {readFileSync,writeFileSync} from 'node:fs';
 import {runOperation,varChanges,fingerprintOf,ReleaseStop,DB,WORKER,BUCKET} from '../scripts/prod-release.mjs';
 import {sha256Hex} from '../scripts/prod-ops-snapshot.mjs';
+import {HISTORICAL_DAILY_PIN,parseProbeEvidence} from '../scripts/prod-historical-daily-probe.mjs';
 
 const SHA='fdb3cc24e9e440a4bdcaa6842aed5984f56f96c6',S=SHA.slice(0,7);
 const V0='d0000000-0000-4000-8000-000000000000',V1='e1111111-1111-4111-8111-111111111111',V2='f2222222-2222-4222-8222-222222222222';
@@ -30,13 +31,42 @@ function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'pro
     throw Error('unexpected call '+args.join(' '));
   };
   w.api=async path=>{assert.equal(path,`/workers/scripts/${WORKER}/settings`);if(fail.api)return{success:false};return{success:true,result:{bindings:[...Object.entries(liveVars).map(([name,text])=>({type:'plain_text',name,text})),{type:'secret_text',name:'GOOGLE_PRIVATE_KEY_BASE64'}]}};};
-  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,sleep:async ms=>{w.sleeps.push(ms);},local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1'},say:l=>w.lines.push(l)});
+  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,sleep:async ms=>{w.sleeps.push(ms);},local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1',...extra.env},say:l=>w.lines.push(l)});
   w.text=()=>w.lines.join('\n');
   w.writes=()=>calls.filter(c=>/^(d1 migrations|deploy$|rollback|r2 object put)/.test(c));
   return w;
 }
 // Deploy and rollback start with every migration applied.
 const dw=(o={})=>world({ledger:LOCAL,...o});
+const historicalEvidence=JSON.stringify({receipt:{incidentFingerprint:'1'.repeat(64),archiveIdentityDigest:'2'.repeat(64),
+ archiveGridDigest:'3'.repeat(64),approvedDeltaDigest:'4'.repeat(64),liveGridDigest:'5'.repeat(64)},preimageDigest:'6'.repeat(64)});
+const historicalOpts={env:{HISTORICAL_DAILY_PROBE:'true',MALIPANG_HISTORICAL_DAILY_PROBE:historicalEvidence}};
+
+test('historical probe release compares and passes only the privately derived pin to Wrangler',async()=>{
+ const w=dw(),pin=parseProbeEvidence(historicalEvidence).pin,flag=`--var ${HISTORICAL_DAILY_PIN}:${pin}`;
+ assert.equal(await w.go('preflight',`PREFLIGHT ${S}`,historicalOpts),0,w.text());
+ assert.ok(w.calls.includes(`deploy --dry-run ${flag}`));
+ assert.equal(await w.go('deploy',`DEPLOY ${S} CHANGES ${HISTORICAL_DAILY_PIN}`,historicalOpts),0,w.text());
+ assert.ok(w.calls.includes(`deploy ${flag}`));
+ assert.ok(w.text().includes(`config_changes: ${HISTORICAL_DAILY_PIN}`));
+ assert.ok(!w.text().includes(pin));
+});
+
+test('historical probe release rejects missing evidence, pending D1 migrations, and unrelated config drift',async()=>{
+ const empty=dw();
+ assert.equal(await empty.go('preflight',`PREFLIGHT ${S}`,{env:{HISTORICAL_DAILY_PROBE:'true'}}),1);
+ assert.equal(empty.calls.length,0);
+ const migration=world();
+ assert.equal(await migration.go('preflight',`PREFLIGHT ${S}`,historicalOpts),1);
+ assert.equal(migration.writes().length,0);
+ const extraMigration=world({ledger:[...LOCAL,'0062_unreviewed.sql']});
+ assert.equal(await extraMigration.go('deploy',`DEPLOY ${S} CHANGES ${HISTORICAL_DAILY_PIN}`,historicalOpts),1);
+ assert.equal(extraMigration.writes().length,0);
+ const drift=dw({liveVars:{...CONFIG.vars,FLAG_A_ENABLED:'true'}});
+ assert.equal(await drift.go('deploy',`DEPLOY ${S} CHANGES ${HISTORICAL_DAILY_PIN},FLAG_A_ENABLED`,historicalOpts),1);
+ assert.ok(!drift.calls.some(call=>call.startsWith('deploy ')));
+ assert.equal(drift.writes().length,0);
+});
 const noIds=w=>{const t=w.text();for(const id of [V0,V1,V2])assert.equal(t.includes(id),false,t);assert.equal(t.includes('private'),false,t);
   // Only migration names, the short SHA, run ids in an expected confirmation and 64-hex hashes may carry digits.
   assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(/: (0|1-9|10\+)$/gm,':').replace(/SINGLE_VERSION_100/g,'').replace(/after 3 reads/g,'').replace(/live_version_sha256/g,'').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};
@@ -249,19 +279,21 @@ test('release workflow is manual-only, main-only, gated, pinned and scopes the t
   assert.doesNotMatch(wf,/npx wrangler|wrangler (d1|deploy|rollback|r2|versions|secret)/);
   assert.match(wf,/\[ "\$EXPECTED_SHA" = "\$GITHUB_SHA" \]/);
   const inputs=[...on.matchAll(/^ {6}([a-z_0-9]+):$/gm)].map(m=>m[1]);
-  assert.deepEqual(inputs,['operation','expected_sha','confirmation']);
+  assert.deepEqual(inputs,['operation','expected_sha','confirmation','historical_daily_probe']);
 });
 
-test('the workflow input check accepts only the three confirmation shapes',()=>{
+test('the workflow input check pins the confirmation and restricts probe mode to preflight or deploy',()=>{
   const wf=readFileSync(new URL('../.github/workflows/prod-release-migrate-deploy.yml',import.meta.url),'utf8');
   const script=wf.slice(wf.indexOf('set -euo pipefail'),wf.indexOf('      - uses: actions/checkout')).split('\n').map(l=>l.replace(/^ {10}/,'')).join('\n');
-  const check=(operation,confirmation,sha=SHA)=>{
+  const check=(operation,confirmation,sha=SHA,mode='false')=>{
     const r=JSON.parse(JSON.stringify(process.env));
-    return import('node:child_process').then(({spawnSync})=>spawnSync('bash',['-c',script],{env:{...r,EXPECTED_SHA:sha,GITHUB_SHA:SHA,OPERATION:operation,CONFIRMATION:confirmation}}).status);
+    return import('node:child_process').then(({spawnSync})=>spawnSync('bash',['-c',script],{env:{...r,EXPECTED_SHA:sha,GITHUB_SHA:SHA,OPERATION:operation,CONFIRMATION:confirmation,HISTORICAL_DAILY_PROBE:mode}}).status);
   };
   return Promise.all([
     check('migrate',`MIGRATE ${S} FROM 0023 TO 0061`).then(s=>assert.equal(s,0)),
     check('preflight',`PREFLIGHT ${S}`).then(s=>assert.equal(s,0)),
+    check('preflight',`PREFLIGHT ${S}`,SHA,'true').then(s=>assert.equal(s,0)),
+    check('migrate',`MIGRATE ${S} FROM 0023 TO 0061`,SHA,'true').then(s=>assert.notEqual(s,0)),
     check('review_fingerprint',`FINGERPRINT ${S}`).then(s=>assert.equal(s,0)),
     check('preflight',`PREFLIGHT ${S} x`).then(s=>assert.notEqual(s,0)),
     check('review_fingerprint',`PREFLIGHT ${S}`).then(s=>assert.notEqual(s,0)),

@@ -135,7 +135,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 </section>
 <section id="p5" class="page">
 <header><span>MaliPang Backend V5.2</span><span>22 พ.ย. 2569 &nbsp; / &nbsp; 05</span></header>
-<h1>งานเดิมจบการตรวจ DAILY ด้วยผลใด</h1><p class="lead">เริ่มจาก INSPECT ทุกครั้งที่สั่ง PROBE หรือ SETTLE เพื่อดูว่ามีหลักฐานยืนยันแถวเดิมอยู่แล้วหรือยัง</p>
+<h1>งานเดิมจบการตรวจ DAILY ด้วยผลใด</h1><p class="lead">ทางปกติเริ่มจาก INSPECT ส่วน PROBE เฉพาะเหตุ #296 เริ่มจากใบรับสำเนาที่ตรวจแล้วและผูกกับรุ่น Worker</p>
 <svg xmlns="http://www.w3.org/2000/svg" class="state-map" width="100%" viewBox="0 0 1040 355" role="img" aria-label="ทางจบของ INSPECT, PROBE และ SETTLE ในการตรวจ DAILY เดิม">
 <defs><marker id="flow5arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10Z" fill="#42677a"/></marker></defs>
 <path d="M289 50H368" fill="none" stroke="#42677a" stroke-width="1.8" marker-end="url(#flow5arr)"/>
@@ -195,7 +195,7 @@ header{font:600 15px/1.4 -apple-system,'Thonburi',sans-serif;letter-spacing:.045
 <div class="notes">
 <div><h4>เมื่อ SETTLE ตอบสำเร็จ</h4><p>Worker อ่านผลที่บันทึกก่อนตอบ ตัวรันตรวจลายนิ้วมือและค่าตรวจจากคำตอบก่อนจบรอบ หากคำตอบผิดปกติจึงอ่าน INSPECT ซ้ำ</p></div>
 <div><h4>เมื่อยืนยันแถวได้แล้ว</h4><p>ปิดเฉพาะการตรวจ DAILY ส่วน sync job เดิมคง REVIEW และ failed job เดิมคง OPEN จึงยังนับรายการนี้เป็นงานพัก</p></div></div>
-<aside class="alert"><b>การส่งมอบสิทธิ์เป็นคำสั่งถัดไป</b> เมื่อ DAILY ยืนยันแล้ว ผู้ดูแลจึงสั่ง HANDOVER_ONE ได้ ภายใต้เงื่อนไขรุ่น Worker, โหมดกู้, การงดผู้เขียนอื่น, ผล backup และการเฝ้าดูตามคู่มือ</aside>
+<aside class="alert"><b>โหมดใบรับเฉพาะเหตุ #296</b> รับเฉพาะ PROBE อ่าน D1 และชีตหลัก เมื่อได้ MATCHED งานเดิมยัง IN_FLIGHT และ claim คงอยู่ การบันทึกผลและ HANDOVER_ONE ใช้คำอนุมัติแยก</aside>
 <footer><span>หลักฐาน &nbsp; <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/exact-daily-settlement.ts">การพิสูจน์และอ่านผล DAILY</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/src/admin/parked-expense-handover.ts">การส่งมอบล็อก</a> · <a href="https://github.com/Eak-dev/malipang-shop/blob/05fd3ebd3a0b04ab62e2eee85cfa8f4179315537/scripts/prod-normal-queue-pilot.mjs">คำสั่งผู้ดูแล</a></span><span>5 / 8</span></footer>
 </section>
 <section id="p6" class="page">

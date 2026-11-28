@@ -8,6 +8,7 @@ import {mkdtempSync,readdirSync,readFileSync,copyFileSync,rmSync} from 'node:fs'
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Miniflare} from 'miniflare';
+import {handleExpenseImage,handleExpensePostback} from '../dist/expense/service.js';
 import {confirmExpenseAtomically} from '../dist/expense/confirm.js';
 import {enqueueSheetSync,recoverPendingSheetJobs} from '../dist/db/repositories.js';
 import {migrationFiles} from './helpers/migration-files.mjs';
@@ -58,6 +59,71 @@ test('release schema on Miniflare D1: LINE confirmation records the expense and 
     await enqueueSheetSync(env,{kind:'SHEETS_SYNC',entityType:'EXPENSE',entityKey:'exp_fixture',entityVersion:1,traceId:'trace_again'});
     assert.equal((await d1.db.prepare('SELECT count(*) n FROM sync_jobs').first()).n,1,'enqueue of the same version is idempotent');
   }finally{await d1.close();}
+});
+
+test('release D1: choosing General on a bank slip resolves the category and offers an explicit Save',async t=>{
+  const d1=await releaseD1(()=>{});
+  t.after(()=>d1.close());
+  const notifications=[];
+  const jobsQueue={...queue(),async send(job){notifications.push(job);}};
+  const env={...releaseVars,DB:d1.db,JOB_QUEUE:jobsQueue,RUNTIME_MODE:'shadow',SHADOW_LINE_OUTPUT:'true',SHEETS_SYNC_ENABLED:'true'};
+  const replies=[];
+  let failNextReply=false;
+  t.mock.method(globalThis,'fetch',async(url,init)=>{
+    assert.equal(String(url),'https://api.line.me/v2/bot/message/reply');
+    replies.push(JSON.parse(init.body).messages[0]);
+    if(failNextReply){failNextReply=false;return new Response('',{status:503});}
+    return new Response('{}');
+  });
+  const source={type:'user',userId:'line_fixture'},actor={employeeId:'staff_fixture',canSubmitExpense:true};
+  const buttonData=()=>replies.at(-1).contents.footer.contents.map(button=>button.action.data);
+  const click=data=>handleExpensePostback(env,{source,replyToken:'test-reply',postback:{data}},actor);
+  for(const legacy of [false,true]){
+    const id=legacy?'old':'new';
+    const document={documentType:'BANK_SLIP',channel:legacy?'BANK':'G_WALLET',institution:'Fixture bank or wallet',
+      transactionType:legacy?'PAYMENT':'WALLET_PAYMENT',transactionStatus:'SUCCESS',
+      paymentDate:'2026-01-15',paymentTime:'10:34',printedYear:'26',referenceId:'FIXTURE-'+id,sender:'',senderAccountMasked:'',
+      recipient:'Fixture supplier',recipientAccountMasked:'',merchant:'Fixture supplier',grossAmountBaht:null,discountAmountBaht:null,paidAmountBaht:17.25,
+      currency:'THB',suggestedDescription:'Fixture supplies',suggestedCategory:'general',confidence:0.98,needsReview:true,note:'category'};
+    await handleExpenseImage(env,{source,replyToken:'test-image',message:{type:'image',id}},
+      {kind:'BANK_SLIP',document,confidence:0.98,raw:{},note:''},'fixture',id,'hash-'+id,actor);
+    const expense=await d1.db.prepare('SELECT expense_id FROM expense_documents WHERE message_id=?').bind(id).first('expense_id');
+    const menu='a=expense_category_menu&id='+expense,save='a=expense_confirm&id='+expense;
+    const state=()=>d1.db.prepare('SELECT normalized_json,status FROM expense_documents WHERE expense_id=?').bind(expense).first();
+    const jobs=()=>d1.db.prepare('SELECT COUNT(*) n FROM sync_jobs WHERE entity_key=?').bind(expense).first('n');
+    const audits=action=>d1.db.prepare('SELECT COUNT(*) n FROM expense_audit_log WHERE expense_id=? AND action=?').bind(expense,action).first('n');
+    // Older open drafts may predate stored review fields. Their General value alone is insufficient.
+    if(legacy)await d1.db.prepare("UPDATE expense_documents SET normalized_json=json_remove(normalized_json,'$.expenseReview') WHERE expense_id=?").bind(expense).run();
+    await click(save);
+    assert.match(JSON.stringify(replies.at(-1).contents.body),legacy?/Bank slip/:/G-Wallet receipt/);
+    assert.ok(buttonData().includes(menu));
+    assert.ok(!buttonData().includes(save));
+    await click(menu);
+    const choice=buttonData().find(data=>data.endsWith('&category=general'));
+    assert.ok(choice);
+    failNextReply=legacy; // An unavailable LINE reply must preserve the committed choice on replay.
+    await click(choice);
+    const reviewed=await state(),review=JSON.parse(reviewed.normalized_json).expenseReview;
+    assert.ok(review?.confirmedFields.includes('category'),'explicit General must survive the postback');
+    assert.ok(review.requiredFields.includes('category'));
+    if(legacy)assert.ok(notifications.some(job=>job.kind==='LINE_NOTIFICATION'&&job.messages[0].contents.footer.contents.some(button=>button.action.data===save)));
+    assert.ok(buttonData().includes(save),'the actual review reply must offer Save');
+    assert.ok(!buttonData().includes(menu));
+    assert.equal(reviewed.status,'WAITING_CONFIRM');
+    assert.equal(await jobs(),0);
+    await click(choice);
+    assert.ok(buttonData().includes(save));
+    assert.equal(await audits('EDIT'),1);
+    assert.equal(await audits('CONFIRM'),0);
+    assert.equal(await jobs(),0);
+    await click(save);
+    await click(save);
+    assert.equal((await state()).status,'CONFIRMED');
+    const saved=await d1.db.prepare('SELECT status,category,payment_key,source_wallet FROM expense_events WHERE expense_id=?').bind(expense).first();
+    assert.deepEqual({...saved},{status:'CONFIRMED',category:'general',payment_key:'transfer',source_wallet:'SHOP_BANK'});
+    assert.equal(await audits('CONFIRM'),1);
+    assert.equal(await jobs(),1);
+  }
 });
 
 test('release schema on Miniflare D1: recovery sends nothing while a review claim holds the workbook, and sends once it is clear',async()=>{

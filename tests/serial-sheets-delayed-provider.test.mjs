@@ -20,9 +20,11 @@ async function waitForProviderAcceptance(child) {
  return new Promise((resolve,reject)=>{
   let output='';
   const record=chunk=>{output=(output+chunk).slice(-3000);};
-  const exit=(code,signal)=>done(Error(`worker exited before provider acceptance: ${code}/${signal}\n${output}`));
+  // Keep child TAP distinguishable from failures emitted by this test runner.
+  const diagnostics=()=>output.trimEnd().split(/\r?\n/).map(line=>`worker: ${line}`).join('\n');
+  const exit=(code,signal)=>done(Error(`worker exited before provider acceptance: ${code}/${signal}\n${diagnostics()}`));
   const message=data=>done(null,data);
-  const timer=setTimeout(()=>done(Error(`provider acceptance timed out\n${output}`)),90000);
+  const timer=setTimeout(()=>done(Error(`provider acceptance timed out\n${diagnostics()}`)),90000);
   function done(error,data){
    clearTimeout(timer);child.off('exit',exit);child.off('error',done);child.off('message',message);
    child.stdout.off('data',record);child.stderr.off('data',record);

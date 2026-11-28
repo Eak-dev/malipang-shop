@@ -2,6 +2,8 @@
 
 อัปเดต: 23 กรกฎาคม 2026
 
+> Checklist A–F ด้านล่างเป็นแผนประวัติ ไม่ใช่สถานะ Production ล่าสุด และยังไม่ได้ตรวจซ้ำทุกข้อ การอัปเดต 15 ตุลาคม 2026 เพิ่มแผนเว็บ Owner ด้านล่าง โดยไม่ติ๊กผ่าน release/legacy gates ย้อนหลัง
+
 ## เป้าหมาย
 
 แผนนี้เรียงลำดับงานตามความเสี่ยงและความจำเป็นของร้าน โดยไม่เร่งเพิ่มฟีเจอร์ก่อนระบบหลักเสถียร
@@ -101,3 +103,17 @@
 8. Soak 7 วัน
 9. ปิด Legacy
 10. ค่อยเริ่มฟีเจอร์ใหม่
+
+## Owner website preparation — 15 ตุลาคม 2026
+
+Specification: [Owner Master / Website Handoff](21_OWNER_MASTER_WEB_HANDOFF_TH.md)
+
+- [x] บันทึก 4 หน้าหลัก, mapping, กติกาเงินสด/มัดจำ และข้อจำกัดจากการตรวจ read-only
+- [ ] ทำ inventory ว่าข้อมูลใดอยู่ D1, Sheets หรือ external legacy พร้อม freshness/ownership
+- [ ] ออกแบบ login/session และบังคับ role/scope ฝั่ง server; ไม่ใช้ admin secret ใน browser
+- [ ] พัฒนาเว็บ 4 เมนูแบบ read-only พร้อม source/status และ pagination (งานถัดไป ต้องระบุ authority)
+- [ ] เพิ่ม synthetic parity tests รวม cash + SHOP_BANK, มัดจำข้ามเดือน, Undo, missing vs zero, ปีอธิกสุรทิน และข้อมูลเกินช่วงแถวเดิม
+- [ ] ให้ Owner ตรวจ UAT ที่ไม่มี Production writes; ทดสอบ mobile และ accessibility
+- [ ] แยกอนุมัติ write workflows, schema/backfill, release และ cutover หลังตรวจครบ
+
+ยังไม่เลือกรูปแบบ hosting ใหม่ ไม่ย้ายข้อมูลธุรกิจ ไม่เปลี่ยนกติกาปิดเดือน และไม่ยกเลิก Sheets/LINE ในงานเอกสารนี้

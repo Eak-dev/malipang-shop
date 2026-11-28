@@ -17,7 +17,7 @@ const env={GITHUB_SHA:sha,EXPECTED_SHA:sha,GITHUB_REF:'refs/heads/main',GITHUB_R
 const fingerprint='b'.repeat(64),preimageDigest='c'.repeat(64),jobId='12345678-1234-1234-1234-123456789abc';
 const gates={BACKUP_RUN_ID:'123',GITHUB_TOKEN:'gh-test',EXTERNAL_WRITERS_FENCED:'true',OWNER_SUPERVISING:'true'};
 
-function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,committed=false,statuses=['JOB_COMPLETE'],finishProofs=[preimageDigest]}={}){
+function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,committed=false,proofKind,statuses=['JOB_COMPLETE'],finishProofs=[preimageDigest]}={}){
   const calls=[];
   const reply=(data,status=200)=>Response.json(data,{status});
   const request=async(input,opts)=>{
@@ -39,7 +39,7 @@ function provider({state='IN_FLIGHT',rows=[],outcome='MATCHED',missingAck=false,
     const body=JSON.parse(opts.body);
     calls.push(body);
     assert.equal(opts.headers['x-malipang-expected-worker-version'],version);
-    if(body.action==='INSPECT')return reply({ok:true,outcome:'INSPECTED',fingerprint,projectionState:state,preimageDigest:state==='VERIFIED'?preimageDigest:null,servedVersion:version});
+    if(body.action==='INSPECT')return reply({ok:true,outcome:'INSPECTED',fingerprint,projectionState:state,preimageDigest:state==='VERIFIED'?preimageDigest:null,proofKind:state==='VERIFIED'?proofKind:undefined,servedVersion:version});
     if(missingAck&&['SETTLE','HANDOVER_ONE'].includes(body.action)){
       if(committed&&body.action==='SETTLE')state='VERIFIED';
       throw Error('sensitive test value');
@@ -94,6 +94,17 @@ test('missing write responses reconcile exact old and pilot evidence without re-
   const pilot=provider({missingAck:true,state:'VERIFIED',rows:[{job_id:jobId,fingerprint}]});
   assert.equal(await runNormalPilot({...env,...gates,PILOT_PHASE:'HANDOVER_ONE'},pilot.request),'PILOT_JOB_COMPLETE_DAILY_MATCHED');
   assert.equal(pilot.calls.filter(c=>c.action==='HANDOVER_ONE').length,1);
+});
+
+test('a historical audit cannot authorize normal handover or reconcile an ordinary settle response',async()=>{
+  const historical=provider({state:'VERIFIED',proofKind:'HISTORICAL',rows:[{job_id:jobId}]});
+  await assert.rejects(runNormalPilot({...env,...gates,PILOT_PHASE:'HANDOVER_ONE'},historical.request),
+    /PILOT_HISTORICAL_SETTLEMENT_REQUIRES_HANDOVER_APPROVAL/);
+  assert.deepEqual(historical.calls.map(c=>c.action),['INSPECT']);
+  const uncertain=provider({missingAck:true,committed:true,proofKind:'HISTORICAL'});
+  await assert.rejects(runNormalPilot({...env,...gates,PILOT_PHASE:'SETTLE'},uncertain.request),
+    /PILOT_RESPONSE_UNKNOWN_NO_RETRY/);
+  assert.deepEqual(uncertain.calls.map(c=>c.action),['INSPECT','PROBE','SETTLE','INSPECT']);
 });
 
 test('bounded read-only finish reconciles both endpoints and classifies held and uncertain runs',async()=>{

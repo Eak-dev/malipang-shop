@@ -1027,12 +1027,19 @@ test('exact DAILY settlement validates request shape and owner observations',()=
  for(const body of [{action:'INSPECT'}, {action:'PROBE',fingerprint},settle])assert.deepEqual(parseExactDailyOperation(body),body);
 });
 
-test('exact DAILY accepts a hash-only historical receipt only for PROBE',()=>{
+test('exact DAILY accepts hash-only historical evidence in its explicit actions',()=>{
  const fingerprint='a'.repeat(64),preimageDigest='b'.repeat(64);
  const historicalReceipt={incidentFingerprint:fingerprint,archiveIdentityDigest:'b'.repeat(64),
   archiveGridDigest:'c'.repeat(64),approvedDeltaDigest:'d'.repeat(64),liveGridDigest:'e'.repeat(64)};
  const probe={action:'PROBE',fingerprint,historicalReceipt};
  assert.deepEqual(parseExactDailyOperation(probe),probe);
+ const settle={action:'SETTLE_HISTORICAL',fingerprint,preimageDigest,historicalReceipt,externalWritersFenced:true,ownerSupervising:true};
+ const inspect={action:'INSPECT_HISTORICAL',fingerprint};
+ assert.deepEqual(parseExactDailyOperation(settle),settle);
+ assert.deepEqual(parseExactDailyOperation(inspect),inspect);
+ for(const body of [{...settle,ownerSupervising:false},{...settle,externalWritersFenced:false},
+  {...settle,extra:true},{...settle,historicalReceipt:null},{...inspect,extra:true},
+  {...inspect,fingerprint:undefined}])assert.equal(parseExactDailyOperation(body),null);
  for(const body of [{...probe,extra:true},{...probe,historicalReceipt:null},{...probe,
   historicalReceipt:{...historicalReceipt,archive:[['private']] }},{...probe,
   historicalReceipt:{...historicalReceipt,incidentFingerprint:preimageDigest}},
@@ -1108,6 +1115,107 @@ async function miniflareDailyFixture(sqlite){
   return {db,close};
  }catch(error){await close();throw error;}
 }
+
+for(const mode of ['received','lost','audit-rejected'])test(`historical DAILY settlement on Miniflare ${mode} preserves the original hold`,async()=>{
+ const h=await failedDailyProbeFixture(),oldStyle=notice.stableNoticeStyleFingerprint;
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ const {verifiedHeldDailyGuard}=require('../dist/admin/exact-daily-settlement.js');
+ let local;
+ try{
+  const original=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book');assert.ok(original);
+  const fingerprint=await failedDailyIncidentFingerprint(original);
+  const {receipt,pin}=await historicalDailyReceiptFixture(h,original,fingerprint);
+  const token='a'.repeat(40),version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+  Object.assign(h.env,{ADMIN_TOKEN:token,CF_VERSION_METADATA:{id:version},EXACT_DAILY_SETTLEMENT_ENABLED:'true',
+   EXACT_DAILY_HISTORICAL_RECEIPT_SHA256:pin,STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true'});
+  notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+  client.batchUpdateSpreadsheetWithReply=async()=>{throw Error('unexpected provider mutation');};
+  const call=async(body)=>{
+   const res=await handleAdmin(new Request('https://example.test/admin/stable-sync/exact-daily-settlement',{
+    method:'POST',headers:{authorization:'Bearer '+token,'x-malipang-expected-worker-version':h.env.CF_VERSION_METADATA.id},
+    body:JSON.stringify(body),
+   }),h.env,{});
+   return res.json();
+  };
+  const probe=await call({action:'PROBE',historicalReceipt:receipt,fingerprint});assert.equal(probe.outcome,'MATCHED');
+  const {preimageDigest}=probe;
+  const approval=createHash('sha256').update(JSON.stringify(['issue296-historical-daily-settlement-v1',fingerprint,pin,preimageDigest])).digest('hex');
+  const settle={action:'SETTLE_HISTORICAL',fingerprint,preimageDigest,historicalReceipt:receipt,externalWritersFenced:true,ownerSupervising:true};
+  const inspect={action:'INSPECT_HISTORICAL',fingerprint};
+  assert.equal((await call(settle)).stage,'HISTORICAL_SETTLEMENT_APPROVAL');
+  h.env.EXACT_DAILY_HISTORICAL_SETTLEMENT_SHA256=approval;
+  assert.equal((await call({...settle,preimageDigest:'1'.repeat(64)})).stage,'HISTORICAL_SETTLEMENT_APPROVAL');
+  if(releaseSchemaOnly){
+   assert.equal((await call(settle)).stage,'HISTORICAL_AUDIT_GUARD');
+   h.sqlite.exec(readFileSync(new URL('../migrations-draft/0081_issue296_historical_daily_audit_draft.sql',import.meta.url),'utf8'));
+  }
+  if(mode==='audit-rejected')h.sqlite.exec("CREATE TRIGGER fixture_reject_historical_audit BEFORE INSERT ON admin_audit WHEN NEW.action='ISSUE296_HISTORICAL_DAILY_SETTLED' BEGIN SELECT RAISE(ABORT,'fixture audit insert rejected'); END");
+  local=await miniflareDailyFixture(h.sqlite);
+  const {db}=local;
+  let batches=0;const journalChanges=new WeakSet();
+  h.env.DB={prepare(sql){
+   const stmt=db.prepare(sql);
+   if(!sql.startsWith('UPDATE stable_projection_writes SET state=\'VERIFIED\''))return stmt;
+   return {bind(...args){const bound=stmt.bind(...args);journalChanges.add(bound);return bound;}};
+  },async batch(statements){
+   const settlement=statements.some(stmt=>journalChanges.has(stmt));
+   if(settlement)batches++;
+   const result=await db.batch(statements);
+   if(settlement&&mode==='lost')throw Error('fixture ACK lost after D1 commit');
+   return result;
+  }};
+  const holdings=['stable_workbook_claims','sync_jobs','failed_jobs','expense_events','stable_recovery_epochs'];
+  const state=()=>Promise.all(holdings.map(async name=>(await db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all()).results));
+  const before=await state();
+  for(const flag of ['CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED','CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED',
+   'MONTHLY_REPORT_OPERATOR_ENABLED','CONTINUOUS_REVIEW_CLOSE_ENABLED','CONTINUOUS_REVOKE_REVIEW_CLOSE_ENABLED']){
+   h.env[flag]='true';assert.equal((await call(settle)).stage,'CONFIG',flag);delete h.env[flag];
+  }
+  for(const flag of ['EXACT_DAILY_SETTLEMENT_ENABLED','STABLE_RECOVERY_GATE_ENABLED']){
+   h.env[flag]='false';assert.equal((await call(settle)).stage,'CONFIG',flag);h.env[flag]='true';
+  }
+  h.formula()[0][0]='drift before historical settlement';
+  assert.equal((await call(settle)).stage,'POSTIMAGE');
+  h.formula()[0][0]='synthetic approved header edit';
+  assert.equal(batches,0);
+  const result=await call(settle);
+  assert.equal(result.outcome,mode==='received'?'SETTLED':'UNCERTAIN');
+  if(mode==='received')assert.equal(result.historicalSettlementDigest,approval);
+  assert.equal(batches,1);
+  const blockedReplay=mode!=='audit-rejected'?await call(settle):null;
+  if(blockedReplay)assert.equal(blockedReplay.outcome,'HELD');
+  assert.equal(batches,1);
+  // Recovery authenticates the new served version and reads retained evidence without the write pins.
+  delete h.env.EXACT_DAILY_HISTORICAL_SETTLEMENT_SHA256;delete h.env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256;
+  h.env.CF_VERSION_METADATA={id:'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee'};
+  const after=await call(inspect),count=(await db.prepare('SELECT count(*) AS n FROM stable_expense_projection_preimages').first()).n;
+  const entries=(await db.prepare("SELECT rowid,id,after_json FROM admin_audit WHERE action='ISSUE296_HISTORICAL_DAILY_SETTLED'").all()).results;
+  assert.equal(after.outcome,'INSPECTED');assert.deepEqual(await state(),before);
+  if(mode==='audit-rejected'){
+   assert.equal(after.projectionState,'IN_FLIGHT');assert.equal(after.historicalReceiptDigest,null);
+   assert.equal(after.historicalSettlementDigest,null);assert.equal(count,0);assert.deepEqual(entries,[]);
+  }else{
+   assert.equal(after.projectionState,'VERIFIED');assert.equal(after.preimageDigest,preimageDigest);
+   assert.equal(after.historicalReceiptDigest,pin);assert.equal(after.historicalSettlementDigest,approval);assert.equal(count,1);
+   assert.equal(entries.length,1);assert.deepEqual(JSON.parse(entries[0].after_json),[pin,approval,preimageDigest]);
+   assert.equal((await call({action:'INSPECT'})).proofKind,'HISTORICAL');
+   const e=await db.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).bind('book').first();
+   const guard=verifiedHeldDailyGuard(e,preimageDigest);
+   assert.equal((await db.prepare(`SELECT CASE WHEN ${guard.sql} THEN 1 ELSE 0 END AS allowed`).bind(...guard.args).first()).allowed,0);
+   for(const query of ["UPDATE admin_audit SET after_json='[]' WHERE id=?",'DELETE FROM admin_audit WHERE id=?',
+    "INSERT OR REPLACE INTO admin_audit(id,action,entity_key,reason,created_at) VALUES(?,'fixture','entity','fixture','now')"])
+    await assert.rejects(db.prepare(query).bind(entries[0].id).run(),/historical daily audit is immutable/);
+   await assert.rejects(db.prepare("INSERT OR REPLACE INTO admin_audit(rowid,id,action,entity_key,reason,created_at) VALUES(?,'replaced','fixture','entity','fixture','now')")
+    .bind(entries[0].rowid).run(),/historical daily audit is immutable/);
+   await db.prepare("INSERT INTO admin_audit(id,action,entity_key,reason,created_at) VALUES('unrelated','fixture','entity','fixture','now')").run();
+   await assert.rejects(db.prepare("UPDATE OR REPLACE admin_audit SET rowid=? WHERE id='unrelated'")
+    .bind(entries[0].rowid).run(),/historical daily audit is immutable/);
+   await db.prepare('DROP TRIGGER issue296_historical_daily_audit_no_delete').run();
+   assert.equal((await call(inspect)).outcome,'HELD');
+  }
+  assert.equal(batches,1);assert.equal(h.writes(),1);
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;if(local)await local.close();h.close();}
+});
 
 async function verifySerialWorkerChain({h,db,finish,completed,successorId,waitingId,version,tick,roundId,single,two,drift}){
  const {handleAdmin}=require('../dist/admin/handler.js');

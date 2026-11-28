@@ -309,6 +309,7 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
   const inspectOriginal=async()=>{
     const state=await incident({action:'INSPECT'},'INSPECTED');
     if(!digest.test(state.fingerprint))stop('PILOT_INCIDENT_UNVERIFIED');
+    if(state.proofKind==='HISTORICAL')stop('PILOT_HISTORICAL_SETTLEMENT_REQUIRES_HANDOVER_APPROVAL');
     return state;
   };
   const settleOriginal=async(state,probeOnly)=>{
@@ -327,7 +328,7 @@ export async function runNormalPilot(env,fetchImpl=fetch,sleep=delay,mockCoordin
       // INSPECT authenticates the exact original REVIEW job, OPEN failure and stored preimage.
       // Positive proof can close the run even if the SETTLE acknowledgment was lost.
       checkLocalAfterDispatch();const after=await incident({action:'INSPECT'},'INSPECTED');checkLocalAfterDispatch();
-      if(after.projectionState!=='VERIFIED'||after.fingerprint!==fingerprint||after.preimageDigest!==proof.preimageDigest)throw error;
+      if(after.proofKind==='HISTORICAL'||after.projectionState!=='VERIFIED'||after.fingerprint!==fingerprint||after.preimageDigest!==proof.preimageDigest)throw error;
     }
     return {label:'PILOT_ORIGINAL_SETTLED_JOB_HELD',preimageDigest:proof.preimageDigest};
   };

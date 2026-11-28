@@ -82,6 +82,19 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue296-dormant-historical-settle",
+      "branch": "codex/issue296-dormant-historical-settle",
+      "source_sha": "b47114af3b1c90c3db6a642cfb07c897bfe014ad",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T12:53:26Z",
+      "reason": "Verified branch start on canonical main for #296 historical DAILY settlement. AUTO_RELEASE is limited to a dormant code-only Worker deployment after review and CI."
+    },
+    {
+      "scope": "local",
       "source": "issue348-interrupted-round-readback",
       "branch": "codex/issue348-interrupted-round-readback",
       "source_sha": "ce3f77b3c59cb440e471ec18f60b3d71215ee55a",

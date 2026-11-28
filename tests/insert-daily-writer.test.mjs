@@ -465,6 +465,61 @@ test('an explicitly scoped extra trailing row must be entirely blank before posi
  assert.equal(h.writes(),1);assert.equal(h.sqlite.prepare("SELECT state FROM stable_projection_writes WHERE projection='DAILY'").get().state,'VERIFIED');
  assert.equal(await verifyReviewedDailyProjection(h.env,h.job,h.claim,'PAUSED',undefined,'REVIEW',true,diagnostic),true);assert.equal(diagnostic.stage,'COMPLETE');
  }finally{h.close();}});
+async function historicalDailyReceiptFixture(h,row,fingerprint){
+  const {historicalDailyReceiptDigest,prepareHistoricalDailyReceipt}=require('../dist/sheets/exact-daily-historical-receipt.js');
+  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
+  const coords={sheetId:row.sheet_id,row:row.target_row,rowCount:row.before_rows,columnCount:row.before_columns};
+  const sheet={sheetId:row.sheet_id,sheetName:row.sheet_name,rowCount:row.before_rows+2,columnCount:row.before_columns};
+  const archive={...sheet,spreadsheetId:'backup-book',sourceSpreadsheetId:'book',createdAt:'2026-11-21T12:41:28.055Z',
+   values:{formula:structuredClone(h.formula()),effective:structuredClone(h.effective())}};
+  const edited='synthetic approved header edit';
+  const differences=[[1,1,archive.values.formula[0][0]??null,archive.values.effective[0][0]??null,edited,edited]];
+  h.formula()[0][0]=h.effective()[0][0]=edited;
+  const current={fingerprint,spreadsheetId:'book',sheetName:row.sheet_name,coordinates:coords,beforeDigest:row.before_digest,payloadDigest:row.payload_digest};
+  const policy={...current,backupSpreadsheetId:archive.spreadsheetId,backupCreatedAt:archive.createdAt,
+   expectedDeltaDigest:createHash('sha256').update(JSON.stringify(['issue296-daily-above-insert-delta-v1',row.sheet_id,row.target_row,row.before_digest,archive.createdAt,differences])).digest('hex')};
+  const payload=h.formula()[row.target_row-1][24];
+  const live={...sheet,spreadsheetId:'book',values:{formula:h.formula(),effective:h.effective()}};
+  const receipt=await prepareHistoricalDailyReceipt(policy,current,payload,archive,live,'42');
+  assert.ok(receipt);
+  return {edited,receipt,pin:await historicalDailyReceiptDigest(receipt)};
+}
+test('approved historical DAILY readback preserves the live proof checks and makes no writes',async()=>{
+ const h=await reviewedLostDaily(),{proveDailyProviderPostimage}=require('../dist/sheets/exact-daily-provider-proof.js');
+ const reports=require('../dist/sheets/continuous-report-health.js'),originalReport=reports.readContinuousReportHealth;
+ try{
+  const row={...h.sqlite.prepare('SELECT * FROM continuous_daily_write_evidence').get(),notice_stamp:'stamp',notice_identity:'identity',projection_state:'IN_FLIGHT'};
+  const fingerprint='d'.repeat(64),{edited,receipt,pin}=await historicalDailyReceiptFixture(h,row,fingerprint);
+  const historical={fingerprint,receipt};
+  const state=()=>['stable_workbook_claims','stable_projection_writes','stable_expense_projection_preimages','stable_recovery_epochs','sync_jobs']
+   .map(table=>h.sqlite.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all());
+  const before=state(),marks=[];
+  let ready=true,report='OK',reportReads=0,changeWhileReading=false,changeScope=false;
+  reports.readContinuousReportHealth=async()=>{reportReads++;return report;};
+  const prove=approval=>proveDailyProviderPostimage(h.env,h.job,h.claim,row,h.source,{sheet:row.sheet_name,sheetId:row.sheet_id},
+   {kind:'continuous-expense'},()=>true,async()=>{
+    if(changeWhileReading)h.formula()[0][0]='changed during proof';
+    if(changeScope)h.env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256='a'.repeat(64);
+    return h.source;
+   },async()=>ready,true,step=>marks.push(step),false,approval);
+  assert.equal(await prove(),null,'strict verification still requires the live preimage hash');
+  assert.equal(marks.at(-1),'POSTIMAGE');
+  assert.equal(await prove(historical),null,'the deployed receipt pin is required');
+  h.env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256=pin;
+  const verified=await prove(historical);
+  assert.ok(verified);
+  assert.equal(verified.snapshot.formula[0][0],edited,'return the live record, not the reconstructed grid');
+  assert.equal(reportReads,2,'both report checks ran on the authorized proof');
+  assert.deepEqual(state(),before);
+  ready=false;assert.equal(await prove(historical),null);ready=true;
+  h.setMode('bad-format');assert.equal(await prove(historical),null);h.setMode('timeout');
+  report='UNVERIFIED';assert.equal(await prove(historical),null);report='OK';
+  changeScope=true;assert.equal(await prove(historical),null);h.env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256=pin;changeScope=false;
+  changeWhileReading=true;assert.equal(await prove(historical),null);
+  assert.deepEqual(state(),before);
+  assert.equal(h.writes(),1,'the original write remains the only Sheets mutation');
+ }finally{reports.readContinuousReportHealth=originalReport;h.close();}
+});
 test('positive daily recovery SQL compiles at the D1 expression limit',async()=>{const h=await reviewedLostDaily(),sql=[],prepare=h.DB.prepare;try{
  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
  h.DB.prepare=function(statement){sql.push(statement);return prepare.call(this,statement)};
@@ -933,11 +988,17 @@ test('failed-hold read-only proof selects exactly one pinned row and rejects all
 
  assert.equal(h.writes(),1);
  }finally{h.close();}}});
-test('failed-hold provider probe is read-only and rejects changed failed row',async()=>{const h=await fixture(false,true,'claim-token-recovery'),oldStyle=notice.stableNoticeStyleFingerprint;try{
- h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
- h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
- h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
- h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+async function failedDailyProbeFixture(){
+ const h=await fixture(false,true,'claim-token-recovery');
+ try{
+  h.setMode('timeout');await assert.rejects(h.run(),/synthetic lost response/);
+  h.sqlite.prepare("UPDATE stable_workbook_claims SET state='REVIEW',phase='OPERATION',review_reason='INSERT_DAILY_SNAPSHOT_UNVERIFIED',notice_stamp='stamp',notice_identity='identity',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE operation_token=?").run(h.claim);
+  h.sqlite.exec("UPDATE sync_jobs SET status='REVIEW',lease_token=NULL,lease_until=NULL,last_error='STABLE_SYNC_REVIEW',updated_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE job_id='job'");
+  h.sqlite.prepare("INSERT INTO failed_jobs(id,queue_name,trace_id,job_key,payload_json,error,status,attempt_count,created_at,updated_at) VALUES('failed','malipang-jobs','fixture','EXPENSE:exp_test:1',?,'Error: STABLE_JOB_HOLD_UNCERTAIN','OPEN',1,strftime('%Y-%m-%dT%H:%M:%fZ','now'),strftime('%Y-%m-%dT%H:%M:%fZ','now'))").run(JSON.stringify(h.job));
+  return h;
+ }catch(error){h.close();throw error;}
+}
+test('failed-hold provider probe is read-only and rejects changed failed row',async()=>{const h=await failedDailyProbeFixture(),oldStyle=notice.stableNoticeStyleFingerprint;try{
  h.formula().push(Array(29).fill(null));h.effective().push(Array(29).fill(null));
  const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book'),hash=await failedDailyIncidentFingerprint(row);notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
  const statements=[],prepare=h.DB.prepare;h.DB.prepare=function(sql){statements.push(sql);return prepare.call(this,sql)};
@@ -964,6 +1025,70 @@ test('exact DAILY settlement validates request shape and owner observations',()=
   {...settle,externalWritersFenced:false},{...settle,ownerSupervising:false},{...settle,extra:true}])
   assert.equal(parseExactDailyOperation(body),null);
  for(const body of [{action:'INSPECT'}, {action:'PROBE',fingerprint},settle])assert.deepEqual(parseExactDailyOperation(body),body);
+});
+
+test('exact DAILY accepts a hash-only historical receipt only for PROBE',()=>{
+ const fingerprint='a'.repeat(64),preimageDigest='b'.repeat(64);
+ const historicalReceipt={incidentFingerprint:fingerprint,archiveIdentityDigest:'b'.repeat(64),
+  archiveGridDigest:'c'.repeat(64),approvedDeltaDigest:'d'.repeat(64),liveGridDigest:'e'.repeat(64)};
+ const probe={action:'PROBE',fingerprint,historicalReceipt};
+ assert.deepEqual(parseExactDailyOperation(probe),probe);
+ for(const body of [{...probe,extra:true},{...probe,historicalReceipt:null},{...probe,
+  historicalReceipt:{...historicalReceipt,archive:[['private']] }},{...probe,
+  historicalReceipt:{...historicalReceipt,incidentFingerprint:preimageDigest}},
+  {...probe,action:'SETTLE',preimageDigest,externalWritersFenced:true,ownerSupervising:true},
+  {action:'INSPECT',historicalReceipt}])assert.equal(parseExactDailyOperation(body),null);
+});
+
+test('exact DAILY historical PROBE requires the deployed digest and refuses readback drift',async()=>{
+ const h=await failedDailyProbeFixture(),oldStyle=notice.stableNoticeStyleFingerprint;
+ const {handleAdmin}=require('../dist/admin/handler.js');
+ try{
+  const row=h.sqlite.prepare(DAILY_FAILED_INCIDENT_EVIDENCE_SQL).get('book');assert.ok(row);
+  const fingerprint=await failedDailyIncidentFingerprint(row);
+  const {receipt,pin}=await historicalDailyReceiptFixture(h,row,fingerprint);
+  const version='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',token='a'.repeat(40);
+  Object.assign(h.env,{ADMIN_TOKEN:token,CF_VERSION_METADATA:{id:version},EXACT_DAILY_SETTLEMENT_ENABLED:'true',
+   STABLE_RECOVERY_GATE_ENABLED:'true',STABLE_SHEETS_PACING_ENABLED:'true'});
+  notice.stableNoticeStyleFingerprint=async()=> 'a'.repeat(64);
+  client.batchUpdateSpreadsheetWithReply=async()=>{throw Error('unexpected provider mutation');};
+  const request=(body,expectedVersion=version)=>handleAdmin(new Request('https://example.test/admin/stable-sync/exact-daily-settlement',{
+   method:'POST',headers:{authorization:'Bearer '+token,'x-malipang-expected-worker-version':expectedVersion},body:JSON.stringify(body),
+  }),h.env,{});
+  const statements=[],prepare=h.DB.prepare;h.DB.prepare=function(sql){statements.push(sql);return prepare.call(this,sql);};
+  const state=()=>['stable_workbook_claims','sync_jobs','failed_jobs','stable_projection_writes','stable_expense_projection_preimages','expense_events']
+   .map(table=>h.sqlite.prepare(`SELECT * FROM ${table}`).all());
+  const before=state(),probe={action:'PROBE',fingerprint,historicalReceipt:receipt};
+  assert.equal((await request(probe,'bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee')).status,409);
+  assert.deepEqual(await (await request(probe)).json(),{ok:false,outcome:'HELD',stage:'HISTORICAL_RECEIPT',servedVersion:version});
+  h.env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256=pin;
+  assert.deepEqual(await (await request({...probe,historicalReceipt:{...receipt,archiveIdentityDigest:'1'.repeat(64)}})).json(),
+   {ok:false,outcome:'HELD',stage:'HISTORICAL_RECEIPT',servedVersion:version});
+  assert.equal(statements.length,0,'version and receipt rejection precede D1 and provider work');
+  h.env.EXACT_DAILY_SETTLEMENT_ENABLED='false';
+  const withoutReceipt=await request({action:'PROBE',fingerprint});
+  assert.equal(withoutReceipt.status,409);
+  assert.deepEqual(await withoutReceipt.json(),
+   {ok:false,outcome:'HELD',stage:'HISTORICAL_RECEIPT',servedVersion:version});
+  const response=await request(probe),result=await response.json();
+  assert.equal(response.status,200);
+  assert.equal(response.headers.get('cache-control'),'no-store');
+  const target=h.formula()[row.target_row-1];
+  const preimageDigest=createHash('sha256').update(JSON.stringify(Array.from({length:row.before_columns},(_,i)=>target[i]===''?null:target[i]??null))).digest('hex');
+  assert.deepEqual(result,{ok:true,outcome:'MATCHED',fingerprint,preimageDigest,historicalReceiptDigest:pin,servedVersion:version});
+  const settle={action:'SETTLE',fingerprint,preimageDigest,externalWritersFenced:true,ownerSupervising:true};
+  assert.equal((await request({...settle,historicalReceipt:receipt})).status,400);
+  h.env.EXACT_DAILY_SETTLEMENT_ENABLED='true';
+  const statementsBeforeRejectedActions=statements.length;
+  assert.deepEqual(await (await request(settle)).json(),{ok:false,outcome:'HELD',stage:'HISTORICAL_RECEIPT',servedVersion:version});
+  assert.deepEqual(await (await request({action:'INSPECT'})).json(),{ok:false,outcome:'HELD',stage:'HISTORICAL_RECEIPT',servedVersion:version});
+  assert.equal(statements.length,statementsBeforeRejectedActions);
+  h.effective()[0][0]='different effective value';
+  assert.deepEqual(await (await request(probe)).json(),{ok:false,outcome:'HELD',stage:'POSTIMAGE',servedVersion:version});
+  assert.ok(statements.length>0&&statements.every(sql=>/^\s*SELECT\b/i.test(sql)));
+  assert.deepEqual(state(),before);
+  assert.equal(h.writes(),1);
+ }finally{notice.stableNoticeStyleFingerprint=oldStyle;h.close();}
 });
 
 async function miniflareDailyFixture(sqlite){

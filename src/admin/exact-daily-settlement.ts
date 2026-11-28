@@ -1,6 +1,7 @@
 import type {Env, SheetsSyncJob} from '../types';
 import {assertContinuousDailyActivated} from '../sheets/continuous-daily-route';
 import {proveDailyProviderPostimage} from '../sheets/exact-daily-provider-proof';
+import {historicalDailyReceiptDigest,parseHistoricalDailyReceipt,type HistoricalDailyReceipt} from '../sheets/exact-daily-historical-receipt';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
 import {stableExpensePreimageStatement} from '../sheets/stable-expense-preimage';
@@ -13,7 +14,7 @@ import {
 type IncidentEnv = Env & {CONTINUOUS_CANARY_OPERATOR_ENABLED?:string; CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED?:string};
 type Operation =
  | {action:'INSPECT'}
- | {action:'PROBE';fingerprint:string}
+ | {action:'PROBE';fingerprint:string;historicalReceipt?:HistoricalDailyReceipt}
  | {action:'SETTLE';fingerprint:string;preimageDigest:string;externalWritersFenced:true;ownerSupervising:true};
 const hash = /^[a-f0-9]{64}$/;
 export function parseExactDailyOperation(value:unknown):Operation|null {
@@ -22,6 +23,10 @@ export function parseExactDailyOperation(value:unknown):Operation|null {
  if(body.action==='INSPECT' && n===1)return {action:'INSPECT'};
  if(typeof body.fingerprint!=='string' || !hash.test(body.fingerprint))return null;
  if(body.action==='PROBE' && n===2)return {action:'PROBE',fingerprint:body.fingerprint};
+ if(body.action==='PROBE' && n===3){
+  const historicalReceipt=parseHistoricalDailyReceipt(body.historicalReceipt);
+  if(historicalReceipt?.incidentFingerprint===body.fingerprint)return {action:'PROBE',fingerprint:body.fingerprint,historicalReceipt};
+ }
  if(body.action==='SETTLE' && n===5 && typeof body.preimageDigest==='string' && hash.test(body.preimageDigest)
    && body.externalWritersFenced===true && body.ownerSupervising===true)
   return {action:'SETTLE',fingerprint:body.fingerprint,preimageDigest:body.preimageDigest,externalWritersFenced:true,ownerSupervising:true};
@@ -45,7 +50,8 @@ const scopeKeys = [
  'STABLE_PHASE1_ENABLED','STABLE_CANCELLATION_PREIMAGE_ENABLED','STABLE_RECOVERY_GATE_ENABLED','STABLE_SHEETS_PACING_ENABLED',
  'CONTINUOUS_DAILY_ENABLED','CONTINUOUS_DAILY_SHEET','CONTINUOUS_DAILY_SHEET_ID','CONTINUOUS_RAW_SHEET','CONTINUOUS_RAW_SHEET_ID',
  'CONTINUOUS_DETAIL_SHEET','CONTINUOUS_DETAIL_SHEET_ID','APP_ENV','RUNTIME_MODE','EXACT_DAILY_SETTLEMENT_ENABLED',
- 'MONTHLY_REPORT_OPERATOR_ENABLED','CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED','SHEETS_SYNC_ENABLED'
+ 'MONTHLY_REPORT_OPERATOR_ENABLED','CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED','SHEETS_SYNC_ENABLED',
+ 'EXACT_DAILY_HISTORICAL_RECEIPT_SHA256'
 ] as const satisfies readonly (keyof IncidentEnv)[];
 export function dailyIncidentScope(env:IncidentEnv):string{
  return JSON.stringify([env.CF_VERSION_METADATA?.id,...scopeKeys.map(k=>env[k])]);
@@ -75,19 +81,27 @@ export function verifiedHeldDailyGuard(e:FailedDailyIncidentEvidence,preimageDig
  * commit together. An uncertain acknowledgment is reconciled using INSPECT. */
 export async function operateExactDailySettlement(env:IncidentEnv,operation:Operation,expectedVersion:string){
  const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID;
+ const receiptPin=env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256;
+ const probeOnly=receiptPin!==undefined;
  const scope=()=>dailyIncidentScope(env);
  const initial=scope(),stable=()=>env.DB===db&&scope()===initial;
  let stage='CONFIG',dispatched=false;
  const held=()=>({ok:false,outcome:dispatched?'UNCERTAIN' as const:'HELD' as const,stage});
  if(!expectedVersion || env.CF_VERSION_METADATA?.id!==expectedVersion || !book ||
-    env.EXACT_DAILY_SETTLEMENT_ENABLED!=='true' || env.STABLE_PHASE1_ENABLED!=='true' ||
+    (!probeOnly&&env.EXACT_DAILY_SETTLEMENT_ENABLED!=='true') || env.STABLE_PHASE1_ENABLED!=='true' ||
     env.STABLE_CANCELLATION_PREIMAGE_ENABLED!=='true' || env.STABLE_SHEETS_PACING_ENABLED!=='true' ||
     env.CONTINUOUS_DAILY_ENABLED!=='true' || !['true','false'].includes(env.STABLE_RECOVERY_GATE_ENABLED??'') ||
     ![env.CONTINUOUS_PUBLICATION_ENABLED,env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED,
       env.CONTINUOUS_CANARY_OPERATOR_ENABLED,env.CANARY_UNWRITTEN_RECOVERY_ENABLED].every(off))return held();
- if(operation.action==='SETTLE' && (env.STABLE_RECOVERY_GATE_ENABLED!=='true' ||
-   !off(env.MONTHLY_REPORT_OPERATOR_ENABLED) || !off(env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED)))return held();
  try {
+  const historical=operation.action==='PROBE'?operation.historicalReceipt:undefined;
+  if(probeOnly||historical){
+   stage='HISTORICAL_RECEIPT';
+   if(operation.action!=='PROBE'||!historical||!receiptPin||!hash.test(receiptPin)||historical.incidentFingerprint!==operation.fingerprint||
+    await historicalDailyReceiptDigest(historical)!==receiptPin||!stable())return held();
+  }
+  if(operation.action==='SETTLE' && (env.STABLE_RECOVERY_GATE_ENABLED!=='true' ||
+    !off(env.MONTHLY_REPORT_OPERATOR_ENABLED) || !off(env.CONTINUOUS_NORMAL_EXPENSE_RECOVERY_ENABLED)))return held();
   stage='INCIDENT';
   const e=await readFailedDailyIncidentEvidence(env,operation.action==='INSPECT'?undefined:operation.fingerprint);
   if(!e||!stable())return held();
@@ -112,7 +126,7 @@ export async function operateExactDailySettlement(env:IncidentEnv,operation:Oper
   const style=await notice();
   if(!style||!stable())return held();
   const proof=await proveDailyProviderPostimage(env,job,e.claim_token,{...e,operation_token:e.claim_token},source,target,policy,
-   stable,readSource,async()=>await notice()===style,true,next=>{stage=next},true);
+   stable,readSource,async()=>await notice()===style,true,next=>{stage=next},true,historical?{fingerprint,receipt:historical}:undefined);
   if(!proof||!stable())return held();
   stage='PREIMAGE';
   const row=proof.snapshot.formula[e.target_row-1];
@@ -121,7 +135,8 @@ export async function operateExactDailySettlement(env:IncidentEnv,operation:Oper
   const preimageDigest=await dailyFailedPayloadDigest(JSON.stringify(cells));
   const latest=await readFailedDailyIncidentEvidence(env,fingerprint);
   if(!latest || JSON.stringify(latest)!==JSON.stringify(e) || !stable())return held();
-  if(operation.action==='PROBE')return {ok:true,outcome:'MATCHED' as const,fingerprint,preimageDigest};
+  if(operation.action==='PROBE')return {ok:true,outcome:'MATCHED' as const,fingerprint,preimageDigest,
+   ...(historical?{historicalReceiptDigest:receiptPin}:{})};
   if(operation.preimageDigest!==preimageDigest)return held();
 
   stage='SETTLEMENT';

@@ -48,9 +48,10 @@
       "title": "Pre-deploy fixes R1-R7 for the continuous daily sync release",
       "mode": "MIGRATION_PENDING",
       "primary_branch": null,
+      "proposed_branch": "codex/issue296-historical-daily-probe",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
-      "reason": "Production change for the continuous daily sync. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Flag PRs for steps 4-7 will register their own branch. Merge is not deployment; each Production step needs owner approval in #296."
+      "reason": "Local proposal for one read-only historical DAILY probe from canonical main fc0b60a6d0bc20599cc77c5fa01b3d562017ed37. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
     },
     {
       "issue": 299,

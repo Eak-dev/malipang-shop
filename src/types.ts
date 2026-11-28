@@ -51,8 +51,11 @@ export interface Env {
   CONTINUOUS_PUBLICATION_SHEET_ID?: string;
   CONTINUOUS_PUBLICATION_ROWS?: string;
   CONTINUOUS_DAILY_ENABLED?: string;
-  /** Temporary, default-off one-item monthly report operator. */
+  /** Temporary, default-off exact DAILY settlement operator. */
   EXACT_DAILY_SETTLEMENT_ENABLED?: string;
+  /** Independently reviewed, incident-specific hash for the read-only historical PROBE. */
+  EXACT_DAILY_HISTORICAL_RECEIPT_SHA256?: string;
+  /** Temporary, default-off one-item monthly report operator. */
   MONTHLY_REPORT_OPERATOR_ENABLED?: string;
   CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED?: string;
   SERIAL_JOB_PROVENANCE_ENABLED?: string;

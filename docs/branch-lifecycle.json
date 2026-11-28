@@ -80,6 +80,19 @@
   ],
   "branches": [
     {
+      "scope": "local",
+      "source": "issue296-release-historical-audit",
+      "branch": "codex/issue296-release-historical-audit",
+      "source_sha": "f718e6422b4c2719bd937299857f8566b374d0ec",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T14:01:38Z",
+      "reason": "Verified canonical branch start for #296 audit-only schema and dormant Worker release. AUTO_RELEASE limited to the approved sequence and same settings."
+    },
+    {
       "scope": "remote",
       "source": "canonical-github",
       "branch": "codex/issue348-sealed-advance-receipt",

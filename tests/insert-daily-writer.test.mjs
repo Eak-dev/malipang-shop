@@ -1159,9 +1159,11 @@ for(const mode of ['received','lost','audit-rejected'])test(`historical DAILY se
   assert.equal((await call(settle)).stage,'HISTORICAL_SETTLEMENT_APPROVAL');
   h.env.EXACT_DAILY_HISTORICAL_SETTLEMENT_SHA256=approval;
   assert.equal((await call({...settle,preimageDigest:'1'.repeat(64)})).stage,'HISTORICAL_SETTLEMENT_APPROVAL');
-  if(releaseSchemaOnly){
+  if(mode==='received'){
+   for(const guard of ['no_update','no_delete','no_replace'])
+    h.sqlite.exec('DROP TRIGGER issue296_historical_daily_audit_'+guard);
    assert.equal((await call(settle)).stage,'HISTORICAL_AUDIT_GUARD');
-   h.sqlite.exec(readFileSync(new URL('../migrations-draft/0081_issue296_historical_daily_audit_draft.sql',import.meta.url),'utf8'));
+   h.sqlite.exec(readFileSync(new URL('../migrations/0068_issue296_historical_daily_audit.sql',import.meta.url),'utf8'));
   }
   if(mode==='audit-rejected')h.sqlite.exec("CREATE TRIGGER fixture_reject_historical_audit BEFORE INSERT ON admin_audit WHEN NEW.action='ISSUE296_HISTORICAL_DAILY_SETTLED' BEGIN SELECT RAISE(ABORT,'fixture audit insert rejected'); END");
   local=await miniflareDailyFixture(h.sqlite);
@@ -1656,7 +1658,7 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
   }
   const operate=value=>operateParkedPilot(h.env,value,version);
   if(releaseSchemaOnly&&!roundMode){
-   // Release schema (0067): INSPECT, PROBE and SETTLE above ran on Miniflare D1.
+   // Release schema: INSPECT, PROBE and SETTLE above ran on Miniflare D1.
    // KNOWN GAP (#296 phase B, not released): FINISH_STATUS reads serial tables and stays UNVERIFIED,
    // yet HANDOVER still reserves the pilot (claim HELD, epoch ARMED). The route is unreachable while
    // CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED is unset and the recovery gate is false. A separate runtime
@@ -2699,7 +2701,7 @@ test('normal-pilot readback independently checks the D1 source and effective Goo
   await read(true,identity);
   const missingHistorical=await handleAdmin(new Request('https://example.test/admin/stable-sync/normal-pilot-readback',{method:'POST',headers:{authorization:'Bearer '+token,'x-malipang-expected-worker-version':version},body:JSON.stringify({action:'READ_HISTORICAL',...identity})}),h.env,{});
   assert.equal((await missingHistorical.json()).outcome,'UNVERIFIED');
-  // Release schema (0067): the live readback above passed; the historical snapshot below needs serial tables.
+  // Release schema: the live readback above passed; the historical snapshot below needs serial tables.
   if(releaseSchemaOnly)return;
   // Synthetic snapshot fixture: the production trigger's provenance remains a
   // separate review gate; this test exercises historical read-only semantics.

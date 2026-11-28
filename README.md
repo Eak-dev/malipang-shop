@@ -897,7 +897,7 @@ Shift schedule audit และ append-only protection
 
 ### Draft schema (local only)
 
-`migrations/` คือชุดที่ `wrangler d1 migrations apply`, `npm run db:migrate:local|remote` และ workflow release ใช้ ตอนนี้จบที่ `0067` ส่วนไฟล์ serial ทดลอง `0068–0079` ของ #350 อยู่ที่ `migrations-draft/` และ**ไม่ใช่**ส่วนหนึ่งของ release ([#356](https://github.com/Eak-dev/malipang-shop/pull/356)) ถ้าต้องการ schema เต็มบน D1 local ให้ลง release ก่อน แล้ว execute ไฟล์ draft ตามลำดับ:
+`migrations/` คือชุดที่ `wrangler d1 migrations apply`, `npm run db:migrate:local|remote` และ workflow release ใช้ ชุดนี้จบที่ `0068_issue296_historical_daily_audit.sql` ส่วนไฟล์ serial ทดลอง `0068–0079` ของ #350 อยู่ที่ `migrations-draft/` และ**ไม่ใช่**ส่วนหนึ่งของ release ([#356](https://github.com/Eak-dev/malipang-shop/pull/356)) ถ้าต้องการ schema เต็มบน D1 local ให้ลง release ก่อน แล้ว execute ไฟล์ draft ตามลำดับ:
 
 ```bash
 npx wrangler d1 migrations apply malipang-v5-2 --local

@@ -13,14 +13,14 @@ const LOCAL=['0001_init.sql','0023_stable_recovery_admission.sql','0024_next.sql
 const CONFIG={name:WORKER,vars:{APP_ENV:'production',FLAG_A_ENABLED:'false'}};
 
 /** A fake wrangler + Cloudflare API with Production-like state. */
-function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
+function world({local=LOCAL,claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'production',FLAG_A_ENABLED:'false'},fail={}}={}){
   const calls=[],r2=new Map(),w={ledger:[...ledger],live,calls,r2,lines:[],sleeps:[],statusFailures:fail.statusFailures??0,deployed:false};
   w.run=(args,opts)=>{
     calls.push(args.join(' '));
     const [a,b]=args;
     if(a==='d1'&&b==='execute'&&args.at(-1).includes('stable_workbook_claims')){if(fail.claim)throw Error('x');return JSON.stringify([{success:true,results:claims}]);}
     if(a==='d1'&&b==='execute'){if(fail.ledger)throw Error('x');return JSON.stringify([{success:true,results:w.ledger.map(migration=>({migration}))}]);}
-    if(a==='d1'&&b==='migrations'){assert.equal(opts?.input,'y\n');const pending=LOCAL.filter(n=>!w.ledger.includes(n));for(const n of pending.slice(0,fail.applyAfter??pending.length))w.ledger.push(n);if(fail.apply)throw Error('x');return 'private wrangler output '+V1;}
+    if(a==='d1'&&b==='migrations'){assert.equal(opts?.input,'y\n');const pending=local.filter(n=>!w.ledger.includes(n));for(const n of pending.slice(0,fail.applyAfter??pending.length))w.ledger.push(n);if(fail.apply)throw Error('x');return 'private wrangler output '+V1;}
     if(a==='deployments'){if(fail.status)throw Error('x');if(w.deployed&&w.statusFailures>0){w.statusFailures--;throw Error('x');}return JSON.stringify({versions:fail.split?[{version_id:w.live,percentage:90},{version_id:V2,percentage:10}]:[{version_id:w.live,percentage:100}]});}
     if(a==='deploy'&&b==='--dry-run'){if(fail.dryRun)throw Error('x');return '';}
     if(a==='deploy'){w.deployed=true;if(!fail.deployNoChange)w.live=V1;if(fail.deploy)throw Error('x');return 'https://private.example '+V1;}
@@ -31,7 +31,7 @@ function world({claims=[],ledger=LOCAL.slice(0,2),live=V0,liveVars={APP_ENV:'pro
     throw Error('unexpected call '+args.join(' '));
   };
   w.api=async path=>{assert.equal(path,`/workers/scripts/${WORKER}/settings`);if(fail.api)return{success:false};return{success:true,result:{bindings:[...Object.entries(liveVars).map(([name,text])=>({type:'plain_text',name,text})),{type:'secret_text',name:'GOOGLE_PRIVATE_KEY_BASE64'}]}};};
-  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,sleep:async ms=>{w.sleeps.push(ms);},local:LOCAL,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1',...extra.env},say:l=>w.lines.push(l)});
+  w.go=(op,confirmation,extra={})=>runOperation(op,{run:w.run,api:w.api,sleep:async ms=>{w.sleeps.push(ms);},local,config:extra.config??CONFIG,env:{EXPECTED_SHA:SHA,CONFIRMATION:confirmation,GITHUB_RUN_ID:'44300000001',GITHUB_RUN_ATTEMPT:extra.attempt??'1',...extra.env},say:l=>w.lines.push(l)});
   w.text=()=>w.lines.join('\n');
   w.writes=()=>calls.filter(c=>/^(d1 migrations|deploy$|rollback|r2 object put)/.test(c));
   return w;
@@ -67,6 +67,46 @@ test('historical probe release rejects missing evidence, pending D1 migrations, 
  assert.ok(!drift.calls.some(call=>call.startsWith('deploy ')));
  assert.equal(drift.writes().length,0);
 });
+test('historical audit preflight allows the exact pending 0068 only with unchanged deployed settings',async()=>{
+ const prefix=['0001_init.sql','0066_scoped_hold_incident.sql','0067_monthly_report_journal.sql'];
+ const audit='0068_issue296_historical_daily_audit.sql',local=[...prefix,audit];
+ const pin=parseProbeEvidence(historicalEvidence).pin;
+ const liveVars={...CONFIG.vars,[HISTORICAL_DAILY_PIN]:pin};
+ const clean=world({local,ledger:prefix.slice(),liveVars});
+ assert.equal(await clean.go('preflight',`PREFLIGHT ${S}`,historicalOpts),0,clean.text());
+ assert.match(clean.text(),/expected_migrate_confirmation: MIGRATE [a-f0-9]+ FROM 0067 TO 0068/);
+ assert.match(clean.text(),/config_changes: NONE/);
+ assert.equal(clean.deployed,false);
+ assert.ok(!clean.writes().some(call=>call.startsWith('d1 migrations')));
+ assert.equal(await clean.go('deploy',`DEPLOY ${S} CHANGES NONE`,historicalOpts),1);
+ assert.match(clean.text(),/HISTORICAL_PROBE_LEDGER_MISMATCH/);
+ assert.equal(clean.deployed,false);
+ assert.equal(await clean.go('migrate',`MIGRATE ${S} FROM 0067 TO 0068`),0,clean.text());
+ assert.deepEqual(clean.ledger,local);
+ assert.equal(await clean.go('deploy',`DEPLOY ${S} CHANGES NONE`,historicalOpts),0,clean.text());
+
+ for(const vars of [CONFIG.vars,{...liveVars,[HISTORICAL_DAILY_PIN]:'f'.repeat(64)},
+   {...liveVars,FLAG_A_ENABLED:'true'},{...liveVars,EXACT_DAILY_SETTLEMENT_ENABLED:'true'}]){
+  const drift=world({local,ledger:prefix,liveVars:vars});
+  assert.equal(await drift.go('preflight',`PREFLIGHT ${S}`,historicalOpts),1,drift.text());
+  assert.match(drift.text(),/HISTORICAL_PROBE_CONFIG_DRIFT/);
+  assert.deepEqual(drift.writes(),[]);
+ }
+ for(const variant of [
+   {local,ledger:[prefix[0],prefix[2]]},
+   {local,ledger:[prefix[1],prefix[0],prefix[2]]},
+   {local,ledger:[...prefix,prefix[2]]},
+   {local:[...prefix,'0068_serial_round_evidence.sql'],ledger:prefix},
+   {local:[...prefix,audit,'0069_other.sql'],ledger:prefix},
+   {local:[...prefix.slice(0,-1),'0067_renamed.sql',audit],ledger:[...prefix.slice(0,-1),'0067_renamed.sql']},
+ ]){
+  const stale=world({...variant,liveVars});
+  assert.equal(await stale.go('preflight',`PREFLIGHT ${S}`,historicalOpts),1,stale.text());
+  assert.match(stale.text(),/HISTORICAL_PROBE_LEDGER_MISMATCH/);
+  assert.deepEqual(stale.writes(),[]);
+ }
+});
+
 const noIds=w=>{const t=w.text();for(const id of [V0,V1,V2])assert.equal(t.includes(id),false,t);assert.equal(t.includes('private'),false,t);
   // Only migration names, the short SHA, run ids in an expected confirmation and 64-hex hashes may carry digits.
   assert.equal(t.replace(/\b\d{4}_[a-z0-9_]+\.sql\b/g,'').replace(/\b[0-9a-f]{64}\b/g,'').replace(/_sha256:/g,':').replace(/: (0|1-9|10\+)$/gm,':').replace(/SINGLE_VERSION_100/g,'').replace(/after 3 reads/g,'').replace(/live_version_sha256/g,'').replace(new RegExp(S,'g'),'').replace(/\b(FROM|TO) \d{4}\b/g,'').match(/\d/),null,t);};

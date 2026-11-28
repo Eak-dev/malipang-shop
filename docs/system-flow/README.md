@@ -25,7 +25,7 @@
 
 หน้า 5–6 แสดงการตรวจงานเดิมและการทดลองหนึ่งรายการ สำหรับ `RUN_SERIAL` ให้ดู [ภาพการจองงานถัดไป](serial-expense.svg) หรือ [ฉบับ PDF](serial-expense.pdf) ควบคู่กับ [ขั้นตอนและเงื่อนไขของตัวรัน](../ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) เมื่องานแรกปิดและแถวรายวันตรงกับ D1 ตัวรันจึงขอจองงานถัดไป หากคำตอบหายจะตรวจประวัติการจองก่อนดำเนินการต่อ
 
-หน้า 5 ระบุทาง PROBE เฉพาะเหตุ #296. ผล MATCHED คง DAILY ใน IN_FLIGHT และคง claim เดิม. ร่าง SETTLE_HISTORICAL ใช้ pin บันทึกแยกกับ trigger จาก draft `0081` เพื่อบันทึกหลักฐานใน D1 โดยคง claim เดิม. เมื่อคำตอบหายให้ใช้ INSPECT_HISTORICAL โดยไม่ส่งซ้ำหรือจอง B. ดู [ขั้นปฏิบัติ](../ISSUE296_EXACT_HELD_DAILY_TH.md#ร่างการบันทึกผลย้อนหลังใน-d1)
+หน้า 5 ระบุทาง PROBE เฉพาะเหตุ #296. ผล MATCHED คง DAILY ใน IN_FLIGHT และคง claim เดิม. ทาง SETTLE_HISTORICAL ที่ยังปิดอยู่ต้องใช้ pin บันทึกแยกกับ trigger จาก release migration `0068` เพื่อบันทึกหลักฐานใน D1 โดยคง claim เดิม. เมื่อคำตอบหายให้ใช้ INSPECT_HISTORICAL โดยไม่ส่งซ้ำหรือจอง B. ดู [ขั้นปฏิบัติ](../ISSUE296_EXACT_HELD_DAILY_TH.md#การบันทึกผลย้อนหลังใน-d1)
 
 round-mode ทดลองต้องมี identity store เฉพาะเครื่องบันทึก roundId ก่อน SETTLE/OPEN; marker เดิมหรืออ่านไม่ชัดให้หยุด ไม่สร้างรอบใหม่แม้ LIST_OPEN ว่าง. เมื่อ restart พบ OPEN ให้ RECONCILE; ถ้ารอบ CLOSED ใช้ READ_ROUND อ่านผลเดิม. CLI/workflow ปกติไม่มี store และ fail closed.
 

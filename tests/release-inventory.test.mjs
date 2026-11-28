@@ -6,25 +6,29 @@ import {migrationFiles} from './helpers/migration-files.mjs';
 
 // The release workflow reads localMigrations() for preflight, migrate and the
 // deploy guard. Draft files must never appear there.
-test('release inventory ends at 0067 and holds no serial draft file',()=>{
+const historicalAudit='0068_issue296_historical_daily_audit.sql';
+
+test('release inventory ends at the historical audit and excludes all serial drafts',()=>{
   const local=localMigrations();
-  assert.equal(local.at(-1),'0067_monthly_report_journal.sql');
-  assert.ok(!local.some(name=>/^00(6[89]|7\d|8[01])_/.test(name)),'no draft number in the release inventory');
+  const drafts=migrationFiles({draft:true}).filter(file=>file.url.pathname.includes('/migrations-draft/'));
+  assert.equal(local.at(-1),historicalAudit);
+  assert.ok(drafts.every(file=>!local.includes(file.name)));
+  assert.ok(drafts.some(file=>file.name==='0068_serial_round_evidence.sql'));
   const config=readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8');
   assert.match(config,/"migrations_dir":\s*"migrations"/,'wrangler applies migrations/ only');
 });
 
-test('a ledger at 0067 leaves nothing pending, so the deploy guard does not ask for a migrate',()=>{
+test('a ledger at 0067 leaves only the historical audit pending',()=>{
   const local=localMigrations();
   assert.deepEqual(pendingMigrations(local.slice(),local),[]);
-  assert.deepEqual(pendingMigrations(local.slice(0,-1),local),['0067_monthly_report_journal.sql']);
+  assert.deepEqual(pendingMigrations(local.slice(0,-1),local),[historicalAudit]);
 });
 
-test('the default test schema includes the serial and historical audit drafts after the release files',()=>{
+test('the default test schema applies canonical release files before the twelve serial drafts',()=>{
   const names=migrationFiles({draft:true}).map(file=>file.name),release=localMigrations();
-  assert.equal(names.length,release.length+13);
-  assert.deepEqual(names.slice(release.length).map(name=>Number(name.slice(0,4))),[...Array.from({length:12},(_,i)=>68+i),81]);
-  assert.deepEqual(migrationFiles({draft:false}).map(file=>file.name),localMigrations());
+  assert.deepEqual(names.slice(0,release.length),release);
+  assert.deepEqual(names.slice(release.length).map(name=>Number(name.slice(0,4))),Array.from({length:12},(_,i)=>68+i));
+  assert.deepEqual(migrationFiles({draft:false}).map(file=>file.name),release);
 });
 
 test('release-schema check reports unexpected and stale failures, nothing else',async()=>{

@@ -121,16 +121,30 @@ async function personalUseClaimOutcome(env:Env,job:SheetsSyncJob,nowIso:string):
  * run yet never loses the job; scheduled recovery re-sends it later. */
 export function sheetSyncOutboxStatement(env:Env,job:SheetsSyncJob,now:string):D1PreparedStatement{
  const guarded=env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.entityType==='EXPENSE';
+ if(job.entityType==='EXPENSE'&&env.SERIAL_JOB_PROVENANCE_ENABLED==='true'){
+  // INSERT ... SELECT avoids a collision on normal redelivery. The statement
+  // runs atomically; the active collision guard still fences REPLACE.
+  return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token,serial_provenance_version,serial_lease_generation)
+   SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL,CASE WHEN EXISTS(SELECT 1 FROM serial_job_provenance_activation a JOIN continuous_daily_post_cutover_expenses p ON p.spreadsheet_id=a.spreadsheet_id JOIN continuous_daily_cutovers c ON c.spreadsheet_id=a.spreadsheet_id AND c.state='ACTIVE' JOIN expense_events e ON e.expense_id=p.expense_id AND e.version=1 AND e.status='CONFIRMED' JOIN serial_source_provenance_activation sp ON sp.singleton=1 AND sp.spreadsheet_id=a.spreadsheet_id AND sp.namespace=e.serial_source_namespace WHERE a.singleton=1 AND a.spreadsheet_id=? AND e.expense_id=? AND ?=1 AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_source_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_source_provenance_no_update','serial_source_provenance_no_delete','serial_source_provenance_no_replace','serial_source_provenance_namespace_guard','serial_source_provenance_insert_guard','serial_source_provenance_update_guard','serial_source_provenance_delete_guard','serial_source_job_birth_guard'))=8) THEN 1 ELSE 0 END,0 WHERE CASE WHEN EXISTS(SELECT 1 FROM serial_job_provenance_activation WHERE singleton=1 AND spreadsheet_id=?) AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_job_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_job_provenance_insert_guard','serial_job_provenance_update_guard','serial_job_provenance_delete_guard','serial_job_provenance_activation_no_update','serial_job_provenance_activation_no_delete','serial_job_provenance_activation_no_replace','continuous_daily_post_no_delete','continuous_daily_post_no_update','continuous_daily_post_no_replace','continuous_daily_record_post_cutover'))=10 THEN (NOT EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?) ${guarded?'AND EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)':''}) ELSE json_extract('invalid','$') END`)
+   .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now,env.GOOGLE_SPREADSHEET_ID||'',job.entityKey,job.entityVersion,env.GOOGLE_SPREADSHEET_ID||'',job.entityType,job.entityKey,job.entityVersion,...(guarded?[job.entityKey]:[]));
+ }
  const values=guarded?`SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL WHERE EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)`:`VALUES(?,?,?,?,?,'PENDING',0,?,?,NULL,NULL)`;
  return env.DB.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token) ${values} ON CONFLICT(entity_type,entity_key,entity_version) DO NOTHING`).bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,now,...(guarded?[job.entityKey]:[]));
 }
 export async function ensureSheetSyncOutbox(env:Env,job:SheetsSyncJob,nowMs=Date.now()):Promise<void>{
+ const scopeDb=env.DB,scopeFlag=env.SERIAL_JOB_PROVENANCE_ENABLED,scopeBook=env.GOOGLE_SPREADSHEET_ID;
+ if(job.entityType==='EXPENSE'&&env.SERIAL_JOB_PROVENANCE_ENABLED==='true'){
+  const ready=await env.DB.prepare("SELECT EXISTS(SELECT 1 FROM serial_job_provenance_activation WHERE singleton=1 AND spreadsheet_id=?) AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_job_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_job_provenance_insert_guard','serial_job_provenance_update_guard','serial_job_provenance_delete_guard','serial_job_provenance_activation_no_update','serial_job_provenance_activation_no_delete','serial_job_provenance_activation_no_replace','continuous_daily_post_no_delete','continuous_daily_post_no_update','continuous_daily_post_no_replace','continuous_daily_record_post_cutover'))=10 AS ok").bind(env.GOOGLE_SPREADSHEET_ID||'').first<{ok:number}>();
+  if(ready?.ok!==1||env.DB!==scopeDb||(env.SERIAL_JOB_PROVENANCE_ENABLED!==scopeFlag||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_NOT_READY');
+ }
  const db=env.DB,result=await sheetSyncOutboxStatement(env,job,new Date(nowMs).toISOString()).run();
- if(env.DB!==db||result.success===false||!Number.isSafeInteger(result.meta?.changes)||Number(result.meta.changes)<0||Number(result.meta.changes)>1)throw Error('SHEET_SYNC_OUTBOX_UNCERTAIN');
+ if(env.DB!==db||job.entityType==='EXPENSE'&&(env.SERIAL_JOB_PROVENANCE_ENABLED!==scopeFlag||env.GOOGLE_SPREADSHEET_ID!==scopeBook)||result.success===false||!Number.isSafeInteger(result.meta?.changes)||Number(result.meta.changes)<0||Number(result.meta.changes)>1)throw Error('SHEET_SYNC_OUTBOX_UNCERTAIN');
 }
 export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now(),legacyCutoverSchema?:boolean):Promise<string|null>{
+  const scopeDb=env.DB,scopeFlag=env.SERIAL_JOB_PROVENANCE_ENABLED,scopeBook=env.GOOGLE_SPREADSHEET_ID;
   const now=new Date(nowMs).toISOString(),leaseUntil=new Date(nowMs+SHEET_SYNC_LEASE_MS).toISOString(),leaseToken=crypto.randomUUID();
   await ensureSheetSyncOutbox(env,job,nowMs);
+  if(env.DB!==scopeDb||job.entityType==='EXPENSE'&&(env.SERIAL_JOB_PROVENANCE_ENABLED!==scopeFlag||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_SCOPE_CHANGED');
   // PERSONAL_USE is mutable (confirm/undo), so claim its per-entity lease in the
   // same D1 statement. Other entity types retain their existing per-version claims.
   const serializePersonalUse=job.entityType==="PERSONAL_USE";
@@ -152,11 +166,14 @@ export async function claimSheetSyncJob(env:Env,job:SheetsSyncJob,nowMs=Date.now
     :" AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='continuous_daily_cutovers')"
    :'';
   const normalNoticeFence=job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'?(env.GOOGLE_SPREADSHEET_ID?" AND NOT EXISTS(SELECT 1 FROM continuous_normal_notice_handoffs h JOIN stable_workbook_claims c ON c.spreadsheet_id=h.spreadsheet_id AND c.operation_token=h.operation_token WHERE h.spreadsheet_id=? AND h.expense_id=sync_jobs.entity_key AND h.source_version=sync_jobs.entity_version AND c.state='HELD' AND c.phase='END_NOTICE_PENDING')":" AND 0"):'';
-  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=? WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence+normalNoticeFence;
+  const generation=job.entityType==='EXPENSE'&&env.SERIAL_JOB_PROVENANCE_ENABLED==='true'?",serial_lease_generation=serial_lease_generation+CASE WHEN serial_provenance_version=1 THEN 1 ELSE 0 END":"";
+  const claimSql=`UPDATE sync_jobs SET status='PROCESSING',attempt_count=attempt_count+1,last_error=NULL,updated_at=?,next_attempt_at=NULL,lease_until=?,lease_token=?${generation} WHERE entity_type=? AND entity_key=? AND entity_version=? AND ${eligible}${serializePersonalUse?` AND NOT EXISTS(SELECT 1 FROM sync_jobs active WHERE active.entity_type='PERSONAL_USE' AND active.entity_key=? AND active.entity_version<>? AND active.status='PROCESSING' AND active.lease_until>?)`:""}`+terminalFence+legacyFence+normalNoticeFence;
   const claimArgs:unknown[]=[now,leaseUntil,leaseToken,job.entityType,job.entityKey,job.entityVersion,now,now];if(serializePersonalUse)claimArgs.push(job.entityKey,job.entityVersion,now);
   if(job.entityType==='EXPENSE'&&legacyCutoverSchema===true&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
   if(job.entityType==='EXPENSE'&&env.CONTINUOUS_NORMAL_NOTICE_HANDOFF_ENABLED==='true'&&env.GOOGLE_SPREADSHEET_ID)claimArgs.push(env.GOOGLE_SPREADSHEET_ID);
-  const claim=await env.DB.prepare(claimSql).bind(...claimArgs).run();
+  if(env.DB!==scopeDb||job.entityType==='EXPENSE'&&(env.SERIAL_JOB_PROVENANCE_ENABLED!==scopeFlag||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_SCOPE_CHANGED');
+  const claim=await scopeDb.prepare(claimSql).bind(...claimArgs).run();
+  if(env.DB!==scopeDb||job.entityType==='EXPENSE'&&(env.SERIAL_JOB_PROVENANCE_ENABLED!==scopeFlag||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_SCOPE_CHANGED');
   return Number(claim.meta.changes||0)===1?leaseToken:null;
 }
 export async function syncJob(env:Env,job:SheetsSyncJob,retryAttempt=1):Promise<SheetSyncOutcome>{

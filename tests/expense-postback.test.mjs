@@ -332,3 +332,15 @@ test('guided item correction is scoped to one bank slip and the user explicitly 
   assert.equal(h.state.row.status,'CONFIRMED');
   assert.equal(h.state.queue.length,1);
 });
+
+test('category choice rolls back with its review and audit if the document write fails',async()=>{
+  const document={document_type:'BANK_SLIP',normalized_json:JSON.stringify({expenseReview:{requiredFields:['category'],confirmedFields:[]}})};
+  const h=harness('WAITING_CONFIRM',{document,category:'general'});
+  const original=h.state.document.normalized_json;
+  h.env.DB.failAt=2;
+  await assert.rejects(handleExpensePostback(h.env,h.event('a=expense_set_category&id=exp_1&category=equipment'),h.actor),/fixture batch failure/);
+  assert.equal(h.state.row.category,'general');
+  assert.equal(h.state.document.normalized_json,original);
+  assert.equal(h.env.DB.sqlite.prepare("SELECT count(*) AS n FROM expense_audit_log WHERE action='EDIT'").get().n,0);
+  assert.equal(h.state.queue.length,0);
+});

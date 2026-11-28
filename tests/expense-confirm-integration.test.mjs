@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
-import {readFileSync,readdirSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
 import {confirmExpenseAtomically} from '../dist/expense/confirm.js';
 import {undoConfirmedExpense} from '../dist/expense/undo.js';
 import {enqueueSheetSync,recoverPendingSheetJobs} from '../dist/db/repositories.js';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 class Statement{
   constructor(owner,sql){this.owner=owner;this.sql=sql;this.args=[];}
@@ -13,8 +14,9 @@ class Statement{
   async all(){return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
   runSync(){
     const statement=this.owner.sqlite.prepare(this.sql);
-    if(/^\s*SELECT\b/i.test(this.sql))return{results:statement.all(...this.args),meta:{changes:0}};
-    const result=statement.run(...this.args);return{meta:{changes:Number(result.changes)}};
+    if(/^\s*SELECT\b/i.test(this.sql))return{success:true,results:statement.all(...this.args),meta:{changes:0}};
+    if(/\bRETURNING\b/i.test(this.sql)){const results=statement.all(...this.args);return{success:true,results,meta:{changes:results.length}};}
+    const result=statement.run(...this.args);return{success:true,meta:{changes:Number(result.changes)}};
   }
   async run(){return this.runSync();}
 }
@@ -38,8 +40,7 @@ const created='2026-01-01T00:00:00.000Z';
 const reviewedJson=JSON.stringify({expenseReview:{requiredFields:['payment'],confirmedFields:['payment']}});
 function harness({version=1,existingVersions=[],syncEnabled=true,document=true,normalizedJson=reviewedJson,updatedAt=created}={}){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const dir=new URL('../migrations/',import.meta.url);
-  for(const name of readdirSync(dir).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,dir),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const snapshot={description:'sanitized fixture',amountSatang:100,transactionDate:'2026-01-01',paymentKey:'cash',sourceWallet:'CASH_DRAWER',category:'ingredients',version};
   sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version)
     VALUES('exp_fixture','msg_fixture','line_fixture',?,?,?,?,?,?,'WAITING_CONFIRM','trace_fixture',?,?)`)
@@ -61,6 +62,39 @@ const jobs=h=>h.sqlite.prepare('SELECT * FROM sync_jobs ORDER BY entity_version'
 const audits=h=>h.sqlite.prepare('SELECT * FROM expense_audit_log ORDER BY created_at,audit_id').all().map(row=>({...row}));
 const state=h=>JSON.stringify({expense:expense(h),documents:documents(h),jobs:jobs(h),audits:audits(h)});
 const expireOutbox=h=>h.sqlite.prepare("UPDATE sync_jobs SET updated_at=? WHERE status='PENDING'").run(created);
+
+function enableDraftProvenance(h,{membership=true,barrier=false}={}){
+ h.sqlite.exec("DROP TRIGGER continuous_daily_cutover_prepared; INSERT INTO continuous_daily_cutovers VALUES('book',1,'legacy',2,'daily',3,'raw',4,'detail','claim',0,'ACTIVE','now','now')");
+ if(membership)h.sqlite.exec("INSERT INTO continuous_daily_post_cutover_expenses VALUES('book','exp_fixture')");
+ h.sqlite.exec("DROP TRIGGER serial_source_provenance_not_ready; INSERT INTO serial_source_provenance_activation VALUES(1,'book','aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa','now'); DROP TRIGGER serial_job_provenance_not_ready; INSERT INTO serial_job_provenance_activation VALUES(1,'book','now')");
+ if(barrier)h.sqlite.exec("CREATE TRIGGER serial_job_provenance_not_ready BEFORE INSERT ON serial_job_provenance_activation BEGIN SELECT RAISE(ABORT,'not ready'); END");
+ Object.assign(h.env,{SERIAL_JOB_PROVENANCE_ENABLED:'true',GOOGLE_SPREADSHEET_ID:'book'});
+}
+test('draft provenance confirm records only positive cohort and aborts on barrier drift',async()=>{
+ for(const membership of [true,false]){const h=harness();try{
+  enableDraftProvenance(h,{membership});assert.equal(await h.confirm(),1);
+  assert.equal(jobs(h)[0].serial_provenance_version,0);
+  assert.equal(jobs(h)[0].serial_lease_generation,0);
+ }finally{h.close();}}
+ const h=harness();try{
+  enableDraftProvenance(h,{barrier:true});const before=state(h);await assert.rejects(h.confirm());assert.equal(state(h),before);
+ }finally{h.close();}
+});
+test('draft provenance retains one confirmed job after an acknowledgement is lost',async()=>{
+ const h=harness();try{
+  enableDraftProvenance(h);h.DB.failAfterCommit=true;await assert.rejects(h.confirm());h.DB.failAfterCommit=false;
+  assert.equal(expense(h).status,'CONFIRMED');assert.equal(jobs(h).length,1);assert.equal(jobs(h)[0].serial_provenance_version,0);
+  assert.equal(await h.confirm(),null);assert.equal(jobs(h).length,1);
+ }finally{h.close();}
+});
+test('scope drift after confirmation commit is reported uncertain without replay',async()=>{
+ const h=harness();try{
+  enableDraftProvenance(h);const batch=h.DB.batch.bind(h.DB);
+  h.DB.batch=async statements=>{const result=await batch(statements);h.env.GOOGLE_SPREADSHEET_ID='other';return result;};
+  await assert.rejects(h.confirm(),/EXPENSE_CONFIRM_OUTCOME_UNCERTAIN/);
+  assert.equal(expense(h).status,'CONFIRMED');assert.equal(jobs(h).length,1);assert.equal(jobs(h)[0].serial_provenance_version,0);
+ }finally{h.close();}
+});
 
 test('SQLite: confirmation atomically records the exact reviewed transition and durable outbox',async()=>{
   const h=harness();

@@ -1,4 +1,5 @@
 import {verifyNormalPilotRow} from './normal-pilot-readback';
+import {closeUnverifiedSerialRound,findOpenSerialRounds,findRecentSerialRounds,observeSerialRound,openSerialRound,readRoundReservations,readSerialRound,serialSelectionGuard} from './serial-round-store';
 import {parseParkedPilot,operateParkedPilot} from './parked-expense-handover';
 import { recoverPendingSheetJobs } from "../db/repositories";
 import { getEvidence } from "../evidence/r2";
@@ -39,7 +40,11 @@ import {ReviewRequestBudget} from '../sheets/review-request-budget';
 import {SheetsHttpError,SheetsReadNetworkError,SheetsMutationOutcomeUnknownError} from '../sheets/client';
 import {GoogleOAuthHttpError,GoogleOAuthPreflightError} from '../sheets/google-auth';
 import {OperationTimeoutError} from '../shared/async';
-import {operateExactDailySettlement,parseExactDailyOperation} from './exact-daily-settlement';
+import {dailyIncidentScope,operateExactDailySettlement,parseExactDailyOperation,verifiedHeldDailyGuard} from './exact-daily-settlement';
+import {readFailedDailyIncidentEvidence} from './exact-daily-proof-evidence';
+import {parkedPilotEnabled} from '../sheets/parked-notice-adoption';
+import {closeAllVerifiedRound,closeMockParkedRound} from './serial-expense-handover';
+import {holdReservedPilot} from './serial-pilot-hold';
 import {operateMonthlyReport} from '../sheets/monthly-report-operator';
 function safeEqual(a:string,b:string):boolean{const aa=new TextEncoder().encode(a),bb=new TextEncoder().encode(b);if(aa.length!==bb.length)return false;let diff=0;for(let i=0;i<aa.length;i++)diff|=aa[i]!^bb[i]!;return diff===0;}
 function authorized(request:Request,env:Env):boolean{return env.ADMIN_TOKEN.length>=32&&safeEqual(request.headers.get("authorization")||"",`Bearer ${env.ADMIN_TOKEN}`);}
@@ -48,7 +53,7 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
   // Prevent an old or mixed deployment from executing a cutover/canary step.
   // The authenticated caller pins the Worker version obtained independently
   // from Cloudflare; an absent/malformed metadata binding fails closed.
-  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report','/admin/stable-sync/normal-expense-pilot','/admin/stable-sync/exact-daily-settlement','/admin/stable-sync/normal-pilot-readback'].includes(url.pathname);
+  const guardedMutation=request.method==='POST'&&['/admin/stable-sync/continuous-cutover','/admin/stable-sync/continuous-canary','/admin/stable-sync/provider-canary','/admin/stable-sync/canary-unwritten-recovery','/admin/stable-sync/canary-daily-incident','/admin/stable-sync/canary-raw-incident','/admin/stable-sync/canary-completed-incident','/admin/stable-sync/canary-raw-undo-incident','/admin/stable-sync/monthly-report','/admin/stable-sync/normal-expense-pilot','/admin/stable-sync/exact-daily-settlement','/admin/stable-sync/normal-pilot-readback','/admin/stable-sync/serial-round-recovery'].includes(url.pathname);
   const versionPattern=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
   const served=typeof env.CF_VERSION_METADATA?.id==='string'&&versionPattern.test(env.CF_VERSION_METADATA.id)?env.CF_VERSION_METADATA.id:null;
   if(guardedMutation){
@@ -136,10 +141,100 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       const body=await request.json().catch(()=>({})) as {action?:unknown};
       return Response.json({...await operateContinuousCanary(env,body.action),servedVersion:served},{headers:{'cache-control':'no-store'}});
     }
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/serial-round-recovery'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
+      const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,version=env.CF_VERSION_METADATA?.id,scope=dailyIncidentScope(env);
+      const stable=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&env.CF_VERSION_METADATA?.id===version&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'&&dailyIncidentScope(env)===scope;
+      const headers={'cache-control':'no-store'},body=await request.json().catch(()=>null) as {action?:unknown;roundId?:unknown;jobId?:unknown;fingerprint?:unknown;preimageDigest?:unknown;jobs?:unknown;ownerSupervising?:unknown;externalWritersFenced?:unknown}|null;
+      if(!body)return Response.json({ok:false},{status:400,headers});
+      const active=await db.prepare('SELECT singleton FROM serial_pilot_round_fence_activation WHERE singleton=1').first<{singleton:number}>();
+      const barrier=await db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='trigger' AND name='serial_pilot_fence_not_ready'").first<{n:number}>();
+      if(active?.singleton!==1||barrier?.n!==0||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      const provenanceColumns=await db.prepare("SELECT count(*) AS n FROM pragma_table_info('sync_jobs') WHERE name IN ('serial_provenance_version','serial_lease_generation')").first<{n:number}>();
+      if(provenanceColumns?.n!==2||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',reason:'PROVENANCE_SCHEMA_UNAVAILABLE',servedVersion:served},{status:409,headers});
+      if(body.action==='HOLD_RESERVED'){
+        if(Object.keys(body).length!==6||typeof body.roundId!=='string'||!versionPattern.test(body.roundId)||typeof body.jobId!=='string'||!versionPattern.test(body.jobId)||typeof body.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(body.fingerprint)||body.ownerSupervising!==true||body.externalWritersFenced!==true)return Response.json({ok:false},{status:400,headers});
+        const valid=()=>!!version&&stable()&&env.SERIAL_PILOT_HOLD_ENABLED==='true'&&env.SERIAL_JOB_PROVENANCE_ENABLED==='true'&&env.SERIAL_SOURCE_PROVENANCE_ENABLED==='true'&&parkedPilotEnabled(env,version);
+        if(!valid())return Response.json({ok:false,outcome:'HELD',servedVersion:served},{status:409,headers});
+        const holdBarrier=await db.prepare("SELECT count(*) AS n FROM sqlite_master WHERE type='trigger' AND name='serial_pilot_hold_not_ready'").first<{n:number}>();
+        if(holdBarrier?.n!==0||!valid())return Response.json({ok:false,outcome:'HELD',servedVersion:served},{status:409,headers});
+        const held=await holdReservedPilot(env,body.roundId,body.jobId,body.fingerprint,version!,valid);
+        return Response.json({...held,servedVersion:served},{status:held.ok?200:409,headers});
+      }
+      if(body.action==='LIST_OPEN'&&Object.keys(body).length===1){
+        if(!book)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        const rounds=await findOpenSerialRounds(db,book);
+        if(!rounds||rounds.length>1||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        return Response.json({ok:true,outcome:'OPEN_ROUNDS',rounds,servedVersion:served},{headers});
+      }
+      if(body.action==='LIST_RECENT'&&Object.keys(body).length===1){
+        if(!book)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        const rounds=await findRecentSerialRounds(db,book);
+        if(!rounds||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        return Response.json({ok:true,outcome:'RECENT_ROUNDS',rounds,servedVersion:served},{headers});
+      }
+      if(body.action==='OPEN_EMPTY'&&Object.keys(body).length===4){
+        if(!book||typeof body.roundId!=='string'||!versionPattern.test(body.roundId)||body.ownerSupervising!==true||body.externalWritersFenced!==true)return Response.json({ok:false},{status:400,headers});
+        if(!version||!parkedPilotEnabled(env,version)||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        const emptyGuard=serialSelectionGuard(db,book,[]),emptyFingerprint='0'.repeat(64);
+        if(!await openSerialRound(db,body.roundId,null,new Date().toISOString(),[],{spreadsheetId:book,fingerprint:emptyFingerprint},stable,[emptyGuard])||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        return Response.json({ok:true,outcome:'OPEN',servedVersion:served},{headers});
+      }
+      if(body.action==='OPEN_INITIAL'&&Object.keys(body).length===7){
+        if(!book||typeof body.roundId!=='string'||!versionPattern.test(body.roundId)||typeof body.fingerprint!=='string'||!/^[0-9a-f]{64}$/.test(body.fingerprint)||typeof body.preimageDigest!=='string'||!/^[0-9a-f]{64}$/.test(body.preimageDigest)||!Array.isArray(body.jobs)||body.jobs.length>100||body.jobs.some(x=>typeof x!=='string'||!versionPattern.test(x))||body.ownerSupervising!==true||body.externalWritersFenced!==true)return Response.json({ok:false},{status:400,headers});
+        if(!version||!parkedPilotEnabled(env,version))return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        const priorEvidence=await readFailedDailyIncidentEvidence(env,body.fingerprint);
+        if(!priorEvidence||priorEvidence.projection_state!=='VERIFIED'||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        const proof=verifiedHeldDailyGuard(priorEvidence,body.preimageDigest);
+        const originalGuard=db.prepare(`SELECT CASE WHEN ${proof.sql} THEN 1 ELSE json_extract('invalid','$') END AS ok`).bind(...proof.args);
+        // Compare the entire ordered eligible set inside the same transaction
+        // that seals the snapshot. A changed, added, duplicated or removed job
+        // aborts rather than silently changing this round.
+        const selectionGuard=serialSelectionGuard(db,book,body.jobs);
+        if(!stable()||!await openSerialRound(db,body.roundId,null,new Date().toISOString(),body.jobs,{spreadsheetId:book,fingerprint:body.fingerprint},stable,[originalGuard,selectionGuard])||!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+        return Response.json({ok:true,outcome:'OPEN',servedVersion:served},{headers});
+      }
+      const closingVerified=body.action==='CLOSE_VERIFIED',closingMock=body.action==='CLOSE_MOCK_PARKED';
+      if(Object.keys(body).length!==(closingVerified||closingMock?4:2)||!['READ','CLOSE_UNVERIFIED','CLOSE_VERIFIED','CLOSE_MOCK_PARKED'].includes(String(body.action))||typeof body.roundId!=='string'||!versionPattern.test(body.roundId)||(closingVerified||closingMock)&&(body.ownerSupervising!==true||body.externalWritersFenced!==true))return Response.json({ok:false},{status:400,headers});
+      const prior=await readSerialRound(db,body.roundId);
+      if(!book||!stable()||!prior?.binding||prior.binding.spreadsheet_id!==book)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      if(body.action==='CLOSE_UNVERIFIED'&&!await closeUnverifiedSerialRound(db,body.roundId,new Date().toISOString(),book,stable))return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      if(closingVerified){
+        const valid=()=>!!version&&stable()&&parkedPilotEnabled(env,version);
+        const closed=version?await closeAllVerifiedRound(env,body.roundId,version,valid):{ok:false,outcome:'HELD'};
+        if(!closed.ok)return Response.json({...closed,servedVersion:served},{status:409,headers});
+      }
+      if(closingMock){
+        const valid=()=>!!version&&stable()&&env.APP_ENV==='test'&&env.SERIAL_MOCK_CLASSIFICATION_ENABLED==='true'&&parkedPilotEnabled(env,version);
+        const closed=version&&valid()?await closeMockParkedRound(env,body.roundId,version,valid):{ok:false,outcome:'HELD'};
+        if(!closed.ok)return Response.json({...closed,servedVersion:served},{status:409,headers});
+      }
+      const observation=body.action==='READ'?prior:await readSerialRound(db,body.roundId);
+      if(!stable()||!observation||!observation.binding||observation.binding.spreadsheet_id!==book)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      const evidence=await observeSerialRound(db,body.roundId);
+      if(!stable()||!evidence||evidence.length!==observation.round.selected_count)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      if(observation.round.state==='CLOSED'){
+        const allVerified=observation.round.reason==='ALL_VERIFIED'&&observation.round.selected_count>0&&observation.results.every(x=>x.category==='VERIFIED'&&x.evidence==='VERIFIED_RECEIPT');
+        const held=observation.round.reason===(observation.round.selected_count===0?'EMPTY_SELECTION':'EVIDENCE_REQUIRED')&&observation.results.every(x=>x.category==='RECONCILE'&&x.evidence==='UNVERIFIED');
+        const mock=observation.round.reason==='MOCK_CLASSIFIED'&&observation.results.filter(x=>x.category==='PARKED'&&x.evidence==='MOCK_ATTESTED_HANDOFF').length===1&&observation.results.every(x=>x.category==='PARKED'&&x.evidence==='MOCK_ATTESTED_HANDOFF'||x.category==='NOT_STARTED'&&x.evidence==='MOCK_NEVER_STARTED'||x.category==='VERIFIED'&&x.evidence==='VERIFIED_RECEIPT'||x.category==='RECONCILE'&&x.evidence==='UNVERIFIED');
+        if(observation.results.length!==observation.round.selected_count||!allVerified&&!held&&!mock)return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      }
+      const reservationChain=body.action==='READ'&&observation.round.state==='OPEN'
+        ? await readRoundReservations(db,body.roundId,observation).catch(()=>({status:'UNKNOWN' as const})) : undefined;
+      if(!stable())return Response.json({ok:false,outcome:'UNVERIFIED',servedVersion:served},{status:409,headers});
+      return Response.json({ok:true,outcome:observation.round.state,selected:observation.round.selected_count,fingerprint:observation.binding.fingerprint,reservationChain,
+        mockOracleAndFenceOnly:observation.round.reason==='MOCK_CLASSIFIED',
+        members:observation.items.map(x=>x.job_id),
+        receipts:observation.verifiedEvidence.map(x=>({jobId:x.job_id,proof:x.proof,proofAlgorithm:x.proof_algorithm,workerVersion:x.worker_version,verifiedAt:x.verified_at})),
+        results:observation.round.state==='CLOSED'?observation.results.map(x=>({jobId:x.job_id,category:x.category,evidence:x.evidence,successorJobId:x.successor_job_id})):[],
+        recordedResultsAreCurrentProviderProof:false,readRevalidatesRecordedIntegrity:false,
+        observationsAreProof:false,provenanceObservationsAreProof:false,observationsAtomicWithRound:false,observedAt:new Date().toISOString(),
+        observations:evidence.map(x=>({jobId:x.job_id,jobState:x.job_state,holdReason:x.hold_reason,provenanceVersion:x.provenance_version,leaseGeneration:x.lease_generation,reservations:x.reservations,epochState:x.epoch_state,admittedOperations:x.admitted_operations,claimRelationship:x.claim_relationship,verifiedStages:x.verified_stages,unresolvedStages:x.unresolved_stages,lastVerifiedAt:x.last_verified_at,lastVerifiedStageCandidate:x.last_verified_stage,lastVerifiedStageMayTie:true,workbookClaimStateGlobal:x.workbook_claim,workbookClaimPhaseGlobal:x.workbook_claim_phase,workbookClaimReasonGlobal:x.workbook_claim_reason})),servedVersion:served},{headers});
+    }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-pilot-readback'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
       const headers={'cache-control':'no-store'};
       const body=await request.json().catch(()=>null);
-      if(!body||body.action!=='READBACK')return Response.json({ok:false},{status:400,headers});
+      if(!body||!['READBACK','READ_HISTORICAL'].includes(body.action))return Response.json({ok:false},{status:400,headers});
+      const historical=body.action==='READ_HISTORICAL';
       let identity;
       if(Object.keys(body).length!==1){
         if(Object.keys(body).length!==3||typeof body.jobId!=='string'||typeof body.fingerprint!=='string'||
@@ -147,9 +242,10 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
           return Response.json({ok:false},{status:400,headers});
         identity={jobId:body.jobId,fingerprint:body.fingerprint};
       }
+      if(historical&&!identity)return Response.json({ok:false},{status:400,headers});
       let matched=false;
-      try{matched=await verifyNormalPilotRow(env,identity);}catch{/* Unavailable evidence keeps the pilot held. */}
-      return Response.json({ok:matched,outcome:matched?'MATCHED':'UNVERIFIED',servedVersion:served},{status:matched?200:409,headers});
+      try{matched=await verifyNormalPilotRow(env,identity,historical);}catch{/* Unavailable evidence keeps the pilot held. */}
+      return Response.json({ok:matched,outcome:matched?(historical?'MATCHED_READ_ONLY':'MATCHED'):'UNVERIFIED',servedVersion:served},{status:matched?200:409,headers});
     }
     if(request.method==='POST'&&url.pathname==='/admin/stable-sync/normal-expense-pilot'&&env.CONTINUOUS_NORMAL_QUEUE_PILOT_ENABLED==='true'){
       const body=await request.json().catch(()=>null) as {jobId?:unknown}|null;
@@ -161,7 +257,8 @@ export async function handleAdmin(request:Request,env:Env,_ctx:ExecutionContext)
       }
       return Response.json({ok:false,error:'PILOT_INPUT_INVALID',servedVersion:served},{status:400,headers});
     }
-    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'){
+    if(request.method==='POST'&&url.pathname==='/admin/stable-sync/exact-daily-settlement'&&
+      (env.EXACT_DAILY_SETTLEMENT_ENABLED==='true'||env.EXACT_DAILY_HISTORICAL_RECEIPT_SHA256!==undefined)){
       const headers={'cache-control':'no-store'};
       const operation=parseExactDailyOperation(await request.json().catch(()=>null));
       if(!operation)return Response.json({ok:false,error:'INVALID_EXACT_DAILY_OPERATION'},{status:400,headers});

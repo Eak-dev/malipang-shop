@@ -199,7 +199,7 @@ Google Sheets ใช้เพื่อ:
 รับรูป
 -> ตรวจ LINE signature/idempotency
 -> เก็บหลักฐาน R2
--> อ่าน Timestamp + GPS overlay
+-> อ่าน Timestamp + GPS overlay (วันเวลาต้อง parse ได้จากข้อความ overlay เพียงชุดเดียว และตรงกับค่าที่ตัวอ่านรายงาน ไม่เช่นนั้นถือว่าไม่มีวันเวลา)
 -> ยืนยันนาฬิการ้านเป็นหลักฐานสถานที่
 -> ตรวจ radius และ photo age
 -> Durable Object จัด IN/OUT

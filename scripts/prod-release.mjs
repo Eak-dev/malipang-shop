@@ -20,6 +20,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {localMigrations,pendingMigrations,sha256Hex} from './prod-ops-snapshot.mjs';
+import {HISTORICAL_DAILY_PIN,parseProbeEvidence} from './prod-historical-daily-probe.mjs';
 
 export const DB='malipang-v5-2',WORKER='malipang-backend-v5-2',BUCKET='malipang-private-backups',RECORD_PREFIX='release-versions/';
 const MIGRATION=/^\d{4}_[a-z0-9_]{1,80}\.sql$/;
@@ -31,6 +32,9 @@ const RUN_ID=/^[1-9][0-9]{0,19}$/;
 export class ReleaseStop extends Error{constructor(code){super(code);this.name='ReleaseStop';}}
 const stop=code=>{throw new ReleaseStop(code);};
 const short=sha=>{if(!/^[0-9a-f]{40}$/.test(sha??''))stop('EXPECTED_SHA_INVALID');return sha.slice(0,7);};
+function verifyProbeLedger(applied,local){
+  if(applied.length!==local.length||applied.some((name,i)=>name!==local[i]))stop('HISTORICAL_PROBE_LEDGER_MISMATCH');
+}
 
 export function readLedger(run){
   let out;try{out=JSON.parse(run(['d1','execute',DB,'--remote','--json','--command','SELECT name AS migration FROM d1_migrations ORDER BY id']));}catch{stop('LEDGER_UNREADABLE');}
@@ -110,15 +114,17 @@ export function getRecord(run,runId){
  * a dry-run deploy and one probe object in private R2. Run it first so a
  * missing permission is found before the migration, not between migration and
  * deploy. */
-export async function preflight({run,api,sha,confirmation,local,config,runId,say}){
+export async function preflight({run,api,sha,confirmation,local,config,runId,say,probeOnly=false}){
   const s=short(sha);
   if(confirmation!==`PREFLIGHT ${s}`)stop('CONFIRMATION_MISMATCH');
   if(config?.name!==WORKER)stop('CONFIG_WORKER_NAME_MISMATCH');
   const applied=readLedger(run),pending=pendingMigrations(applied,local);
   say(`- ledger_head: ${applied.at(-1)??'none'}`);say(`- pending_migrations: ${pending.length?pending.length>9?'10+':'1-9':'0'}`);
+  if(probeOnly)verifyProbeLedger(applied,local);
   if(pending.length)say(`- expected_migrate_confirmation: MIGRATE ${s} FROM ${(applied.at(-1)??'0000').slice(0,4)} TO ${local.at(-1).slice(0,4)}`);
   const live=liveVersion(run);say('- worker_status: SINGLE_VERSION_100');say(`- live_version_sha256: ${sha256Hex(live)}`);
   const changes=varChanges(await liveVars(api),config.vars);say(`- config_changes: ${changes.join(',')||'NONE'}`);
+  if(probeOnly&&changes.some(name=>name!==HISTORICAL_DAILY_PIN))stop('HISTORICAL_PROBE_CONFIG_DRIFT');
   try{run(['deploy','--dry-run']);}catch{stop('DRY_RUN_FAILED');}
   say('- dry_run: PASS');
   putRecord(run,`preflight-${runId}`,{probe:true,sha});
@@ -167,16 +173,18 @@ export function migrate({run,sha,confirmation,local,say}){
   say(`- ledger_head_after: ${after.at(-1)}`);say('- migrate: PASS');return 0;
 }
 
-export async function deploy({run,api,sleep,sha,confirmation,local,config,runId,attempt,say}){
+export async function deploy({run,api,sleep,sha,confirmation,local,config,runId,attempt,say,probeOnly=false}){
   const s=short(sha);
   // A rerun would record the first attempt's new version as the rollback target.
   if(attempt!=='1')stop('RERUN_NOT_ALLOWED_DISPATCH_A_NEW_RUN');
   recordKey(runId);
   if(config?.name!==WORKER)stop('CONFIG_WORKER_NAME_MISMATCH');
-  const pending=pendingMigrations(readLedger(run),local);
+  const applied=readLedger(run),pending=pendingMigrations(applied,local);
+  if(probeOnly)verifyProbeLedger(applied,local);
   if(pending.length){say(`- pending_migrations: ${pending.join(' ')}`);stop('PENDING_MIGRATIONS');}
   const prior=liveVersion(run),changes=varChanges(await liveVars(api),config.vars);
   say(`- config_changes: ${changes.join(',')||'NONE'}`);
+  if(probeOnly&&changes.some(name=>name!==HISTORICAL_DAILY_PIN))stop('HISTORICAL_PROBE_CONFIG_DRIFT');
   const want=`DEPLOY ${s} CHANGES ${changes.join(',')||'NONE'}`;
   if(confirmation!==want){say(`- expected_confirmation: ${want}`);stop('CONFIRMATION_MISMATCH');}
   try{run(['deploy','--dry-run']);}catch{stop('DRY_RUN_FAILED');}
@@ -218,10 +226,22 @@ export async function runOperation(op,{run=wrangler,api=cloudflare,sleep=ms=>new
   const base={run,sleep,sha:env.EXPECTED_SHA,confirmation:env.CONFIRMATION,say};
   try{
     const cfg=()=>config??JSON.parse(readFileSync(new URL('../wrangler.jsonc',import.meta.url),'utf8'));
-    if(op==='preflight')return await preflight({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID});
+    const probeOnly=env.HISTORICAL_DAILY_PROBE==='true';
+    if(probeOnly&&op!=='preflight'&&op!=='deploy')stop('HISTORICAL_PROBE_OPERATION_INVALID');
+    if(op==='preflight'||op==='deploy'){
+      let effective=cfg(),releaseRun=run;
+      if(probeOnly){
+        const evidence=parseProbeEvidence(env.MALIPANG_HISTORICAL_DAILY_PROBE);
+        if(!evidence)stop('HISTORICAL_PROBE_EVIDENCE_INVALID');
+        effective={...effective,vars:{...effective.vars,[HISTORICAL_DAILY_PIN]:evidence.pin}};
+        releaseRun=(args,options)=>run(args[0]==='deploy'?[...args,'--var',`${HISTORICAL_DAILY_PIN}:${evidence.pin}`]:args,options);
+      }
+      const release={...base,run:releaseRun,api,local,config:effective,runId:env.GITHUB_RUN_ID,probeOnly};
+      if(op==='preflight')return await preflight(release);
+      return await deploy({...release,attempt:env.GITHUB_RUN_ATTEMPT});
+    }
     if(op==='review_fingerprint')return reviewFingerprint(base);
     if(op==='migrate')return migrate({...base,local});
-    if(op==='deploy')return await deploy({...base,api,local,config:cfg(),runId:env.GITHUB_RUN_ID,attempt:env.GITHUB_RUN_ATTEMPT});
     if(op==='rollback_worker')return await rollbackWorker(base);
     stop('UNKNOWN_OPERATION');
   }catch(error){say(`- stop: ${error instanceof ReleaseStop?error.message:'UNEXPECTED_ERROR'}`);return 1;}

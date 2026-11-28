@@ -2,7 +2,7 @@
 
 **ขอบเขต** งานซิงก์เดิมอยู่ใน REVIEW หลังการส่ง insert ที่มี marker และ journal สถานะ IN_FLIGHT ส่วน failed job เดิมยัง OPEN การอ่าน grid ของ writer รุ่นเดิมรองรับการเพิ่มหนึ่งแถว หลักฐานจำลองสร้างกรณีเพิ่มสองแถวเมื่อมี padding ได้ สาเหตุของผลอ่านแต่แรกใน Production และสถานะปัจจุบันต้องตรวจสด เป้าหมายขั้นนี้คือยืนยันผลที่เขียนไปแล้ว ตรวจสูตร ค่า รายการและยอดที่ D1 คาดไว้ กริดก่อน insert ที่สร้างย้อนจาก postimage แถวว่างท้ายสุด รูปแบบตัวเลขของรายการ notice และรายงาน
 
-**ผู้ปฏิบัติ** เรียก POST /admin/stable-sync/exact-daily-settlement ด้วย admin authorization และ x-malipang-expected-worker-version ที่ได้จากการตรวจ version ที่รับ traffic ทั้งหมด ณ เวลานั้น เปิด EXACT_DAILY_SETTLEMENT_ENABLED เฉพาะขั้นตอนนี้ ส่ง JSON ตามลำดับต่อไปนี้
+**ขั้นตรวจปกติ** เรียก POST /admin/stable-sync/exact-daily-settlement ด้วย admin authorization และ x-malipang-expected-worker-version ที่ได้จากการตรวจ version ที่รับ traffic ทั้งหมด ณ เวลานั้น เปิด EXACT_DAILY_SETTLEMENT_ENABLED เฉพาะขั้นตอนนี้ ส่ง JSON ตามลำดับต่อไปนี้
 
 1. ส่ง `{"action":"INSPECT"}` เพื่ออ่าน fingerprint ของ incident ที่ตรงเงื่อนไขเพียงหนึ่งรายการ ค่า projectionState คือ IN_FLIGHT หรือ VERIFIED หากได้รับ VERIFIED ให้ตรวจ preimageDigest เทียบผล PROBE ที่เก็บไว้
 2. ส่ง `{"action":"PROBE","fingerprint":"<hash จาก INSPECT>"}` ต้องได้ MATCHED พร้อม preimageDigest รักษารั้วผู้เขียนตลอดการตรวจ การอ่านซ้ำช่วยตรวจการเปลี่ยนระหว่างรอบ ขอบเขตหลักฐาน DAILY ครอบคลุมสูตร ค่าและรูปแบบตัวเลขที่ระบุ การตรวจนี้ไม่ได้เก็บ notes, validation, protection หรือ comment anchor ของทั้ง grid
@@ -11,3 +11,23 @@
 5. ตรวจ INSPECT อีกครั้ง ต้องได้ fingerprint และ preimageDigest ตรงกับ PROBE ตรวจว่า synced job กับ claim เดิมยัง REVIEW, failed job ยัง OPEN, ไม่มี epoch ที่ active, ไม่มีการเพิ่มธุรกรรมหรือเปลี่ยน notice จากขั้นตอนนี้ หากได้รับ UNCERTAIN หรือไม่ได้คำตอบ ให้ตรวจด้วย INSPECT อย่างเดียวและคง gate ต่อไป อย่าส่ง SETTLE ซ้ำจากผลที่ไม่ชัดเจน
 
 **ทดสอบและกู้ต่อ** กรณีจำลองใช้ Miniflare D1 ตรวจผลรับ ACK, ACK หายหลัง commit, rollback ภายใน batch, failed job เปลี่ยนก่อน CAS และการส่งคำขอเก่าหลัง VERIFIED หลังบันทึกให้คง journal และ preimage ซึ่งย้อนค่าไม่ได้ตาม trigger หากขั้นตอนถัดไปยังไม่พร้อม ให้คง claim และงานเดิมใน REVIEW และปิด operator เพื่อระงับการเรียกเพิ่มเติม การย้าย claim, ปล่อย notice และอนุญาตงานทดสอบตัวถัดไปต้องมีหลักฐานและการตรวจผลแยกต่างหาก
+
+## PROBE แบบอ่านอย่างเดียวด้วยสำเนาหลังเหตุ
+
+ผู้จัดเตรียมหลักฐานตรวจเหตุการณ์คัดลอกใน Drive Activity และ `files.version` จาก Drive ก่อนและหลังอ่านกริด ใช้ `prepareHistoricalDailyReceipt` ตรวจกริดเต็มและส่วนต่างที่ตกลงกัน แล้วเตรียม JSON ที่มี `receipt` และ SHA-256 ของแถวที่ตรวจใน `preimageDigest`. เก็บ JSON ใน GitHub Environment `production` ชื่อ `MALIPANG_HISTORICAL_DAILY_PROBE`. ใบรับมีเฉพาะ SHA-256 ห้าค่า.
+
+1. ให้ #296 ระบุ SHA บน `main`, ขอบเขตเหตุเดียว และสิทธิ์สำหรับแต่ละรัน. ใช้ workflow Production release เลือก `historical_daily_probe=true` ตอน `preflight` และ `deploy`. ตัวรันสร้างค่า `EXACT_DAILY_HISTORICAL_RECEIPT_SHA256` จากใบรับและส่งเฉพาะค่านี้ให้ Worker. เมื่อมี migration ค้างหรือค่า config อื่นต่างจาก Production จะหยุด. Rollback ใช้ `rollback_worker` กับ run ID ที่บันทึกรุ่นก่อนหน้า.
+2. เมื่อ Worker รุ่นที่อนุมัติรับทราฟฟิก 100% ให้รัน `prod-historical-daily-probe.yml` ผ่าน Environment `production` บน SHA เดิม โดยระบุ hash ของ Worker และยืนยันว่าหยุดผู้เขียนภายนอกกับมีเจ้าของเฝ้าดู. ตัวรันส่ง `PROBE` พร้อมใบรับหนึ่งครั้ง แล้วเทียบ fingerprint, receipt digest, preimage digest และรุ่น Worker. ตรวจ deployment ซ้ำก่อนรายงาน `MATCHED`.
+3. Worker ค้นเหตุเดิมใน D1 แล้วตรวจกริดหลัก, source, carrier, บัญชี, รายงาน, รูปแบบตัวเลขและ notice ซ้ำ. เมื่อมีเพียง pin อ่านและปิด operator สำหรับ SETTLE, endpoint รับเฉพาะ `PROBE` ที่มีใบรับตรงกัน. หากหลักฐานไม่ตรงหรือผลไม่ชัด ให้คง claim เดิมและหยุดเพื่อทบทวน. การบันทึกผลใช้คำอนุมัติแยก.
+
+เมื่อผลยืนยันไม่ได้ log แสดง `PROBE_RESULT_UNVERIFIED` พร้อม HTTP status ถ้าได้รับคำตอบ. สำหรับ HTTP 409 ที่ Worker ตอบ `HELD` จะรายงานชื่อขั้นตรวจที่อยู่ในรายการอนุญาต เช่น `HTTP_409 STAGE_NOTICE`. ข้อมูลใน response ใช้ตรวจในหน่วยความจำ และคำขอคงส่งครั้งเดียว.
+
+## ร่างการบันทึกผลย้อนหลังใน D1
+
+`SETTLE_HISTORICAL` ใช้ `fingerprint`, `historicalReceipt`, `preimageDigest` และคำยืนยัน `externalWritersFenced` กับ `ownerSupervising` ของเหตุเดียว. Worker ต้องเป็นรุ่นที่ยืนยันแล้ว เปิด exact DAILY settlement กับ recovery gate และปิดตัวดำเนินการที่อาจแข่งกัน. Pin บันทึกแยกจาก pin อ่าน โดยผูก fingerprint, digest ของใบรับ และ preimage digest จาก PROBE.
+
+เมื่อเปิดใช้ใน fixture ที่มี trigger จาก draft `0081`, Worker เทียบกริดหลักและหลักฐานเดิมใหม่ก่อนส่ง D1 batch เดียว. Batch เปลี่ยน DAILY จาก `IN_FLIGHT` เป็น `VERIFIED` และเพิ่ม preimage กับ audit ที่แก้หรือลบด้วยคำสั่งปกติไม่ได้. claim, sync job, failed job และ epoch เดิมคงอยู่. ผลย้อนหลังยังใช้กับการจองปกติไม่ได้.
+
+ถ้าคำตอบหาย ให้ใช้ `INSPECT_HISTORICAL` กับ fingerprint เดิมและ Worker รุ่นที่รับทราฟฟิกทั้งหมดในขณะนั้น. ตรวจว่า `VERIFIED`, preimage และ digest ใน audit ตรงกับหลักฐานที่อนุมัติ. ถ้ายัง `IN_FLIGHT` หรือหลักฐานไม่ครบ ให้คง hold ไว้เพื่อกระทบยอดโดยไม่ส่ง SETTLE ซ้ำ.
+
+`0081` อยู่ใน `migrations-draft/` สำหรับทดสอบเท่านั้น. ชุด release ถึง `0067` ยังไม่มี trigger ของงานนี้. การปล่อยโค้ดด้วย config เดิมจึงยังคงทางอ่าน PROBE. ต้องอนุมัติการนำ schema มาใช้ การเปิด operator และการส่งคำสั่งจริงแยกกันใน #296.

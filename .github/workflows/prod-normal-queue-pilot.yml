@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
     inputs:
       phase:
-        description: RUN_SERIAL reconciles the current tip and processes this run’s selected queue one job at a time.
+        description: RUN_SERIAL processes selected jobs; experimental round-mode stops on an uncertain restart.
         type: choice
-        options: [PROBE, SETTLE, HANDOVER_ONE, INSPECT_HANDOVER, READBACK, FINISH_PILOT, RUN_SERIAL]
+        options: [PROBE, SETTLE, HANDOVER_ONE, INSPECT_HANDOVER, READBACK, READ_HISTORICAL, FINISH_PILOT, RUN_SERIAL, DISCOVER_ROUND, READ_ROUND, HOLD_RESERVED, RECOVER_ROUND]
         required: true
       expected_sha:
         description: Exact reviewed main SHA
@@ -19,6 +19,18 @@ on:
         description: Fresh successful private backup and restore run ID after 2026-11-21 10:07:19 UTC
         type: string
         required: false
+      round_id:
+        description: Exact round ID for READ_ROUND, HOLD_RESERVED, or RECOVER_ROUND
+        type: string
+        required: false
+      round_mode:
+        description: Experimental round mode requires an injected local identity store; this workflow fails closed
+        type: boolean
+        default: false
+      close_verified:
+        description: Experimental proof-bound close (not ready for production activation)
+        type: boolean
+        default: false
       external_writers_fenced:
         description: Current fact — external and manual writers are fenced
         type: boolean
@@ -62,6 +74,9 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           EXPECTED_WORKER_VERSION_SHA256: ${{ inputs.expected_worker_version_sha256 }}
           PILOT_PHASE: ${{ inputs.phase }}
+          PILOT_ROUND_ID: ${{ inputs.round_id }}
+          PILOT_ROUND_MODE: ${{ inputs.round_mode }}
+          PILOT_CLOSE_VERIFIED: ${{ inputs.close_verified }}
           BACKUP_RUN_ID: ${{ inputs.backup_run_id }}
           EXTERNAL_WRITERS_FENCED: ${{ inputs.external_writers_fenced }}
           OWNER_SUPERVISING: ${{ inputs.owner_supervising }}

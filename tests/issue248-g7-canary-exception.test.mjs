@@ -21,7 +21,7 @@ function canaryDb(overrides={}){
 }
 const run=(db,key=KEY,version=1)=>{const x=db.sqlite.prepare(canarySourceSql(key,version)).get();return {x,rows:[{success:true,meta:{changed_db:false,rows_written:0},results:[{...x}]}]};};
 // Independent re-statement of the Worker formula; tests/issue248-g7-canary-worker-parity.test.mjs uses the compiled Worker.
-const restated=db=>h(JSON.stringify({expense:db.sqlite.prepare(`SELECT e.* FROM expense_events e WHERE expense_id='${KEY}'`).get(),links:[],documents:[],items:[]}));
+const restated=db=>h(JSON.stringify({expense:db.sqlite.prepare(`SELECT ${EXPENSE_COLUMNS.join(',')} FROM expense_events WHERE expense_id='${KEY}'`).get(),links:[],documents:[],items:[]}));
 
 test('one ASCII statement returns only revision, counts and digests, and the digest equals the Worker formula',()=>{
  const db=canaryDb();try{
@@ -54,14 +54,14 @@ test('a source write bumps the revision; a cancelled, other-version or missing c
   const cancelled=run(db);assert.equal(cancelled.x.digest,null);assert.throws(()=>canarySourceDigest(cancelled.rows,{targetKey:KEY,targetVersion:1,epochRevision:cancelled.x.rev}),/ROW_COUNT/);
  }finally{db.close()}
 });
-test('a linked document yields no digest; schema drift fails to compile; oversize yields no digest',()=>{
+test('a linked document yields no digest; schema drift yields no result; oversize yields no digest',()=>{
  const db=canaryDb();try{
   db.sqlite.exec(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,expense_id) VALUES('doc_synthetic','m_doc_synthetic','U_doc_synthetic','RECEIPT','CONFIRMED','2026-11-10T00:00:00.000Z','${KEY}')`);
   const r=run(db);assert.equal(r.x.documents,1);assert.equal(r.x.digest,null);
   assert.throws(()=>canarySourceDigest(r.rows,{targetKey:KEY,targetVersion:1,epochRevision:r.x.rev}),/NO_GO_CANARY_SOURCE_SHAPE/);
  }finally{db.close()}
  const big=canaryDb({description:'x'.repeat(256001)});try{const r=run(big);assert.equal(r.x.digest,null);assert.throws(()=>canarySourceDigest(r.rows,{targetKey:KEY,targetVersion:1,epochRevision:r.x.rev}),/NO_GO_CANARY_SOURCE_DIGEST/);}finally{big.close()}
- const drift=canaryDb();try{drift.sqlite.exec('ALTER TABLE expense_events ADD COLUMN synthetic_extra TEXT');assert.throws(()=>drift.sqlite.prepare(canarySourceSql(KEY,1)),/same number of result columns/);}finally{drift.close()}
+ const drift=canaryDb();try{drift.sqlite.exec('ALTER TABLE expense_events ADD COLUMN synthetic_extra TEXT');assert.equal(drift.sqlite.prepare(canarySourceSql(KEY,1)).get(),undefined);}finally{drift.close()}
 });
 test('table-free provider self-test reads no table and verifies only the exact synthetic digest',()=>{
  const sql=selftestSql();assert.match(sql,/^[\x20-\x7e]+$/);

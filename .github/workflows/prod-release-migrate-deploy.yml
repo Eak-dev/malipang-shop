@@ -36,6 +36,10 @@ on:
         description: "PREFLIGHT <sha7> | FINGERPRINT <sha7> | MIGRATE <sha7> FROM <head> TO <last> | DEPLOY <sha7> CHANGES <names or NONE> | ROLLBACK <sha7> BEFORE RUN <deploy run id>"
         type: string
         required: true
+      historical_daily_probe:
+        description: "#296 preload the private read-only DAILY proof (preflight and deploy only)"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -58,10 +62,14 @@ jobs:
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
           OPERATION: ${{ inputs.operation }}
+          HISTORICAL_DAILY_PROBE: ${{ inputs.historical_daily_probe }}
         run: |
           set -euo pipefail
           [[ "$EXPECTED_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo 'expected_sha must be 40 lowercase hex'; exit 1; }
           [ "$EXPECTED_SHA" = "$GITHUB_SHA" ] || { echo 'expected_sha does not match the main commit being run'; exit 1; }
+          if [ "${HISTORICAL_DAILY_PROBE:-false}" = true ]; then
+            [[ "$OPERATION" = preflight || "$OPERATION" = deploy ]] || exit 1
+          fi
           s="${EXPECTED_SHA:0:7}"
           case "$OPERATION" in
             preflight) [[ "$CONFIRMATION" =~ ^PREFLIGHT\ $s$ ]] ;;
@@ -89,4 +97,6 @@ jobs:
           RELEASE_OPERATION: ${{ inputs.operation }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           CONFIRMATION: ${{ inputs.confirmation }}
+          HISTORICAL_DAILY_PROBE: ${{ inputs.historical_daily_probe }}
+          MALIPANG_HISTORICAL_DAILY_PROBE: ${{ inputs.historical_daily_probe && secrets.MALIPANG_HISTORICAL_DAILY_PROBE || '' }}
         run: node scripts/prod-release.mjs | tee -a "$GITHUB_STEP_SUMMARY"

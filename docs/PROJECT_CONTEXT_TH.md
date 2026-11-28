@@ -6,15 +6,31 @@
 
 ทุกงานให้อ่าน [แผนผังระบบและคิวรายงาน](system-flow/README.md) ก่อนเริ่ม พร้อมอัปเดตส่วนที่เปลี่ยนใน PR เดียวกัน
 
-ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง
+ชุด migration ที่ปล่อยจริงคือ `migrations/` (จบที่ 0067) ส่วน schema serial ทดลอง 0068–0079 อยู่ที่ `migrations-draft/` สำหรับ local และเทสต์เท่านั้น ดู [README ข้อ 15](../README.md#draft-schema-local-only) และ [#356](https://github.com/Eak-dev/malipang-shop/pull/356)
 
-งานต่อของ #348 ในเครื่องทดสอบให้ผู้ใช้เติมข้อมูลที่ขาดในเอกสารสลิปเดิมเมื่อยืนยันการจ่ายได้ จากนั้นตรวจรายการและหมวดใน draft แล้วกด Save เอง หากหลักฐานการจ่ายไม่ผ่าน ระบบพักรายการโดยไม่บันทึกค่าใช้จ่าย ดู [ขั้นตอนใน LINE](05_LINE_FLEX_FLOW_TH.md#รูปภาพ) และ [แผนผังหน้า 2](system-flow/system-map.html#p2)
+ขั้นตอนทดสอบรูปส่วนตัวของ [#348](https://github.com/Eak-dev/malipang-shop/issues/348) ใช้ R2 ส่วนตัวกับ GitHub Environment ที่มี reviewer เพื่อประเมินรูปสิบไฟล์ตาม[คู่มือทดสอบ](03_TEST_AND_CUTOVER_TH.md) ผลใน Production ต้องอ้างรันที่ส่งภาพจริง วันเวลาลงเวลาใช้เฉพาะที่อ่านได้จากข้อความ overlay สีขาวและตรงกับที่ตัวอ่านรายงาน ดู[หลักฐานวันเวลาจาก overlay](03_TEST_AND_CUTOVER_TH.md#หลักฐานวันเวลาจาก-overlay) การวินิจฉัยรูป 07 แบบรูปเดียวและเกณฑ์ผ่านอยู่ในหัวข้อ[วินิจฉัยรูป 07](03_TEST_AND_CUTOVER_TH.md#วินิจฉัยรูป-07-แบบรูปเดียว-manual) ([#355](https://github.com/Eak-dev/malipang-shop/pull/355)) workflow วินิจฉัยแบบ staging-only (manual) ดึงแพ็กเดิมหนึ่งครั้งเพื่อบอกว่าการ staging ล้มที่ขั้นใด โดยไม่ส่งภาพให้ตัวประเมิน ดูหัวข้อ[วินิจฉัย staging แพ็กรูปส่วนตัว](03_TEST_AND_CUTOVER_TH.md#วินิจฉัย-staging-แพ็กรูปส่วนตัว-manual) ([#360](https://github.com/Eak-dev/malipang-shop/pull/360)) การมี workflow ไม่ได้แปลว่ารันแล้ว ผลต้องอ้าง run id
+
+#348 มี workflow สำหรับ [UAT เฉพาะรูปลงเวลาที่ยังขาด](03_TEST_AND_CUTOVER_TH.md#uat-เฉพาะรูปลงเวลาที่ยังขาด) ที่ผูกสิทธิ์กับ SHA และรายชื่อที่ Owner อนุมัติ ส่งทีละรูป หยุดเมื่อผลล้มหรือไม่แน่ชัด ต้องมี receipt จากรันจริงเพื่อยืนยันผลรายรูป
+
+ตัวตรวจ `issue348-reader-json-check.yml` ที่เสนอสำหรับ #348 แยกค่า reader ว่าง, JSON ผิดรูปแบบ และ JSON ที่ parse ได้ โดยไม่เปิดเผยค่าและไม่ดึงภาพ ผลเป็นเพียงการตรวจไวยากรณ์ ไม่ยืนยันสิทธิ์ R2; ต้องได้รับอนุมัติ run แยกและผ่าน production environment ดู `docs/03_TEST_AND_CUTOVER_TH.md`
+
+งานต่อของ #348 ในเครื่องทดสอบให้ผู้ใช้เติมข้อมูลที่ขาดในเอกสารสลิปเดิมเมื่อยืนยันการจ่ายได้ จากนั้นตรวจรายการและหมวดใน draft ผู้ใช้ยืนยันหมวด General ที่ระบบเสนอได้ด้วยการเลือกหมวดนั้น แล้วกด Save เอง หากหลักฐานการจ่ายไม่ผ่าน ระบบพักรายการโดยไม่บันทึกค่าใช้จ่าย ดู [ขั้นตอนใน LINE](05_LINE_FLEX_FLOW_TH.md#รูปภาพ) และ [แผนผังหน้า 2](system-flow/system-map.html#p2)
+
+ทางตรวจ [DAILY เดิมของ #296](ISSUE296_EXACT_HELD_DAILY_TH.md#probe-แบบอ่านอย่างเดียวด้วยสำเนาหลังเหตุ) ผูกหลักฐานสำเนาหลังเหตุกับกริดหลักและรุ่น Worker. เมื่อปิด operator และมีเพียง pin อ่านจะใช้ PROBE. ทางบันทึกผลย้อนหลังต้องมี pin แยกและ trigger จาก draft `0081` จึงบันทึก DAILY, preimage และ audit ใน D1 พร้อมกันโดยคง claim เดิม. ผลตรวจสดต้องอ้างรันจาก Environment production.
 
 ## ภาพรวมระบบ
 
 ตัวรันคิวค่าใช้จ่ายมีโหมด [RUN_SERIAL](ISSUE296_NORMAL_QUEUE_PILOT_TH.md#run_serial) สำหรับส่งงานหลัง cutover ทีละรายการโดยตรวจแถวเดิมและหลักฐาน D1 ก่อนจองงานถัดไป ดู [แผนผัง](system-flow/serial-expense.svg)
 
+ในรอบทดลองที่ผนึกรายการ `ADVANCE_ONE` ตรวจหลักฐานจบ v2 ของงานก่อนหน้าภายในธุรกรรมจอง เพื่อให้ `RECOVER_ROUND` อ่านสิทธิ์ของงานถัดไปจาก D1 ได้เมื่อคำตอบหาย ดู [ลำดับตรวจ B ก่อนจอง C](system-flow/serial-sequence.md#4-ตรวจ-b-จากชีตจริงก่อนส่งสิทธิ์ให้-c)
+
+เมื่อกลับเข้ารอบ #348 หลังคำตอบการส่งต่อหรือปิดรอบหาย `RECOVER_ROUND` อ่านประวัติการจอง D1 ของรอบเดิมได้ระหว่างที่ยังตรวจหลักฐานการกันผู้เขียนใน Sheets ให้ติดตาม C เมื่อมีสาย B → C ที่ตรวจได้ หรือพักไว้เมื่อผลยังไม่แน่ชัด รอบ CLOSED แสดงผลที่บันทึกไว้ได้ข้ามรุ่นด้วยคำสั่งอ่านครั้งเดียว ดู [คู่มือคิวทดลอง](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) และ [ลำดับรับช่วง](system-flow/serial-sequence.md#5-รับช่วงเมื่อรอบหยุด)
+
 ผลจบรอบของ [งานทดลองคิวปกติ #296](ISSUE296_NORMAL_QUEUE_PILOT_TH.md) ตรวจหลักฐานการพักรายการเดิมและแถวเป้าหมายของงานใหม่ก่อนรายงานผล
+
+ร่าง [Issue #348: ตรวจเกณฑ์](ISSUE348_ACCEPTANCE_AUDIT_TH.md) มีการทดสอบ local `final-whole` ที่ให้ RUN_SERIAL เปิดรอบ พัก B ส่งสิทธิ์ C แบบจำลอง แล้วให้ Worker ทำ DAILY, RAW, สอง DETAIL และ FINAL ก่อนบันทึกผลจบรอบ; provider readback, notice, backup, oracle และ fence เป็น mock. round-mode ทดลองต้องฉีด local identity store และบันทึก marker ก่อน SETTLE/OPEN; marker เดิมหรือไม่ชัดต้องหยุด ไม่ถือ LIST_OPEN ว่างเป็นสิทธิ์เริ่มรอบใหม่. CLI/workflow ปกติไม่มี store จึง fail closed. ผล full check 2,565 ผ่าน, 0 ล้มเหลว, 6 ข้าม และ dry-run exit 0 เป็นผลก่อนเพิ่ม durable identity และต้องตรวจซ้ำ. **ยังไม่รับงาน #348**: หลักฐาน mock ไม่พิสูจน์สถานะ Production หรือการหยุด writer ภายนอก และการเขียน Google/D1 จริงหรือปล่อยรุ่นต้องมี authority และ gate แยกตาม #296; barriers ยังคงปิดโดยปริยาย.
+
+ร่าง #348 ตรวจหลักฐาน B หลังพัก ถ้าขัดกันก่อนเซ็น context เป็น null และงดจอง ถ้าขัดกันหลังเซ็นก่อนส่ง batch ให้คืน HELD หากพบใน batch จะ rollback และเก็บ claim เดิม เมื่อได้ UNCERTAIN ให้หยุดจอง ตรวจหลักฐานเดิม และห้ามส่งซ้ำ ดู [ลำดับรอบจำลอง](system-flow/serial-sequence.md#6-รอบจำลอง-348-พัก-b-จอง-c-และบันทึกผล)
 
 ระบบรับงานจาก LINE OA และ Back Office ผ่าน Cloudflare Worker โดยมี D1 เป็น operational source of truth, Google Sheets เป็นส่วนรายงานและงานปฏิบัติการ, R2 เก็บหลักฐานส่วนตัว และ Queue ช่วยประมวลผลงานเบื้องหลัง ระบบครอบคลุมค่าใช้จ่าย, การลงเวลา, กะ, Payroll, สิทธิ์ผู้ใช้, ข้อมูลภาพ และรายงานของเจ้าของ
 

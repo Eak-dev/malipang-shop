@@ -148,7 +148,7 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
  const target=await assertContinuousDailyActivated(env),targetScope=scope();
  const publicationTarget=await resolvePublicationTarget(env);
  if(publicationTarget&&(!(invocationBudget instanceof ReviewRequestBudget)||!target||env.STABLE_SHEETS_PACING_ENABLED!=='true'||!normalNoticeHandoffEnabled(env)||!await normalNoticeHandoffReady(env)))throw Error('PUBLICATION_ROUTE_DISABLED');
- return withStableWorkbookClaim(env,async claim=>{
+ return withStableWorkbookClaim(env,async (claim,captureFinalProof)=>{
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
   const db=env.DB,book=env.GOOGLE_SPREADSHEET_ID,source=await readStableExpenseSource(env,job,lease,claim);
   if(targetScope!==scope())throw Error('CONTINUOUS_DAILY_SCOPE_CHANGED');
@@ -260,7 +260,8 @@ export async function runStableExpenseJob(env:Env,job:SheetsSyncJob,lease:string
   const policy=publicationBudget?{...continuousSheetsReadPolicy,budget:publicationBudget}:continuousSheetsReadPolicy;
   const finalSnapshot=publication&&publicationTarget&&publicationBudget?await capturePublicationBatchSnapshot(env,await planPublicationSnapshot(env,await getSpreadsheetSheetProperties(env,policy),publicationTarget),publicationBudget):undefined;
   const publicationEvidence=publication?await readPublicationAccountingEvidence(env,publication,policy,finalSnapshot):undefined;
-  await verifyStableExpenseProjections(env,job,source,journals,publicationEvidence?{...publicationEvidence,phase:'PUBLISHED'}:undefined,policy,finalSnapshot);
+  const finalProof=await verifyStableExpenseProjections(env,job,source,journals,publicationEvidence?{...publicationEvidence,phase:'PUBLISHED'}:undefined,policy,finalSnapshot,!!captureFinalProof,captureFinalProof?()=>stableWorkbookClaimOwned(env,claim):undefined,captureFinalProof?{claim,lease}:undefined);
+  if(captureFinalProof){if(!finalProof)throw Error('SERIAL_FINAL_PROOF_UNVERIFIED');await captureFinalProof(finalProof);}
   if(publication&&!await verifyPublicationTarget())throw Error('PUBLICATION_TARGET_CHANGED');
   const latest=await readStableExpenseSource(env,job,lease,claim);if(!latest||latest.revision!==source.revision||latest.digest!==source.digest||latest.fingerprint!==source.fingerprint)throw Error('STABLE_EXPENSE_SOURCE_CHANGED');
   if(!await stableWorkbookClaimOwned(env,claim))throw Error('STABLE_EXPENSE_CLAIM_CHANGED');

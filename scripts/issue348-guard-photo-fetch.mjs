@@ -3,9 +3,12 @@ import { createHash } from 'node:crypto';
 
 const origin = 'https://malipang-backend-v5-2.eakkachai-dev.workers.dev';
 const clock = JSON.parse(readFileSync(process.env.MALIPANG_CLOCK_PRIVATE_MANIFEST)).cases;
-const slips = JSON.parse(readFileSync(process.env.MALIPANG_BANK_SLIP_PRIVATE_MANIFEST)).cases;
+// Optional: a diagnostic run permits exactly one known clock case and no slips.
+const only = process.env.ISSUE348_ONLY_CASE;
+if (only !== undefined && !clock.some(row => row.id === only)) throw Error('ISSUE348_ONLY_CASE is not a known clock case');
+const slips = only === undefined ? JSON.parse(readFileSync(process.env.MALIPANG_BANK_SLIP_PRIVATE_MANIFEST)).cases : [];
 const allowed = new Map();
-for (const row of [...clock, ...slips]) {
+for (const row of only === undefined ? [...clock, ...slips] : clock.filter(row => row.id === only)) {
   const url = new URL('/admin/vision/evaluate', origin);
   url.searchParams.set('provider', 'openai');
   if (clock.includes(row)) url.searchParams.set('receivedAt', row.receivedAt);
@@ -26,6 +29,11 @@ globalThis.fetch = async (target, options) => {
   } catch {
     console.error('ISSUE348_TRANSPORT_OUTCOME_UNKNOWN');
     throw Error('Transport outcome unknown');
+  }
+  // The fixture catches fetch errors and discards their details. Preserve a
+  // fixed, private receipt before an overlay assertion can hide a known reply.
+  if (process.env.ISSUE348_ATTENDANCE_UAT === '1' && response.ok && typeof result?.ok === 'boolean') {
+    console.error('ISSUE348_EVALUATOR_RESPONDED');
   }
   if (response.ok && permitted.overlay) {
     const reading = result?.reading;

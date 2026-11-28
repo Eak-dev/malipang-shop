@@ -13,7 +13,8 @@ import {createHash} from 'node:crypto';
 import {DatabaseSync} from 'node:sqlite';
 import {verifyStage} from '../scripts/pr247-stage-guard.mjs';
 import {verifyReleasePre,verifyReleasePost,ATTENDANCE_ACCEPT} from '../scripts/issue248-nonfinancial-release-guard.mjs';
-import {canarySourceSql,RESULT_COLUMNS} from '../scripts/issue248-canary-source-digest.mjs';
+import {canarySourceSql,RESULT_COLUMNS,EXPENSE_COLUMNS} from '../scripts/issue248-canary-source-digest.mjs';
+import {migrationFiles} from './helpers/migration-files.mjs';
 
 const root=path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const jqProbe=spawnSync(process.env.MP248_JQ_PATH||'jq',['--version'],{encoding:'utf8'});
@@ -32,7 +33,7 @@ const ok=results=>({success:true,meta:{changed_db:false,rows_written:0},results}
 const revisionOf=db=>db.prepare('SELECT revision AS r FROM stable_source_revision WHERE singleton=1').get().r;
 function migratedCanary(file){
  const db=new DatabaseSync(file);
- for(const name of readdirSync(path.join(root,'migrations')).filter(n=>n.endsWith('.sql')).sort())db.exec(readFileSync(path.join(root,'migrations',name),'utf8'));
+ for(const {url} of migrationFiles())db.exec(readFileSync(url,'utf8'));
  const cols=Object.keys(canaryRow);db.prepare(`INSERT INTO expense_events(${cols.join(',')}) VALUES(${cols.map(()=>'?').join(',')})`).run(...Object.values(canaryRow));
  return db;
 }
@@ -42,7 +43,7 @@ function sourceDb(file,{mutate=()=>{},revision=86}={}){
  const db=migratedCanary(file);try{mutate(db);const bump=db.prepare('UPDATE expense_events SET updated_at=updated_at WHERE expense_id=?');while(revisionOf(db)<revision)bump.run(TARGET);return revisionOf(db);}finally{db.close()}
 }
 // G7 digest = Worker formula on the stored row (tests/issue248-g7-canary-worker-parity.test.mjs pins the SQL to the compiled Worker).
-const G7_DIGEST=(()=>{const db=migratedCanary(':memory:');try{return h(JSON.stringify({expense:db.prepare(`SELECT e.* FROM expense_events e WHERE expense_id='${TARGET}'`).get(),links:[],documents:[],items:[]}))}finally{db.close()}})();
+const G7_DIGEST=(()=>{const db=migratedCanary(':memory:');try{return h(JSON.stringify({expense:db.prepare(`SELECT ${EXPENSE_COLUMNS.join(',')} FROM expense_events WHERE expense_id='${TARGET}'`).get(),links:[],documents:[],items:[]}))}finally{db.close()}})();
 const linkedDocument=db=>db.exec(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,created_at,expense_id) VALUES('doc_synthetic','m_doc_synthetic','U_doc_synthetic','RECEIPT','CONFIRMED','2026-11-10T00:00:00.000Z','${TARGET}')`);
 
 function runSnapshot({mode='B_POST',stripped=true,exception=true,canaryRaw=null,db={},epochPatch={}}={}){

@@ -99,6 +99,32 @@ const LEGACY_FORCE_ENQUEUE_SQL=`INSERT INTO sync_jobs(job_id,entity_type,entity_
 export async function enqueueSheetSyncBatch(env:Env,jobs:SheetsSyncJob[],force=false):Promise<number>{
   if(env.SHEETS_SYNC_ENABLED!=="true"||!jobs.length)return 0;
   const unique=[...new Map(jobs.map(job=>[`${job.entityType}|${job.entityKey}|${job.entityVersion}`,job])).values()],nowMs=Date.now(),now=new Date(nowMs).toISOString(),scheduled=scheduleSheetJobs(unique,force,nowMs,stablePacingConfigured(env));
+  if(env.SERIAL_JOB_PROVENANCE_ENABLED==='true'&&unique.some(job=>job.entityType==='EXPENSE')&&unique.some(job=>job.entityType!=='EXPENSE')){
+    // Preserve the existing batch ordering and pacing rather than splitting a
+    // mixed batch into independently committed and dispatched groups.
+    throw Error('SERIAL_JOB_PROVENANCE_MIXED_BATCH_UNSUPPORTED');
+  }
+  if(env.SERIAL_JOB_PROVENANCE_ENABLED==='true'&&unique.some(job=>job.entityType==='EXPENSE')){
+    // Forced redrive needs a separate reviewed design; never reinterpret it as
+    // proof of a newly born job. Missing instrumentation remains fail closed.
+    if(force)throw Error('SERIAL_JOB_PROVENANCE_FORCE_UNSUPPORTED');
+    const db=env.DB,scopeBook=env.GOOGLE_SPREADSHEET_ID,ready=await db.prepare("SELECT EXISTS(SELECT 1 FROM serial_job_provenance_activation WHERE singleton=1 AND spreadsheet_id=?) AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_job_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_job_provenance_insert_guard','serial_job_provenance_update_guard','serial_job_provenance_delete_guard','serial_job_provenance_activation_no_update','serial_job_provenance_activation_no_delete','serial_job_provenance_activation_no_replace','continuous_daily_post_no_delete','continuous_daily_post_no_update','continuous_daily_post_no_replace','continuous_daily_record_post_cutover'))=10 AS ok").bind(env.GOOGLE_SPREADSHEET_ID||'').first<{ok:number}>();
+    if(env.DB!==db||(env.SERIAL_JOB_PROVENANCE_ENABLED!=='true'||env.GOOGLE_SPREADSHEET_ID!==scopeBook)||ready?.ok!==1)throw Error('SERIAL_JOB_PROVENANCE_NOT_READY');
+    const accepted:ScheduledSheetJob[]=[];
+    for(const item of scheduled){
+      const job=item.body,guarded=env.EXPENSE_OUTBOX_SOURCE_GUARD_ENABLED==='true'&&job.entityType==='EXPENSE';
+      const insert=db.prepare(`INSERT INTO sync_jobs(job_id,entity_type,entity_key,entity_version,trace_id,status,attempt_count,updated_at,next_attempt_at,lease_until,lease_token,serial_provenance_version,serial_lease_generation)
+       SELECT ?,?,?,?,?,'PENDING',0,?,?,NULL,NULL,CASE WHEN EXISTS(SELECT 1 FROM serial_job_provenance_activation a JOIN continuous_daily_post_cutover_expenses p ON p.spreadsheet_id=a.spreadsheet_id JOIN continuous_daily_cutovers c ON c.spreadsheet_id=a.spreadsheet_id AND c.state='ACTIVE' JOIN expense_events e ON e.expense_id=p.expense_id AND e.version=1 AND e.status='CONFIRMED' JOIN serial_source_provenance_activation sp ON sp.singleton=1 AND sp.spreadsheet_id=a.spreadsheet_id AND sp.namespace=e.serial_source_namespace WHERE a.singleton=1 AND a.spreadsheet_id=? AND e.expense_id=? AND ?=1 AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_source_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_source_provenance_no_update','serial_source_provenance_no_delete','serial_source_provenance_no_replace','serial_source_provenance_namespace_guard','serial_source_provenance_insert_guard','serial_source_provenance_update_guard','serial_source_provenance_delete_guard','serial_source_job_birth_guard'))=8) THEN 1 ELSE 0 END,0 WHERE CASE WHEN EXISTS(SELECT 1 FROM serial_job_provenance_activation WHERE singleton=1 AND spreadsheet_id=?) AND NOT EXISTS(SELECT 1 FROM sqlite_master WHERE type='trigger' AND name='serial_job_provenance_not_ready') AND (SELECT count(*) FROM sqlite_master WHERE type='trigger' AND name IN ('serial_job_provenance_insert_guard','serial_job_provenance_update_guard','serial_job_provenance_delete_guard','serial_job_provenance_activation_no_update','serial_job_provenance_activation_no_delete','serial_job_provenance_activation_no_replace','continuous_daily_post_no_delete','continuous_daily_post_no_update','continuous_daily_post_no_replace','continuous_daily_record_post_cutover'))=10 THEN (NOT EXISTS(SELECT 1 FROM sync_jobs WHERE entity_type=? AND entity_key=? AND entity_version=?) ${guarded?'AND EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?)':''}) ELSE json_extract('invalid','$') END`)
+       .bind(crypto.randomUUID(),job.entityType,job.entityKey,job.entityVersion,job.traceId,now,item.nextAttemptAt,env.GOOGLE_SPREADSHEET_ID||'',job.entityKey,job.entityVersion,env.GOOGLE_SPREADSHEET_ID||'',job.entityType,job.entityKey,job.entityVersion,...(guarded?[job.entityKey]:[]));
+      const check=db.prepare(guarded?'SELECT EXISTS(SELECT 1 FROM expense_events WHERE expense_id=?) AS present':'SELECT 1 AS present');
+      if(env.DB!==db||(env.SERIAL_JOB_PROVENANCE_ENABLED!=='true'||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_SCOPE_CHANGED');
+      const result=await db.batch([insert,guarded?check.bind(job.entityKey):check]);
+      if(env.DB!==db||(env.SERIAL_JOB_PROVENANCE_ENABLED!=='true'||env.GOOGLE_SPREADSHEET_ID!==scopeBook)||result.length!==2||result.some(x=>x.success!==true)||!Number.isSafeInteger(result[0]?.meta?.changes)||Number(result[0]!.meta.changes)>1||!Array.isArray(result[1]?.results)||result[1]!.results.length!==1)throw Error('SERIAL_JOB_PROVENANCE_UNCERTAIN');
+      if(Number((result[1]!.results[0] as {present?:unknown}).present)===1)accepted.push(item);
+    }
+    if(env.DB!==db||(env.SERIAL_JOB_PROVENANCE_ENABLED!=='true'||env.GOOGLE_SPREADSHEET_ID!==scopeBook))throw Error('SERIAL_JOB_PROVENANCE_SCOPE_CHANGED');
+    await sendScheduledSheetJobs(env,accepted);return accepted.length;
+  }
   // Forced reconciliation is not proof of an expense provider outcome, even
   // when its version has no local job: an older version, legacy writer or
   // delayed provider request may have written. Hold all expense force jobs

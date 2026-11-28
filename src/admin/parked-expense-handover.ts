@@ -2,7 +2,7 @@ import type {SheetsSyncJob} from '../types';
 import {readFailedDailyIncidentEvidence,dailyFailedPayloadDigest} from './exact-daily-proof-evidence';
 import {dailyIncidentScope,verifiedHeldDailyGuard} from './exact-daily-settlement';
 import {normalExpenseEpochStatements} from '../sheets/continuous-normal-recovery';
-import {advancePilot,finishStatus,type AdvancePilot} from './serial-expense-handover';
+import {advancePilot,finishProgress,finishStatus,recordVerifiedPilot,type AdvancePilot,type RecordVerifiedPilot} from './serial-expense-handover';
 import {parkedAuditAction,parkedPilotEnabled,parkedSourceJoins,pilotWriteJoins,type ParkedPilotEnv} from '../sheets/parked-notice-adoption';
 import {stableNoticeStyleFingerprint} from '../sheets/stable-edit-notice';
 import {ReviewRequestBudget} from '../sheets/review-request-budget';
@@ -12,18 +12,22 @@ import {proveDailyProviderPostimage} from '../sheets/exact-daily-provider-proof'
 
 const digest=/^[0-9a-f]{64}$/;
 const uuid=/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/;
-type Select={jobId:string;fingerprint:string};
-type Action=AdvancePilot | Select & ({action:'INSPECT_HANDOVER'}|{action:'FINISH_STATUS'}|{action:'HANDOVER_ONE';preimageDigest:string;ownerSupervising:true;externalWritersFenced:true});
+type Select={jobId:string;fingerprint:string;roundId?:string};
+type Action=AdvancePilot | RecordVerifiedPilot | Select & ({action:'INSPECT_HANDOVER'}|{action:'FINISH_STATUS'}|{action:'FINISH_PROGRESS'}|{action:'HANDOVER_ONE';preimageDigest:string;ownerSupervising:true;externalWritersFenced:true});
 export function parseParkedPilot(value:unknown):Action|null{
  if(!value||typeof value!=='object'||Array.isArray(value))return null;
  const v=value as Record<string,unknown>,n=Object.keys(v).length;
  if(typeof v.jobId!=='string'||!uuid.test(v.jobId)||typeof v.fingerprint!=='string'||!digest.test(v.fingerprint))return null;
- const select={jobId:v.jobId,fingerprint:v.fingerprint};
- if((v.action==='INSPECT_HANDOVER'||v.action==='FINISH_STATUS')&&n===3)return {...select,action:v.action};
- if(v.action==='ADVANCE_ONE'&&n===7&&typeof v.nextJobId==='string'&&uuid.test(v.nextJobId)&&v.nextJobId!==v.jobId&&
+ if(v.roundId!==undefined&&(typeof v.roundId!=='string'||!uuid.test(v.roundId)))return null;
+ const select={jobId:v.jobId,fingerprint:v.fingerprint,...(typeof v.roundId==='string'?{roundId:v.roundId}:{})};
+ const base=v.roundId===undefined?0:1;
+ if((v.action==='INSPECT_HANDOVER'||v.action==='FINISH_STATUS'||v.action==='FINISH_PROGRESS')&&n===3+base)return {...select,action:v.action};
+ if(v.action==='RECORD_VERIFIED'&&n===7&&typeof v.roundId==='string'&&typeof v.proof==='string'&&digest.test(v.proof)&&v.externalWritersFenced===true&&v.ownerSupervising===true)
+  return {jobId:v.jobId,fingerprint:v.fingerprint,roundId:v.roundId,action:v.action,proof:v.proof,externalWritersFenced:true,ownerSupervising:true};
+ if(v.action==='ADVANCE_ONE'&&n===7+base&&typeof v.nextJobId==='string'&&uuid.test(v.nextJobId)&&v.nextJobId!==v.jobId&&
    typeof v.proof==='string'&&digest.test(v.proof)&&v.externalWritersFenced===true&&v.ownerSupervising===true)
   return {...select,action:v.action,nextJobId:v.nextJobId,proof:v.proof,externalWritersFenced:true,ownerSupervising:true};
- if(v.action==='HANDOVER_ONE'&&n===6&&typeof v.preimageDigest==='string'&&digest.test(v.preimageDigest)&&v.externalWritersFenced===true&&v.ownerSupervising===true)
+ if(v.action==='HANDOVER_ONE'&&n===6+base&&typeof v.preimageDigest==='string'&&digest.test(v.preimageDigest)&&v.externalWritersFenced===true&&v.ownerSupervising===true)
   return {...select,action:v.action,preimageDigest:v.preimageDigest,externalWritersFenced:true,ownerSupervising:true};
  return null;
 }
@@ -54,6 +58,11 @@ export async function operateParkedPilot(env:ParkedPilotEnv,action:Action,versio
  const prior=dailyIncidentScope(env);
  const valid=()=>env.DB===db&&env.GOOGLE_SPREADSHEET_ID===book&&dailyIncidentScope(env)===prior&&parkedPilotEnabled(env,version);
  if(action.action==='ADVANCE_ONE')return advancePilot(env,action,version,valid);
+ if(action.action==='RECORD_VERIFIED')return recordVerifiedPilot(env,action,version,valid);
+ if(action.action==='FINISH_PROGRESS'){
+  try{const progress=valid()?await finishProgress(env,action,version):null;if(progress&&valid())return progress;}catch{/* Evidence unavailable. */}
+  return {ok:false,outcome:'UNVERIFIED'};
+ }
  if(action.action==='FINISH_STATUS'){
   try{
    const outcome=valid()?await finishStatus(env,action,version):'UNVERIFIED';
@@ -83,7 +92,7 @@ export async function operateParkedPilot(env:ParkedPilotEnv,action:Action,versio
   const now=new Date().toISOString(),epoch='normal_pilot296_'+crypto.randomUUID(),token=crypto.randomUUID();
   const before=JSON.stringify({book,oldToken:e.claim_token,job:e.job_id,failed:e.failed_id,failedUpdated:e.failed_updated,
    stamp:e.notice_stamp,identity:e.notice_identity,style,revision:e.source_revision,preimage:action.preimageDigest});
-  const auditId='issue296:parked:'+e.claim_token,after=JSON.stringify({version,epoch,token});
+  const auditId='issue296:parked:'+e.claim_token,after=JSON.stringify({version,epoch,token,...(action.roundId?{roundId:action.roundId}:{})});
   const advance=db.prepare("SELECT CASE WHEN changes()=1 THEN 1 ELSE json_extract('invalid','$') END AS ok");
   const [arm,admit]=normalExpenseEpochStatements(env,epoch,now,action.jobId);
   if(!arm||!admit||!valid())return held();

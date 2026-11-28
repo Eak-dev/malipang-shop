@@ -6,17 +6,19 @@ import {createRequire} from 'node:module';
 import {handleExpensePostback} from '../dist/expense/service.js';
 import {claimSheetSyncJob,syncJob} from '../dist/sheets/sync.js';
 import {recoverPendingSheetJobs} from '../dist/db/repositories.js';
+import {migrationFiles} from './helpers/migration-files.mjs';
 const sheetsClient=createRequire(import.meta.url)('../dist/sheets/client.js');
 
 class Statement{
   constructor(owner,sql){this.owner=owner;this.sql=sql;this.args=[];}
   bind(...args){this.args=args;return this;}
   async first(){return this.owner.sqlite.prepare(this.sql).get(...this.args)??null;}
-  async all(){return{results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
+  async all(){return{success:true,results:this.owner.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
   runSync(){
     const stmt=this.owner.sqlite.prepare(this.sql);
-    if(/^\s*SELECT\b/i.test(this.sql))return{results:stmt.all(...this.args),meta:{changes:0}};
-    const result=stmt.run(...this.args);return{meta:{changes:Number(result.changes)}};
+    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{success:true,results:stmt.all(...this.args),meta:{changes:0}};
+    if(/\bRETURNING\b/i.test(this.sql)){const results=stmt.all(...this.args);return{success:true,results,meta:{changes:results.length}};}
+    const result=stmt.run(...this.args);return{success:true,meta:{changes:Number(result.changes)}};
   }
   async run(){return this.runSync();}
 }
@@ -38,8 +40,7 @@ class SqliteD1{
 }
 function harness({version=2,status='CONFIRMED',existingVersions=[1,2],syncEnabled=true}={}){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const dir=new URL('../migrations/',import.meta.url);
-  for(const name of readdirSync(dir).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,dir),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const created='2026-01-01T00:00:00.000Z';
   sqlite.prepare(`INSERT INTO expense_events(expense_id,message_id,line_user_id,description,amount_satang,payment_key,source_wallet,category,transaction_date,status,trace_id,created_at,version) VALUES('exp_fixture','msg_fixture','line_fixture','sanitized fixture',100,'cash','CASH_DRAWER','ingredients','2026-01-01',?,'trace_fixture',?,?)`).run(status,created,version);
   sqlite.prepare(`INSERT INTO expense_documents(document_id,message_id,line_user_id,document_type,status,expense_id,created_at) VALUES('doc_fixture','doc_msg_fixture','line_fixture','RECEIPT',?,'exp_fixture',?)`).run(status,created);

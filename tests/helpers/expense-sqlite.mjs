@@ -1,22 +1,23 @@
 import {DatabaseSync} from 'node:sqlite';
-import {readFileSync,readdirSync} from 'node:fs';
+import {readFileSync} from 'node:fs';
+import {migrationFiles} from './migration-files.mjs';
 
 class Statement{
   constructor(db,sql){this.db=db;this.sql=sql;this.args=[];}
   bind(...args){this.args=args;return this;}
   async first(){return this.db.sqlite.prepare(this.sql).get(...this.args)??null;}
-  async all(){return{results:this.db.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
+  async all(){return{success:true,results:this.db.sqlite.prepare(this.sql).all(...this.args),meta:{changes:0}};}
   runSync(){
     const statement=this.db.sqlite.prepare(this.sql);
-    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{results:statement.all(...this.args),meta:{changes:0}};
-    return{meta:{changes:Number(statement.run(...this.args).changes)}};
+    if(/^\s*(SELECT|WITH)\b/i.test(this.sql))return{success:true,results:statement.all(...this.args),meta:{changes:0}};
+    if(/\bRETURNING\b/i.test(this.sql)){const results=statement.all(...this.args);return{success:true,results,meta:{changes:results.length}};}
+    return{success:true,meta:{changes:Number(statement.run(...this.args).changes)}};
   }
   async run(){this.db.runs.push(this);return this.runSync();}
 }
 export function expenseSqlite(){
   const sqlite=new DatabaseSync(':memory:');sqlite.exec('PRAGMA foreign_keys=ON');
-  const directory=new URL('../../migrations/',import.meta.url);
-  for(const name of readdirSync(directory).filter(name=>name.endsWith('.sql')).sort())sqlite.exec(readFileSync(new URL(name,directory),'utf8'));
+  for(const {url} of migrationFiles())sqlite.exec(readFileSync(url,'utf8'));
   const DB={sqlite,runs:[],batches:[],failAt:null,failAfterCommit:false,
     prepare(sql){return new Statement(this,sql);},
     async batch(statements){

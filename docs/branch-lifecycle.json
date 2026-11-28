@@ -46,12 +46,11 @@
     {
       "issue": 296,
       "title": "Pre-deploy fixes R1-R7 for the continuous daily sync release",
-      "mode": "MIGRATION_PENDING",
-      "primary_branch": null,
-      "proposed_branch": "codex/issue296-historical-daily-probe",
+      "mode": "MANAGED",
+      "primary_branch": "codex/issue296-dormant-historical-settle",
       "target_branch": "main",
       "coordination_chat": "[ผู้ประสานงาน] MaliPang ทีม Dev/QA",
-      "reason": "Local proposal for one read-only historical DAILY probe from canonical main fc0b60a6d0bc20599cc77c5fa01b3d562017ed37. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
+      "reason": "Dormant historical DAILY settlement based on b47114af3b1c90c3db6a642cfb07c897bfe014ad. The read-only probe and diagnostics were integrated in #366 and #367. Code PRs #297 (16de09c) and #298 (fdb3cc2) merged; their branches are deleted. Each Production step requires owner approval in #296."
     },
     {
       "issue": 299,
@@ -80,6 +79,19 @@
     }
   ],
   "branches": [
+    {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue296-dormant-historical-settle",
+      "source_sha": "2f8c3ca6b859f63e6f6194da2549cb7c5a53ddce",
+      "issues": [
+        296
+      ],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T13:03:37Z",
+      "reason": "Observed implementation head before the registry commit. Canonical target main; activation and Production business writes remain separately scoped."
+    },
     {
       "scope": "local",
       "source": "issue296-dormant-historical-settle",
@@ -7892,12 +7904,12 @@
       "scope": "remote",
       "source": "canonical-github",
       "branch": "claude/issue348-n1-no-migration-20261125",
-      "source_sha": "b23d6fefb090cda5f4afd129813c58ac0ca01b9e",
+      "source_sha": "19fcae757e0e79d9464e3c606e20baf680424dab",
       "issues": [296, 354],
       "pull_requests": [356],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-25T03:47:05Z",
-      "reason": "Release-path branch for #354 under #296 (N1: serial drafts kept out of migrations/, PR #356, base main 0b426d3); remote head observed before this registry commit. A phase B runtime PR is stacked on it. Integration plan: review, then merge PR #356 into main before the release candidate is chosen. No release is implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T13:04:14Z",
+      "reason": "PR #356 merged to ccd9c738bea85aadff5a0975da803632c9ba7d8b. Its final head matches the live branch ref. Keep the ref for stacked dependencies and separate lifecycle review."
     }
   ],
   "canonical_main_observed_at": "2026-11-14T12:25:14.938894+00:00",

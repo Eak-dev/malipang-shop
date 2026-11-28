@@ -81,6 +81,17 @@
   ],
   "branches": [
     {
+      "scope": "remote",
+      "source": "canonical-github",
+      "branch": "codex/issue348-sheets-ack-recovery",
+      "source_sha": "394596712b7531398a4c6228b5910c2e20c84f59",
+      "issues": [348],
+      "pull_requests": [365],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T12:47:00Z",
+      "reason": "Draft PR #365 head verified against main b47114a. Read-only recovery integration awaits independent QA and CI. No Production activation."
+    },
+    {
       "scope": "local",
       "source": "issue348-interrupted-round-readback",
       "branch": "codex/issue348-interrupted-round-readback",

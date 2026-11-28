@@ -1091,6 +1091,20 @@ test('exact DAILY historical PROBE requires the deployed digest and refuses read
  }finally{notice.stableNoticeStyleFingerprint=oldStyle;h.close();}
 });
 
+function delayRawProviderCommit({h, job, jobId, roundId, requests}) {
+ const replacement=requests[0]?.findReplace;
+ assert.equal(requests.length,1);
+ assert.equal(replacement?.range?.sheetId,3);
+ const {startRowIndex,startColumnIndex}=replacement.range;
+ const previousCell=h.rawFormula()[startRowIndex][startColumnIndex];
+ assert.equal(previousCell,replacement.find);
+ const env=Object.fromEntries(Object.entries(h.env).filter(([,value])=>typeof value==='string'));
+ env.CF_VERSION_METADATA=h.env.CF_VERSION_METADATA;
+ assert.ok(process.send);
+ process.send({cut:'provider-accepted-before-commit',job,jobId,roundId,replacement,previousCell,env});
+ return new Promise(()=>{});
+}
+
 async function miniflareDailyFixture(sqlite){
  const {mkdtempSync,readdirSync,copyFileSync,rmSync}=await import('node:fs');
  const {join}=await import('node:path'),{tmpdir}=await import('node:os'),{Miniflare}=await import('miniflare');
@@ -1756,7 +1770,11 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
      const date=(await db.prepare('SELECT transaction_date FROM expense_events WHERE expense_id=?').bind(nextExpense).first()).transaction_date;
      coverage.readLegacyDailyCoverage=async(...args)=>{const x=await originalCoverage(...args);return {...x,coverage:{...x.coverage,year:Number(date.slice(0,4)),month:Number(date.slice(5,7))}};};
      googleAuth.getGoogleAccessToken=async()=> 'local-test-token';client.batchUpdateSpreadsheetWithReply=h.realBatchUpdate;
-     globalThis.fetch=async(input,init)=>{assert.equal(String(input),'https://sheets.googleapis.com/v4/spreadsheets/book:batchUpdate');posts++;const reply=await model(h.env,JSON.parse(init.body).requests,async()=>{});
+     globalThis.fetch=async(input,init)=>{assert.equal(String(input),'https://sheets.googleapis.com/v4/spreadsheets/book:batchUpdate');posts++;const {requests}=JSON.parse(init.body);
+      if(roundMode==='worker-fault-raw-lost'&&posts===2&&process.env.ISSUE348_DELAY_RAW_COMMIT==='true'){
+       return delayRawProviderCommit({h,job:nextJob,jobId:successorId,roundId,requests});
+      }
+      const reply=await model(h.env,requests,async()=>{});
       const killAt=roundMode==='worker-fault-postlost'?1:roundMode==='worker-fault-raw-lost'?2:roundMode==='worker-fault-detail-lost'?3:0;
       if(killAt===posts&&process.env.ISSUE348_KILL_STATE_FILE){
        // Model provider has committed; persist its synthetic state before the
@@ -2375,7 +2393,11 @@ test('Miniflare exact DAILY settlement preserves both holds when the commit ACK 
      globalThis.fetch=async(input,init)=>{
       assert.equal(String(input),'https://sheets.googleapis.com/v4/spreadsheets/book:batchUpdate');
       assert.equal(init.method,'POST');posts++;
-      return Response.json(await model(h.env,JSON.parse(init.body).requests,async()=>{}));
+      const {requests}=JSON.parse(init.body);
+      if(roundMode==='two'&&posts===2&&process.env.ISSUE348_DELAY_RAW_COMMIT==='true'){
+       return delayRawProviderCommit({h,job:pilot,jobId:pilotId,roundId,requests});
+      }
+      return Response.json(await model(h.env,requests,async()=>{}));
      };
      await worker.queue({queue:'malipang-jobs',messages:[{body:pilot,attempts:1,ack(){acks++;},retry(){assert.fail('unexpected pilot retry');}}]},h.env,{});
      const state=await db.prepare("SELECT j.status,j.last_error,c.phase,c.review_reason FROM sync_jobs j LEFT JOIN stable_workbook_claims c ON c.spreadsheet_id='book' WHERE j.job_id=?").bind(pilotId).first();

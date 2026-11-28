@@ -8,7 +8,7 @@ const phases=['PROBE','SETTLE','HANDOVER_ONE','INSPECT_HANDOVER','READBACK','REA
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const digest=/^[a-f0-9]{64}$/;
 const recordedTime=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/.test(value)&&Number.isFinite(Date.parse(value));
-const mutating=phase=>['SETTLE','HANDOVER_ONE','RUN_SERIAL','RECOVER_ROUND','HOLD_RESERVED','CLOSE_MOCK_ROUND'].includes(phase);
+const mutating=phase=>['SETTLE','HANDOVER_ONE','RUN_SERIAL','HOLD_RESERVED','CLOSE_MOCK_ROUND'].includes(phase);
 function stop(code){throw Error(code);}
 export function pilotInputs(env){
   const phase=env.PILOT_PHASE;

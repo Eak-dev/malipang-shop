@@ -81,6 +81,17 @@
   "branches": [
     {
       "scope": "local",
+      "source": "issue348-sheets-ack-recovery",
+      "branch": "codex/issue348-sheets-ack-recovery",
+      "source_sha": "fc0b60a6d0bc20599cc77c5fa01b3d562017ed37",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "PENDING_INTEGRATION",
+      "observed_at": "2026-11-28T04:36:46Z",
+      "reason": "Started at synchronized main after #364. Local tests and independent review under DEV_OWNED."
+    },
+    {
+      "scope": "local",
       "source": "issue348-interrupted-round-readback",
       "branch": "codex/issue348-interrupted-round-readback",
       "source_sha": "ce3f77b3c59cb440e471ec18f60b3d71215ee55a",

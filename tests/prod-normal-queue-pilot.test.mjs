@@ -260,14 +260,20 @@ test('round recovery reads the durable close without issuing a new write',async(
 
 test('open round recovery reports expired provider uncertainty without dispatch',async()=>{
  const roundId='aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee',base=provider(),actions=[];
+ const readWithoutWriteApproval={...env,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId,
+  EXTERNAL_WRITERS_FENCED:'false',OWNER_SUPERVISING:'false'};
  let holdReason='SERIAL_EXPIRED_PROVIDER_UNCERTAIN',reservationChain;
  const request=async(url,opts)=>{
-  if(!String(url).endsWith('/serial-round-recovery'))return base.request(url,opts);
+  if(!String(url).endsWith('/serial-round-recovery')){
+   assert.match(String(url),/\/deployments\?per_page=2$/);
+   assert.equal(opts.method,'GET');
+   return base.request(url,opts);
+  }
   const body=JSON.parse(opts.body);actions.push(body.action);
   const observed={jobState:'REVIEW',holdReason,provenanceVersion:1,leaseGeneration:2,epochState:'ARMED',workbookClaimStateGlobal:'HELD',workbookClaimPhaseGlobal:'SERIAL_CONTINUATION',workbookClaimReasonGlobal:null,claimRelationship:'EXACT_EPOCH_OPERATION',admittedOperations:1,verifiedStages:1,unresolvedStages:1,reservations:1,lastVerifiedStageCandidate:'DAILY',lastVerifiedStageMayTie:true,lastVerifiedAt:'2026-11-22T00:00:00.000Z'};
   return Response.json({ok:true,outcome:'OPEN',selected:2,members:[jobId,nextId],reservationChain,observationsAreProof:false,observationsAtomicWithRound:false,observedAt:'2026-11-22T00:00:00.000Z',observations:[{...observed,jobId,holdReason:'SERIAL_PILOT_B_REVIEW'},{...observed,jobId:nextId}],servedVersion:version});
  };
- let progress;try{await runNormalPilot({...env,...gates,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId},request);assert.fail('OPEN must stop');}catch(error){assert.match(error.message,/PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION/);progress=error.serialProgress;}
+ let progress;try{await runNormalPilot(readWithoutWriteApproval,request);assert.fail('OPEN must stop');}catch(error){assert.match(error.message,/PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION/);progress=error.serialProgress;}
  assert.equal(progress.jobs[1].holdReason,holdReason);assert.deepEqual(actions,['READ']);
  const dir=mkdtempSync(join(tmpdir(),'recover-open-summary-'));try{const path=join(dir,'summary');summarize('RECOVER_ROUND','PILOT_ROUND_TRANSITION_NEEDS_RECONCILIATION',progress,path);const output=readFileSync(path,'utf8');assert.match(output,/SERIAL_EXPIRED_PROVIDER_UNCERTAIN/);assert.match(output,/ผล provider ยังไม่ชัด/);assert.match(output,/ห้ามส่งซ้ำ/);assert.match(output,/ยังไม่ตรวจสายการจอง/);assert.doesNotMatch(output,/ยังไม่พบการจองถัดไป/);}finally{rmSync(dir,{recursive:true,force:true});}
  const recovery={...env,...gates,PILOT_PHASE:'RECOVER_ROUND',PILOT_ROUND_ID:roundId};

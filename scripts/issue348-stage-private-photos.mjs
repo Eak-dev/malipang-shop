@@ -29,6 +29,9 @@ function signObject(name, reader) {
 }
 
 try {
+  const args = process.argv.slice(2);
+  const clockOnly = args.length === 1 && args[0] === '--clock-only';
+  if (args.length && !clockOnly) throw Error();
   const control = JSON.parse(process.env.PHOTO_CONTROL);
   const reader = JSON.parse(process.env.SCOPED_READER);
   const files = await receive(signObject(control.name, reader), control, 'photos', account);
@@ -39,7 +42,8 @@ try {
     const cases = control[group].cases;
     if (cases.length !== count) throw Error();
     const dir = join(root, group);
-    await mkdir(dir, {mode: 0o700});
+    const stage = group === 'clock' || !clockOnly;
+    if (stage) await mkdir(dir, {mode: 0o700});
     for (let i = 0; i < count; i++) {
       const filename = prefix + '-' + String(i + 1).padStart(2, '0') + '.jpg';
       const row = cases.find(x => x.file === filename);
@@ -55,11 +59,11 @@ try {
             || !/^(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d$/.test(time)) throw Error();
       }
       seen.add(row.sha256);
-      await writeFile(join(dir, filename), data, {mode: 0o600, flag: 'wx'});
+      if (stage) await writeFile(join(dir, filename), data, {mode: 0o600, flag: 'wx'});
     }
-    await writeFile(join(dir, 'manifest.json'), JSON.stringify(control[group]), {mode: 0o600, flag: 'wx'});
+    if (stage) await writeFile(join(dir, 'manifest.json'), JSON.stringify(control[group]), {mode: 0o600, flag: 'wx'});
   }
-  console.log('Private transfer verified: seven attendance photos and three slips');
+  console.log(clockOnly ? 'ISSUE348_CLOCK_STAGING_OK' : 'Private transfer verified: seven attendance photos and three slips');
 } catch {
   console.error('Private transfer or input validation failed; stopped before evaluation');
   process.exitCode = 1;

@@ -1,0 +1,80 @@
+name: Production attendance photo UAT (approved IDs only)
+on:
+  workflow_dispatch:
+    inputs:
+      expected_main_sha:
+        description: Owner-approved exact main commit
+        required: true
+        type: string
+      approved_photo_ids:
+        description: Owner-approved missing IDs, comma-separated (photo-01 through photo-07)
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: issue348-production-private-photo-evaluation
+  cancel-in-progress: false
+jobs:
+  evaluate:
+    if: github.repository == 'Eak-dev/malipang-shop' && github.ref == 'refs/heads/main' && github.sha == inputs.expected_main_sha && github.run_attempt == 1
+    environment: production
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '22'
+      - name: Validate dispatch before reading the photo pack
+        run: node scripts/issue348-attendance-uat.mjs --check-dispatch
+      - name: Load the reviewed private transport
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: 440e22061cf27ed76b0188bfc3f15bde63e20f88
+          path: reviewed-transfer
+          persist-credentials: false
+          sparse-checkout: scripts
+      - name: Stage the clock fixtures
+        shell: bash
+        env:
+          SCOPED_READER: ${{ secrets.ISSUE348_R2_READER }}
+          PHOTO_CONTROL: ${{ secrets.ISSUE348_PHOTO_CONTROL }}
+          R2_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          scratch=$(mktemp -d "$RUNNER_TEMP/issue348.XXXXXX")
+          printf '::add-mask::%s\n' "$scratch"
+          export ISSUE348_SCRATCH="$scratch"
+          printf 'ISSUE348_SCRATCH=%s\n' "$scratch" >> "$GITHUB_ENV"
+          node scripts/issue348-stage-private-photos.mjs --clock-only
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$scratch/clock/manifest.json"
+          node --test --test-reporter=tap --test-name-pattern='^clock photo fixture contract' \
+            tests/clock-photo-fixtures.test.mjs > "$scratch/contract.tap" 2>&1
+          grep -qx '# pass 1' "$scratch/contract.tap"
+      - name: Evaluate the approved attendance IDs
+        shell: bash
+        env:
+          ADMIN: ${{ secrets.MALIPANG_ADMIN_TOKEN }}
+          MALIPANG_VISION_BASE_URL: ${{ vars.MALIPANG_WORKER_URL }}
+          MALIPANG_ENDPOINT_CLOCK_MIN_CONFIDENCE: '0.70'
+        run: |
+          set -euo pipefail
+          umask 077
+          [[ ${#ADMIN} -ge 32 ]]
+          export MALIPANG_ADMIN_TOKEN_FILE="$ISSUE348_SCRATCH/token"
+          printf '%s' "$ADMIN" > "$MALIPANG_ADMIN_TOKEN_FILE"
+          unset ADMIN
+          export MALIPANG_CLOCK_PRIVATE_MANIFEST="$ISSUE348_SCRATCH/clock/manifest.json"
+          node scripts/issue348-attendance-uat.mjs
+      - name: Remove transient files
+        if: always()
+        shell: bash
+        run: |
+          if [[ "${ISSUE348_SCRATCH:-}" == "$RUNNER_TEMP"/issue348.* ]]; then
+            rm -rf -- "$ISSUE348_SCRATCH"
+            [[ ! -e "$ISSUE348_SCRATCH" ]]
+          fi

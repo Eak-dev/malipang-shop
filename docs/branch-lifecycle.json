@@ -9,10 +9,10 @@
     {
       "issue": 348,
       "mode": "MANAGED",
-      "primary_branch": "codex/issue348-reader-json-diagnostic",
+      "primary_branch": "codex/348-attendance-uat-selection",
       "target_branch": "main",
-      "coordination_chat": "MaliPang #348 reader JSON diagnostic (Codex)",
-      "reason": "PR #360 merged at 8b554ed. The isolated reader JSON diagnostic branch is proposed for a draft PR only; merge and live run require separate owner gates. Other branches remain preserved; no release is implied."
+      "coordination_chat": "MaliPang #348 attendance-only UAT (Codex)",
+      "reason": "After #361 merged, the selected task branch adds an attendance-only UAT workflow from synchronized main. DEV_OWNED draft PR; separate owner approval for merge and live dispatch."
     },
     {
       "issue": 285,
@@ -93,13 +93,24 @@
     {
       "scope": "remote",
       "source": "canonical-github",
+      "branch": "codex/348-attendance-uat-selection",
+      "source_sha": "b744af1010be5b4619000a03d4a9a281027f5bfb",
+      "issues": [348],
+      "pull_requests": [],
+      "status": "ACTIVE",
+      "observed_at": "2026-11-28T01:48:57Z",
+      "reason": "Canonical remote branch observed at the reviewed main base before the attendance UAT commit. Target main after review; no live run or deletion authority."
+    },
+    {
+      "scope": "remote",
+      "source": "canonical-github",
       "branch": "codex/issue348-reader-json-diagnostic",
       "source_sha": "e6a7632f4ccf558d8363cae567894511155194fc",
       "issues": [348],
       "pull_requests": [361],
-      "status": "ACTIVE",
-      "observed_at": "2026-11-27T05:51:46Z",
-      "reason": "Draft PR #361 observed at this head; later commits require fresh verification. No merge or run authorization implied."
+      "status": "INTEGRATED",
+      "observed_at": "2026-11-28T01:48:57Z",
+      "reason": "PR #361 merged into main as b744af1. Source SHA is a historical head observation. No declaration of deletion readiness or live run."
     },
     {
       "scope": "local",

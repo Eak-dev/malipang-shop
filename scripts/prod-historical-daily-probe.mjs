@@ -5,9 +5,21 @@ export const HISTORICAL_DAILY_PIN='EXACT_DAILY_HISTORICAL_RECEIPT_SHA256';
 const hex64=/^[a-f0-9]{64}$/;
 const versionId=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const fields=['incidentFingerprint','archiveIdentityDigest','archiveGridDigest','approvedDeltaDigest','liveGridDigest'];
+const heldStages=new Set([
+ 'CONFIG','HISTORICAL_RECEIPT','INCIDENT','SOURCE','NOTICE','GRID','SNAPSHOT','LEGACY',
+ 'FORMAT','POSTIMAGE','ACCOUNTING','CARRIER','REPORT','FINAL_READS','PREIMAGE',
+]);
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const validHash=value=>typeof value==='string'&&hex64.test(value);
 const fail=code=>{throw Error(code)};
+
+class UnverifiedProbeResult extends Error{
+ constructor(status,result){
+  const http=Number.isInteger(status)&&status>=100&&status<=599?` HTTP_${status}`:'';
+  const held=status===409&&result?.ok===false&&result.outcome==='HELD'&&heldStages.has(result.stage);
+  super('PROBE_RESULT_UNVERIFIED'+http+(held?` STAGE_${result.stage}`:''));
+ }
+}
 
 export function parseProbeEvidence(raw){
  if(typeof raw!=='string'||raw.length>2000)return null;
@@ -47,21 +59,27 @@ export async function runHistoricalDailyProbe(env=process.env,send=fetch){
   return id;
  };
  const worker=await before(),fingerprint=receipt.incidentFingerprint;
- let result;
+ let result,status,ok=false;
  try{
   const response=await send(new URL('/admin/stable-sync/exact-daily-settlement',url),{method:'POST',
    headers:{authorization:'Bearer '+env.MALIPANG_ADMIN_TOKEN,'content-type':'application/json',
     'x-malipang-expected-worker-version':worker},redirect:'error',signal:AbortSignal.timeout(240000),
    body:JSON.stringify({action:'PROBE',fingerprint,historicalReceipt:receipt})});
-  if(response.ok)result=await response.json();
+  status=response.status;
+  ok=response.ok;
+  if(ok||status===409)result=await response.json();
  }catch{}
- if(result?.ok!==true||result.outcome!=='MATCHED'||result.servedVersion!==worker||
+ if(!ok||result?.ok!==true||result.outcome!=='MATCHED'||result.servedVersion!==worker||
   result.fingerprint!==fingerprint||result.historicalReceiptDigest!==pin||
-  result.preimageDigest!==preimageDigest)fail('PROBE_RESULT_UNVERIFIED');
+  result.preimageDigest!==preimageDigest)throw new UnverifiedProbeResult(status,result);
  await before();
 }
 
 if(import.meta.url===pathToFileURL(process.argv[1]??'').href){
  try{await runHistoricalDailyProbe();console.log('HISTORICAL_DAILY_PROBE: MATCHED; WORKER_VERSION_MATCH; EVIDENCE_MATCH');}
- catch(error){console.error(/^PROBE_[A-Z_]+$/.test(error?.message??'')?error.message:'PROBE_FAILED');process.exitCode=1;}
+ catch(error){
+  const allowed=error instanceof UnverifiedProbeResult||/^PROBE_[A-Z_]+$/.test(error?.message??'');
+  console.error(allowed?error.message:'PROBE_FAILED');
+  process.exitCode=1;
+ }
 }

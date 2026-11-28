@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
+import {spawnSync} from 'node:child_process';
+import {fileURLToPath} from 'node:url';
 import {parseProbeEvidence,runHistoricalDailyProbe} from '../scripts/prod-historical-daily-probe.mjs';
 
 const sha='a'.repeat(40),version='11111111-2222-3333-4444-555555555555';
@@ -17,7 +19,7 @@ const env={EXPECTED_SHA:sha,GITHUB_SHA:sha,GITHUB_REF:'refs/heads/main',GITHUB_R
  CLOUDFLARE_ACCOUNT_ID:'account',CLOUDFLARE_API_TOKEN:'cf-test',MALIPANG_ADMIN_TOKEN:'admin-test',
  MALIPANG_WORKER_URL:'https://worker.example',MALIPANG_HISTORICAL_DAILY_PROBE:evidence};
 
-function world({secondVersion=version,response={}}={}){
+function world({secondVersion=version,response={},status=200,workerResponse}={}){
  const calls=[];let deployments=0;
  const send=async (url,options)=>{
   calls.push({url:String(url),options});
@@ -25,8 +27,8 @@ function world({secondVersion=version,response={}}={}){
    const id=deployments++===0?version:secondVersion;
    return Response.json({success:true,result:{deployments:[{versions:[{version_id:id,percentage:100}]}]}});
   }
-  return Response.json({ok:true,outcome:'MATCHED',fingerprint:receipt.incidentFingerprint,
-   servedVersion:version,historicalReceiptDigest:expectedHash,preimageDigest:digest(6),...response});
+  return workerResponse??Response.json({ok:true,outcome:'MATCHED',fingerprint:receipt.incidentFingerprint,
+   servedVersion:version,historicalReceiptDigest:expectedHash,preimageDigest:digest(6),...response},{status});
  };
  return {calls,send};
 }
@@ -35,6 +37,33 @@ test('incident-only release parses exactly a hash-only receipt and preserves can
  assert.deepEqual(parseProbeEvidence(evidence),{receipt,preimageDigest:digest(6),pin:expectedHash});
  assert.equal(parseProbeEvidence(JSON.stringify({receipt:{...receipt,extra:'private'},preimageDigest:digest(6)})),null);
  assert.equal(parseProbeEvidence(JSON.stringify({receipt,preimageDigest:'bad'})),null);
+});
+
+test('operator reports only HTTP status and an allowlisted HELD stage',async()=>{
+ const cases=[
+  {status:409,response:{ok:false,outcome:'HELD',stage:'NOTICE',payload:'private'},diagnostic:' HTTP_409 STAGE_NOTICE'},
+  {status:409,response:{ok:false,outcome:'HELD',stage:'NOTICE\nprivate'},diagnostic:' HTTP_409'},
+  {status:409,response:{stage:'CONFIG'},diagnostic:' HTTP_409'},
+  {status:503,response:{ok:false,outcome:'HELD',stage:'NOTICE'},diagnostic:' HTTP_503'},
+  {workerResponse:new Response('private',{status:409}),diagnostic:' HTTP_409'},
+  {response:{preimageDigest:digest(9)},diagnostic:' HTTP_200'},
+ ];
+ for(const {diagnostic,...options} of cases){
+  const w=world(options);
+  await assert.rejects(runHistoricalDailyProbe(env,w.send),{message:'PROBE_RESULT_UNVERIFIED'+diagnostic});
+  assert.deepEqual(w.calls.map(c=>c.options.method),['GET','POST']);
+ }
+});
+
+test('workflow CLI logs the bounded diagnostic on stderr and exits unsuccessfully',()=>{
+ const fake=`globalThis.fetch=async url=>String(url).includes('api.cloudflare.com')
+  ?Response.json({success:true,result:{deployments:[{versions:[{version_id:${JSON.stringify(version)},percentage:100}]}]}})
+  :Response.json({ok:false,outcome:'HELD',stage:'POSTIMAGE',payload:'private-payload-marker',fingerprint:'private-fingerprint-marker'},{status:409});`;
+ const script=fileURLToPath(new URL('../scripts/prod-historical-daily-probe.mjs',import.meta.url));
+ const result=spawnSync(process.execPath,['--import','data:text/javascript,'+encodeURIComponent(fake),script],{env,encoding:'utf8'});
+ assert.equal(result.status,1);
+ assert.equal(result.stdout,'');
+ assert.equal(result.stderr,'PROBE_RESULT_UNVERIFIED HTTP_409 STAGE_POSTIMAGE\n');
 });
 
 test('operator workflow uses Production approval, shared release exclusion and a failing pipeline',()=>{
